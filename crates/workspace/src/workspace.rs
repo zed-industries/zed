@@ -31,12 +31,16 @@ mod workspace_settings;
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
-    CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace,
-    MultiWorkspaceEvent, NewThread, NextProject, NextThread, PreviousProject, PreviousThread,
-    ShowFewerThreads, ShowMoreThreads, Sidebar, SidebarEvent, SidebarHandle, SidebarRenderState,
-    SidebarSide, ToggleWorkspaceSidebar, sidebar_side_context_menu,
+    CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MoveProjectToNewWindow,
+    MultiWorkspace, MultiWorkspaceEvent, NewThread, NextProject, NextThread, PreviousProject,
+    PreviousThread, ProjectGroup, ProjectGroupKey, SerializedProjectGroupState, Sidebar,
+    SidebarEvent, SidebarHandle, SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
+    sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
+pub use remote::{
+    RemoteConnectionIdentity, remote_connection_identity, same_remote_connection_identity,
+};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -85,15 +89,15 @@ use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     WorkspaceDb, delete_unloaded_items,
     model::{
-        DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
-        SerializedProjectGroupKey, SerializedWorkspaceLocation, SessionWorkspace,
+        DockData, DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
+        SerializedProjectGroup, SerializedWorkspaceLocation, SessionWorkspace,
     },
     read_serialized_multi_workspaces, resolve_worktree_workspaces,
 };
 use postage::stream::Stream;
 use project::{
-    DirectoryLister, Project, ProjectEntryId, ProjectGroupKey, ProjectPath, ResolvedPath, Worktree,
-    WorktreeId, WorktreeSettings,
+    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+    WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
@@ -158,7 +162,7 @@ use crate::{dock::PanelSizeState, item::ItemBufferKind, notifications::Notificat
 use crate::{
     persistence::{
         SerializedAxis,
-        model::{DockData, SerializedItem, SerializedPane, SerializedPaneGroup},
+        model::{SerializedItem, SerializedPane, SerializedPaneGroup},
     },
     security_modal::SecurityModal,
 };
@@ -302,6 +306,8 @@ actions!(
         ResetOpenDocksSize,
         /// Reloads the application
         Reload,
+        /// Formats and saves the current file, regardless of the format_on_save setting.
+        FormatAndSave,
         /// Saves the current file with a new name.
         SaveAs,
         /// Saves without formatting.
@@ -2296,18 +2302,19 @@ impl Workspace {
                 return None;
             }
             let flex = flex.max(0.001);
+            let center_column_count = self.center_full_height_column_count();
             let opposite = self.opposite_dock_panel_and_size_state(position, window, cx);
             if let Some(opposite_flex) = opposite.as_ref().and_then(|(_, s)| s.flex) {
-                // Both docks are flex items sharing the full workspace width.
-                let total_flex = flex + 1.0 + opposite_flex;
+                let total_flex = flex + center_column_count + opposite_flex;
                 return Some((flex / total_flex * workspace_width).max(RESIZE_HANDLE_SIZE));
             } else {
-                // Opposite dock is fixed-width; flex items share (W - fixed).
                 let opposite_fixed = opposite
                     .map(|(panel, s)| s.size.unwrap_or_else(|| panel.default_size(window, cx)))
                     .unwrap_or_default();
                 let available = (workspace_width - opposite_fixed).max(RESIZE_HANDLE_SIZE);
-                return Some((flex / (flex + 1.0) * available).max(RESIZE_HANDLE_SIZE));
+                return Some(
+                    (flex / (flex + center_column_count) * available).max(RESIZE_HANDLE_SIZE),
+                );
             }
         }
 
@@ -2334,17 +2341,18 @@ impl Workspace {
             return None;
         }
 
+        let center_column_count = self.center_full_height_column_count();
         let opposite = self.opposite_dock_panel_and_size_state(position, window, cx);
         if let Some(opposite_flex) = opposite.as_ref().and_then(|(_, s)| s.flex) {
             let size = size.clamp(px(0.), workspace_width - px(1.));
-            Some((size * (1.0 + opposite_flex) / (workspace_width - size)).max(0.0))
+            Some((size * (center_column_count + opposite_flex) / (workspace_width - size)).max(0.0))
         } else {
             let opposite_width = opposite
                 .map(|(panel, s)| s.size.unwrap_or_else(|| panel.default_size(window, cx)))
                 .unwrap_or_default();
             let available = (workspace_width - opposite_width).max(RESIZE_HANDLE_SIZE);
             let remaining = (available - size).max(px(1.));
-            Some((size / remaining).max(0.0))
+            Some((size * center_column_count / remaining).max(0.0))
         }
     }
 
@@ -2371,13 +2379,16 @@ impl Workspace {
         Some((panel.clone(), size_state))
     }
 
+    fn center_full_height_column_count(&self) -> f32 {
+        self.center.full_height_column_count().max(1) as f32
+    }
+
     pub fn default_dock_flex(&self, position: DockPosition) -> Option<f32> {
         if position.axis() != Axis::Horizontal {
             return None;
         }
 
-        let pane = self.last_active_center_pane.clone()?.upgrade()?;
-        Some(self.center.width_fraction_for_pane(&pane).unwrap_or(1.0))
+        Some(1.0)
     }
 
     pub fn is_edited(&self) -> bool {
@@ -2847,6 +2858,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+        // TODO: If `on_prompt_for_open_path` is set, we should always use it
+        // rather than gating on `use_system_path_prompts`. This would let tests
+        // inject a mock without also having to disable the setting.
         if !lister.is_local(cx) || !WorkspaceSettings::get_global(cx).use_system_path_prompts {
             let prompt = self.on_prompt_for_open_path.take().unwrap();
             let rx = prompt(self, lister, window, cx);
@@ -6488,10 +6502,12 @@ impl Workspace {
         if let Some(focus_on) = focus_on {
             focus_on.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx));
         } else if self.active_pane() == pane {
-            self.panes
-                .last()
-                .unwrap()
-                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx));
+            let fallback_pane = self.panes.last().unwrap().clone();
+            if self.has_active_modal(window, cx) {
+                self.set_active_pane(&fallback_pane, window, cx);
+            } else {
+                fallback_pane.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx));
+            }
         }
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
@@ -6936,6 +6952,11 @@ impl Workspace {
             .on_action(cx.listener(|workspace, action: &Save, window, cx| {
                 workspace
                     .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), window, cx)
+                    .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
+            }))
+            .on_action(cx.listener(|workspace, _: &FormatAndSave, window, cx| {
+                workspace
+                    .save_active_item(SaveIntent::FormatAndSave, window, cx)
                     .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
             }))
             .on_action(cx.listener(|workspace, _: &SaveWithoutFormat, window, cx| {
@@ -7468,7 +7489,7 @@ impl Workspace {
                     None
                 };
                 if let Some(grow) = flex_grow {
-                    let grow = grow.max(0.001);
+                    let grow = (grow / self.center_full_height_column_count()).max(0.001);
                     let style = container.style();
                     style.flex_grow = Some(grow);
                     style.flex_shrink = Some(1.0);
@@ -8726,7 +8747,7 @@ pub async fn restore_multiworkspace(
             log::error!("Failed to restore active workspace: {err:#}");
 
             let mut fallback_handle = None;
-            for key in &state.project_group_keys {
+            for key in &state.project_groups {
                 let key: ProjectGroupKey = key.clone().into();
                 let paths = key.path_list().paths().to_vec();
                 match cx
@@ -8776,20 +8797,17 @@ pub async fn apply_restored_multiworkspace_state(
 ) {
     let MultiWorkspaceState {
         sidebar_open,
-        project_group_keys,
+        project_groups,
         sidebar_state,
         ..
     } = state;
 
-    if !project_group_keys.is_empty() {
+    if !project_groups.is_empty() {
         // Resolve linked worktree paths to their main repo paths so
         // stale keys from previous sessions get normalized and deduped.
-        let mut resolved_keys: Vec<ProjectGroupKey> = Vec::new();
-        for key in project_group_keys
-            .iter()
-            .cloned()
-            .map(ProjectGroupKey::from)
-        {
+        let mut resolved_groups: Vec<SerializedProjectGroupState> = Vec::new();
+        for serialized in project_groups.iter().cloned() {
+            let SerializedProjectGroupState { key, expanded } = serialized.into_restored_state();
             if key.path_list().paths().is_empty() {
                 continue;
             }
@@ -8806,14 +8824,17 @@ pub async fn apply_restored_multiworkspace_state(
                 }
             }
             let resolved = ProjectGroupKey::new(key.host(), PathList::new(&resolved_paths));
-            if !resolved_keys.contains(&resolved) {
-                resolved_keys.push(resolved);
+            if !resolved_groups.iter().any(|g| g.key == resolved) {
+                resolved_groups.push(SerializedProjectGroupState {
+                    key: resolved,
+                    expanded,
+                });
             }
         }
 
         window_handle
-            .update(cx, |multi_workspace, _window, _cx| {
-                multi_workspace.restore_project_group_keys(resolved_keys);
+            .update(cx, |multi_workspace, _window, cx| {
+                multi_workspace.restore_project_groups(resolved_groups, cx);
             })
             .ok();
     }
@@ -8821,7 +8842,7 @@ pub async fn apply_restored_multiworkspace_state(
     if *sidebar_open {
         window_handle
             .update(cx, |multi_workspace, _, cx| {
-                multi_workspace.open_sidebar(cx);
+                multi_workspace.restore_open_sidebar(cx);
             })
             .ok();
     }
@@ -9240,35 +9261,31 @@ pub async fn find_existing_workspace(
     let mut open_visible = OpenVisible::All;
     let mut best_match = None;
 
-    cx.update(|cx| {
-        for window in workspace_windows_for_location(location, cx) {
-            if let Ok(multi_workspace) = window.read(cx) {
-                for workspace in multi_workspace.workspaces() {
-                    let project = workspace.read(cx).project.read(cx);
-                    let m = project.visibility_for_paths(
-                        abs_paths,
-                        open_options.open_new_workspace == None,
-                        cx,
-                    );
-                    if m > best_match {
-                        existing = Some((window, workspace.clone()));
-                        best_match = m;
-                    } else if best_match.is_none() && open_options.open_new_workspace == Some(false)
-                    {
-                        existing = Some((window, workspace.clone()))
+    if open_options.workspace_matching != WorkspaceMatching::None {
+        cx.update(|cx| {
+            for window in workspace_windows_for_location(location, cx) {
+                if let Ok(multi_workspace) = window.read(cx) {
+                    for workspace in multi_workspace.workspaces() {
+                        let project = workspace.read(cx).project.read(cx);
+                        let m = project.visibility_for_paths(
+                            abs_paths,
+                            open_options.workspace_matching != WorkspaceMatching::MatchSubdirectory,
+                            cx,
+                        );
+                        if m > best_match {
+                            existing = Some((window, workspace.clone()));
+                            best_match = m;
+                        } else if best_match.is_none()
+                            && open_options.workspace_matching
+                                == WorkspaceMatching::MatchSubdirectory
+                        {
+                            existing = Some((window, workspace.clone()))
+                        }
                     }
                 }
             }
-        }
-    });
+        });
 
-    // With -n, only reuse a window if the path is genuinely contained
-    // within an existing worktree (don't fall back to any arbitrary window).
-    if open_options.open_new_workspace == Some(true) && best_match.is_none() {
-        existing = None;
-    }
-
-    if open_options.open_new_workspace != Some(true) {
         let all_paths_are_files = existing
             .as_ref()
             .and_then(|(_, target_workspace)| {
@@ -9291,11 +9308,7 @@ pub async fn find_existing_workspace(
             })
             .unwrap_or(false);
 
-        if open_options.open_new_workspace.is_none()
-            && existing.is_some()
-            && open_options.wait
-            && all_paths_are_files
-        {
+        if open_options.wait && existing.is_some() && all_paths_are_files {
             cx.update(|cx| {
                 let windows = workspace_windows_for_location(location, cx);
                 let window = cx
@@ -9316,17 +9329,59 @@ pub async fn find_existing_workspace(
     (existing, open_visible)
 }
 
-#[derive(Default, Clone)]
+/// Controls whether to reuse an existing workspace whose worktrees contain the
+/// given paths, and how broadly to match.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum WorkspaceMatching {
+    /// Always open a new workspace. No matching against existing worktrees.
+    None,
+    /// Match paths against existing worktree roots and files within them.
+    #[default]
+    MatchExact,
+    /// Match paths against existing worktrees including subdirectories, and
+    /// fall back to any existing window if no worktree matched.
+    ///
+    /// For example, `zed -a foo/bar` will activate the `bar` workspace if it
+    /// exists, otherwise it will open a new window with `foo/bar` as the root.
+    MatchSubdirectory,
+}
+
+#[derive(Clone)]
 pub struct OpenOptions {
     pub visible: Option<OpenVisible>,
     pub focus: Option<bool>,
-    pub open_new_workspace: Option<bool>,
-    pub force_existing_window: bool,
+    pub workspace_matching: WorkspaceMatching,
+    /// Whether to add unmatched directories to the existing window's sidebar
+    /// rather than opening a new window. Defaults to true, matching the default
+    /// `cli_default_open_behavior` setting.
+    pub add_dirs_to_sidebar: bool,
     pub wait: bool,
     pub requesting_window: Option<WindowHandle<MultiWorkspace>>,
     pub open_mode: OpenMode,
     pub env: Option<HashMap<String, String>>,
     pub open_in_dev_container: bool,
+}
+
+impl Default for OpenOptions {
+    fn default() -> Self {
+        Self {
+            visible: None,
+            focus: None,
+            workspace_matching: WorkspaceMatching::default(),
+            add_dirs_to_sidebar: true,
+            wait: false,
+            requesting_window: None,
+            open_mode: OpenMode::default(),
+            env: None,
+            open_in_dev_container: false,
+        }
+    }
+}
+
+impl OpenOptions {
+    fn should_reuse_existing_window(&self) -> bool {
+        self.workspace_matching != WorkspaceMatching::None && self.open_mode != OpenMode::NewWindow
+    }
 }
 
 /// The result of opening a workspace via [`open_paths`], [`Workspace::new_local`],
@@ -9476,7 +9531,7 @@ pub fn open_paths(
 
         // Fallback: if no workspace contains the paths and all paths are files,
         // prefer an existing local workspace window (active window first).
-        if open_options.open_new_workspace.is_none() && existing.is_none() {
+        if open_options.should_reuse_existing_window() && existing.is_none() {
             let all_paths = abs_paths.iter().map(|path| app_state.fs.metadata(path));
             let all_metadatas = futures::future::join_all(all_paths)
                 .await
@@ -9509,12 +9564,14 @@ pub fn open_paths(
         // workspace matched, check the user's setting to decide whether to add
         // the directory as a new workspace in the active window's MultiWorkspace
         // or open a new window.
-        if open_options.open_new_workspace.is_none() && existing.is_none() {
-            let use_existing_window = open_options.force_existing_window
-                || cx.update(|cx| {
-                    WorkspaceSettings::get_global(cx).cli_default_open_behavior
-                        == settings::CliDefaultOpenBehavior::ExistingWindow
-                });
+        // Skip when requesting_window is already set: the caller (e.g.
+        // open_workspace_for_paths reusing an empty window) already chose the
+        // target window, so we must not open the sidebar as a side-effect.
+        if open_options.should_reuse_existing_window()
+            && existing.is_none()
+            && open_options.requesting_window.is_none()
+        {
+            let use_existing_window = open_options.add_dirs_to_sidebar;
 
             if use_existing_window {
                 let target_window = cx.update(|cx| {
@@ -9847,11 +9904,13 @@ async fn open_remote_project_inner(
 
     for path in paths {
         let result = cx
-            .update(|cx| Workspace::project_path_for_path(project.clone(), &path, true, cx))
+            .update(|cx| {
+                Workspace::project_path_for_path(project.clone(), path.as_path(), true, cx)
+            })
             .await;
         match result {
             Ok((_, project_path)) => {
-                project_paths_to_open.push((path.clone(), Some(project_path)));
+                project_paths_to_open.push((path, Some(project_path)));
             }
             Err(error) => {
                 project_path_errors.push(error);
@@ -9879,7 +9938,7 @@ async fn open_remote_project_inner(
         });
 
         if let Some(project_group_key) = provisional_project_group_key.clone() {
-            multi_workspace.set_workspace_group_key(&new_workspace, project_group_key);
+            multi_workspace.retain_workspace(new_workspace.clone(), project_group_key, cx);
         }
         multi_workspace.activate(new_workspace.clone(), window, cx);
         new_workspace
@@ -9951,14 +10010,13 @@ pub fn join_in_room_project(
                 .and_then(|window_handle| {
                     window_handle
                         .update(cx, |multi_workspace, _window, cx| {
-                            for workspace in multi_workspace.workspaces() {
-                                if workspace.read(cx).project().read(cx).remote_id()
-                                    == Some(project_id)
-                                {
-                                    return Some((window_handle, workspace.clone()));
-                                }
-                            }
-                            None
+                            multi_workspace
+                                .workspaces()
+                                .find(|workspace| {
+                                    workspace.read(cx).project().read(cx).remote_id()
+                                        == Some(project_id)
+                                })
+                                .map(|workspace| (window_handle, workspace.clone()))
                         })
                         .unwrap_or(None)
                 })
@@ -10909,8 +10967,7 @@ mod tests {
         // Activate workspace A
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
-                let workspace = mw.workspaces().next().unwrap().clone();
-                mw.activate(workspace, window, cx);
+                mw.activate(workspace_a.clone(), window, cx);
             })
             .unwrap();
 
@@ -11033,7 +11090,7 @@ mod tests {
         assert!(!removed, "removal should have been cancelled");
 
         multi_workspace_handle
-            .read_with(cx, |mw, _| {
+            .read_with(cx, |mw, _cx| {
                 assert_eq!(
                     mw.workspace(),
                     &workspace_b,
@@ -11061,7 +11118,7 @@ mod tests {
 
         // Should be back on workspace A, and B should be gone.
         multi_workspace_handle
-            .read_with(cx, |mw, _| {
+            .read_with(cx, |mw, _cx| {
                 assert_eq!(
                     mw.workspace(),
                     &workspace_a,
@@ -12692,74 +12749,40 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         workspace.update(cx, |workspace, _cx| {
-            workspace.bounds.size.width = px(800.);
+            workspace.set_random_database_id();
         });
 
         workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Right, 100, cx));
-            workspace.add_panel(panel, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Right, window, cx);
+
+            let right_dock = workspace.right_dock().clone();
+            right_dock.update(cx, |dock, cx| {
+                dock.set_panel_size_state(
+                    &panel,
+                    dock::PanelSizeState {
+                        size: None,
+                        flex: Some(1.0),
+                    },
+                    cx,
+                );
+            });
         });
 
-        let (panel, resized_width, ratio_basis_width) =
-            workspace.update_in(cx, |workspace, window, cx| {
-                let item = cx.new(|cx| {
-                    TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
-                });
-                workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
-
-                let dock = workspace.right_dock().read(cx);
-                let workspace_width = workspace.bounds.size.width;
-                let initial_width = workspace
-                    .dock_size(&dock, window, cx)
-                    .expect("flexible dock should have an initial width");
-
-                assert_eq!(initial_width, workspace_width / 2.);
-
-                workspace.resize_right_dock(px(300.), window, cx);
-
-                let dock = workspace.right_dock().read(cx);
-                let resized_width = workspace
-                    .dock_size(&dock, window, cx)
-                    .expect("flexible dock should keep its resized width");
-
-                assert_eq!(resized_width, px(300.));
-
-                let panel = workspace
-                    .right_dock()
-                    .read(cx)
-                    .visible_panel()
-                    .expect("flexible dock should have a visible panel")
-                    .panel_id();
-
-                (panel, resized_width, workspace_width)
-            });
-
         workspace.update_in(cx, |workspace, window, cx| {
-            workspace.toggle_dock(DockPosition::Right, window, cx);
-            workspace.toggle_dock(DockPosition::Right, window, cx);
+            let item = cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+            });
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+            workspace.bounds.size.width = px(1920.);
 
             let dock = workspace.right_dock().read(cx);
-            let reopened_width = workspace
+            let initial_width = workspace
                 .dock_size(&dock, window, cx)
-                .expect("flexible dock should restore when reopened");
+                .expect("flexible dock should have an initial width");
 
-            assert_eq!(reopened_width, resized_width);
-
-            let right_dock = workspace.right_dock().read(cx);
-            let flexible_panel = right_dock
-                .visible_panel()
-                .expect("flexible dock should still have a visible panel");
-            assert_eq!(flexible_panel.panel_id(), panel);
-            assert_eq!(
-                right_dock
-                    .stored_panel_size_state(flexible_panel.as_ref())
-                    .and_then(|size_state| size_state.flex),
-                Some(
-                    resized_width.to_f64() as f32
-                        / (workspace.bounds.size.width - resized_width).to_f64() as f32
-                )
-            );
+            assert_eq!(initial_width, px(960.));
         });
 
         workspace.update_in(cx, |workspace, window, cx| {
@@ -12770,25 +12793,16 @@ mod tests {
                 cx,
             );
 
-            let dock = workspace.right_dock().read(cx);
-            let split_width = workspace
-                .dock_size(&dock, window, cx)
-                .expect("flexible dock should keep its user-resized proportion");
-
-            assert_eq!(split_width, px(300.));
-
-            workspace.bounds.size.width = px(1600.);
+            let center_column_count = workspace.center.full_height_column_count();
+            assert_eq!(center_column_count, 2);
 
             let dock = workspace.right_dock().read(cx);
-            let resized_window_width = workspace
-                .dock_size(&dock, window, cx)
-                .expect("flexible dock should preserve proportional size on window resize");
+            assert_eq!(workspace.dock_size(&dock, window, cx).unwrap(), px(640.));
 
-            assert_eq!(
-                resized_window_width,
-                workspace.bounds.size.width
-                    * (resized_width.to_f64() as f32 / ratio_basis_width.to_f64() as f32)
-            );
+            workspace.bounds.size.width = px(2400.);
+
+            let dock = workspace.right_dock().read(cx);
+            assert_eq!(workspace.dock_size(&dock, window, cx).unwrap(), px(800.));
         });
     }
 
@@ -12960,9 +12974,31 @@ mod tests {
             );
         });
 
-        // Step 2: Split the center pane vertically (top/bottom). Vertical splits do not
-        // change horizontal width fractions, so the flexible panel stays at the same
-        // width as each half of the split.
+        // Step 2: Split the center pane left/right. The flexible panel is treated as one
+        // average center column, so with two center columns it should take one third of
+        // the workspace width.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+
+            let left_dock = workspace.left_dock().read(cx);
+            let left_width = workspace
+                .dock_size(&left_dock, window, cx)
+                .expect("left dock should still have an active panel after horizontal split");
+
+            assert_eq!(
+                left_width,
+                workspace.bounds.size.width / 3.,
+                "flexible left panel width should match the average center column width"
+            );
+        });
+
+        // Step 3: Split the active center pane vertically (top/bottom). Vertical splits do
+        // not change the number of center columns, so the flexible panel width stays the same.
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.split_pane(
                 workspace.active_pane().clone(),
@@ -12978,14 +13014,14 @@ mod tests {
 
             assert_eq!(
                 left_width,
-                workspace.bounds.size.width / 2.,
-                "flexible left panel width should match each vertically-split pane"
+                workspace.bounds.size.width / 3.,
+                "flexible left panel width should still match the average center column width"
             );
         });
 
-        // Step 3: Open a fixed-width panel in the right dock. The right dock's default
-        // size reduces the available width, so the flexible left panel and the center
-        // panes all shrink proportionally to accommodate it.
+        // Step 4: Open a fixed-width panel in the right dock. The right dock's default
+        // size reduces the available width, so the flexible left panel keeps matching one
+        // average center column within the remaining space.
         workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 200, cx));
             workspace.add_panel(panel, window, cx);
@@ -13004,14 +13040,14 @@ mod tests {
             let available_width = workspace.bounds.size.width - right_width;
             assert_eq!(
                 left_width,
-                available_width / 2.,
-                "flexible left panel should shrink proportionally as the right dock takes space"
+                available_width / 3.,
+                "flexible left panel should keep matching one average center column"
             );
         });
 
-        // Step 4: Toggle the right dock's panel to flexible. Now both docks use
-        // flex sizing and the workspace width is divided among left-flex, center
-        // (implicit flex 1.0), and right-flex.
+        // Step 5: Toggle the right dock's panel to flexible. Now both docks use
+        // column-equivalent flex sizing and the workspace width is divided among
+        // left-flex, two center columns, and right-flex.
         workspace.update_in(cx, |workspace, window, cx| {
             let right_dock = workspace.right_dock().clone();
             let right_panel = right_dock
@@ -13053,8 +13089,9 @@ mod tests {
             let left_flex = workspace
                 .default_dock_flex(DockPosition::Left)
                 .expect("left dock should have a default flex");
+            let center_column_count = workspace.center.full_height_column_count() as f32;
 
-            let total_flex = left_flex + 1.0 + right_flex;
+            let total_flex = left_flex + center_column_count + right_flex;
             let expected_left = left_flex / total_flex * workspace.bounds.size.width;
             let expected_right = right_flex / total_flex * workspace.bounds.size.width;
             assert_eq!(

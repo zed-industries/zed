@@ -14,6 +14,7 @@ dependencies = [
  "chrono",
  "collections",
  "env_logger 0.11.8",
+ "feature_flags",
  "file_icons",
  "futures 0.3.32",
  "gpui",
@@ -29,7 +30,7 @@ dependencies = [
  "portable-pty",
  "project",
  "prompt_store",
- "rand 0.9.2",
+ "rand 0.9.3",
  "serde",
  "serde_json",
  "settings",
@@ -81,7 +82,7 @@ dependencies = [
  "log",
  "pretty_assertions",
  "project",
- "rand 0.9.2",
+ "rand 0.9.3",
  "serde_json",
  "settings",
  "telemetry",
@@ -184,7 +185,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
- "rand 0.9.2",
+ "rand 0.9.3",
  "regex",
  "reqwest_client",
  "rust-embed",
@@ -301,6 +302,7 @@ dependencies = [
  "collections",
  "convert_case 0.8.0",
  "fs",
+ "futures 0.3.32",
  "gpui",
  "language_model",
  "log",
@@ -378,7 +380,7 @@ dependencies = [
  "project",
  "prompt_store",
  "proto",
- "rand 0.9.2",
+ "rand 0.9.3",
  "release_channel",
  "remote",
  "remote_connection",
@@ -396,6 +398,7 @@ dependencies = [
  "streaming_diff",
  "task",
  "telemetry",
+ "tempfile",
  "terminal",
  "terminal_view",
  "text",
@@ -1248,6 +1251,7 @@ dependencies = [
  "fs",
  "gpui",
  "markdown_preview",
+ "notifications",
  "release_channel",
  "semver",
  "serde",
@@ -2181,7 +2185,7 @@ dependencies = [
  "language",
  "log",
  "pretty_assertions",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rope",
  "settings",
  "sum_tree",
@@ -2432,7 +2436,7 @@ dependencies = [
  "memmap2",
  "num-traits",
  "num_cpus",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rand_distr",
  "rayon",
  "safetensors",
@@ -2925,7 +2929,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "postage",
- "rand 0.9.2",
+ "rand 0.9.3",
  "regex",
  "release_channel",
  "rpc",
@@ -3175,7 +3179,7 @@ dependencies = [
  "prometheus",
  "prompt_store",
  "prost 0.9.0",
- "rand 0.9.2",
+ "rand 0.9.3",
  "recent_projects",
  "release_channel",
  "remote",
@@ -3509,7 +3513,7 @@ dependencies = [
  "net",
  "parking_lot",
  "postage",
- "rand 0.9.2",
+ "rand 0.9.3",
  "schemars",
  "serde",
  "serde_json",
@@ -3595,7 +3599,7 @@ dependencies = [
  "anthropic",
  "anyhow",
  "collections",
- "dirs 4.0.0",
+ "dirs",
  "fs",
  "futures 0.3.32",
  "gpui",
@@ -4085,7 +4089,7 @@ checksum = "6ddc2d09feefeee8bd78101665bd8645637828fa9317f9f292496dbbd8c65ff3"
 dependencies = [
  "crc",
  "digest",
- "rand 0.9.2",
+ "rand 0.9.3",
  "regex",
  "rustversion",
 ]
@@ -4838,7 +4842,7 @@ dependencies = [
  "markdown",
  "pretty_assertions",
  "project",
- "rand 0.9.2",
+ "rand 0.9.3",
  "serde",
  "serde_json",
  "settings",
@@ -4892,52 +4896,11 @@ dependencies = [
 
 [[package]]
 name = "dirs"
-version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca3aa72a6f96ea37bbc5aa912f6788242832f75369bdfdadcb0e38423f100059"
-dependencies = [
- "dirs-sys 0.3.7",
-]
-
-[[package]]
-name = "dirs"
-version = "5.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
-dependencies = [
- "dirs-sys 0.4.1",
-]
-
-[[package]]
-name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
 dependencies = [
- "dirs-sys 0.5.0",
-]
-
-[[package]]
-name = "dirs-sys"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b1d1d91c932ef41c0f2663aa8b0ca0342d444d842c06914aa0a7e352d0bada6"
-dependencies = [
- "libc",
- "redox_users 0.4.6",
- "winapi",
-]
-
-[[package]]
-name = "dirs-sys"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
-dependencies = [
- "libc",
- "option-ext",
- "redox_users 0.4.6",
- "windows-sys 0.48.0",
+ "dirs-sys",
 ]
 
 [[package]]
@@ -4948,7 +4911,7 @@ checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
 dependencies = [
  "libc",
  "option-ext",
- "redox_users 0.5.2",
+ "redox_users",
  "windows-sys 0.61.2",
 ]
 
@@ -5183,6 +5146,7 @@ dependencies = [
  "ctor",
  "db",
  "edit_prediction_context",
+ "edit_prediction_metrics",
  "edit_prediction_types",
  "feature_flags",
  "fs",
@@ -5204,7 +5168,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "pulldown-cmark 0.13.0",
- "rand 0.9.2",
+ "rand 0.9.3",
  "regex",
  "release_channel",
  "semver",
@@ -5243,8 +5207,9 @@ dependencies = [
  "collections",
  "db",
  "debug_adapter_extension",
- "dirs 4.0.0",
+ "dirs",
  "edit_prediction",
+ "edit_prediction_metrics",
  "extension",
  "flate2",
  "fs",
@@ -5268,14 +5233,14 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
- "rand 0.9.2",
+ "rand 0.9.3",
  "release_channel",
  "reqwest_client",
  "rust-embed",
  "serde",
  "serde_json",
  "settings",
- "shellexpand 2.1.2",
+ "shellexpand",
  "similar",
  "smol",
  "sqlez",
@@ -5316,6 +5281,19 @@ dependencies = [
  "text",
  "tree-sitter",
  "util",
+ "zeta_prompt",
+]
+
+[[package]]
+name = "edit_prediction_metrics"
+version = "0.1.0"
+dependencies = [
+ "indoc",
+ "language",
+ "pretty_assertions",
+ "serde",
+ "similar",
+ "tree-sitter",
  "zeta_prompt",
 ]
 
@@ -5414,7 +5392,7 @@ dependencies = [
  "project",
  "proptest",
  "proptest-derive",
- "rand 0.9.2",
+ "rand 0.9.3",
  "regex",
  "release_channel",
  "rope",
@@ -5826,7 +5804,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "shellexpand 2.1.2",
+ "shellexpand",
  "terminal_view",
  "util",
  "watch",
@@ -6298,7 +6276,7 @@ checksum = "4203231de188ebbdfb85c11f3c20ca2b063945710de04e7b59268731e728b462"
 dependencies = [
  "half",
  "num-traits",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rand_distr",
 ]
 
@@ -7166,7 +7144,7 @@ dependencies = [
  "log",
  "parking_lot",
  "pretty_assertions",
- "rand 0.9.2",
+ "rand 0.9.3",
  "regex",
  "rope",
  "schemars",
@@ -7214,7 +7192,7 @@ dependencies = [
  "language",
  "menu",
  "project",
- "rand 0.9.2",
+ "rand 0.9.3",
  "remote_connection",
  "search",
  "serde_json",
@@ -7286,7 +7264,7 @@ dependencies = [
  "project",
  "prompt_store",
  "proto",
- "rand 0.9.2",
+ "rand 0.9.3",
  "remote",
  "remote_connection",
  "schemars",
@@ -7573,7 +7551,7 @@ dependencies = [
  "postage",
  "profiling",
  "proptest",
- "rand 0.9.2",
+ "rand 0.9.3",
  "raw-window-handle",
  "refineable",
  "regex",
@@ -7623,6 +7601,7 @@ dependencies = [
  "gpui",
  "gpui_wgpu",
  "http_client",
+ "image",
  "itertools 0.14.0",
  "libc",
  "log",
@@ -7809,7 +7788,7 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "parking_lot",
- "rand 0.9.2",
+ "rand 0.9.3",
  "raw-window-handle",
  "smallvec",
  "util",
@@ -7915,7 +7894,7 @@ dependencies = [
  "cfg-if",
  "crunchy",
  "num-traits",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rand_distr",
  "zerocopy",
 ]
@@ -9070,7 +9049,7 @@ dependencies = [
  "log",
  "serde",
  "settings",
- "shellexpand 2.1.2",
+ "shellexpand",
  "workspace",
 ]
 
@@ -9332,14 +9311,14 @@ dependencies = [
  "parking_lot",
  "postage",
  "pretty_assertions",
- "rand 0.9.2",
+ "rand 0.9.3",
  "regex",
  "rpc",
  "semver",
  "serde",
  "serde_json",
  "settings",
- "shellexpand 2.1.2",
+ "shellexpand",
  "smallvec",
  "smol",
  "streaming-iterator",
@@ -9932,7 +9911,7 @@ dependencies = [
  "parking_lot",
  "pbjson-types",
  "prost 0.12.6",
- "rand 0.9.2",
+ "rand 0.9.3",
  "reqwest 0.12.24",
  "rustls-native-certs 0.6.3",
  "scopeguard",
@@ -10762,7 +10741,7 @@ dependencies = [
  "log",
  "parking_lot",
  "pretty_assertions",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rope",
  "serde",
  "settings",
@@ -11194,7 +11173,7 @@ dependencies = [
  "num-iter",
  "num-traits",
  "once_cell",
- "rand 0.9.2",
+ "rand 0.9.3",
  "serde",
  "smallvec",
  "zeroize",
@@ -11688,7 +11667,7 @@ dependencies = [
  "language_model_core",
  "log",
  "pretty_assertions",
- "rand 0.9.2",
+ "rand 0.9.3",
  "schemars",
  "serde",
  "serde_json",
@@ -12083,7 +12062,7 @@ dependencies = [
 name = "paths"
 version = "0.1.0"
 dependencies = [
- "dirs 4.0.0",
+ "dirs",
  "ignore",
  "util",
 ]
@@ -13310,7 +13289,7 @@ dependencies = [
  "prettier",
  "pretty_assertions",
  "project",
- "rand 0.9.2",
+ "rand 0.9.3",
  "regex",
  "release_channel",
  "remote",
@@ -13321,7 +13300,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sha2",
- "shellexpand 2.1.2",
+ "shellexpand",
  "smallvec",
  "smol",
  "snippet",
@@ -13487,7 +13466,7 @@ dependencies = [
  "bitflags 2.10.0",
  "num-traits",
  "proptest-macro",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rand_chacha 0.9.0",
  "rand_xorshift",
  "regex-syntax",
@@ -13848,7 +13827,7 @@ dependencies = [
  "bytes 1.11.1",
  "getrandom 0.3.4",
  "lru-slab",
- "rand 0.9.2",
+ "rand 0.9.3",
  "ring",
  "rustc-hash 2.1.1",
  "rustls 0.23.33",
@@ -13931,9 +13910,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.2"
+version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
+checksum = "7ec095654a25171c2124e9e3393a930bddbffdc939556c914957a4c3e0a87166"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
@@ -13999,7 +13978,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8615d50dcf34fa31f7ab52692afec947c4dd0ab803cc87cb3b0b4570ff7463"
 dependencies = [
  "num-traits",
- "rand 0.9.2",
+ "rand 0.9.3",
 ]
 
 [[package]]
@@ -14268,17 +14247,6 @@ dependencies = [
 
 [[package]]
 name = "redox_users"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba009ff324d1fc1b900bd1fdb31564febe58a8ccc8a6fdbb93b543d33b13ca43"
-dependencies = [
- "getrandom 0.2.16",
- "libredox",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "redox_users"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
@@ -14498,7 +14466,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "shellexpand 2.1.2",
+ "shellexpand",
  "smol",
  "sysinfo 0.37.2",
  "task",
@@ -14792,7 +14760,7 @@ dependencies = [
  "dasp_sample",
  "hound",
  "num-rational",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rand_distr",
  "rtrb",
  "symphonia",
@@ -14808,7 +14776,7 @@ dependencies = [
  "gpui",
  "heapless",
  "log",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rayon",
  "sum_tree",
  "tracing",
@@ -14847,7 +14815,7 @@ dependencies = [
  "gpui",
  "parking_lot",
  "proto",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rsa",
  "serde",
  "serde_json",
@@ -14935,13 +14903,13 @@ dependencies = [
  "bytes 1.11.1",
  "chrono",
  "data-encoding",
- "dirs 6.0.0",
+ "dirs",
  "futures 0.3.32",
  "glob",
  "jupyter-protocol",
  "serde",
  "serde_json",
- "shellexpand 3.1.1",
+ "shellexpand",
  "smol",
  "thiserror 2.0.17",
  "uuid",
@@ -15312,7 +15280,7 @@ dependencies = [
  "flume",
  "futures 0.3.32",
  "parking_lot",
- "rand 0.9.2",
+ "rand 0.9.3",
  "web-time",
 ]
 
@@ -15929,6 +15897,7 @@ dependencies = [
  "edit_prediction",
  "edit_prediction_ui",
  "editor",
+ "feature_flags",
  "fs",
  "futures 0.3.32",
  "fuzzy",
@@ -16037,20 +16006,11 @@ dependencies = [
 
 [[package]]
 name = "shellexpand"
-version = "2.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ccc8076840c4da029af4f87e4e8daeb0fca6b87bbb02e10cb60b791450e11e4"
-dependencies = [
- "dirs 4.0.0",
-]
-
-[[package]]
-name = "shellexpand"
 version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b1fdf65dd6331831494dd616b30351c38e96e45921a27745cf98490458b90bb"
 dependencies = [
- "dirs 6.0.0",
+ "dirs",
 ]
 
 [[package]]
@@ -16079,6 +16039,7 @@ dependencies = [
  "chrono",
  "client",
  "clock",
+ "db",
  "editor",
  "extension",
  "fs",
@@ -16104,6 +16065,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "telemetry",
  "theme",
  "theme_settings",
  "ui",
@@ -16747,7 +16709,7 @@ name = "streaming_diff"
 version = "0.1.0"
 dependencies = [
  "ordered-float 2.10.1",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rope",
  "util",
 ]
@@ -16871,7 +16833,7 @@ dependencies = [
  "heapless",
  "log",
  "proptest",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rayon",
  "tracing",
  "zlog",
@@ -17470,7 +17432,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "sha2",
- "shellexpand 2.1.2",
+ "shellexpand",
  "util",
  "zed_actions",
 ]
@@ -17566,7 +17528,7 @@ dependencies = [
  "libc",
  "log",
  "parking_lot",
- "rand 0.9.2",
+ "rand 0.9.3",
  "regex",
  "release_channel",
  "schemars",
@@ -17604,7 +17566,7 @@ dependencies = [
  "breadcrumbs",
  "collections",
  "db",
- "dirs 4.0.0",
+ "dirs",
  "editor",
  "futures 0.3.32",
  "gpui",
@@ -17619,7 +17581,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "shellexpand 2.1.2",
+ "shellexpand",
  "task",
  "terminal",
  "theme",
@@ -17642,7 +17604,7 @@ dependencies = [
  "log",
  "parking_lot",
  "postage",
- "rand 0.9.2",
+ "rand 0.9.3",
  "regex",
  "rope",
  "smallvec",
@@ -18793,7 +18755,7 @@ dependencies = [
  "http 1.3.1",
  "httparse",
  "log",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rustls 0.23.33",
  "rustls-pki-types",
  "sha1",
@@ -18812,7 +18774,7 @@ dependencies = [
  "http 1.3.1",
  "httparse",
  "log",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rustls 0.23.33",
  "rustls-pki-types",
  "sha1",
@@ -19137,7 +19099,7 @@ dependencies = [
  "async_zip",
  "collections",
  "command-fds",
- "dirs 4.0.0",
+ "dirs",
  "dunce",
  "futures 0.3.32",
  "futures-lite 1.13.0",
@@ -19151,7 +19113,7 @@ dependencies = [
  "nix 0.29.0",
  "percent-encoding",
  "pretty_assertions",
- "rand 0.9.2",
+ "rand 0.9.3",
  "regex",
  "rust-embed",
  "schemars",
@@ -21717,7 +21679,6 @@ dependencies = [
  "collections",
  "component",
  "db",
- "feature_flags",
  "fs",
  "futures 0.3.32",
  "git",
@@ -21733,6 +21694,7 @@ dependencies = [
  "postage",
  "pretty_assertions",
  "project",
+ "release_channel",
  "remote",
  "schemars",
  "serde",
@@ -21778,7 +21740,7 @@ dependencies = [
  "paths",
  "postage",
  "pretty_assertions",
- "rand 0.9.2",
+ "rand 0.9.3",
  "rpc",
  "serde",
  "serde_json",
@@ -22171,7 +22133,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.233.0"
+version = "0.234.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -22294,7 +22256,7 @@ dependencies = [
  "settings",
  "settings_profile_selector",
  "settings_ui",
- "shellexpand 2.1.2",
+ "shellexpand",
  "sidebar",
  "smol",
  "snippet_provider",
@@ -22344,14 +22306,14 @@ dependencies = [
 [[package]]
 name = "zed-font-kit"
 version = "0.14.1-zed"
-source = "git+https://github.com/zed-industries/font-kit?rev=110523127440aefb11ce0cf280ae7c5071337ec5#110523127440aefb11ce0cf280ae7c5071337ec5"
+source = "git+https://github.com/zed-industries/font-kit?rev=94b0f28166665e8fd2f53ff6d268a14955c82269#94b0f28166665e8fd2f53ff6d268a14955c82269"
 dependencies = [
  "bitflags 2.10.0",
  "byteorder",
  "core-foundation 0.10.0",
  "core-graphics 0.24.0",
  "core-text",
- "dirs 5.0.1",
+ "dirs",
  "dwrote",
  "float-ord",
  "freetype-sys",
@@ -22623,7 +22585,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "parking_lot",
- "rand 0.9.2",
+ "rand 0.9.3",
  "regex",
  "scc",
  "thiserror 1.0.69",

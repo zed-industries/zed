@@ -123,6 +123,13 @@
   // Time to wait in milliseconds before showing the informational hover box.
   // This delay also applies to auto signature help when `auto_signature_help` is enabled.
   "hover_popover_delay": 300,
+  // Whether the hover popover sticks when the mouse moves toward it,
+  // allowing interaction with its contents before it disappears.
+  "hover_popover_sticky": true,
+  // Time to wait in milliseconds before hiding the hover popover
+  // after the mouse moves away from the hover target.
+  // Only applies when `hover_popover_sticky` is enabled.
+  "hover_popover_hiding_delay": 300,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened
@@ -138,9 +145,10 @@
   // an explicit `-e` (existing window) or `-n` (new window) flag.
   //
   // May take 2 values:
-  //  1. Add to the existing Zed window
+  //  1. Open directories as a new workspace in the current Zed window's sidebar
   //         "cli_default_open_behavior": "existing_window"
-  //  2. Open a new Zed window
+  //  2. Open directories in a new window (reuse existing windows for files
+  //     that are already part of an open project)
   //         "cli_default_open_behavior": "new_window"
   "cli_default_open_behavior": "existing_window",
   // Whether to attempt to restore previous file's state when opening it again.
@@ -2076,10 +2084,10 @@
       "ensure_final_newline_on_save": false,
     },
     "EEx": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "Elixir": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "!emmet-language-server", "..."],
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "!emmet-language-server", "..."],
     },
     "Elm": {
       "tab_size": 4,
@@ -2105,7 +2113,7 @@
       },
     },
     "HEEx": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "HTML": {
       "prettier": {

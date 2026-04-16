@@ -1,8 +1,7 @@
 use crate::{CommonAnimationExt, DiffStat, GradientFade, HighlightedLabel, Tooltip, prelude::*};
 
 use gpui::{
-    Animation, AnimationExt, AnyView, ClickEvent, Hsla, MouseButton, SharedString,
-    pulsating_between,
+    Animation, AnimationExt, ClickEvent, Hsla, MouseButton, SharedString, pulsating_between,
 };
 use itertools::Itertools as _;
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -29,6 +28,7 @@ pub struct ThreadItemWorktreeInfo {
     pub full_path: SharedString,
     pub highlight_positions: Vec<usize>,
     pub kind: WorktreeKind,
+    pub branch_name: Option<SharedString>,
 }
 
 #[derive(IntoElement, RegisterComponent)]
@@ -58,7 +58,6 @@ pub struct ThreadItem {
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
     action_slot: Option<AnyElement>,
-    tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
     base_bg: Option<Hsla>,
 }
 
@@ -83,7 +82,6 @@ impl ThreadItem {
             rounded: false,
             added: None,
             removed: None,
-
             project_paths: None,
             project_name: None,
             worktrees: Vec::new(),
@@ -91,7 +89,6 @@ impl ThreadItem {
             on_click: None,
             on_hover: Box::new(|_, _, _| {}),
             action_slot: None,
-            tooltip: None,
             base_bg: None,
         }
     }
@@ -214,11 +211,6 @@ impl ThreadItem {
         self
     }
 
-    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
-        self.tooltip = Some(Box::new(tooltip));
-        self
-    }
-
     pub fn base_bg(mut self, color: Hsla) -> Self {
         self.base_bg = Some(color);
         self
@@ -278,35 +270,26 @@ impl RenderOnce for ThreadItem {
             Icon::new(self.icon).color(icon_color).size(IconSize::Small)
         };
 
-        let (status_icon, icon_tooltip) = if self.status == AgentThreadStatus::Error {
-            (
-                Some(
-                    Icon::new(IconName::Close)
-                        .size(IconSize::Small)
-                        .color(Color::Error),
-                ),
-                Some("Thread has an Error"),
+        let status_icon = if self.status == AgentThreadStatus::Error {
+            Some(
+                Icon::new(IconName::Close)
+                    .size(IconSize::Small)
+                    .color(Color::Error),
             )
         } else if self.status == AgentThreadStatus::WaitingForConfirmation {
-            (
-                Some(
-                    Icon::new(IconName::Warning)
-                        .size(IconSize::XSmall)
-                        .color(Color::Warning),
-                ),
-                Some("Thread is Waiting for Confirmation"),
+            Some(
+                Icon::new(IconName::Warning)
+                    .size(IconSize::XSmall)
+                    .color(Color::Warning),
             )
         } else if self.notified {
-            (
-                Some(
-                    Icon::new(IconName::Circle)
-                        .size(IconSize::Small)
-                        .color(Color::Accent),
-                ),
-                Some("Thread's Generation is Complete"),
+            Some(
+                Icon::new(IconName::Circle)
+                    .size(IconSize::Small)
+                    .color(Color::Accent),
             )
         } else {
-            (None, None)
+            None
         };
 
         let icon = if self.status == AgentThreadStatus::Running {
@@ -319,15 +302,16 @@ impl RenderOnce for ThreadItem {
                 )
                 .into_any_element()
         } else if let Some(status_icon) = status_icon {
-            icon_container()
-                .child(status_icon)
-                .when_some(icon_tooltip, |icon, tooltip| {
-                    icon.tooltip(Tooltip::text(tooltip))
-                })
-                .into_any_element()
+            icon_container().child(status_icon).into_any_element()
         } else {
             icon_container().child(agent_icon).into_any_element()
         };
+
+        let tooltip_title = self.title.clone();
+        let tooltip_status = self.status;
+        let tooltip_worktrees = self.worktrees.clone();
+        let tooltip_added = self.added;
+        let tooltip_removed = self.removed;
 
         let title = self.title;
         let highlight_positions = self.highlight_positions;
@@ -374,12 +358,224 @@ impl RenderOnce for ThreadItem {
 
         let has_project_name = self.project_name.is_some();
         let has_project_paths = project_paths.is_some();
-        let has_worktree = self
-            .worktrees
-            .iter()
-            .any(|wt| wt.kind == WorktreeKind::Linked);
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
+
+        let visible_worktree_count = self
+            .worktrees
+            .iter()
+            .filter(|wt| !(wt.kind == WorktreeKind::Main && wt.branch_name.is_none()))
+            .count();
+
+        let mut worktree_labels: Vec<AnyElement> = Vec::new();
+
+        let slash_color = Color::Custom(cx.theme().colors().text_muted.opacity(0.4));
+
+        for wt in self.worktrees {
+            match (wt.kind, wt.branch_name) {
+                (WorktreeKind::Main, None) => continue,
+                (WorktreeKind::Main, Some(branch)) => {
+                    let chip_index = worktree_labels.len();
+
+                    worktree_labels.push(
+                        h_flex()
+                            .id(format!("{}-worktree-{chip_index}", self.id.clone()))
+                            .min_w_0()
+                            .when(visible_worktree_count > 1, |this| {
+                                this.child(
+                                    Label::new(wt.name)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .truncate(),
+                                )
+                                .child(
+                                    Label::new("/")
+                                        .size(LabelSize::Small)
+                                        .color(slash_color)
+                                        .flex_shrink_0(),
+                                )
+                            })
+                            .child(
+                                Label::new(branch)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .truncate(),
+                            )
+                            .into_any_element(),
+                    );
+                }
+                (WorktreeKind::Linked, branch) => {
+                    let chip_index = worktree_labels.len();
+
+                    let label = if wt.highlight_positions.is_empty() {
+                        Label::new(wt.name)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .truncate()
+                            .into_any_element()
+                    } else {
+                        HighlightedLabel::new(wt.name, wt.highlight_positions)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .truncate()
+                            .into_any_element()
+                    };
+
+                    worktree_labels.push(
+                        h_flex()
+                            .id(format!("{}-worktree-{chip_index}", self.id.clone()))
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(
+                                Icon::new(IconName::GitWorktree)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(label)
+                            .when_some(branch, |this, branch| {
+                                this.child(
+                                    Label::new("/")
+                                        .size(LabelSize::Small)
+                                        .color(slash_color)
+                                        .flex_shrink_0(),
+                                )
+                                .child(
+                                    Label::new(branch)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .truncate(),
+                                )
+                            })
+                            .into_any_element(),
+                    );
+                }
+            }
+        }
+
+        let has_worktree = !worktree_labels.is_empty();
+
+        let unified_tooltip = {
+            let title = tooltip_title;
+            let status = tooltip_status;
+            let worktrees = tooltip_worktrees;
+            let added = tooltip_added;
+            let removed = tooltip_removed;
+
+            Tooltip::element(move |_window, cx| {
+                v_flex()
+                    .min_w_0()
+                    .gap_1()
+                    .child(Label::new(title.clone()))
+                    .children(worktrees.iter().map(|wt| {
+                        let is_linked = wt.kind == WorktreeKind::Linked;
+
+                        v_flex()
+                            .gap_1()
+                            .when(is_linked, |this| {
+                                this.child(
+                                    v_flex()
+                                        .child(
+                                            h_flex()
+                                                .gap_1()
+                                                .child(
+                                                    Icon::new(IconName::GitWorktree)
+                                                        .size(IconSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                                .child(
+                                                    Label::new(wt.name.clone())
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .pl(IconSize::Small.rems() + rems(0.25))
+                                                .w(px(280.))
+                                                .whitespace_normal()
+                                                .text_ui_sm(cx)
+                                                .text_color(
+                                                    cx.theme().colors().text_muted.opacity(0.8),
+                                                )
+                                                .child(wt.full_path.clone()),
+                                        ),
+                                )
+                            })
+                            .when_some(wt.branch_name.clone(), |this, branch| {
+                                this.child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Icon::new(IconName::GitBranch)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new(branch)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                )
+                            })
+                    }))
+                    .when(status == AgentThreadStatus::Error, |this| {
+                        this.child(
+                            h_flex()
+                                .gap_1()
+                                .pt_1()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(
+                                    Icon::new(IconName::Close)
+                                        .size(IconSize::Small)
+                                        .color(Color::Error),
+                                )
+                                .child(Label::new("Error").size(LabelSize::Small)),
+                        )
+                    })
+                    .when(
+                        status == AgentThreadStatus::WaitingForConfirmation,
+                        |this| {
+                            this.child(
+                                h_flex()
+                                    .pt_1()
+                                    .border_t_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .gap_1()
+                                    .child(
+                                        Icon::new(IconName::Warning)
+                                            .size(IconSize::Small)
+                                            .color(Color::Warning),
+                                    )
+                                    .child(
+                                        Label::new("Waiting for Confirmation")
+                                            .size(LabelSize::Small),
+                                    ),
+                            )
+                        },
+                    )
+                    .when(added.is_some() || removed.is_some(), |this| {
+                        this.child(
+                            h_flex()
+                                .pt_1()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .gap_1()
+                                .child(DiffStat::new(
+                                    "diff",
+                                    added.unwrap_or(0),
+                                    removed.unwrap_or(0),
+                                ))
+                                .child(
+                                    Label::new("Unreviewed Changes")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                    })
+                    .into_any_element()
+            })
+        };
 
         v_flex()
             .id(self.id.clone())
@@ -397,6 +593,7 @@ impl RenderOnce for ThreadItem {
             .when(self.rounded, |s| s.rounded_sm())
             .hover(|s| s.bg(hover_color))
             .on_hover(self.on_hover)
+            .tooltip(unified_tooltip)
             .child(
                 h_flex()
                     .min_w_0()
@@ -410,8 +607,7 @@ impl RenderOnce for ThreadItem {
                             .flex_1()
                             .gap_1p5()
                             .child(icon)
-                            .child(title_label)
-                            .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip)),
+                            .child(title_label),
                     )
                     .child(gradient_overlay)
                     .when(self.hovered, |this| {
@@ -441,112 +637,54 @@ impl RenderOnce for ThreadItem {
                     || has_diff_stats
                     || has_timestamp,
                 |this| {
-                    // Collect all full paths for the shared tooltip.
-                    let worktree_tooltip: SharedString = self
-                        .worktrees
-                        .iter()
-                        .map(|wt| wt.full_path.as_ref())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                        .into();
-
-                    let worktree_tooltip_title = match (self.is_remote, self.worktrees.len() > 1) {
-                        (true, true) => "Thread Running in Remote Git Worktrees",
-                        (true, false) => "Thread Running in a Remote Git Worktree",
-                        (false, true) => "Thread Running in Local Git Worktrees",
-                        (false, false) => "Thread Running in a Local Git Worktree",
-                    };
-
-                    // Deduplicate chips by name — e.g. two paths both named
-                    // "olivetti" produce a single chip. Highlight positions
-                    // come from the first occurrence.
-                    let mut seen_names: Vec<SharedString> = Vec::new();
-                    let mut worktree_labels: Vec<AnyElement> = Vec::new();
-
-                    for wt in self.worktrees {
-                        if seen_names.contains(&wt.name) {
-                            continue;
-                        }
-
-                        if wt.kind == WorktreeKind::Main {
-                            continue;
-                        }
-
-                        let chip_index = seen_names.len();
-                        seen_names.push(wt.name.clone());
-
-                        let label = if wt.highlight_positions.is_empty() {
-                            Label::new(wt.name)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .into_any_element()
-                        } else {
-                            HighlightedLabel::new(wt.name, wt.highlight_positions)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .into_any_element()
-                        };
-                        let tooltip_title = worktree_tooltip_title;
-                        let tooltip_meta = worktree_tooltip.clone();
-
-                        worktree_labels.push(
-                            h_flex()
-                                .id(format!("{}-worktree-{chip_index}", self.id.clone()))
-                                .gap_0p5()
-                                .child(
-                                    Icon::new(IconName::GitWorktree)
-                                        .size(IconSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                                .child(label)
-                                .tooltip(move |_, cx| {
-                                    Tooltip::with_meta(
-                                        tooltip_title,
-                                        None,
-                                        tooltip_meta.clone(),
-                                        cx,
-                                    )
-                                })
-                                .into_any_element(),
-                        );
-                    }
-
                     this.child(
                         h_flex()
                             .min_w_0()
                             .gap_1p5()
                             .child(icon_container()) // Icon Spacing
-                            .when_some(self.project_name, |this, name| {
-                                this.child(
-                                    Label::new(name).size(LabelSize::Small).color(Color::Muted),
-                                )
-                            })
                             .when(
-                                has_project_name && (has_project_paths || has_worktree),
-                                |this| this.child(dot_separator()),
+                                has_project_name || has_project_paths || has_worktree,
+                                |this| {
+                                    this.child(
+                                        h_flex()
+                                            .min_w_0()
+                                            .flex_shrink()
+                                            .overflow_hidden()
+                                            .gap_1p5()
+                                            .when_some(self.project_name, |this, name| {
+                                                this.child(
+                                                    Label::new(name)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                            })
+                                            .when(
+                                                has_project_name
+                                                    && (has_project_paths || has_worktree),
+                                                |this| this.child(dot_separator()),
+                                            )
+                                            .when_some(project_paths, |this, paths| {
+                                                this.child(
+                                                    Label::new(paths)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted)
+                                                        .into_any_element(),
+                                                )
+                                            })
+                                            .when(has_project_paths && has_worktree, |this| {
+                                                this.child(dot_separator())
+                                            })
+                                            .children(worktree_labels),
+                                    )
+                                },
                             )
-                            .when_some(project_paths, |this, paths| {
-                                this.child(
-                                    Label::new(paths)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .into_any_element(),
-                                )
-                            })
-                            .when(has_project_paths && has_worktree, |this| {
-                                this.child(dot_separator())
-                            })
-                            .children(worktree_labels)
                             .when(
                                 (has_project_name || has_project_paths || has_worktree)
                                     && (has_diff_stats || has_timestamp),
                                 |this| this.child(dot_separator()),
                             )
                             .when(has_diff_stats, |this| {
-                                this.child(
-                                    DiffStat::new(diff_stat_id, added_count, removed_count)
-                                        .tooltip("Unreviewed Changes"),
-                                )
+                                this.child(DiffStat::new(diff_stat_id, added_count, removed_count))
                             })
                             .when(has_diff_stats && has_timestamp, |this| {
                                 this.child(dot_separator())
@@ -648,6 +786,7 @@ impl Component for ThreadItem {
                                 full_path: "link-agent-panel".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
+                                branch_name: None,
                             }]),
                     )
                     .into_any_element(),
@@ -675,10 +814,68 @@ impl Component for ThreadItem {
                                 full_path: "my-project".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
+                                branch_name: None,
                             }])
                             .added(42)
                             .removed(17)
                             .timestamp("3w"),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Worktree + Branch + Changes + Timestamp",
+                container()
+                    .child(
+                        ThreadItem::new("ti-5c", "Full metadata with branch")
+                            .icon(IconName::AiClaude)
+                            .worktrees(vec![ThreadItemWorktreeInfo {
+                                name: "my-project".into(),
+                                full_path: "/worktrees/my-project/zed".into(),
+                                highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Linked,
+                                branch_name: Some("feature-branch".into()),
+                            }])
+                            .added(42)
+                            .removed(17)
+                            .timestamp("3w"),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Long Branch + Changes (truncation)",
+                container()
+                    .child(
+                        ThreadItem::new("ti-5d", "Metadata overflow with long branch name")
+                            .icon(IconName::AiClaude)
+                            .worktrees(vec![ThreadItemWorktreeInfo {
+                                name: "my-project".into(),
+                                full_path: "/worktrees/my-project/zed".into(),
+                                highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Linked,
+                                branch_name: Some("fix-very-long-branch-name-here".into()),
+                            }])
+                            .added(108)
+                            .removed(53)
+                            .timestamp("2d"),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Main Branch + Changes + Timestamp",
+                container()
+                    .child(
+                        ThreadItem::new("ti-5e", "Main worktree branch with diff stats")
+                            .icon(IconName::ZedAgent)
+                            .worktrees(vec![ThreadItemWorktreeInfo {
+                                name: "zed".into(),
+                                full_path: "/projects/zed".into(),
+                                highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Main,
+                                branch_name: Some("sidebar-show-branch-name".into()),
+                            }])
+                            .added(23)
+                            .removed(8)
+                            .timestamp("5m"),
                     )
                     .into_any_element(),
             ),
@@ -755,6 +952,7 @@ impl Component for ThreadItem {
                                 full_path: "my-project-name".into(),
                                 highlight_positions: vec![3, 4, 5, 6, 7, 8, 9, 10, 11],
                                 kind: WorktreeKind::Linked,
+                                branch_name: None,
                             }]),
                     )
                     .into_any_element(),

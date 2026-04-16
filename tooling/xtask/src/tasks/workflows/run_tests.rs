@@ -1,5 +1,5 @@
 use gh_workflow::{
-    Concurrency, Container, Event, Expression, Input, Job, Level, Permissions, Port, PullRequest,
+    Container, Event, Expression, Input, Job, Level, MergeGroup, Permissions, Port, PullRequest,
     Push, Run, Step, Strategy, Use, UsesJob, Workflow,
 };
 use indexmap::IndexMap;
@@ -48,26 +48,55 @@ pub(crate) fn run_tests() -> Workflow {
     let mut jobs = vec![
         orchestrate,
         check_style(),
-        should_run_tests.guard(clippy(Platform::Windows, None)),
-        should_run_tests.guard(clippy(Platform::Linux, None)),
-        should_run_tests.guard(clippy(Platform::Mac, None)),
-        should_run_tests.guard(clippy(Platform::Mac, Some(Arch::X86_64))),
-        should_run_tests.guard(run_platform_tests(Platform::Windows)),
-        should_run_tests.guard(run_platform_tests(Platform::Linux)),
-        should_run_tests.guard(run_platform_tests(Platform::Mac)),
-        should_run_tests.guard(doctests()),
-        should_run_tests.guard(check_workspace_binaries()),
-        should_run_tests.guard(build_visual_tests_binary()),
-        should_run_tests.guard(check_wasm()),
-        should_run_tests.guard(check_dependencies()), // could be more specific here?
-        should_check_docs.guard(check_docs()),
-        should_check_licences.guard(check_licenses()),
-        should_check_scripts.guard(check_scripts()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Windows, None)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Linux, None)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Mac, None)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Mac, Some(Arch::X86_64))),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(run_platform_tests(Platform::Windows)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(run_platform_tests(Platform::Linux)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(run_platform_tests(Platform::Mac)),
+        should_run_tests.and_not_in_merge_queue().then(doctests()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(check_workspace_binaries()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(build_visual_tests_binary()),
+        should_run_tests.and_not_in_merge_queue().then(check_wasm()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(check_dependencies()), // could be more specific here?
+        should_check_docs
+            .and_not_in_merge_queue()
+            .then(check_docs()),
+        should_check_licences
+            .and_not_in_merge_queue()
+            .then(check_licenses()),
+        should_check_scripts.and_always().then(check_scripts()),
     ];
     let ext_tests = extension_tests();
     let tests_pass = tests_pass(&jobs, &[&ext_tests.name]);
 
-    jobs.push(should_run_tests.guard(check_postgres_and_protobuf_migrations())); // could be more specific here?
+    // TODO: For merge queues, this should fail in the merge queue context
+    jobs.push(
+        should_run_tests
+            .and_always()
+            .then(check_postgres_and_protobuf_migrations()),
+    ); // could be more specific here?
 
     named::workflow()
         .add_event(
@@ -77,16 +106,10 @@ pub(crate) fn run_tests() -> Workflow {
                         .add_branch("main")
                         .add_branch("v[0-9]+.[0-9]+.x"),
                 )
-                .pull_request(PullRequest::default().add_branch("**")),
+                .pull_request(PullRequest::default().add_branch("**"))
+                .merge_group(MergeGroup::default()),
         )
-        .concurrency(
-            Concurrency::default()
-                .group(concat!(
-                    "${{ github.workflow }}-${{ github.ref_name }}-",
-                    "${{ github.ref_name == 'main' && github.sha || 'anysha' }}"
-                ))
-                .cancel_in_progress(true),
-        )
+        .concurrency(vars::one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))

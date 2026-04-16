@@ -306,7 +306,7 @@ mod tests {
     use crate::{
         checks::{ReviewFailure, ReviewSuccess},
         git::{CommitDetails, CommitList},
-        github::{GitHubUser, PullRequestReview, ReviewState},
+        github::{GithubUser, PullRequestReview, ReviewState},
     };
 
     use super::{Report, ReportReviewSummary};
@@ -330,7 +330,7 @@ mod tests {
 
     fn reviewed() -> ReviewSuccess {
         ReviewSuccess::PullRequestReviewed(vec![PullRequestReview {
-            user: Some(GitHubUser {
+            user: Some(GithubUser {
                 login: "reviewer".to_owned(),
             }),
             state: Some(ReviewState::Approved),

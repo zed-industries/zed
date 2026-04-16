@@ -3,17 +3,18 @@ use std::{
     sync::Arc,
 };
 
-use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, AsyncApp, Entity, Task};
 use project::{
     LocalProjectFlags, Project, WorktreeId,
-    git_store::{Repository, resolve_git_worktree_to_main_repo},
+    git_store::{Repository, resolve_git_worktree_to_main_repo, worktrees_directory_for_repo},
+    project_settings::ProjectSettings,
 };
+use settings::Settings;
 use util::ResultExt;
 use workspace::{AppState, MultiWorkspace, Workspace};
 
-use crate::thread_metadata_store::{ArchivedGitWorktree, ThreadMetadataStore};
+use crate::thread_metadata_store::{ArchivedGitWorktree, ThreadId, ThreadMetadataStore};
 
 /// The plan for archiving a single git worktree root.
 ///
@@ -39,17 +40,12 @@ pub struct RootPlan {
     /// Multiple projects can reference the same path when the user has the
     /// worktree open in more than one workspace.
     pub affected_projects: Vec<AffectedProject>,
-    /// The `Repository` entity for this worktree, used to run git commands
-    /// (create WIP commits, stage files, reset) during
-    /// [`persist_worktree_state`]. `None` when the `GitStore` hasn't created
-    /// a `Repository` for this worktree yet — in that case,
-    /// `persist_worktree_state` falls back to creating a temporary headless
-    /// project to obtain one.
-    pub worktree_repo: Option<Entity<Repository>>,
+    /// The `Repository` entity for this linked worktree, used to run git
+    /// commands (create WIP commits, stage files, reset) during
+    /// [`persist_worktree_state`].
+    pub worktree_repo: Entity<Repository>,
     /// The branch the worktree was on, so it can be restored later.
-    /// `None` if the worktree was in detached HEAD state or if no
-    /// `Repository` entity was available at planning time (in which case
-    /// `persist_worktree_state` reads it from the repo snapshot instead).
+    /// `None` if the worktree was in detached HEAD state.
     pub branch_name: Option<String>,
 }
 
@@ -71,6 +67,16 @@ fn archived_worktree_ref_name(id: i64) -> String {
     format!("refs/archived-worktrees/{}", id)
 }
 
+/// Resolves the Zed-managed worktrees base directory for a given repo.
+///
+/// This intentionally reads the *global* `git.worktree_directory` setting
+/// rather than any project-local override, because Zed always uses the
+/// global value when creating worktrees and the archive check must match.
+fn worktrees_base_for_repo(main_repo_path: &Path, cx: &App) -> Option<PathBuf> {
+    let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
+    worktrees_directory_for_repo(main_repo_path, setting).log_err()
+}
+
 /// Builds a [`RootPlan`] for archiving the git worktree at `path`.
 ///
 /// This is a synchronous planning step that must run *before* any workspace
@@ -86,13 +92,8 @@ fn archived_worktree_ref_name(id: i64) -> String {
 ///    linked worktree — needed for both git ref creation and
 ///    `git worktree remove`.
 ///
-/// When no `Repository` entity is available (e.g. the `GitStore` hasn't
-/// finished scanning), the function falls back to deriving `main_repo_path`
-/// from the worktree snapshot's `root_repo_common_dir`. In that case
-/// `worktree_repo` is `None` and [`persist_worktree_state`] will create a
-/// temporary headless project to obtain one.
-///
-/// Returns `None` if no open project has this path as a visible worktree.
+/// Returns `None` if the path is not a linked worktree (main worktrees
+/// cannot be archived to disk) or if no open project has it loaded.
 pub fn build_root_plan(
     path: &Path,
     workspaces: &[Entity<Workspace>],
@@ -139,53 +140,30 @@ pub fn build_root_plan(
             .then_some((snapshot, repo))
         });
 
-    let (main_repo_path, worktree_repo, branch_name) =
-        if let Some((linked_snapshot, repo)) = linked_repo {
-            (
-                linked_snapshot.original_repo_abs_path.to_path_buf(),
-                Some(repo),
-                linked_snapshot
-                    .branch
-                    .as_ref()
-                    .map(|branch| branch.name().to_string()),
-            )
-        } else {
-            // Not a linked worktree — nothing to archive from disk.
-            // `remove_root` would try to remove the main worktree from
-            // the project and then run `git worktree remove`, both of
-            // which fail for main working trees.
-            return None;
-        };
+    // Only linked worktrees can be archived to disk via `git worktree remove`.
+    // Main worktrees must be left alone — git refuses to remove them.
+    let (linked_snapshot, repo) = linked_repo?;
+    let main_repo_path = linked_snapshot.original_repo_abs_path.to_path_buf();
 
+    // Only archive worktrees that live inside the Zed-managed worktrees
+    // directory (configured via `git.worktree_directory`). Worktrees the
+    // user created outside that directory should be left untouched.
+    let worktrees_base = worktrees_base_for_repo(&main_repo_path, cx)?;
+    if !path.starts_with(&worktrees_base) {
+        return None;
+    }
+
+    let branch_name = linked_snapshot
+        .branch
+        .as_ref()
+        .map(|branch| branch.name().to_string());
     Some(RootPlan {
         root_path: path,
         main_repo_path,
         affected_projects,
-        worktree_repo,
+        worktree_repo: repo,
         branch_name,
     })
-}
-
-/// Returns `true` if any unarchived thread other than `current_session_id`
-/// references `path` in its folder paths. Used to determine whether a
-/// worktree can safely be removed from disk.
-pub fn path_is_referenced_by_other_unarchived_threads(
-    current_session_id: &acp::SessionId,
-    path: &Path,
-    cx: &App,
-) -> bool {
-    ThreadMetadataStore::global(cx)
-        .read(cx)
-        .entries()
-        .filter(|thread| thread.session_id != *current_session_id)
-        .filter(|thread| !thread.archived)
-        .any(|thread| {
-            thread
-                .folder_paths()
-                .paths()
-                .iter()
-                .any(|other_path| other_path.as_path() == path)
-        })
 }
 
 /// Removes a worktree from all affected projects and deletes it from disk
@@ -230,20 +208,107 @@ async fn remove_root_after_worktree_removal(
         }
     }
 
+    // Delete the directory ourselves first, then tell git to clean up the
+    // metadata. This avoids a problem where `git worktree remove` can
+    // remove the metadata in `.git/worktrees/<name>` but fail to delete
+    // the directory (git continues past directory-removal errors), leaving
+    // an orphaned folder on disk. By deleting the directory first, we
+    // guarantee it's gone, and `git worktree remove --force` with a
+    // missing working tree just cleans up the admin entry.
+    let root_path = root.root_path.clone();
+    cx.background_executor()
+        .spawn(async move {
+            match std::fs::remove_dir_all(&root_path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            }
+        })
+        .await
+        .with_context(|| {
+            format!(
+                "failed to delete worktree directory '{}'",
+                root.root_path.display()
+            )
+        })?;
+
     let (repo, _temp_project) = find_or_create_repository(&root.main_repo_path, cx).await?;
-    // force=true is required because the working directory is still dirty
-    // — persist_worktree_state captures state into detached commits without
-    // modifying the real index or working tree, so git refuses to delete
-    // the worktree without --force.
     let receiver = repo.update(cx, |repo: &mut Repository, _cx| {
         repo.remove_worktree(root.root_path.clone(), true)
     });
     let result = receiver
         .await
-        .map_err(|_| anyhow!("git worktree removal was canceled"))?;
+        .map_err(|_| anyhow!("git worktree metadata cleanup was canceled"))?;
     // Keep _temp_project alive until after the await so the headless project isn't dropped mid-operation
     drop(_temp_project);
-    result
+    result.context("git worktree metadata cleanup failed")?;
+
+    remove_empty_parent_dirs_up_to_worktrees_base(
+        root.root_path.clone(),
+        root.main_repo_path.clone(),
+        cx,
+    )
+    .await;
+
+    Ok(())
+}
+
+/// After `git worktree remove` deletes the worktree directory, clean up any
+/// empty parent directories between it and the Zed-managed worktrees base
+/// directory (configured via `git.worktree_directory`). The base directory
+/// itself is never removed.
+///
+/// If the base directory is not an ancestor of `root_path`, no parent
+/// directories are removed.
+async fn remove_empty_parent_dirs_up_to_worktrees_base(
+    root_path: PathBuf,
+    main_repo_path: PathBuf,
+    cx: &mut AsyncApp,
+) {
+    let worktrees_base = cx.update(|cx| worktrees_base_for_repo(&main_repo_path, cx));
+
+    if let Some(worktrees_base) = worktrees_base {
+        cx.background_executor()
+            .spawn(async move {
+                remove_empty_ancestors(&root_path, &worktrees_base);
+            })
+            .await;
+    }
+}
+
+/// Removes empty directories between `child_path` and `base_path`.
+///
+/// Walks upward from `child_path`, removing each empty parent directory,
+/// stopping before `base_path` itself is removed. If `base_path` is not
+/// an ancestor of `child_path`, nothing is removed. If any directory is
+/// non-empty (i.e. `std::fs::remove_dir` fails), the walk stops.
+fn remove_empty_ancestors(child_path: &Path, base_path: &Path) {
+    let mut current = child_path;
+    while let Some(parent) = current.parent() {
+        if parent == base_path {
+            break;
+        }
+        if !parent.starts_with(base_path) {
+            break;
+        }
+        match std::fs::remove_dir(parent) {
+            Ok(()) => {
+                log::info!("Removed empty parent directory: {}", parent.display());
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::DirectoryNotEmpty => break,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                // Already removed by a concurrent process; keep walking upward.
+            }
+            Err(err) => {
+                log::error!(
+                    "Failed to remove parent directory {}: {err}",
+                    parent.display()
+                );
+                break;
+            }
+        }
+        current = parent;
+    }
 }
 
 /// Finds a live `Repository` entity for the given path, or creates a temporary
@@ -358,10 +423,7 @@ async fn rollback_root(root: &RootPlan, cx: &mut AsyncApp) {
 ///
 /// On success, returns the archived worktree DB row ID for rollback.
 pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Result<i64> {
-    let (worktree_repo, _temp_worktree_project) = match &root.worktree_repo {
-        Some(worktree_repo) => (worktree_repo.clone(), None),
-        None => find_or_create_repository(&root.root_path, cx).await?,
-    };
+    let worktree_repo = root.worktree_repo.clone();
 
     let original_commit_hash = worktree_repo
         .update(cx, |repo, _cx| repo.head_sha())
@@ -412,7 +474,7 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
     };
 
     // Link all threads on this worktree to the archived record
-    let session_ids: Vec<acp::SessionId> = store.read_with(cx, |store, _cx| {
+    let thread_ids: Vec<ThreadId> = store.read_with(cx, |store, _cx| {
         store
             .entries()
             .filter(|thread| {
@@ -422,18 +484,14 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
                     .iter()
                     .any(|p| p.as_path() == root.root_path)
             })
-            .map(|thread| thread.session_id.clone())
+            .map(|thread| thread.thread_id)
             .collect()
     });
 
-    for session_id in &session_ids {
+    for thread_id in &thread_ids {
         let link_result = store
             .read_with(cx, |store, cx| {
-                store.link_thread_to_archived_worktree(
-                    session_id.0.to_string(),
-                    archived_worktree_id,
-                    cx,
-                )
+                store.link_thread_to_archived_worktree(*thread_id, archived_worktree_id, cx)
             })
             .await;
         if let Err(error) = link_result {
@@ -547,25 +605,83 @@ pub async fn restore_worktree_via_git(
         }
     };
 
-    // Switch to the branch. Since the branch was never moved during
-    // archival (WIP commits are detached), it still points at
-    // original_commit_hash, so this is essentially a no-op for HEAD.
     if let Some(branch_name) = &row.branch_name {
-        let rx = wt_repo.update(cx, |repo, _cx| repo.change_branch(branch_name.clone()));
-        if let Err(checkout_error) = rx.await.map_err(|e| anyhow!("{e}")).and_then(|r| r) {
-            log::debug!(
-                "change_branch('{}') failed: {checkout_error:#}, trying create_branch",
-                branch_name
-            );
-            let rx = wt_repo.update(cx, |repo, _cx| {
-                repo.create_branch(branch_name.clone(), None)
-            });
-            if let Ok(Err(error)) | Err(error) = rx.await.map_err(|e| anyhow!("{e}")) {
-                log::warn!(
-                    "Could not create branch '{}': {error} — \
-                     restored worktree will be in detached HEAD state.",
-                    branch_name
+        // Attempt to check out the branch the worktree was previously on.
+        let checkout_result = wt_repo
+            .update(cx, |repo, _cx| repo.change_branch(branch_name.clone()))
+            .await;
+
+        match checkout_result.map_err(|e| anyhow!("{e}")).flatten() {
+            Ok(()) => {
+                // Branch checkout succeeded. Check whether the branch has moved since
+                // we archived the worktree, by comparing HEAD to the expected SHA.
+                let head_sha = wt_repo
+                    .update(cx, |repo, _cx| repo.head_sha())
+                    .await
+                    .map_err(|e| anyhow!("{e}"))
+                    .and_then(|r| r);
+
+                match head_sha {
+                    Ok(Some(sha)) if sha == row.original_commit_hash => {
+                        // Branch still points at the original commit; we're all done!
+                    }
+                    Ok(Some(sha)) => {
+                        // The branch has moved. We don't want to restore the worktree to
+                        // a different filesystem state, so checkout the original commit
+                        // in detached HEAD state.
+                        log::info!(
+                            "Branch '{branch_name}' has moved since archival (now at {sha}); \
+                             restoring worktree in detached HEAD at {}",
+                            row.original_commit_hash
+                        );
+                        let detach_result = main_repo
+                            .update(cx, |repo, _cx| {
+                                repo.checkout_branch_in_worktree(
+                                    row.original_commit_hash.clone(),
+                                    row.worktree_path.clone(),
+                                    false,
+                                )
+                            })
+                            .await;
+
+                        if let Err(error) = detach_result.map_err(|e| anyhow!("{e}")).flatten() {
+                            log::warn!(
+                                "Failed to detach HEAD at {}: {error:#}",
+                                row.original_commit_hash
+                            );
+                        }
+                    }
+                    Ok(None) => {
+                        log::warn!(
+                            "head_sha unexpectedly returned None after checking out \"{branch_name}\"; \
+                             proceeding in current HEAD state."
+                        );
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "Failed to read HEAD after checking out \"{branch_name}\": {error:#}"
+                        );
+                    }
+                }
+            }
+            Err(checkout_error) => {
+                // We weren't able to check out the branch, most likely because it was deleted.
+                // This is fine; users will often delete old branches! We'll try to recreate it.
+                log::debug!(
+                    "change_branch('{branch_name}') failed: {checkout_error:#}, trying create_branch"
                 );
+                let create_result = wt_repo
+                    .update(cx, |repo, _cx| {
+                        repo.create_branch(branch_name.clone(), None)
+                    })
+                    .await;
+
+                if let Err(error) = create_result.map_err(|e| anyhow!("{e}")).flatten() {
+                    log::warn!(
+                        "Failed to create branch '{branch_name}': {error:#}; \
+                         restored worktree will be in detached HEAD state."
+                    );
+                }
             }
         }
     }
@@ -636,21 +752,18 @@ pub async fn cleanup_archived_worktree_record(row: &ArchivedGitWorktree, cx: &mu
 /// This unlinks the thread from all its archived worktrees and, for any
 /// archived worktree that is no longer referenced by any other thread,
 /// deletes the git ref and DB records.
-pub async fn cleanup_thread_archived_worktrees(session_id: &acp::SessionId, cx: &mut AsyncApp) {
+pub async fn cleanup_thread_archived_worktrees(thread_id: ThreadId, cx: &mut AsyncApp) {
     let store = cx.update(|cx| ThreadMetadataStore::global(cx));
 
     let archived_worktrees = store
         .read_with(cx, |store, cx| {
-            store.get_archived_worktrees_for_thread(session_id.0.to_string(), cx)
+            store.get_archived_worktrees_for_thread(thread_id, cx)
         })
         .await;
     let archived_worktrees = match archived_worktrees {
         Ok(rows) => rows,
         Err(error) => {
-            log::error!(
-                "Failed to fetch archived worktrees for thread {}: {error:#}",
-                session_id.0
-            );
+            log::error!("Failed to fetch archived worktrees for thread {thread_id:?}: {error:#}");
             return;
         }
     };
@@ -661,14 +774,11 @@ pub async fn cleanup_thread_archived_worktrees(session_id: &acp::SessionId, cx: 
 
     if let Err(error) = store
         .read_with(cx, |store, cx| {
-            store.unlink_thread_from_all_archived_worktrees(session_id.0.to_string(), cx)
+            store.unlink_thread_from_all_archived_worktrees(thread_id, cx)
         })
         .await
     {
-        log::error!(
-            "Failed to unlink thread {} from archived worktrees: {error:#}",
-            session_id.0
-        );
+        log::error!("Failed to unlink thread {thread_id:?} from archived worktrees: {error:#}");
         return;
     }
 
@@ -714,4 +824,626 @@ fn current_app_state(cx: &mut AsyncApp) -> Option<Arc<AppState>> {
             .next()
             .map(|workspace| workspace.read(cx).app_state().clone())
     })
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::{FakeFs, Fs as _};
+    use git::repository::Worktree as GitWorktree;
+    use gpui::{BorrowAppContext, TestAppContext};
+    use project::Project;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use tempfile::TempDir;
+    use workspace::MultiWorkspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+    }
+
+    #[test]
+    fn test_remove_empty_ancestors_single_empty_parent() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("worktrees");
+        let branch_dir = base.join("my-branch");
+        let child = branch_dir.join("zed");
+
+        std::fs::create_dir_all(&child).unwrap();
+        // Simulate git worktree remove having deleted the child.
+        std::fs::remove_dir(&child).unwrap();
+
+        assert!(branch_dir.exists());
+        remove_empty_ancestors(&child, &base);
+        assert!(!branch_dir.exists(), "empty parent should be removed");
+        assert!(base.exists(), "base directory should be preserved");
+    }
+
+    #[test]
+    fn test_remove_empty_ancestors_nested_empty_parents() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("worktrees");
+        // Branch name with slash creates nested dirs: fix/thing/zed
+        let child = base.join("fix").join("thing").join("zed");
+
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::remove_dir(&child).unwrap();
+
+        assert!(base.join("fix").join("thing").exists());
+        remove_empty_ancestors(&child, &base);
+        assert!(!base.join("fix").join("thing").exists());
+        assert!(
+            !base.join("fix").exists(),
+            "all empty ancestors should be removed"
+        );
+        assert!(base.exists(), "base directory should be preserved");
+    }
+
+    #[test]
+    fn test_remove_empty_ancestors_stops_at_non_empty_parent() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("worktrees");
+        let branch_dir = base.join("my-branch");
+        let child = branch_dir.join("zed");
+        let sibling = branch_dir.join("other-file.txt");
+
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::write(&sibling, "content").unwrap();
+        std::fs::remove_dir(&child).unwrap();
+
+        remove_empty_ancestors(&child, &base);
+        assert!(branch_dir.exists(), "non-empty parent should be preserved");
+        assert!(sibling.exists());
+    }
+
+    #[test]
+    fn test_remove_empty_ancestors_not_an_ancestor() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("worktrees");
+        let unrelated = tmp.path().join("other-place").join("branch").join("zed");
+
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&unrelated).unwrap();
+        std::fs::remove_dir(&unrelated).unwrap();
+
+        let parent = unrelated.parent().unwrap();
+        assert!(parent.exists());
+        remove_empty_ancestors(&unrelated, &base);
+        assert!(parent.exists(), "should not remove dirs outside base");
+    }
+
+    #[test]
+    fn test_remove_empty_ancestors_child_is_direct_child_of_base() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("worktrees");
+        let child = base.join("zed");
+
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::remove_dir(&child).unwrap();
+
+        remove_empty_ancestors(&child, &base);
+        assert!(base.exists(), "base directory should be preserved");
+    }
+
+    #[test]
+    fn test_remove_empty_ancestors_partially_non_empty_chain() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("worktrees");
+        // Structure: base/a/b/c/zed where a/ has another child besides b/
+        let child = base.join("a").join("b").join("c").join("zed");
+        let other_in_a = base.join("a").join("other-branch");
+
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::create_dir_all(&other_in_a).unwrap();
+        std::fs::remove_dir(&child).unwrap();
+
+        remove_empty_ancestors(&child, &base);
+        assert!(
+            !base.join("a").join("b").join("c").exists(),
+            "c/ should be removed (empty)"
+        );
+        assert!(
+            !base.join("a").join("b").exists(),
+            "b/ should be removed (empty)"
+        );
+        assert!(
+            base.join("a").exists(),
+            "a/ should be preserved (has other-branch sibling)"
+        );
+        assert!(other_in_a.exists());
+    }
+
+    #[gpui::test]
+    async fn test_build_root_plan_returns_none_for_main_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // The main worktree should NOT produce a root plan.
+        workspace.read_with(cx, |_workspace, cx| {
+            let plan = build_root_plan(Path::new("/project"), std::slice::from_ref(&workspace), cx);
+            assert!(
+                plan.is_none(),
+                "build_root_plan should return None for a main worktree",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_build_root_plan_returns_some_for_linked_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature"]);
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/worktrees/project/feature/project"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new("/project"),
+                Path::new("/worktrees/project/feature/project"),
+            ],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |_workspace, cx| {
+            // The linked worktree SHOULD produce a root plan.
+            let plan = build_root_plan(
+                Path::new("/worktrees/project/feature/project"),
+                std::slice::from_ref(&workspace),
+                cx,
+            );
+            assert!(
+                plan.is_some(),
+                "build_root_plan should return Some for a linked worktree",
+            );
+            let plan = plan.unwrap();
+            assert_eq!(
+                plan.root_path,
+                PathBuf::from("/worktrees/project/feature/project")
+            );
+            assert_eq!(plan.main_repo_path, PathBuf::from("/project"));
+
+            // The main worktree should still return None.
+            let main_plan =
+                build_root_plan(Path::new("/project"), std::slice::from_ref(&workspace), cx);
+            assert!(
+                main_plan.is_none(),
+                "build_root_plan should return None for the main worktree \
+                 even when a linked worktree exists",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_build_root_plan_returns_none_for_external_linked_worktree(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature"]);
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/external-worktree"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/project"), Path::new("/external-worktree")],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |_workspace, cx| {
+            let plan = build_root_plan(
+                Path::new("/external-worktree"),
+                std::slice::from_ref(&workspace),
+                cx,
+            );
+            assert!(
+                plan.is_none(),
+                "build_root_plan should return None for a linked worktree \
+                 outside the Zed-managed worktrees directory",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_build_root_plan_with_custom_worktree_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Override the worktree_directory setting to a non-default location.
+        // With main repo at /project and setting "../custom-worktrees", the
+        // resolved base is /custom-worktrees/project.
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.git.get_or_insert(Default::default()).worktree_directory =
+                        Some("../custom-worktrees".to_string());
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature", "feature2"]);
+
+        // Worktree inside the custom managed directory.
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/custom-worktrees/project/feature/project"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        // Worktree outside the custom managed directory (at the default
+        // `../worktrees` location, which is not what the setting says).
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/worktrees/project/feature2/project"),
+                ref_name: Some("refs/heads/feature2".into()),
+                sha: "def456".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new("/project"),
+                Path::new("/custom-worktrees/project/feature/project"),
+                Path::new("/worktrees/project/feature2/project"),
+            ],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |_workspace, cx| {
+            // Worktree inside the custom managed directory SHOULD be archivable.
+            let plan = build_root_plan(
+                Path::new("/custom-worktrees/project/feature/project"),
+                std::slice::from_ref(&workspace),
+                cx,
+            );
+            assert!(
+                plan.is_some(),
+                "build_root_plan should return Some for a worktree inside \
+                 the custom worktree_directory",
+            );
+
+            // Worktree at the default location SHOULD NOT be archivable
+            // because the setting points elsewhere.
+            let plan = build_root_plan(
+                Path::new("/worktrees/project/feature2/project"),
+                std::slice::from_ref(&workspace),
+                cx,
+            );
+            assert!(
+                plan.is_none(),
+                "build_root_plan should return None for a worktree outside \
+                 the custom worktree_directory, even if it would match the default",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_remove_root_deletes_directory_and_git_metadata(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature"]);
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/worktrees/project/feature/project"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new("/project"),
+                Path::new("/worktrees/project/feature/project"),
+            ],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // Build the root plan while the worktree is still loaded.
+        let root = workspace
+            .read_with(cx, |_workspace, cx| {
+                build_root_plan(
+                    Path::new("/worktrees/project/feature/project"),
+                    std::slice::from_ref(&workspace),
+                    cx,
+                )
+            })
+            .expect("should produce a root plan for the linked worktree");
+
+        assert!(
+            fs.is_dir(Path::new("/worktrees/project/feature/project"))
+                .await
+        );
+
+        // Remove the root.
+        let task = cx.update(|cx| cx.spawn(async move |cx| remove_root(root, cx).await));
+        task.await.expect("remove_root should succeed");
+
+        cx.run_until_parked();
+
+        // The FakeFs directory should be gone (removed by the FakeGitRepository
+        // backend's remove_worktree implementation).
+        assert!(
+            !fs.is_dir(Path::new("/worktrees/project/feature/project"))
+                .await,
+            "linked worktree directory should be removed from FakeFs"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_remove_root_succeeds_when_directory_already_gone(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature"]);
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/worktrees/project/feature/project"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new("/project"),
+                Path::new("/worktrees/project/feature/project"),
+            ],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let root = workspace
+            .read_with(cx, |_workspace, cx| {
+                build_root_plan(
+                    Path::new("/worktrees/project/feature/project"),
+                    std::slice::from_ref(&workspace),
+                    cx,
+                )
+            })
+            .expect("should produce a root plan for the linked worktree");
+
+        // Manually remove the worktree directory from FakeFs before calling
+        // remove_root, simulating the directory being deleted externally.
+        fs.as_ref()
+            .remove_dir(
+                Path::new("/worktrees/project/feature/project"),
+                fs::RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: false,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(
+            !fs.as_ref()
+                .is_dir(Path::new("/worktrees/project/feature/project"))
+                .await
+        );
+
+        // remove_root should still succeed — the std::fs::remove_dir_all
+        // handles NotFound, and git worktree remove handles a missing
+        // working tree directory.
+        let task = cx.update(|cx| cx.spawn(async move |cx| remove_root(root, cx).await));
+        task.await
+            .expect("remove_root should succeed even when directory is already gone");
+    }
+
+    #[test]
+    fn test_remove_dir_all_deletes_real_directory() {
+        let tmp = TempDir::new().unwrap();
+        let worktree_dir = tmp.path().join("linked-worktree");
+        std::fs::create_dir_all(worktree_dir.join("src")).unwrap();
+        std::fs::write(worktree_dir.join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(worktree_dir.join("README.md"), "# Hello").unwrap();
+
+        assert!(worktree_dir.is_dir());
+
+        // This is the same pattern used in remove_root_after_worktree_removal.
+        match std::fs::remove_dir_all(&worktree_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("unexpected error: {error}"),
+        }
+
+        assert!(
+            !worktree_dir.exists(),
+            "worktree directory should be deleted"
+        );
+    }
+
+    #[test]
+    fn test_remove_dir_all_handles_not_found() {
+        let tmp = TempDir::new().unwrap();
+        let nonexistent = tmp.path().join("does-not-exist");
+
+        assert!(!nonexistent.exists());
+
+        // Should not panic — NotFound is handled gracefully.
+        match std::fs::remove_dir_all(&nonexistent) {
+            Ok(()) => panic!("expected NotFound error"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("unexpected error: {error}"),
+        }
+    }
 }

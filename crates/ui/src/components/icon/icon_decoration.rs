@@ -163,7 +163,7 @@ impl RenderOnce for IconDecoration {
             .absolute()
             .bottom(self.position.y)
             .right(self.position.x)
-            .child(foreground)
             .child(background)
+            .child(foreground)
     }
 }
