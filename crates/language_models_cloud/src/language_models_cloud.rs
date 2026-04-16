@@ -496,6 +496,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     request.output_config = Some(anthropic::OutputConfig { effort });
                 }
 
+                if !self.model.supports_fast_mode {
+                    request.speed = None;
+                }
+
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
                 let auth_context = token_provider.auth_context(cx);

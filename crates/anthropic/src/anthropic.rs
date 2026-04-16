@@ -341,6 +341,10 @@ impl Model {
         }
     }
 
+    pub fn supports_speed(&self) -> bool {
+        matches!(self, Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6)
+    }
+
     pub fn supports_adaptive_thinking(&self) -> bool {
         match self {
             Self::Custom { mode, .. } => matches!(mode, AnthropicModelMode::AdaptiveThinking),
