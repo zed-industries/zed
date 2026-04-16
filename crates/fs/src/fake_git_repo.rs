@@ -10,8 +10,8 @@ use git::{
     repository::{
         AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
-        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
-        RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
+        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -107,6 +107,20 @@ impl FakeGitRepository {
             fs.with_git_state(&dot_git_path, write, f)?
         }
         .boxed()
+    }
+
+    fn edit_ref(&self, edit: RefEdit) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            match edit {
+                RefEdit::Update { ref_name, commit } => {
+                    state.refs.insert(ref_name, commit);
+                }
+                RefEdit::Delete { ref_name } => {
+                    state.refs.remove(&ref_name);
+                }
+            }
+            Ok(())
+        })
     }
 
     /// Scans `.git/worktrees/*/gitdir` to find the admin entry directory for a
@@ -1437,17 +1451,11 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
-        self.with_state_async(true, move |state| {
-            state.refs.insert(ref_name, commit);
-            Ok(())
-        })
+        self.edit_ref(RefEdit::Update { ref_name, commit })
     }
 
     fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>> {
-        self.with_state_async(true, move |state| {
-            state.refs.remove(&ref_name);
-            Ok(())
-        })
+        self.edit_ref(RefEdit::Delete { ref_name })
     }
 
     fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>> {
