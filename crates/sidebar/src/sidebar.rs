@@ -3241,7 +3241,9 @@ impl Sidebar {
                 return Ok(ArchiveWorktreeOutcome::Cancelled);
             }
 
-            if let Err(error) = thread_worktree_archive::remove_root(root.clone(), fs.clone(), cx).await {
+            if let Err(error) =
+                thread_worktree_archive::remove_root(root.clone(), fs.clone(), cx).await
+            {
                 if let Some(&(id, ref completed_root)) = completed_persists.last() {
                     if completed_root.root_path == root.root_path {
                         thread_worktree_archive::rollback_persist(id, completed_root, cx).await;
