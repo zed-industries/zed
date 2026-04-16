@@ -231,7 +231,7 @@ pub struct Open {
 
 impl Open {
     pub const DEFAULT: Self = Self {
-        create_new_window: true,
+        create_new_window: false,
     };
 
     /// Used by `#[serde(default)]` on the `create_new_window` field so that
