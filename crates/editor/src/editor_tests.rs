@@ -12410,6 +12410,350 @@ async fn test_autoclose_with_embedded_language(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_autoclose_multi_char_brackets_with_injection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Host language (like Liquid) with multi-character bracket pairs.
+    // We reuse the HTML grammar because it supports injections into <script>.
+    let host_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "HTML".into(),
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "<".into(),
+                            end: ">".into(),
+                            close: true,
+                            ..Default::default()
+                        },
+                        BracketPair {
+                            start: "{".into(),
+                            end: "}".into(),
+                            close: true,
+                            ..Default::default()
+                        },
+                        BracketPair {
+                            start: "{{".into(),
+                            end: "}}".into(),
+                            close: true,
+                            ..Default::default()
+                        },
+                        BracketPair {
+                            start: "{{-".into(),
+                            end: "-}}".into(),
+                            close: true,
+                            ..Default::default()
+                        },
+                        BracketPair {
+                            start: "{%".into(),
+                            end: "%}".into(),
+                            close: true,
+                            ..Default::default()
+                        },
+                        BracketPair {
+                            start: "{%-".into(),
+                            end: "-%}".into(),
+                            close: true,
+                            ..Default::default()
+                        },
+                        BracketPair {
+                            start: "(".into(),
+                            end: ")".into(),
+                            close: true,
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                },
+                autoclose_before: "%-:.,=}])<>'\" \n\t".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_html::LANGUAGE.into()),
+        )
+        .with_injection_query(
+            r#"
+            (script_element
+                (raw_text) @injection.content
+                (#set! injection.language "javascript"))
+            "#,
+        )
+        .unwrap(),
+    );
+
+    // Injected language with only single-character bracket pairs.
+    let injected_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            brackets: BracketPairConfig {
+                pairs: vec![
+                    BracketPair {
+                        start: "{".into(),
+                        end: "}".into(),
+                        close: true,
+                        ..Default::default()
+                    },
+                    BracketPair {
+                        start: "(".into(),
+                        end: ")".into(),
+                        close: true,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            autoclose_before: "})]>".into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    ));
+
+    cx.language_registry().add(host_language.clone());
+    cx.language_registry().add(injected_language);
+    cx.executor().run_until_parked();
+
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(host_language), cx);
+    });
+
+    cx.set_state(
+        &r#"
+            <body>ˇ
+                <script>
+                    var x = 1;ˇ
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+
+    // Precondition: different languages are active at different locations.
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let cursors = editor
+            .selections
+            .ranges::<MultiBufferOffset>(&editor.display_snapshot(cx));
+        let languages = cursors
+            .iter()
+            .map(|c| snapshot.language_at(c.start).unwrap().name())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            languages,
+            &[
+                LanguageName::from("HTML"),
+                LanguageName::from("JavaScript"),
+            ]
+        );
+    });
+
+    // When typing the first `{`, the injected language (JavaScript) matches `{`/`}`,
+    // but the host language (HTML) has a longer match `{{`/`}}`. The first `{`
+    // should still auto-close as `{}` because we don't yet know if the user will
+    // type a second `{`.
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("{", window, cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            <body>{ˇ}
+                <script>
+                    var x = 1;{ˇ}
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+
+    // When typing the second `{`, the host language's `{{`/`}}` pair should
+    // supersede the previous single-character auto-close. The stale `}` from
+    // the first auto-close should be replaced.
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("{", window, cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            <body>{{ˇ}}
+                <script>
+                    var x = 1;{{ˇ}}
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+
+    // Verify that angle brackets from the host language do NOT auto-close
+    // inside the injected language (no bracket leaking).
+    cx.set_state(
+        &r#"
+            <body>
+                <script>
+                    var x = 1;ˇ
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("<", window, cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            <body>
+                <script>
+                    var x = 1;<ˇ
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+
+    // Supersession chain: `{{` → `{{-`. Typing `-` after `{{|}}` should
+    // produce `{{-|-}}` by superseding the `{{`/`}}` pair with `{{-`/`-}}`.
+    cx.set_state(
+        &r#"
+            <body>
+                <script>
+                    var x = 1;ˇ
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("{", window, cx);
+        editor.handle_input("{", window, cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            <body>
+                <script>
+                    var x = 1;{{ˇ}}
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("-", window, cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            <body>
+                <script>
+                    var x = 1;{{-ˇ-}}
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+
+    // Multi-character bracket pairs from the host language should work inside
+    // injected regions even when the injected language has NO matching pair.
+    // Here `{%`/`%}` is only defined in the host, not in JavaScript.
+    cx.set_state(
+        &r#"
+            <body>
+                <script>
+                    var x = 1;ˇ
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("{", window, cx);
+    });
+    // First `{` auto-closes from the injected language (JavaScript has `{`/`}`).
+    cx.assert_editor_state(
+        &r#"
+            <body>
+                <script>
+                    var x = 1;{ˇ}
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("%", window, cx);
+    });
+    // `{%` from the host language supersedes the `{`/`}` from the injected
+    // language, replacing the stale `}` with `%}`.
+    cx.assert_editor_state(
+        &r#"
+            <body>
+                <script>
+                    var x = 1;{%ˇ%}
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+
+    // Regression: after typing content inside an auto-closed pair and then
+    // moving the cursor back, typing should NOT trigger supersession.
+    // Type some content after `{%`, then move cursor back and type `-`.
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(" test ", window, cx);
+    });
+    // Cursor stays inside the autoclose region (before `%}`).
+    cx.assert_editor_state(
+        &r#"
+            <body>
+                <script>
+                    var x = 1;{% test ˇ%}
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+
+    // Move cursor back to right after `{%` (6 chars left past ` test `).
+    cx.update_editor(|editor, window, cx| {
+        editor.move_left(&Default::default(), window, cx);
+        editor.move_left(&Default::default(), window, cx);
+        editor.move_left(&Default::default(), window, cx);
+        editor.move_left(&Default::default(), window, cx);
+        editor.move_left(&Default::default(), window, cx);
+        editor.move_left(&Default::default(), window, cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            <body>
+                <script>
+                    var x = 1;{%ˇ test %}
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+
+    // Typing `-` inside the `{%`/`%}` region (not at its end) should just
+    // insert `-` without auto-closing `{%-`/`-%}`, because the enclosing
+    // `%}` already provides the correct closing.
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("-", window, cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            <body>
+                <script>
+                    var x = 1;{%-ˇ test %}
+                </script>
+            </body>
+        "#
+        .unindent(),
+    );
+}
+
+#[gpui::test]
 async fn test_autoclose_with_overrides(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
