@@ -2,9 +2,9 @@ use std::ops::Range;
 
 use gpui::Entity;
 use multi_buffer::{Anchor, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _};
-use text::Bias;
 use project::{Project, bookmark_store::BookmarkStore};
 use rope::Point;
+use text::Bias;
 use ui::{Context, Window};
 use util::ResultExt as _;
 use workspace::{Workspace, searchable::Direction};
