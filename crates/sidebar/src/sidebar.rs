@@ -4194,23 +4194,11 @@ impl Sidebar {
 
     fn render_sidebar_bottom_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let is_archive = matches!(self.view, SidebarView::Archive(..));
-        let show_import_button = is_archive && !self.should_render_acp_import_onboarding(cx);
         let on_right = self.side(cx) == SidebarSide::Right;
 
         let action_buttons = h_flex()
             .gap_1()
             .when(on_right, |this| this.flex_row_reverse())
-            .when(show_import_button, |this| {
-                this.child(
-                    IconButton::new("thread-import", IconName::ThreadImport)
-                        .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Import External Agent Threads"))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.show_archive(window, cx);
-                            this.show_thread_import_modal(window, cx);
-                        })),
-                )
-            })
             .child(
                 IconButton::new("history", IconName::Clock)
                     .icon_size(IconSize::Small)
@@ -4363,7 +4351,12 @@ impl Sidebar {
         )
     }
 
-    fn toggle_archive(&mut self, _: &ToggleThreadHistory, window: &mut Window, cx: &mut Context<Self>) {
+    fn toggle_archive(
+        &mut self,
+        _: &ToggleThreadHistory,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match &self.view {
             SidebarView::ThreadList => {
                 let side = match self.side(cx) {
@@ -4420,6 +4413,9 @@ impl Sidebar {
                 }
                 ThreadsArchiveViewEvent::CancelRestore { thread_id } => {
                     this.restoring_tasks.remove(thread_id);
+                }
+                ThreadsArchiveViewEvent::Import => {
+                    this.show_thread_import_modal(window, cx);
                 }
             },
         );
