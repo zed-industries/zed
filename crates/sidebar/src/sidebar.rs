@@ -4229,9 +4229,13 @@ impl Sidebar {
         let is_archive = matches!(self.view, SidebarView::Archive(..));
         let on_right = self.side(cx) == SidebarSide::Right;
 
-        let action_buttons = h_flex()
+        h_flex()
+            .p_1()
             .gap_1()
             .when(on_right, |this| this.flex_row_reverse())
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .child(self.render_sidebar_toggle_button(cx))
             .child(
                 IconButton::new("history", IconName::Clock)
                     .icon_size(IconSize::Small)
@@ -4248,17 +4252,8 @@ impl Sidebar {
                         this.toggle_archive(&ToggleThreadHistory, window, cx);
                     })),
             )
-            .child(self.render_recent_projects_button(cx));
-
-        h_flex()
-            .p_1()
-            .gap_1()
-            .when(on_right, |this| this.flex_row_reverse())
-            .justify_between()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .child(self.render_sidebar_toggle_button(cx))
-            .child(action_buttons)
+            .child(div().flex_1())
+            .child(self.render_recent_projects_button(cx))
     }
 
     fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
