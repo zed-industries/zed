@@ -645,20 +645,25 @@ impl Item for Editor {
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        self.buffer()
-            .read(cx)
+        let multi_buffer = self.buffer().read(cx);
+        if let Some(file) = multi_buffer
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
             .and_then(|file| File::from_dyn(Some(file)))
-            .map(|file| {
+        {
+            Some(
                 file.worktree
                     .read(cx)
                     .absolutize(&file.path)
                     .compact()
                     .to_string_lossy()
                     .into_owned()
-                    .into()
-            })
+                    .into(),
+            )
+        } else {
+            let title = multi_buffer.title(cx);
+            (!title.is_empty()).then(|| title.to_string().into())
+        }
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
