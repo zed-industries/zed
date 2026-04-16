@@ -441,10 +441,16 @@ impl TabSwitcherDelegate {
                     ))
                 })
                 .collect::<Vec<_>>();
-            fuzzy_nucleo::match_strings(&candidates, &query, true, true, 10000)
-                .into_iter()
-                .map(|m| all_items[m.candidate_id].clone())
-                .collect()
+            fuzzy_nucleo::match_strings(
+                &candidates,
+                &query,
+                fuzzy_nucleo::Case::Smart,
+                fuzzy_nucleo::LengthPenalty::On,
+                10000,
+            )
+            .into_iter()
+            .map(|m| all_items[m.candidate_id].clone())
+            .collect()
         };
 
         if self.open_in_active_pane {

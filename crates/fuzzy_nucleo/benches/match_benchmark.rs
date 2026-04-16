@@ -145,7 +145,7 @@ fn to_fuzzy_candidates(
 ) -> Vec<fuzzy::StringMatchCandidate> {
     candidates
         .iter()
-        .map(|c| fuzzy::StringMatchCandidate::new(c.id, &c.string))
+        .map(|c| fuzzy::StringMatchCandidate::new(c.id, c.string.as_ref()))
         .collect()
 }
 
@@ -178,8 +178,8 @@ fn bench_string_matching(criterion: &mut Criterion) {
                         foreground_executor.block_on(fuzzy_nucleo::match_strings_async(
                             &candidates,
                             query,
-                            false,
-                            true,
+                            fuzzy_nucleo::Case::Ignore,
+                            fuzzy_nucleo::LengthPenalty::On,
                             size,
                             &cancel,
                             background_executor.clone(),

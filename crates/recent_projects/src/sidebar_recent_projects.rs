@@ -194,7 +194,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let query = query.trim_start();
-        let smart_case = query.chars().any(|c| c.is_uppercase());
+        let case = fuzzy_nucleo::Case::from_smart(query.chars().any(|c| c.is_uppercase()));
         let is_empty_query = query.is_empty();
 
         let current_workspace_id = self
@@ -234,8 +234,13 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 })
                 .collect();
         } else {
-            self.filtered_workspaces =
-                match_strings(&candidates, query, smart_case, true, 100);
+            self.filtered_workspaces = match_strings(
+                &candidates,
+                query,
+                case,
+                fuzzy_nucleo::LengthPenalty::On,
+                100,
+            );
         }
 
         self.selected_index = 0;

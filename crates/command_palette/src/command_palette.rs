@@ -326,7 +326,7 @@ impl CommandPaletteDelegate {
             });
             new_matches.push(StringMatch {
                 candidate_id: commands.len() - 1,
-                string,
+                string: string.into(),
                 positions,
                 score: 0.0,
             })
@@ -477,8 +477,8 @@ impl PickerDelegate for CommandPaletteDelegate {
                 let matches = fuzzy_nucleo::match_strings_async(
                     &candidates,
                     &query,
-                    true,
-                    true,
+                    fuzzy_nucleo::Case::Smart,
+                    fuzzy_nucleo::LengthPenalty::On,
                     10000,
                     &Default::default(),
                     executor,
