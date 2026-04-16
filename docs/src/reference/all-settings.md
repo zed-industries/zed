@@ -2759,7 +2759,7 @@ To override settings for a language, add an entry for that languages name to the
     "C": {
       "format_on_save": "off",
       "preferred_line_length": 64,
-      "soft_wrap": "preferred_line_length"
+      "soft_wrap": "bounded"
     },
     "JSON": {
       "tab_size": 4
@@ -5494,7 +5494,7 @@ To preview and enable a settings profile, open the command palette via {#kb comm
       "format_on_save": "on",
       "formatter": "language_server",
       "preferred_line_length": 64,
-      "soft_wrap": "preferred_line_length"
+      "soft_wrap": "bounded"
     }
   }
 }
