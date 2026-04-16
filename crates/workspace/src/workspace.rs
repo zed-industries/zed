@@ -7317,7 +7317,7 @@ impl Workspace {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn test_new(
+    pub fn test_new(
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
