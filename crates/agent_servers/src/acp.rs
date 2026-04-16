@@ -56,7 +56,7 @@ pub struct AcpConnection {
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
-    child: Child,
+    child: Option<Child>,
     session_list: Option<Rc<AcpSessionList>>,
     _io_task: Task<Result<(), acp::Error>>,
     _wait_task: Task<Result<()>>,
@@ -413,12 +413,41 @@ impl AcpConnection {
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
-            child,
+            child: Some(child),
         })
     }
 
     pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
         &self.agent_capabilities.prompt_capabilities
+    }
+
+    #[cfg(test)]
+    fn new_for_test(
+        connection: Rc<acp::ClientSideConnection>,
+        sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+        agent_capabilities: acp::AgentCapabilities,
+        agent_server_store: WeakEntity<AgentServerStore>,
+        io_task: Task<Result<(), acp::Error>>,
+        _cx: &mut App,
+    ) -> Self {
+        Self {
+            id: AgentId::new("test"),
+            telemetry_id: "test".into(),
+            connection,
+            sessions,
+            pending_sessions: Rc::new(RefCell::new(HashMap::default())),
+            auth_methods: vec![],
+            agent_server_store,
+            agent_capabilities,
+            default_mode: None,
+            default_model: None,
+            default_config_options: HashMap::default(),
+            child: None,
+            session_list: None,
+            _io_task: io_task,
+            _wait_task: Task::ready(Ok(())),
+            _stderr_task: Task::ready(Ok(())),
+        }
     }
 
     fn apply_default_config_options(
@@ -520,7 +549,9 @@ impl AcpConnection {
 
 impl Drop for AcpConnection {
     fn drop(&mut self) {
-        self.child.kill().log_err();
+        if let Some(ref mut child) = self.child {
+            child.kill().log_err();
+        }
     }
 }
 
@@ -1210,6 +1241,8 @@ fn map_acp_error(err: acp::Error) -> anyhow::Error {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
 
     #[test]
@@ -1337,6 +1370,241 @@ mod tests {
             ])
         );
         assert_eq!(task.label, "Login");
+    }
+
+    struct FakeAcpAgent {
+        load_session_count: Arc<AtomicUsize>,
+        close_session_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl acp::Agent for FakeAcpAgent {
+        async fn initialize(
+            &self,
+            args: acp::InitializeRequest,
+        ) -> acp::Result<acp::InitializeResponse> {
+            Ok(
+                acp::InitializeResponse::new(args.protocol_version).agent_capabilities(
+                    acp::AgentCapabilities::default()
+                        .load_session(true)
+                        .session_capabilities(
+                            acp::SessionCapabilities::default()
+                                .close(acp::SessionCloseCapabilities::new()),
+                        ),
+                ),
+            )
+        }
+
+        async fn authenticate(
+            &self,
+            _: acp::AuthenticateRequest,
+        ) -> acp::Result<acp::AuthenticateResponse> {
+            Ok(Default::default())
+        }
+
+        async fn new_session(
+            &self,
+            _: acp::NewSessionRequest,
+        ) -> acp::Result<acp::NewSessionResponse> {
+            Ok(acp::NewSessionResponse::new(acp::SessionId::new("unused")))
+        }
+
+        async fn prompt(&self, _: acp::PromptRequest) -> acp::Result<acp::PromptResponse> {
+            Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+        }
+
+        async fn cancel(&self, _: acp::CancelNotification) -> acp::Result<()> {
+            Ok(())
+        }
+
+        async fn load_session(
+            &self,
+            _: acp::LoadSessionRequest,
+        ) -> acp::Result<acp::LoadSessionResponse> {
+            self.load_session_count.fetch_add(1, Ordering::SeqCst);
+            Ok(acp::LoadSessionResponse::new())
+        }
+
+        async fn close_session(
+            &self,
+            _: acp::CloseSessionRequest,
+        ) -> acp::Result<acp::CloseSessionResponse> {
+            self.close_session_count.fetch_add(1, Ordering::SeqCst);
+            Ok(acp::CloseSessionResponse::new())
+        }
+    }
+
+    async fn connect_fake_agent(
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        Rc<AcpConnection>,
+        Entity<project::Project>,
+        Arc<AtomicUsize>,
+        Arc<AtomicUsize>,
+        Task<anyhow::Result<()>>,
+    ) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/", serde_json::json!({ "a": {} })).await;
+        let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
+
+        let load_count = Arc::new(AtomicUsize::new(0));
+        let close_count = Arc::new(AtomicUsize::new(0));
+
+        let (c2a_reader, c2a_writer) = piper::pipe(4096);
+        let (a2c_reader, a2c_writer) = piper::pipe(4096);
+
+        let sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>> =
+            Rc::new(RefCell::new(HashMap::default()));
+        let session_list_container: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
+            Rc::new(RefCell::new(None));
+
+        let foreground = cx.foreground_executor().clone();
+
+        let client_delegate = ClientDelegate {
+            sessions: sessions.clone(),
+            session_list: session_list_container,
+            cx: cx.to_async(),
+        };
+
+        let (client_conn, client_io_task) =
+            acp::ClientSideConnection::new(client_delegate, c2a_writer, a2c_reader, {
+                let foreground = foreground.clone();
+                move |fut| {
+                    foreground.spawn(fut).detach();
+                }
+            });
+
+        let fake_agent = FakeAcpAgent {
+            load_session_count: load_count.clone(),
+            close_session_count: close_count.clone(),
+        };
+
+        let (_, agent_io_task) =
+            acp::AgentSideConnection::new(fake_agent, a2c_writer, c2a_reader, {
+                let foreground = foreground.clone();
+                move |fut| {
+                    foreground.spawn(fut).detach();
+                }
+            });
+
+        let client_io_task = cx.background_spawn(client_io_task);
+        let agent_io_task = cx.background_spawn(agent_io_task);
+
+        let response = client_conn
+            .initialize(acp::InitializeRequest::new(acp::ProtocolVersion::V1))
+            .await
+            .expect("failed to initialize ACP connection");
+
+        let agent_capabilities = response.agent_capabilities;
+
+        let agent_server_store =
+            project.read_with(cx, |project, _| project.agent_server_store().downgrade());
+
+        let connection = cx.update(|cx| {
+            AcpConnection::new_for_test(
+                Rc::new(client_conn),
+                sessions,
+                agent_capabilities,
+                agent_server_store,
+                client_io_task,
+                cx,
+            )
+        });
+
+        let keep_agent_alive = cx.background_spawn(async move {
+            agent_io_task.await.ok();
+            anyhow::Ok(())
+        });
+
+        (
+            Rc::new(connection),
+            project,
+            load_count,
+            close_count,
+            keep_agent_alive,
+        )
+    }
+
+    #[gpui::test]
+    async fn test_loaded_sessions_keep_state_until_last_close(cx: &mut gpui::TestAppContext) {
+        let (connection, project, load_count, close_count, _keep_agent_alive) =
+            connect_fake_agent(cx).await;
+
+        let session_id = acp::SessionId::new("session-1");
+        let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
+
+        // Load the same session twice concurrently — the second call should join
+        // the pending task rather than issuing a second ACP load_session RPC.
+        let first_load = cx.update(|cx| {
+            connection.clone().load_session(
+                session_id.clone(),
+                project.clone(),
+                work_dirs.clone(),
+                None,
+                cx,
+            )
+        });
+        let second_load = cx.update(|cx| {
+            connection.clone().load_session(
+                session_id.clone(),
+                project.clone(),
+                work_dirs.clone(),
+                None,
+                cx,
+            )
+        });
+
+        let first_thread = first_load.await.expect("first load failed");
+        let second_thread = second_load.await.expect("second load failed");
+        cx.run_until_parked();
+
+        assert_eq!(
+            first_thread.entity_id(),
+            second_thread.entity_id(),
+            "concurrent loads for the same session should share one AcpThread"
+        );
+        assert_eq!(
+            load_count.load(Ordering::SeqCst),
+            1,
+            "underlying ACP load_session should be called exactly once for concurrent loads"
+        );
+
+        // The session has ref_count 2. The first close should not send the ACP
+        // close_session RPC — the session is still referenced.
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .expect("first close failed");
+
+        assert_eq!(
+            close_count.load(Ordering::SeqCst),
+            0,
+            "ACP close_session should not be sent while ref_count > 0"
+        );
+        assert!(
+            connection.sessions.borrow().contains_key(&session_id),
+            "session should still be tracked after first close"
+        );
+
+        // The second close drops ref_count to 0 — now the ACP RPC must be sent.
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .expect("second close failed");
+        cx.run_until_parked();
+
+        assert_eq!(
+            close_count.load(Ordering::SeqCst),
+            1,
+            "ACP close_session should be sent exactly once when ref_count reaches 0"
+        );
+        assert!(
+            !connection.sessions.borrow().contains_key(&session_id),
+            "session should be removed after final close"
+        );
     }
 }
 
