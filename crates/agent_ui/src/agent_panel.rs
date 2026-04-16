@@ -49,7 +49,7 @@ use crate::{
 use crate::{ExpandMessageEditor, ThreadHistoryView};
 use crate::{ManageProfiles, ThreadHistoryViewEvent};
 use crate::{ThreadHistory, agent_connection_store::AgentConnectionStore};
-use agent_settings::{AgentSettings, WindowLayout};
+use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Context as _, Result, anyhow};
 use client::UserStore;
@@ -760,8 +760,6 @@ pub struct AgentPanel {
     pending_serialization: Option<Task<Result<()>>>,
     new_user_onboarding: Entity<AgentPanelOnboarding>,
     new_user_onboarding_upsell_dismissed: AtomicBool,
-    agent_layout_onboarding: Entity<ai_onboarding::AgentLayoutOnboarding>,
-    agent_layout_onboarding_dismissed: AtomicBool,
     selected_agent: Agent,
     pending_thread_loads: usize,
     worktree_creation_status: Option<(EntityId, WorktreeCreationStatus)>,
@@ -1065,46 +1063,6 @@ impl AgentPanel {
             )
         });
 
-        let weak_panel = cx.entity().downgrade();
-
-        let layout = AgentSettings::get_layout(cx);
-        let is_agent_layout = matches!(layout, WindowLayout::Agent(_));
-
-        let agent_layout_onboarding = cx.new(|_cx| ai_onboarding::AgentLayoutOnboarding {
-            use_agent_layout: Arc::new({
-                let fs = fs.clone();
-                let weak_panel = weak_panel.clone();
-                move |_window, cx| {
-                    let _ = AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
-                    weak_panel
-                        .update(cx, |panel, cx| {
-                            panel.dismiss_agent_layout_onboarding(cx);
-                        })
-                        .ok();
-                }
-            }),
-            revert_to_editor_layout: Arc::new({
-                let fs = fs.clone();
-                let weak_panel = weak_panel.clone();
-                move |_window, cx| {
-                    let _ = AgentSettings::set_layout(WindowLayout::Editor(None), fs.clone(), cx);
-                    weak_panel
-                        .update(cx, |panel, cx| {
-                            panel.dismiss_agent_layout_onboarding(cx);
-                        })
-                        .ok();
-                }
-            }),
-            dismissed: Arc::new(move |_window, cx| {
-                weak_panel
-                    .update(cx, |panel, cx| {
-                        panel.dismiss_agent_layout_onboarding(cx);
-                    })
-                    .ok();
-            }),
-            is_agent_layout,
-        });
-
         // Subscribe to extension events to sync agent servers when extensions change
         let extension_subscription = if let Some(extension_events) = ExtensionEvents::try_global(cx)
         {
@@ -1169,7 +1127,6 @@ impl AgentPanel {
             zoomed: false,
             pending_serialization: None,
             new_user_onboarding: onboarding,
-            agent_layout_onboarding,
             thread_store,
             selected_agent: Agent::default(),
             pending_thread_loads: 0,
@@ -1179,9 +1136,6 @@ impl AgentPanel {
             _worktree_creation_task: None,
             show_trust_workspace_message: false,
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
-            agent_layout_onboarding_dismissed: AtomicBool::new(AgentLayoutOnboarding::dismissed(
-                cx,
-            )),
             _base_view_observation: None,
             _draft_editor_observation: None,
         };
@@ -1328,16 +1282,37 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ConversationView> {
-        if let Some(draft) = &self.draft_thread {
-            return draft.clone();
-        }
-        let agent = if self.project.read(cx).is_via_collab() {
+        let desired_agent = if self.project.read(cx).is_via_collab() {
             Agent::NativeAgent
         } else {
             self.selected_agent.clone()
         };
-        let thread =
-            self.create_agent_thread(agent, None, None, None, None, "agent_panel", window, cx);
+        if let Some(draft) = &self.draft_thread {
+            let agent_matches = *draft.read(cx).agent_key() == desired_agent;
+            let has_editor_content = draft.read(cx).active_thread().is_some_and(|tv| {
+                !tv.read(cx)
+                    .message_editor
+                    .read(cx)
+                    .text(cx)
+                    .trim()
+                    .is_empty()
+            });
+            if agent_matches || has_editor_content {
+                return draft.clone();
+            }
+            self.draft_thread = None;
+            self._draft_editor_observation = None;
+        }
+        let thread = self.create_agent_thread(
+            desired_agent,
+            None,
+            None,
+            None,
+            None,
+            "agent_panel",
+            window,
+            cx,
+        );
         self.draft_thread = Some(thread.conversation_view.clone());
         self.observe_draft_editor(&thread.conversation_view, cx);
         thread.conversation_view
@@ -3258,26 +3233,6 @@ impl AgentPanel {
             return;
         }
 
-        let (worktree_receivers, worktree_directory_setting) =
-            if matches!(args, WorktreeCreationArgs::New { .. }) {
-                (
-                    Some(
-                        git_repos
-                            .iter()
-                            .map(|repo| repo.update(cx, |repo, _cx| repo.worktrees()))
-                            .collect::<Vec<_>>(),
-                    ),
-                    Some(
-                        ProjectSettings::get_global(cx)
-                            .git
-                            .worktree_directory
-                            .clone(),
-                    ),
-                )
-            } else {
-                (None, None)
-            };
-
         let remote_connection_options = self.project.read(cx).remote_connection_options(cx);
 
         if remote_connection_options.is_some() {
@@ -3314,10 +3269,18 @@ impl AgentPanel {
                     worktree_name,
                     branch_target,
                 } => {
-                    let worktree_receivers = worktree_receivers
-                        .expect("worktree receivers must be prepared for new worktree creation");
-                    let worktree_directory_setting = worktree_directory_setting
-                        .expect("worktree directory must be prepared for new worktree creation");
+                    let worktree_receivers: Vec<_> = this.update_in(cx, |_this, _window, cx| {
+                        git_repos
+                            .iter()
+                            .map(|repo| repo.update(cx, |repo, _cx| repo.worktrees()))
+                            .collect()
+                    })?;
+                    let worktree_directory_setting = this.update_in(cx, |_this, _window, cx| {
+                        ProjectSettings::get_global(cx)
+                            .git
+                            .worktree_directory
+                            .clone()
+                    })?;
 
                     let mut existing_worktree_names = Vec::new();
                     let mut existing_worktree_paths = HashSet::default();
@@ -4110,7 +4073,7 @@ impl AgentPanel {
             let current_path = &repo.work_directory_abs_path;
 
             return linked_worktree_short_name(main_path, current_path)
-                .unwrap_or_else(|| "main".into());
+                .unwrap_or_else(|| "main worktree".into());
         }
 
         project
@@ -4688,56 +4651,10 @@ impl AgentPanel {
         plan.is_some_and(|plan| plan == Plan::ZedFree) && has_previous_trial
     }
 
-    fn should_render_agent_layout_onboarding(&self, cx: &mut Context<Self>) -> bool {
-        // We only want to show this for existing users: those who
-        // have used the agent panel before the sidebar was introduced.
-        // We can infer that state by users having seen the onboarding
-        // at one point, but not the agent layout onboarding.
-
-        let has_messages = self.active_thread_has_messages(cx);
-        let is_dismissed = self
-            .agent_layout_onboarding_dismissed
-            .load(Ordering::Acquire);
-
-        if is_dismissed || has_messages {
-            return false;
-        }
-
-        match &self.base_view {
-            BaseView::Uninitialized => false,
-            BaseView::AgentThread { .. } => {
-                let existing_user = self
-                    .new_user_onboarding_upsell_dismissed
-                    .load(Ordering::Acquire);
-                existing_user
-            }
-        }
-    }
-
-    fn render_agent_layout_onboarding(
-        &self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
-        if !self.should_render_agent_layout_onboarding(cx) {
-            return None;
-        }
-
-        Some(div().child(self.agent_layout_onboarding.clone()))
-    }
-
-    fn dismiss_agent_layout_onboarding(&mut self, cx: &mut Context<Self>) {
-        self.agent_layout_onboarding_dismissed
-            .store(true, Ordering::Release);
-        AgentLayoutOnboarding::set_dismissed(true, cx);
-        cx.notify();
-    }
-
     fn dismiss_ai_onboarding(&mut self, cx: &mut Context<Self>) {
         self.new_user_onboarding_upsell_dismissed
             .store(true, Ordering::Release);
         OnboardingUpsell::set_dismissed(true, cx);
-        self.dismiss_agent_layout_onboarding(cx);
         cx.notify();
     }
 
@@ -4999,7 +4916,6 @@ impl Render for AgentPanel {
             .child(self.render_toolbar(window, cx))
             .children(self.render_workspace_trust_message(cx))
             .children(self.render_new_user_onboarding(window, cx))
-            .children(self.render_agent_layout_onboarding(window, cx))
             .map(|parent| match self.visible_surface() {
                 VisibleSurface::Uninitialized => parent,
                 VisibleSurface::AgentThread(conversation_view) => parent
@@ -5088,12 +5004,6 @@ struct OnboardingUpsell;
 
 impl Dismissable for OnboardingUpsell {
     const KEY: &'static str = "dismissed-trial-upsell";
-}
-
-struct AgentLayoutOnboarding;
-
-impl Dismissable for AgentLayoutOnboarding {
-    const KEY: &'static str = "dismissed-agent-layout-onboarding";
 }
 
 struct TrialEndUpsell;
@@ -7211,6 +7121,95 @@ mod tests {
             assert!(
                 panel.active_conversation_view().is_some(),
                 "a thread should have been created"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_draft_replaced_when_selected_agent_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        // Create a draft with the default NativeAgent.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.activate_draft(true, window, cx);
+        });
+
+        let first_draft_id = panel.read_with(cx, |panel, cx| {
+            assert!(panel.draft_thread.is_some());
+            assert_eq!(panel.selected_agent, Agent::NativeAgent);
+            let draft = panel.draft_thread.as_ref().unwrap();
+            assert_eq!(*draft.read(cx).agent_key(), Agent::NativeAgent);
+            draft.entity_id()
+        });
+
+        // Switch selected_agent to a custom agent, then activate_draft again.
+        // The stale NativeAgent draft should be replaced.
+        let custom_agent = Agent::Custom {
+            id: "my-custom-agent".into(),
+        };
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_agent = custom_agent.clone();
+            panel.activate_draft(true, window, cx);
+        });
+
+        panel.read_with(cx, |panel, cx| {
+            let draft = panel.draft_thread.as_ref().expect("draft should exist");
+            assert_ne!(
+                draft.entity_id(),
+                first_draft_id,
+                "a new draft should have been created"
+            );
+            assert_eq!(
+                *draft.read(cx).agent_key(),
+                custom_agent,
+                "the new draft should use the custom agent"
+            );
+        });
+
+        // Calling activate_draft again with the same agent should return the
+        // cached draft (no replacement).
+        let second_draft_id = panel.read_with(cx, |panel, _cx| {
+            panel.draft_thread.as_ref().unwrap().entity_id()
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.activate_draft(true, window, cx);
+        });
+
+        panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                panel.draft_thread.as_ref().unwrap().entity_id(),
+                second_draft_id,
+                "draft should be reused when the agent has not changed"
             );
         });
     }

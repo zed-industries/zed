@@ -680,6 +680,17 @@ impl ContextMenu {
         self
     }
 
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        if let Some(ContextMenuItem::CustomEntry {
+            selectable: entry_selectable,
+            ..
+        }) = self.items.last_mut()
+        {
+            *entry_selectable = selectable;
+        }
+        self
+    }
+
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.items.push(ContextMenuItem::Label(label.into()));
         self

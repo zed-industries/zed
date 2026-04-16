@@ -250,7 +250,6 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum),
         MigrationType::Json(migrations::m_2026_04_01::restructure_profiles_with_settings_key),
         MigrationType::Json(migrations::m_2026_04_10::rename_web_search_to_search_web),
-        MigrationType::Json(migrations::m_2026_04_15::remove_settings_from_http_context_servers),
     ];
     run_migrations(text, migrations)
 }
@@ -4983,61 +4982,47 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_settings_from_http_context_servers() {
+    fn test_mcp_settings_migration_adds_settings_to_extension_servers() {
         assert_migrate_settings(
-            &r#"
-            {
-                "context_servers": {
-                    "http_server": {
-                        "url": "https://example.com/mcp",
-                        "settings": {}
-                    },
-                    "http_server_with_headers": {
-                        "url": "https://example.com/mcp",
-                        "headers": {
-                            "Authorization": "Bearer token"
-                        },
-                        "settings": {}
-                    },
-                    "extension_server": {
-                        "settings": {
-                            "foo": "bar"
-                        }
-                    },
-                    "stdio_server": {
-                        "command": "npx",
-                        "args": ["-y", "some-server"]
-                    }
-                }
+            r#"{
+    "context_servers": {
+        "extension_server": {},
+        "stdio_server": {
+            "command": "npx",
+            "args": ["-y", "some-server"]
+        },
+        "http_server": {
+            "url": "https://example.com/mcp"
+        },
+        "http_server_with_headers": {
+            "url": "https://example.com/mcp",
+            "headers": {
+                "Authorization": "Bearer token"
             }
-            "#
-            .unindent(),
+        }
+    }
+}"#,
             Some(
-                &r#"
-                {
-                    "context_servers": {
-                        "http_server": {
-                            "url": "https://example.com/mcp"
-                        },
-                        "http_server_with_headers": {
-                            "url": "https://example.com/mcp",
-                            "headers": {
-                                "Authorization": "Bearer token"
-                            }
-                        },
-                        "extension_server": {
-                            "settings": {
-                                "foo": "bar"
-                            }
-                        },
-                        "stdio_server": {
-                            "command": "npx",
-                            "args": ["-y", "some-server"]
-                        }
-                    }
-                }
-                "#
-                .unindent(),
+                r#"{
+    "context_servers": {
+        "extension_server": {
+            "settings": {}
+        },
+        "stdio_server": {
+            "command": "npx",
+            "args": ["-y", "some-server"]
+        },
+        "http_server": {
+            "url": "https://example.com/mcp"
+        },
+        "http_server_with_headers": {
+            "url": "https://example.com/mcp",
+            "headers": {
+                "Authorization": "Bearer token"
+            }
+        }
+    }
+}"#,
             ),
         );
     }
