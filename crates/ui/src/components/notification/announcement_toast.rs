@@ -101,6 +101,8 @@ impl RenderOnce for AnnouncementToast {
         let illustration = self.illustration;
 
         v_flex()
+            .id("announcement-toast")
+            .occlude()
             .relative()
             .w_full()
             .elevation_3(cx)

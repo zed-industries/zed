@@ -45,7 +45,7 @@ use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
     ManifestQuery, OffsetRangeExt, Point, ToPoint, Toolchain, ToolchainList, ToolchainLister,
     ToolchainMetadata,
-    language_settings::{LanguageSettings, LanguageSettingsContent},
+    language_settings::{Formatter, FormatterList, LanguageSettings, LanguageSettingsContent},
     markdown_lang, rust_lang, tree_sitter_typescript,
 };
 use lsp::{
@@ -1913,6 +1913,84 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await,
         close_message,
     );
+}
+
+#[gpui::test]
+async fn test_late_lsp_adapter_registration(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "test.rs": "const A: i32 = 1;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    // Add the language first so the buffer gets assigned a language.
+    language_registry.add(rust_lang());
+    cx.executor().run_until_parked();
+
+    // Open a buffer — it gets assigned the Rust language but there is no LSP adapter yet.
+    let (rust_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/test.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    rust_buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.language().map(|l| l.name()), Some("Rust".into()));
+    });
+
+    // Now register the LSP adapter late (simulating an extension loading after startup).
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-rust-language-server",
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), "::".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    cx.executor().run_until_parked();
+
+    // The language server should start and receive a DidOpenTextDocument notification
+    // for the already-open buffer.
+    let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+    assert_eq!(
+        fake_rust_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentItem {
+            uri: lsp::Uri::from_file_path(path!("/dir/test.rs")).unwrap(),
+            version: 0,
+            text: "const A: i32 = 1;".to_string(),
+            language_id: "rust".to_string(),
+        }
+    );
+
+    // The buffer should be configured with the language server's capabilities.
+    rust_buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .completion_triggers()
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            &[".".to_string(), "::".to_string()]
+        );
+    });
 }
 
 #[gpui::test]
@@ -4899,6 +4977,85 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         .collect::<Vec<_>>();
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fully\nQualified\nName");
+}
+
+#[gpui::test]
+async fn test_supports_range_formatting_ignores_unrelated_language_servers(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+                ));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.ts": "",
+            "b.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    language_registry.add(rust_lang());
+
+    let mut typescript_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            name: "typescript-fake-language-server",
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let mut rust_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-fake-language-server",
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                document_range_formatting_provider: Some(lsp::OneOf::Left(false)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (typescript_buffer, _typescript_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .unwrap();
+    let (rust_buffer, _rust_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/b.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _typescript_language_server = typescript_language_servers.next().await.unwrap();
+    let _rust_language_server = rust_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    assert!(project.read_with(cx, |project, cx| {
+        project.supports_range_formatting(&typescript_buffer, cx)
+    }));
+    assert!(!project.read_with(cx, |project, cx| {
+        project.supports_range_formatting(&rust_buffer, cx)
+    }));
 }
 
 #[gpui::test(iterations = 10)]

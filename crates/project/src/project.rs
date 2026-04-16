@@ -2075,6 +2075,18 @@ impl Project {
         project
     }
 
+    /// Transitions a local test project into the `Collab` client state so that
+    /// `is_via_collab()` returns `true`. Use only in tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn mark_as_collab_for_testing(&mut self) {
+        self.client_state = ProjectClientState::Collab {
+            sharing_has_stopped: false,
+            capability: Capability::ReadWrite,
+            remote_id: 0,
+            replica_id: clock::ReplicaId::new(1),
+        };
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn add_test_remote_worktree(
         &mut self,
@@ -4120,6 +4132,12 @@ impl Project {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.format(buffers, target, push_to_history, trigger, cx)
         })
+    }
+
+    pub fn supports_range_formatting(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
+        self.lsp_store
+            .read(cx)
+            .supports_range_formatting(buffer, cx)
     }
 
     pub fn definitions<T: ToPointUtf16>(

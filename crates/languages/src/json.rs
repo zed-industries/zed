@@ -296,6 +296,13 @@ impl LspAdapter for JsonLspAdapter {
                 }
             })
         });
+
+        if let Some(proxy_settings) = cx.update(|cx| {
+            json_schema_proxy_settings(cx.http_client().proxy().map(ToString::to_string))
+        }) {
+            merge_json_value_into(proxy_settings, &mut config);
+        }
+
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &self.name(), cx)
                 .and_then(|s| worktree_root(delegate, s.settings.clone()))
@@ -356,6 +363,16 @@ fn worktree_root(delegate: &Arc<dyn LspAdapterDelegate>, settings: Option<Value>
     Some(Value::Object(settings_map))
 }
 
+fn json_schema_proxy_settings(proxy: Option<String>) -> Option<Value> {
+    proxy.map(|proxy| {
+        json!({
+            "http": {
+                "proxy": proxy,
+            }
+        })
+    })
+}
+
 async fn get_cached_server_binary(
     container_dir: PathBuf,
     node: &NodeRuntime,
@@ -374,6 +391,30 @@ async fn get_cached_server_binary(
     })
     .await
     .log_err()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::json_schema_proxy_settings;
+
+    #[test]
+    fn test_json_schema_proxy_settings_includes_proxy() {
+        assert_eq!(
+            json_schema_proxy_settings(Some("http://proxy.example:8080".to_string())),
+            Some(json!({
+                "http": {
+                    "proxy": "http://proxy.example:8080",
+                }
+            }))
+        );
+    }
+
+    #[test]
+    fn test_json_schema_proxy_settings_ignores_missing_proxy() {
+        assert_eq!(json_schema_proxy_settings(None), None);
+    }
 }
 
 pub struct NodeVersionAdapter;

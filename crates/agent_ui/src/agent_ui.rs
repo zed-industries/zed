@@ -79,7 +79,10 @@ pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
 pub(crate) use thread_history::ThreadHistory;
 pub(crate) use thread_history_view::*;
-pub use thread_import::{AcpThreadImportOnboarding, ThreadImportModal};
+pub use thread_import::{
+    AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
+    channels_with_threads, import_threads_from_other_channels,
+};
 use zed_actions;
 
 pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
@@ -195,6 +198,8 @@ actions!(
         ScrollOutputToPreviousMessage,
         /// Scroll the output to the next user message.
         ScrollOutputToNextMessage,
+        /// Import agent threads from other Zed release channels (e.g. Preview, Nightly).
+        ImportThreadsFromOtherChannels,
     ]
 );
 
@@ -511,6 +516,17 @@ pub fn init(
     })
     .detach();
     cx.observe_new(ManageProfilesModal::register).detach();
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(
+            |workspace: &mut Workspace,
+             _: &ImportThreadsFromOtherChannels,
+             _window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                import_threads_from_other_channels(workspace, cx);
+            },
+        );
+    })
+    .detach();
 
     // Update command palette filter based on AI settings
     update_command_palette_filter(cx);

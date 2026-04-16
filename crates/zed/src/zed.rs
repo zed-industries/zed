@@ -782,6 +782,22 @@ fn register_actions(
 ) {
     workspace
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &input_latency_ui::DumpInputLatencyHistogram,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                let report =
+                    input_latency_ui::format_input_latency_report(window, cx);
+                let project = workspace.project().clone();
+                let buffer = project.update(cx, |project, cx| {
+                    project.create_local_buffer(&report, None, true, cx)
+                });
+                let editor =
+                    cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+                workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+            },
+        )
         .register_action(|_, _: &Minimize, window, _| {
             window.minimize_window();
         })
@@ -1088,11 +1104,12 @@ fn register_actions(
         })
         .register_action({
             let app_state = app_state.clone();
-            move |_workspace, _: &CloseProject, window, cx| {
+            move |workspace, _: &CloseProject, window, cx| {
                 let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
                     return;
                 };
                 let app_state = app_state.clone();
+                let old_group_key = workspace.project_group_key(cx);
                 cx.spawn_in(window, async move |this, cx| {
                     let should_continue = this
                         .update_in(cx, |workspace, window, cx| {
@@ -1131,7 +1148,11 @@ fn register_actions(
                                 },
                             )
                         })?;
-                        task.await
+                        task.await?;
+                        window_handle.update(cx, |mw, window, cx| {
+                            mw.remove_project_group(&old_group_key, window, cx)
+                        })?.await.log_err();
+                        Ok::<(), anyhow::Error>(())
                     } else {
                         Ok(())
                     }
@@ -6445,5 +6466,56 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_close_project_removes_project_group(cx: &mut TestAppContext) {
+        use util::path_list::PathList;
+        use workspace::{OpenMode, ProjectGroupKey};
+
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/my-project"), json!({}))
+            .await;
+
+        let workspace::OpenResult { window, .. } = cx
+            .update(|cx| {
+                workspace::Workspace::new_local(
+                    vec![path!("/my-project").into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        window.update(cx, |mw, _, cx| mw.open_sidebar(cx)).unwrap();
+        cx.background_executor.run_until_parked();
+
+        let project_key = ProjectGroupKey::new(None, PathList::new(&[path!("/my-project")]));
+        let keys = window
+            .read_with(cx, |mw, _| mw.project_group_keys())
+            .unwrap();
+        assert_eq!(
+            keys,
+            vec![project_key],
+            "project group should exist before CloseProject: {keys:?}"
+        );
+
+        cx.dispatch_action(window.into(), CloseProject);
+
+        let keys = window
+            .read_with(cx, |mw, _| mw.project_group_keys())
+            .unwrap();
+        assert!(
+            keys.is_empty(),
+            "project group should be removed after CloseProject: {keys:?}"
+        );
     }
 }
