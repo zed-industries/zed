@@ -117,6 +117,27 @@ impl ThreadStore {
     pub fn entry_ids(&self) -> impl Iterator<Item = acp::SessionId> + '_ {
         self.threads.iter().map(|t| t.id.clone())
     }
+
+    /// Returns all entries including sub-threads spawned by orchestrator agents.
+    ///
+    /// Unlike `entries()`, this iterator is **not** filtered by `parent_session_id`.
+    /// Callers (e.g. audit views, Zed for Business team dashboards) can use this to
+    /// reconstruct the full delegation tree for a root session.
+    pub fn entries_with_subthreads(&self) -> impl Iterator<Item = DbThreadMetadata> + '_ {
+        self.all_threads.iter().cloned()
+    }
+
+    /// Returns sub-thread entries whose `parent_session_id` matches `parent`.
+    pub fn child_entries(
+        &self,
+        parent: &acp::SessionId,
+    ) -> impl Iterator<Item = DbThreadMetadata> + '_ {
+        let parent = parent.clone();
+        self.all_threads
+            .iter()
+            .filter(move |t| t.parent_session_id.as_ref() == Some(&parent))
+            .cloned()
+    }
 }
 
 #[cfg(test)]
