@@ -890,7 +890,9 @@ impl EditorElement {
             let gutter_right_padding = editor.gutter_dimensions.right_padding;
             let hitbox = &position_map.gutter_hitbox;
 
-            if event.position.x <= hitbox.bounds.right() - gutter_right_padding {
+            if event.position.x <= hitbox.bounds.right() - gutter_right_padding
+                && editor.collaboration_hub.is_none()
+            {
                 let point_for_position = position_map.point_for_position(event.position);
                 editor.set_gutter_context_menu(
                     point_for_position.previous_valid.row(),
@@ -10759,6 +10761,7 @@ impl Element for EditorElement {
                         && !breakpoint_rows.contains_key(&row)
                         && !run_indicator_rows.contains(&row)
                         && !bookmark_rows.contains(&row)
+                        && (show_bookmarks || show_breakpoints)
                     {
                         let position = snapshot
                             .display_point_to_anchor(DisplayPoint::new(row, 0), Bias::Right);

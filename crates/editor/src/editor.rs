@@ -9464,7 +9464,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> IconButton {
-
         #[derive(Clone, Copy)]
         enum Intent {
             SetBookmark,
