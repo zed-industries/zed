@@ -875,6 +875,20 @@ livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "
 libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
 webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
 
+# DEV ONLY: local wgpu override for damage/present-regions work.
+# Remove this section before opening the Zed PR — the final PR should
+# point at a merged commit on zed-industries/wgpu v29 instead.
+[patch.'https://github.com/zed-industries/wgpu.git']
+wgpu = { git = "https://github.com/loadingalias/wgpu.git", rev = "bb070fec2ca45625855581ba894a6cb0b55e2105" }
+wgpu-core = { git = "https://github.com/loadingalias/wgpu.git", rev = "bb070fec2ca45625855581ba894a6cb0b55e2105" }
+wgpu-hal = { git = "https://github.com/loadingalias/wgpu.git", rev = "bb070fec2ca45625855581ba894a6cb0b55e2105" }
+wgpu-types = { git = "https://github.com/loadingalias/wgpu.git", rev = "bb070fec2ca45625855581ba894a6cb0b55e2105" }
+wgpu-naga-bridge = { git = "https://github.com/loadingalias/wgpu.git", rev = "bb070fec2ca45625855581ba894a6cb0b55e2105" }
+naga = { git = "https://github.com/loadingalias/wgpu.git", rev = "bb070fec2ca45625855581ba894a6cb0b55e2105" }
+wgpu-core-deps-apple = { git = "https://github.com/loadingalias/wgpu.git", rev = "bb070fec2ca45625855581ba894a6cb0b55e2105" }
+wgpu-core-deps-emscripten = { git = "https://github.com/loadingalias/wgpu.git", rev = "bb070fec2ca45625855581ba894a6cb0b55e2105" }
+wgpu-core-deps-windows-linux-android = { git = "https://github.com/loadingalias/wgpu.git", rev = "bb070fec2ca45625855581ba894a6cb0b55e2105" }
+
 [profile.dev]
 split-debuginfo = "unpacked"
 incremental = true

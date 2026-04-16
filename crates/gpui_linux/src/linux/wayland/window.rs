@@ -1356,7 +1356,7 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene, damage: Option<Bounds<DevicePixels>>) {
         let mut state = self.borrow_mut();
 
         if state.renderer.device_lost() {
@@ -1384,7 +1384,7 @@ impl PlatformWindow for WaylandWindow {
             return;
         }
 
-        state.renderer.draw(scene);
+        state.renderer.draw(scene, damage);
     }
 
     fn completed_frame(&self) {

@@ -101,10 +101,26 @@ impl DispatchPhase {
     }
 }
 
+/// Tracks the spatial extent of damage accumulated between frames.
+///
+/// When entities notify the system of changes, damage is accumulated here.
+/// At draw time, the accumulated region is extracted and forwarded to the
+/// platform backend so it can limit compositor-visible damage.
+#[derive(Clone, Copy, Debug)]
+enum DamageRegion {
+    /// No damage has been recorded since the last draw.
+    Empty,
+    /// All recorded damage fits within this bounding rectangle.
+    Partial(Bounds<Pixels>),
+    /// Damage is unknown or covers the full window.
+    Full,
+}
+
 struct WindowInvalidatorInner {
     pub dirty: bool,
     pub draw_phase: DrawPhase,
     pub dirty_views: FxHashSet<EntityId>,
+    pub damage: DamageRegion,
 }
 
 #[derive(Clone)]
@@ -119,6 +135,7 @@ impl WindowInvalidator {
                 dirty: true,
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
+                damage: DamageRegion::Full,
             })),
         }
     }
@@ -126,6 +143,33 @@ impl WindowInvalidator {
     pub fn invalidate_view(&self, entity: EntityId, cx: &mut App) -> bool {
         let mut inner = self.inner.borrow_mut();
         inner.dirty_views.insert(entity);
+        inner.damage = DamageRegion::Full;
+        Self::commit_invalidation(&mut inner, entity, cx)
+    }
+
+    pub fn invalidate_view_with_damage(
+        &self,
+        entity: EntityId,
+        damage_bounds: Bounds<Pixels>,
+        cx: &mut App,
+    ) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        inner.dirty_views.insert(entity);
+        inner.damage = match inner.damage {
+            DamageRegion::Empty => DamageRegion::Partial(damage_bounds),
+            DamageRegion::Partial(existing) => {
+                DamageRegion::Partial(existing.union(&damage_bounds))
+            }
+            DamageRegion::Full => DamageRegion::Full,
+        };
+        Self::commit_invalidation(&mut inner, entity, cx)
+    }
+
+    fn commit_invalidation(
+        inner: &mut WindowInvalidatorInner,
+        entity: EntityId,
+        cx: &mut App,
+    ) -> bool {
         if inner.draw_phase == DrawPhase::None {
             inner.dirty = true;
             cx.push_effect(Effect::Notify { emitter: entity });
@@ -153,6 +197,23 @@ impl WindowInvalidator {
 
     pub fn replace_views(&self, views: FxHashSet<EntityId>) {
         self.inner.borrow_mut().dirty_views = views;
+    }
+
+    /// Extracts the accumulated damage region and resets it to `Empty` for the
+    /// next frame. Returns `None` for full-window damage, `Some(bounds)` for
+    /// partial damage constrained to `bounds`.
+    pub fn take_damage(&self) -> Option<Bounds<Pixels>> {
+        let mut inner = self.inner.borrow_mut();
+        let damage = mem::replace(&mut inner.damage, DamageRegion::Empty);
+        match damage {
+            DamageRegion::Empty => Some(Bounds::default()),
+            DamageRegion::Partial(bounds) => Some(bounds),
+            DamageRegion::Full => None,
+        }
+    }
+
+    pub fn set_full_damage(&self) {
+        self.inner.borrow_mut().damage = DamageRegion::Full;
     }
 
     pub fn not_drawing(&self) -> bool {
@@ -955,6 +1016,7 @@ pub struct Window {
     active: Rc<Cell<bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    pending_damage: Cell<Option<Bounds<DevicePixels>>>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
@@ -1481,6 +1543,7 @@ impl Window {
             active,
             hovered,
             needs_present,
+            pending_damage: Cell::new(None),
             input_rate_tracker,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
@@ -1621,6 +1684,7 @@ impl Window {
         if self.invalidator.not_drawing() {
             self.refreshing = true;
             self.invalidator.set_dirty(true);
+            self.invalidator.set_full_damage();
         }
     }
 
@@ -2275,6 +2339,9 @@ impl Window {
         let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
         self.invalidate_entities();
+        let damage_bounds = self.invalidator.take_damage();
+        self.pending_damage
+            .set(damage_bounds.map(|bounds| bounds.to_device_pixels(self.scale_factor)));
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
@@ -2348,12 +2415,7 @@ impl Window {
         let mut entities_ref = cx.entities.accessed_entities.get_mut();
         let mut entities = mem::take(entities_ref.deref_mut());
         let handle = self.handle;
-        cx.record_entities_accessed(
-            handle,
-            // Try moving window invalidator into the Window
-            self.invalidator.clone(),
-            &entities,
-        );
+        cx.record_entities_accessed(handle, self.invalidator.clone(), &entities);
         let mut entities_ref = cx.entities.accessed_entities.get_mut();
         mem::swap(&mut entities, entities_ref.deref_mut());
     }
@@ -2366,9 +2428,31 @@ impl Window {
         self.invalidator.replace_views(views);
     }
 
+    /// Expand the current frame's pending damage to include additional bounds.
+    ///
+    /// When damage is currently partial (`Some`), unions the new bounds in.
+    /// When damage is already full (`None`), this is a no-op.
+    pub fn widen_pending_damage(&self, bounds: Bounds<Pixels>) {
+        if let Some(existing) = self.pending_damage.get() {
+            let new_device = bounds.to_device_pixels(self.scale_factor);
+            self.pending_damage.set(Some(existing.union(&new_device)));
+        }
+        // If pending_damage is None, damage is already full — nothing to widen.
+    }
+
+    /// Upgrade the current frame's pending damage to full-window damage.
+    ///
+    /// Use this when layout discovers that partial damage is insufficient
+    /// (e.g., autoscroll actually moved the viewport).
+    pub fn set_full_pending_damage(&self) {
+        self.pending_damage.set(None);
+    }
+
     #[profiling::function]
     fn present(&self) {
-        self.platform_window.draw(&self.rendered_frame.scene);
+        let damage = self.pending_damage.get();
+        self.platform_window
+            .draw(&self.rendered_frame.scene, damage);
         self.needs_present.set(false);
         profiling::finish_frame!();
     }
@@ -5762,5 +5846,394 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Entity, TestAppContext, div, px, size};
+
+    fn bounds(x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(x), px(y)), size(px(w), px(h)))
+    }
+
+    struct DamageTestView;
+
+    impl Render for DamageTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    struct DependencyModel;
+
+    struct ObservingDamageView {
+        model: Entity<DependencyModel>,
+        render_count: Rc<Cell<usize>>,
+        _subscription: Subscription,
+    }
+
+    impl ObservingDamageView {
+        fn new(
+            model: Entity<DependencyModel>,
+            render_count: Rc<Cell<usize>>,
+            cx: &mut Context<Self>,
+        ) -> Self {
+            let subscription = cx.observe(&model, |_, _, cx| cx.notify());
+            Self {
+                model,
+                render_count,
+                _subscription: subscription,
+            }
+        }
+    }
+
+    impl Render for ObservingDamageView {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let _ = self.model.read(cx);
+            self.render_count.set(self.render_count.get() + 1);
+            div()
+        }
+    }
+
+    #[test]
+    fn test_invalidator_initial_damage_is_full() {
+        let invalidator = WindowInvalidator::new();
+        let damage = invalidator.take_damage();
+        assert!(damage.is_none(), "new invalidator should have Full damage");
+    }
+
+    #[test]
+    fn test_invalidate_view_sets_full_damage() {
+        let cx = TestAppContext::single();
+        cx.update(|cx| {
+            let invalidator = WindowInvalidator::new();
+            invalidator.take_damage(); // clear initial Full
+
+            let entity_id = EntityId::from(1u64);
+            invalidator.invalidate_view(entity_id, cx);
+
+            let damage = invalidator.take_damage();
+            assert!(damage.is_none(), "invalidate_view should set Full damage");
+        });
+    }
+
+    #[test]
+    fn test_damage_aware_invalidation_sets_partial_from_empty() {
+        let cx = TestAppContext::single();
+        cx.update(|cx| {
+            let invalidator = WindowInvalidator::new();
+            invalidator.take_damage(); // clear initial Full
+
+            let entity_id = EntityId::from(1u64);
+            let region = bounds(10.0, 20.0, 100.0, 50.0);
+            invalidator.invalidate_view_with_damage(entity_id, region, cx);
+
+            let damage = invalidator.take_damage();
+            assert_eq!(damage, Some(region));
+        });
+    }
+
+    #[test]
+    fn test_damage_aware_invalidation_unions_bounds() {
+        let cx = TestAppContext::single();
+        cx.update(|cx| {
+            let invalidator = WindowInvalidator::new();
+            invalidator.take_damage(); // clear initial Full
+
+            let entity_a = EntityId::from(1u64);
+            let entity_b = EntityId::from(2u64);
+            let region_a = bounds(10.0, 10.0, 50.0, 50.0);
+            let region_b = bounds(100.0, 100.0, 50.0, 50.0);
+            invalidator.invalidate_view_with_damage(entity_a, region_a, cx);
+            invalidator.invalidate_view_with_damage(entity_b, region_b, cx);
+
+            let damage = invalidator.take_damage();
+            let expected = region_a.union(&region_b);
+            assert_eq!(damage, Some(expected));
+        });
+    }
+
+    #[test]
+    fn test_plain_notify_collapses_partial_to_full() {
+        let cx = TestAppContext::single();
+        cx.update(|cx| {
+            let invalidator = WindowInvalidator::new();
+            invalidator.take_damage(); // clear initial Full
+
+            let entity_a = EntityId::from(1u64);
+            let entity_b = EntityId::from(2u64);
+            let region = bounds(10.0, 20.0, 100.0, 50.0);
+            invalidator.invalidate_view_with_damage(entity_a, region, cx);
+            invalidator.invalidate_view(entity_b, cx);
+
+            let damage = invalidator.take_damage();
+            assert!(
+                damage.is_none(),
+                "plain invalidate_view after partial should collapse to Full"
+            );
+        });
+    }
+
+    #[test]
+    fn test_full_damage_not_overridden_by_partial() {
+        let cx = TestAppContext::single();
+        cx.update(|cx| {
+            let invalidator = WindowInvalidator::new();
+            invalidator.take_damage(); // clear initial Full
+
+            let entity_a = EntityId::from(1u64);
+            let entity_b = EntityId::from(2u64);
+            invalidator.invalidate_view(entity_a, cx);
+
+            let region = bounds(10.0, 20.0, 100.0, 50.0);
+            invalidator.invalidate_view_with_damage(entity_b, region, cx);
+
+            let damage = invalidator.take_damage();
+            assert!(
+                damage.is_none(),
+                "damage-aware notify cannot narrow Full back to Partial"
+            );
+        });
+    }
+
+    #[test]
+    fn test_take_damage_resets_to_empty() {
+        let cx = TestAppContext::single();
+        cx.update(|cx| {
+            let invalidator = WindowInvalidator::new();
+            invalidator.take_damage(); // clear initial Full
+
+            let entity_id = EntityId::from(1u64);
+            let region = bounds(10.0, 20.0, 100.0, 50.0);
+            invalidator.invalidate_view_with_damage(entity_id, region, cx);
+            invalidator.take_damage(); // consume
+
+            // Second take should return Empty (zero-sized bounds)
+            let damage = invalidator.take_damage();
+            assert_eq!(
+                damage,
+                Some(Bounds::default()),
+                "after take_damage, state should be Empty"
+            );
+        });
+    }
+
+    #[crate::test]
+    fn test_notify_with_damage_sets_partial_pending_damage(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_window, _cx| DamageTestView);
+        let entity_id = window.root(cx).unwrap().entity_id();
+
+        // The initial draw consumes the Full damage and registers the entity
+        // with the window invalidator. Now trigger a damage-aware notify
+        // followed by a redraw to verify pending_damage is set to partial.
+        let region = bounds(10.0, 20.0, 100.0, 50.0);
+        cx.update(|cx| cx.notify_with_damage(entity_id, region));
+
+        // After flush_effects draws the window, pending_damage should
+        // have been set during draw(). Read it from the window.
+        window
+            .update(cx, |_view, window, _cx| {
+                let damage = window.pending_damage.get();
+                let expected = region.to_device_pixels(window.scale_factor);
+                assert_eq!(
+                    damage,
+                    Some(expected),
+                    "pending_damage should match the notified region in device pixels"
+                );
+            })
+            .unwrap();
+    }
+
+    #[crate::test]
+    fn test_plain_notify_sets_full_pending_damage(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_window, _cx| DamageTestView);
+        let entity_id = window.root(cx).unwrap().entity_id();
+
+        cx.update(|cx| cx.notify(entity_id));
+
+        window
+            .update(cx, |_view, window, _cx| {
+                let damage = window.pending_damage.get();
+                assert_eq!(
+                    damage, None,
+                    "pending_damage should be None (full) after plain notify"
+                );
+            })
+            .unwrap();
+    }
+
+    #[crate::test]
+    fn test_mixed_notify_sets_full_pending_damage(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_window, _cx| DamageTestView);
+        let entity_id = window.root(cx).unwrap().entity_id();
+
+        cx.update(|cx| {
+            cx.notify_with_damage(entity_id, bounds(10.0, 20.0, 50.0, 30.0));
+            cx.notify(entity_id);
+        });
+
+        window
+            .update(cx, |_view, window, _cx| {
+                let damage = window.pending_damage.get();
+                assert_eq!(
+                    damage, None,
+                    "pending_damage should be None (full) when partial + full are mixed"
+                );
+            })
+            .unwrap();
+    }
+
+    #[crate::test]
+    fn test_widen_pending_damage_unions_with_partial(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_window, _cx| DamageTestView);
+        let entity_id = window.root(cx).unwrap().entity_id();
+
+        let region = bounds(10.0, 20.0, 30.0, 40.0);
+        cx.update(|cx| cx.notify_with_damage(entity_id, region));
+
+        window
+            .update(cx, |_view, window, _cx| {
+                let before = window.pending_damage.get();
+                assert!(before.is_some(), "should start as partial");
+
+                let widen_region = bounds(100.0, 100.0, 50.0, 50.0);
+                window.widen_pending_damage(widen_region);
+
+                let after = window.pending_damage.get();
+                let expected = region
+                    .union(&widen_region)
+                    .to_device_pixels(window.scale_factor);
+                assert_eq!(
+                    after,
+                    Some(expected),
+                    "widened bounds should be the exact union of both regions"
+                );
+            })
+            .unwrap();
+    }
+
+    #[crate::test]
+    fn test_widen_pending_damage_noop_when_full(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_window, _cx| DamageTestView);
+        let entity_id = window.root(cx).unwrap().entity_id();
+
+        cx.update(|cx| cx.notify(entity_id));
+
+        window
+            .update(cx, |_view, window, _cx| {
+                assert_eq!(window.pending_damage.get(), None, "should be full (None)");
+
+                window.widen_pending_damage(bounds(10.0, 10.0, 50.0, 50.0));
+
+                assert_eq!(
+                    window.pending_damage.get(),
+                    None,
+                    "should remain full after widen"
+                );
+            })
+            .unwrap();
+    }
+
+    #[crate::test]
+    fn test_set_full_pending_damage_upgrades_partial(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_window, _cx| DamageTestView);
+        let entity_id = window.root(cx).unwrap().entity_id();
+
+        let region = bounds(10.0, 20.0, 100.0, 50.0);
+        cx.update(|cx| cx.notify_with_damage(entity_id, region));
+
+        window
+            .update(cx, |_view, window, _cx| {
+                assert!(
+                    window.pending_damage.get().is_some(),
+                    "should be partial before"
+                );
+                window.set_full_pending_damage();
+                assert_eq!(
+                    window.pending_damage.get(),
+                    None,
+                    "should be full after set_full_pending_damage"
+                );
+            })
+            .unwrap();
+    }
+
+    #[crate::test]
+    fn test_present_keeps_pending_damage_for_presentation_only_frames(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_window, _cx| DamageTestView);
+        let entity_id = window.root(cx).unwrap().entity_id();
+
+        let region = bounds(10.0, 20.0, 100.0, 50.0);
+        cx.update(|cx| cx.notify_with_damage(entity_id, region));
+
+        window
+            .update(cx, |_view, window, _cx| {
+                let expected = Some(region.to_device_pixels(window.scale_factor));
+                assert_eq!(window.pending_damage.get(), expected);
+
+                window.present();
+
+                assert_eq!(
+                    window.pending_damage.get(),
+                    expected,
+                    "present-only frames should retain the last damage region"
+                );
+            })
+            .unwrap();
+    }
+
+    #[crate::test]
+    fn test_observed_non_view_notify_reaches_the_view(cx: &mut TestAppContext) {
+        let render_count = Rc::new(Cell::new(0));
+        let model = cx.update(|cx| cx.new(|_| DependencyModel));
+        let initial_renders = render_count.clone();
+        let _window = cx.add_window(|_window, cx| {
+            ObservingDamageView::new(model.clone(), initial_renders.clone(), cx)
+        });
+
+        assert_eq!(
+            render_count.get(),
+            1,
+            "initial window creation should draw once"
+        );
+
+        model.update(cx, |_model, cx| cx.notify());
+
+        assert_eq!(
+            render_count.get(),
+            2,
+            "observed non-view notifications should still trigger a redraw through the view"
+        );
+    }
+
+    #[crate::test]
+    fn test_refresh_sets_full_damage(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_window, _cx| DamageTestView);
+        let entity_id = window.root(cx).unwrap().entity_id();
+
+        // First, set partial damage so we can verify refresh upgrades it
+        let region = bounds(10.0, 20.0, 100.0, 50.0);
+        cx.update(|cx| cx.notify_with_damage(entity_id, region));
+
+        // Now call refresh, which should set damage to Full
+        window
+            .update(cx, |_view, window, _cx| {
+                window.refresh();
+            })
+            .unwrap();
+
+        // Flush effects to draw the window
+        cx.run_until_parked();
+
+        window
+            .update(cx, |_view, window, _cx| {
+                // After refresh + draw, pending_damage should have been set from Full
+                // damage (None), not the earlier partial damage
+                let damage = window.pending_damage.get();
+                assert_eq!(damage, None, "refresh should produce full damage");
+            })
+            .unwrap();
     }
 }

@@ -133,6 +133,11 @@ pub(crate) struct MetalRenderer {
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
     path_sample_count: u32,
+    /// Persistent render target for damage-aware rendering. Metal drawables come
+    /// from a triple-buffered pool, so their previous content is 2-3 frames stale.
+    /// This texture always holds the latest complete frame, enabling partial updates
+    /// via LoadAction::Load + scissor rect.
+    persistent_texture: Option<metal::Texture>,
 }
 
 #[repr(C)]
@@ -347,6 +352,7 @@ impl MetalRenderer {
             path_intermediate_texture: None,
             path_intermediate_msaa_texture: None,
             path_sample_count: PATH_SAMPLE_COUNT,
+            persistent_texture: None,
         }
     }
 
@@ -386,6 +392,32 @@ impl MetalRenderer {
             }
         }
         self.update_path_intermediate_textures(size);
+        // Invalidate persistent texture so it is recreated at the new size.
+        self.persistent_texture = None;
+    }
+
+    /// Ensures the persistent render target exists and matches the viewport size.
+    /// Returns `true` if the texture was just created (caller must do a full render).
+    fn ensure_persistent_texture(&mut self, viewport_size: Size<DevicePixels>) -> bool {
+        let needs_recreate = match &self.persistent_texture {
+            Some(tex) => {
+                tex.width() != i32::from(viewport_size.width) as u64
+                    || tex.height() != i32::from(viewport_size.height) as u64
+            }
+            None => true,
+        };
+        if needs_recreate {
+            let desc = metal::TextureDescriptor::new();
+            desc.set_width(i32::from(viewport_size.width) as u64);
+            desc.set_height(i32::from(viewport_size.height) as u64);
+            desc.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+            desc.set_storage_mode(metal::MTLStorageMode::Private);
+            desc.set_usage(
+                metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+            );
+            self.persistent_texture = Some(self.device.new_texture(&desc));
+        }
+        needs_recreate
     }
 
     fn update_path_intermediate_textures(&mut self, size: Size<DevicePixels>) {
@@ -437,7 +469,7 @@ impl MetalRenderer {
         // nothing to do
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    pub fn draw(&mut self, scene: &Scene, damage: Option<Bounds<DevicePixels>>) {
         let layer = match &self.layer {
             Some(l) => l.clone(),
             None => {
@@ -462,17 +494,72 @@ impl MetalRenderer {
             return;
         };
 
+        // Ensure persistent texture exists; force full render if just created.
+        let texture_is_new = self.ensure_persistent_texture(viewport_size);
+
+        // Compute scissor for partial damage. Skip scissor if the persistent texture
+        // was just created (its content is undefined, so we must do a full render).
+        let scissor = if texture_is_new {
+            None
+        } else {
+            damage.map(|bounds| {
+                let vp_w = i32::from(viewport_size.width) as u64;
+                let vp_h = i32::from(viewport_size.height) as u64;
+                let x = (bounds.origin.x.0.max(0) as u64).min(vp_w);
+                let y = (bounds.origin.y.0.max(0) as u64).min(vp_h);
+                metal::MTLScissorRect {
+                    x,
+                    y,
+                    width: (bounds.size.width.0.max(0) as u64).min(vp_w.saturating_sub(x)),
+                    height: (bounds.size.height.0.max(0) as u64).min(vp_h.saturating_sub(y)),
+                }
+            })
+        };
+
         loop {
             let mut instance_buffer = self
                 .instance_buffer_pool
                 .lock()
                 .acquire(&self.device, self.is_unified_memory);
 
-            let command_buffer =
-                self.draw_primitives(scene, &mut instance_buffer, drawable, viewport_size);
+            // Render to persistent texture (not the drawable). On partial damage,
+            // LoadAction::Load preserves previous content and the scissor rect
+            // limits fragment work to the damaged region.
+            let Some(persistent_texture) = self.persistent_texture.take() else {
+                log::error!("persistent texture missing after creation");
+                return;
+            };
+            let command_buffer = self.draw_primitives_to_texture(
+                scene,
+                &mut instance_buffer,
+                &persistent_texture,
+                viewport_size,
+                scissor,
+            );
 
             match command_buffer {
                 Ok(command_buffer) => {
+                    // Blit the persistent texture to the drawable.
+                    let blit = command_buffer.new_blit_command_encoder();
+                    let origin = metal::MTLOrigin { x: 0, y: 0, z: 0 };
+                    let tex_size = metal::MTLSize {
+                        width: i32::from(viewport_size.width) as u64,
+                        height: i32::from(viewport_size.height) as u64,
+                        depth: 1,
+                    };
+                    blit.copy_from_texture(
+                        &persistent_texture,
+                        0,
+                        0,
+                        origin,
+                        tex_size,
+                        drawable.texture(),
+                        0,
+                        0,
+                        origin,
+                    );
+                    blit.end_encoding();
+
                     let instance_buffer_pool = self.instance_buffer_pool.clone();
                     let instance_buffer = Cell::new(Some(instance_buffer));
                     let block = ConcreteBlock::new(move |_| {
@@ -491,9 +578,11 @@ impl MetalRenderer {
                         command_buffer.present_drawable(drawable);
                         command_buffer.commit();
                     }
+                    self.persistent_texture = Some(persistent_texture);
                     return;
                 }
                 Err(err) => {
+                    self.persistent_texture = Some(persistent_texture);
                     log::error!(
                         "failed to render: {}. retrying with larger instance buffer size",
                         err
@@ -647,8 +736,13 @@ impl MetalRenderer {
                 .lock()
                 .acquire(&self.device, self.is_unified_memory);
 
-            let command_buffer =
-                self.draw_primitives_to_texture(scene, &mut instance_buffer, &target_texture, size);
+            let command_buffer = self.draw_primitives_to_texture(
+                scene,
+                &mut instance_buffer,
+                &target_texture,
+                size,
+                None,
+            );
 
             match command_buffer {
                 Ok(command_buffer) => {
@@ -729,6 +823,7 @@ impl MetalRenderer {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn draw_primitives(
         &mut self,
         scene: &Scene,
@@ -736,7 +831,13 @@ impl MetalRenderer {
         drawable: &metal::MetalDrawableRef,
         viewport_size: Size<DevicePixels>,
     ) -> Result<metal::CommandBuffer> {
-        self.draw_primitives_to_texture(scene, instance_buffer, drawable.texture(), viewport_size)
+        self.draw_primitives_to_texture(
+            scene,
+            instance_buffer,
+            drawable.texture(),
+            viewport_size,
+            None,
+        )
     }
 
     fn draw_primitives_to_texture(
@@ -745,6 +846,7 @@ impl MetalRenderer {
         instance_buffer: &mut InstanceBuffer,
         texture: &metal::TextureRef,
         viewport_size: Size<DevicePixels>,
+        scissor: Option<metal::MTLScissorRect>,
     ) -> Result<metal::CommandBuffer> {
         let command_queue = self.command_queue.clone();
         let command_buffer = command_queue.new_command_buffer();
@@ -756,10 +858,20 @@ impl MetalRenderer {
             texture,
             viewport_size,
             |color_attachment| {
-                color_attachment.set_load_action(metal::MTLLoadAction::Clear);
-                color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., alpha));
+                if scissor.is_some() {
+                    // Partial damage: preserve existing content in the persistent
+                    // texture; the scissor rect limits fragment work to the changed
+                    // region.
+                    color_attachment.set_load_action(metal::MTLLoadAction::Load);
+                } else {
+                    color_attachment.set_load_action(metal::MTLLoadAction::Clear);
+                    color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., alpha));
+                }
             },
         );
+        if let Some(rect) = scissor {
+            command_encoder.set_scissor_rect(rect);
+        }
 
         for batch in scene.batches() {
             let ok = match batch {
@@ -797,6 +909,9 @@ impl MetalRenderer {
                             color_attachment.set_load_action(metal::MTLLoadAction::Load);
                         },
                     );
+                    if let Some(rect) = scissor {
+                        command_encoder.set_scissor_rect(rect);
+                    }
 
                     if did_draw {
                         self.draw_paths_from_intermediate(

@@ -1261,6 +1261,9 @@ pub struct Editor {
     next_color_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
+    cursor_damage_bounds: Option<gpui::Bounds<Pixels>>,
+    selection_damage_bounds: Option<gpui::Bounds<Pixels>>,
+    hover_damage_bounds: Option<gpui::Bounds<Pixels>>,
     gutter_dimensions: GutterDimensions,
     style: Option<EditorStyle>,
     text_style_refinement: Option<TextStyleRefinement>,
@@ -2511,6 +2514,9 @@ impl Editor {
             inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
+            cursor_damage_bounds: None,
+            selection_damage_bounds: None,
+            hover_damage_bounds: None,
             last_bounds: None,
             last_position_map: None,
             expect_bounds_change: None,
@@ -2558,7 +2564,9 @@ impl Editor {
                         cx.observe(&multi_buffer, Self::on_buffer_changed),
                         cx.subscribe_in(&multi_buffer, window, Self::on_buffer_event),
                         cx.observe_in(&display_map, window, Self::on_display_map_changed),
-                        cx.observe(&blink_manager, |_, _, cx| cx.notify()),
+                        cx.observe(&blink_manager, |editor, _, cx| {
+                            editor.notify_cursor_damage(cx);
+                        }),
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
                         cx.observe_global_in::<GlobalTheme>(window, Self::theme_changed),
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
@@ -3650,6 +3658,27 @@ impl Editor {
         self.use_modal_editing
     }
 
+    fn notify_cursor_damage(&self, cx: &mut Context<Self>) {
+        if let Some(bounds) = self.cursor_damage_bounds.or(self.last_bounds) {
+            cx.notify_with_damage(bounds);
+        } else {
+            cx.notify();
+        }
+    }
+
+    /// Compute the union of cursor, selection, and hover damage bounds from
+    /// the previous frame. Returns `None` if none are known.
+    fn combined_damage_bounds(&self) -> Option<gpui::Bounds<Pixels>> {
+        [
+            self.cursor_damage_bounds,
+            self.selection_damage_bounds,
+            self.hover_damage_bounds,
+        ]
+        .into_iter()
+        .flatten()
+        .reduce(|acc, b| acc.union(&b))
+    }
+
     fn selections_did_change(
         &mut self,
         local: bool,
@@ -3857,7 +3886,13 @@ impl Editor {
             }
         }
 
-        cx.notify();
+        // Notify with old cursor/selection/hover bounds as damage. New
+        // positions will be added during layout via widen_pending_damage.
+        if let Some(bounds) = self.combined_damage_bounds() {
+            cx.notify_with_damage(bounds);
+        } else {
+            cx.notify();
+        }
     }
 
     fn folds_did_change(&mut self, cx: &mut Context<Self>) {
@@ -24368,7 +24403,11 @@ impl Editor {
     }
 
     fn on_buffer_changed(&mut self, _: Entity<MultiBuffer>, cx: &mut Context<Self>) {
-        cx.notify();
+        if let Some(bounds) = self.last_bounds {
+            cx.notify_with_damage(bounds);
+        } else {
+            cx.notify();
+        }
     }
 
     fn on_debug_session_event(
@@ -24670,7 +24709,11 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        cx.notify();
+        if let Some(bounds) = self.last_bounds {
+            cx.notify_with_damage(bounds);
+        } else {
+            cx.notify();
+        }
     }
 
     fn fetch_accent_data(&self, cx: &App) -> Option<AccentData> {

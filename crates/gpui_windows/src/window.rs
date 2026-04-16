@@ -921,7 +921,7 @@ impl PlatformWindow for WindowsWindow {
             .set(Some(callback));
     }
 
-    fn draw(&self, scene: &Scene) {
+    fn draw(&self, scene: &Scene, _damage: Option<Bounds<DevicePixels>>) {
         self.state
             .renderer
             .borrow_mut()

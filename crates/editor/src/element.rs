@@ -1962,6 +1962,66 @@ impl EditorElement {
                 }
             }
 
+            let prev_cursor_bounds = editor.cursor_damage_bounds;
+
+            let new_cursor_bounds = cursors.iter().fold(None, |acc, cursor| {
+                let rect = cursor.bounding_rect(content_origin);
+                Some(acc.map_or(rect, |existing: gpui::Bounds<Pixels>| existing.union(&rect)))
+            });
+            if let Some(bounds) = new_cursor_bounds {
+                editor.cursor_damage_bounds = Some(bounds);
+            }
+
+            // Compute the bounding rect of all visible selection backgrounds.
+            // Uses the full content width (conservative) since selections can
+            // span arbitrary columns.
+            let prev_selection_bounds = editor.selection_damage_bounds;
+
+            let new_selection_bounds = selections.iter().flat_map(|(_, sels)| sels).fold(
+                None,
+                |acc: Option<gpui::Bounds<Pixels>>, selection| {
+                    if selection.range.start == selection.range.end {
+                        return acc;
+                    }
+                    let sel_start_row = selection.range.start.row();
+                    let sel_end_row = if selection.range.end.column() == 0 {
+                        selection.range.end.row()
+                    } else {
+                        selection.range.end.row().next_row()
+                    };
+                    let start_y = content_origin.y
+                        + Pixels::from(
+                            (sel_start_row.as_f64() - scroll_position.y)
+                                * ScrollOffset::from(line_height),
+                        );
+                    let end_y = content_origin.y
+                        + Pixels::from(
+                            (sel_end_row.as_f64() - scroll_position.y)
+                                * ScrollOffset::from(line_height),
+                        );
+                    let rect = gpui::Bounds::from_corners(
+                        gpui::point(content_origin.x, start_y),
+                        gpui::point(content_origin.x + text_hitbox.bounds.size.width, end_y),
+                    );
+                    Some(acc.map_or(rect, |existing| existing.union(&rect)))
+                },
+            );
+            editor.selection_damage_bounds = new_selection_bounds;
+
+            // Widen the frame's pending damage to include new cursor and selection
+            // positions when they differ from the previous frame. Old positions
+            // were submitted during `selections_did_change`.
+            if let Some(new) = new_cursor_bounds {
+                if prev_cursor_bounds.as_ref() != Some(&new) {
+                    window.widen_pending_damage(new);
+                }
+            }
+            if let Some(new) = new_selection_bounds {
+                if prev_selection_bounds.as_ref() != Some(&new) {
+                    window.widen_pending_damage(new);
+                }
+            }
+
             cursors
         });
 
@@ -5383,6 +5443,9 @@ impl EditorElement {
             )
         });
         let Some((popover_position, hover_popovers)) = hover_popovers else {
+            self.editor.update(cx, |editor, _| {
+                editor.hover_damage_bounds = None;
+            });
             return;
         };
 
@@ -5421,6 +5484,27 @@ impl EditorElement {
                 horizontal_offset,
             });
         }
+
+        // Compute a conservative bounding rect covering all possible popover
+        // placements (above, below, or beside the hovered point). This is
+        // stored as damage bounds so hiding the hover can use partial damage.
+        let max_popover_width = measured_hover_popovers
+            .iter()
+            .map(|p| p.size.width)
+            .fold(Pixels::ZERO, |a, b| a.max(b));
+        let hover_bounds = gpui::Bounds::from_corners(
+            gpui::point(
+                hovered_point.x - max_popover_width,
+                hovered_point.y - overall_height - HOVER_POPOVER_GAP,
+            ),
+            gpui::point(
+                hovered_point.x + max_popover_width,
+                hovered_point.y + line_height + overall_height + HOVER_POPOVER_GAP,
+            ),
+        );
+        self.editor.update(cx, |editor, _| {
+            editor.hover_damage_bounds = Some(hover_bounds);
+        });
 
         fn draw_occluder(
             width: Pixels,
@@ -9827,6 +9911,9 @@ impl Element for EditorElement {
                             );
                         if was_scrolled.0 {
                             snapshot = editor.snapshot(window, cx);
+                            // Scrolling invalidates the entire viewport — partial
+                            // damage from cursor movement is no longer sufficient.
+                            window.set_full_pending_damage();
                         }
                         (
                             autoscroll_request,
@@ -10461,6 +10548,7 @@ impl Element for EditorElement {
                             )
                         {
                             scroll_position = new_scroll_position;
+                            window.set_full_pending_damage();
                         }
                     });
 

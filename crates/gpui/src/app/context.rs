@@ -1,7 +1,8 @@
 use crate::{
-    AnyView, AnyWindowHandle, AppContext, AsyncApp, DispatchPhase, Effect, EntityId, EventEmitter,
-    FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Priority, Reservation,
-    SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
+    AnyView, AnyWindowHandle, AppContext, AsyncApp, Bounds, DispatchPhase, Effect, EntityId,
+    EventEmitter, FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Pixels,
+    Priority, Reservation, SubscriberSet, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
+    WindowHandle,
 };
 use anyhow::Result;
 use futures::FutureExt;
@@ -228,6 +229,16 @@ impl<'a, T: 'static> Context<'a, T> {
     /// Tell GPUI that this entity has changed and observers of it should be notified.
     pub fn notify(&mut self) {
         self.app.notify(self.entity_state.entity_id);
+    }
+
+    /// Tell GPUI that this entity has changed within the given damage bounds.
+    ///
+    /// This is the damage-aware variant of [`notify`](Self::notify). The bounds
+    /// describe the screen region that changed, allowing GPUI to limit
+    /// compositor-visible damage. See [`App::notify_with_damage`] for semantics.
+    pub fn notify_with_damage(&mut self, damage_bounds: Bounds<Pixels>) {
+        self.app
+            .notify_with_damage(self.entity_state.entity_id, damage_bounds);
     }
 
     /// Spawn the future returned by the given function.

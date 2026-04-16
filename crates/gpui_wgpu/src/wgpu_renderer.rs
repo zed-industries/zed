@@ -149,6 +149,27 @@ pub struct WgpuRenderer {
 }
 
 impl WgpuRenderer {
+    fn clamp_damage_rect(&self, bounds: Bounds<DevicePixels>) -> wgpu::DamageRect {
+        let surface_width = self.surface_config.width as i64;
+        let surface_height = self.surface_config.height as i64;
+        let origin_x = i64::from(bounds.origin.x.0);
+        let origin_y = i64::from(bounds.origin.y.0);
+        let end_x = origin_x.saturating_add(i64::from(bounds.size.width.0.max(0)));
+        let end_y = origin_y.saturating_add(i64::from(bounds.size.height.0.max(0)));
+
+        let clamped_origin_x = origin_x.clamp(0, surface_width);
+        let clamped_origin_y = origin_y.clamp(0, surface_height);
+        let clamped_end_x = end_x.clamp(0, surface_width);
+        let clamped_end_y = end_y.clamp(0, surface_height);
+
+        wgpu::DamageRect {
+            x: clamped_origin_x as i32,
+            y: clamped_origin_y as i32,
+            width: clamped_end_x.saturating_sub(clamped_origin_x) as u32,
+            height: clamped_end_y.saturating_sub(clamped_origin_y) as u32,
+        }
+    }
+
     fn resources(&self) -> &WgpuResources {
         self.resources
             .as_ref()
@@ -1064,7 +1085,7 @@ impl WgpuRenderer {
         self.max_texture_size
     }
 
-    pub fn draw(&mut self, scene: &Scene) {
+    pub fn draw(&mut self, scene: &Scene, damage: Option<Bounds<DevicePixels>>) {
         // Bail out early if the surface has been unconfigured (e.g. during
         // Android background/rotation transitions).  Attempting to acquire
         // a texture from an unconfigured surface can block indefinitely on
@@ -1072,6 +1093,15 @@ impl WgpuRenderer {
         if !self.surface_configured {
             return;
         }
+
+        let damage_rect;
+        let damage_rects: &[wgpu::DamageRect] = match damage {
+            Some(bounds) => {
+                damage_rect = self.clamp_damage_rect(bounds);
+                std::slice::from_ref(&damage_rect)
+            }
+            None => &[],
+        };
 
         let last_error = self.last_error.lock().unwrap().take();
         if let Some(error) = last_error {
@@ -1294,7 +1324,7 @@ impl WgpuRenderer {
                         "instance buffer size grew too large: {}",
                         self.instance_buffer_capacity
                     );
-                    frame.present();
+                    frame.present_with_damage(&damage_rects);
                     return;
                 }
                 self.grow_instance_buffer();
@@ -1304,7 +1334,7 @@ impl WgpuRenderer {
             self.resources()
                 .queue
                 .submit(std::iter::once(encoder.finish()));
-            frame.present();
+            frame.present_with_damage(&damage_rects);
             return;
         }
     }

@@ -259,7 +259,11 @@ pub fn hide_hover(editor: &mut Editor, cx: &mut Context<Editor>) -> bool {
     editor.clear_background_highlights(HighlightKey::HoverState, cx);
 
     if did_hide {
-        cx.notify();
+        if let Some(bounds) = editor.hover_damage_bounds.take() {
+            cx.notify_with_damage(bounds);
+        } else {
+            cx.notify();
+        }
     }
 
     did_hide

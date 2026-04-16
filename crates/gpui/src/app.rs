@@ -2277,6 +2277,19 @@ impl App {
 
     /// Tell GPUI that an entity has changed and observers of it should be notified.
     pub fn notify(&mut self, entity_id: EntityId) {
+        self.notify_inner(entity_id, None);
+    }
+
+    /// Tell GPUI that an entity has changed within the given damage bounds.
+    ///
+    /// This provides a spatial hint so GPUI can limit compositor-visible damage
+    /// to the affected region. Multiple calls in the same frame union their
+    /// bounds.
+    pub fn notify_with_damage(&mut self, entity_id: EntityId, damage_bounds: Bounds<Pixels>) {
+        self.notify_inner(entity_id, Some(damage_bounds));
+    }
+
+    fn notify_inner(&mut self, entity_id: EntityId, damage: Option<Bounds<Pixels>>) {
         let window_invalidators = mem::take(
             self.window_invalidators_by_entity
                 .entry(entity_id)
@@ -2290,7 +2303,14 @@ impl App {
             }
         } else {
             for invalidator in window_invalidators.values() {
-                invalidator.invalidate_view(entity_id, self);
+                match damage {
+                    Some(bounds) => {
+                        invalidator.invalidate_view_with_damage(entity_id, bounds, self);
+                    }
+                    None => {
+                        invalidator.invalidate_view(entity_id, self);
+                    }
+                }
             }
         }
 
