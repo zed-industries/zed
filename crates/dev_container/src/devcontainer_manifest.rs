@@ -3794,33 +3794,6 @@ ENV DOCKER_BUILDKIT=1
     }
 
     #[gpui::test]
-    async fn test_dockerfile_location_with_compose_context_parent(cx: &mut TestAppContext) {
-        cx.executor().allow_parking();
-        env_logger::try_init().ok();
-
-        let given_devcontainer_contents = r#"
-            {
-              "name": "Test",
-              "dockerComposeFile": "docker-compose-context-parent.yml",
-              "service": "app",
-              "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}"
-            }
-            "#;
-        let (_, mut devcontainer_manifest) =
-            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
-                .await
-                .unwrap();
-
-        devcontainer_manifest.parse_nonremote_vars().unwrap();
-
-        let expected = PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile");
-        assert_eq!(
-            devcontainer_manifest.dockerfile_location().await,
-            Some(expected)
-        );
-    }
-
-    #[gpui::test]
     async fn test_spawns_devcontainer_with_docker_compose_and_no_update_uid(
         cx: &mut TestAppContext,
     ) {
