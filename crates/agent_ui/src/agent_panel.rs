@@ -3835,34 +3835,9 @@ impl AgentPanel {
                                 |label, delta| label.alpha(delta),
                             )
                             .into_any_element()
-                    } else if title_generation_failed {
-                        h_flex()
-                            .w_full()
-                            .gap_1()
-                            .items_center()
-                            .child(
-                                Label::new(conversation_view.read(cx).title(cx))
-                                    .color(Color::Muted)
-                                    .truncate(),
-                            )
-                            .child(
-                                IconButton::new("retry-thread-title", IconName::RotateCw)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Retry generating thread title"))
-                                    .on_click({
-                                        let conversation_view = conversation_view.clone();
-                                        move |_event, _window, cx| {
-                                            Self::handle_regenerate_thread_title(
-                                                conversation_view.clone(),
-                                                cx,
-                                            );
-                                        }
-                                    }),
-                            )
-                            .into_any_element()
                     } else {
-                        div()
-                            .w_full()
+                        let editable_title = div()
+                            .flex_1()
                             .on_action({
                                 let conversation_view = conversation_view.downgrade();
                                 move |_: &menu::Confirm, window, cx| {
@@ -3879,8 +3854,33 @@ impl AgentPanel {
                                     }
                                 }
                             })
-                            .child(title_editor)
-                            .into_any_element()
+                            .child(title_editor);
+
+                        if title_generation_failed {
+                            h_flex()
+                                .w_full()
+                                .gap_1()
+                                .items_center()
+                                .child(editable_title)
+                                .child(
+                                    IconButton::new("retry-thread-title", IconName::XCircle)
+                                        .icon_color(Color::Error)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Title generation failed. Retry"))
+                                        .on_click({
+                                            let conversation_view = conversation_view.clone();
+                                            move |_event, _window, cx| {
+                                                Self::handle_regenerate_thread_title(
+                                                    conversation_view.clone(),
+                                                    cx,
+                                                );
+                                            }
+                                        }),
+                                )
+                                .into_any_element()
+                        } else {
+                            editable_title.w_full().into_any_element()
+                        }
                     }
                 } else {
                     Label::new(conversation_view.read(cx).title(cx))

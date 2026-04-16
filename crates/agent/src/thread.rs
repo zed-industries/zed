@@ -2672,21 +2672,21 @@ impl Thread {
                 anyhow::Ok(())
             };
 
-            if generate
+            let succeeded = generate
                 .await
                 .context("failed to generate thread title")
                 .log_err()
-                .is_some()
-            {
-                _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
-            } else {
-                _ = this.update(cx, |this, cx| {
+                .is_some();
+            _ = this.update(cx, |this, cx| {
+                this.pending_title_generation = None;
+                if succeeded {
+                    this.set_title(title.into(), cx);
+                } else {
                     this.title_generation_failed = true;
                     cx.emit(TitleUpdated);
                     cx.notify();
-                });
-            }
-            _ = this.update(cx, |this, _| this.pending_title_generation = None);
+                }
+            });
         }));
     }
 
