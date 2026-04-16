@@ -1523,26 +1523,24 @@ impl GitRepository for RealGitRepository {
                     .await
                     .context("failed to run git config --get commit.template")?;
 
-                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !output.status.success() || path.is_empty() {
+                let raw_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !output.status.success() || raw_path.is_empty() {
                     return Ok(None);
                 }
 
-                let mut path_buf = PathBuf::from(&path);
-                if let Some(path_str) = path.strip_prefix("~/") {
-                    path_buf = paths::home_dir().join(path_str);
-                } else if path_buf.is_relative() {
-                    path_buf = working_directory.join(path_buf);
-                }
+                let path = PathBuf::from(&raw_path);
+                let path = if let Some(path) = raw_path.strip_prefix("~/") {
+                    paths::home_dir().join(path)
+                } else if path.is_relative() {
+                    working_directory.join(path)
+                } else {
+                    path
+                };
 
-                let template = match std::fs::read_to_string(&path_buf) {
+                let template = match std::fs::read_to_string(&path) {
                     Ok(s) if !s.trim().is_empty() => Some(s),
                     Err(err) => {
-                        log::warn!(
-                            "failed to read commit template {}: {}",
-                            path_buf.display(),
-                            err
-                        );
+                        log::warn!("failed to read commit template {}: {}", path.display(), err);
                         None
                     }
                     _ => None,
