@@ -10300,3 +10300,274 @@ fn test_worktree_info_missing_branch_returns_none() {
     assert_eq!(infos[0].branch_name, None);
     assert_eq!(infos[0].name, SharedString::from("myapp"));
 }
+
+// TODO: These remote archive tests are currently ignored because the mock
+// remote server doesn't support the full agent/thread loading flow that
+// archive_and_activate triggers as a fallback. The core remote git RPC
+// plumbing is tested in remote_server::remote_editing_tests::
+// test_remote_archive_git_operations_are_supported.
+#[gpui::test]
+async fn test_remote_archive_thread_with_active_connection(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    // When a remote project has an active SSH connection and the user
+    // archives a thread, the thread metadata should be marked as archived.
+    init_test(cx);
+
+    cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+
+    let app_state = cx.update(|cx| {
+        let app_state = workspace::AppState::test(cx);
+        workspace::init(app_state.clone(), cx);
+        app_state
+    });
+
+    server_cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+
+    let server_fs = FakeFs::new(server_cx.executor());
+    server_fs
+        .insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" },
+            }),
+        )
+        .await;
+    server_fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+    let (opts, server_session, _) = remote::RemoteClient::fake_server(cx, server_cx);
+
+    server_cx.update(remote_server::HeadlessProject::init);
+    let server_executor = server_cx.executor();
+    let _headless = server_cx.new(|cx| {
+        remote_server::HeadlessProject::new(
+            remote_server::HeadlessAppState {
+                session: server_session,
+                fs: server_fs.clone(),
+                http_client: Arc::new(http_client::BlockedHttpClient),
+                node_runtime: node_runtime::NodeRuntime::unavailable(),
+                languages: Arc::new(language::LanguageRegistry::new(server_executor.clone())),
+                extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+
+    let remote_client = remote::RemoteClient::connect_mock(opts, cx).await;
+    let project = cx.update(|cx| {
+        let project_client = client::Client::new(
+            Arc::new(clock::FakeSystemClock::new()),
+            http_client::FakeHttpClient::with_404_response(),
+            cx,
+        );
+        let user_store = cx.new(|cx| client::UserStore::new(project_client.clone(), cx));
+        project::Project::remote(
+            remote_client,
+            project_client,
+            node_runtime::NodeRuntime::unavailable(),
+            user_store,
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            false,
+            cx,
+        )
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(Path::new("/project"), true, cx)
+        })
+        .await
+        .expect("should open remote worktree");
+    cx.run_until_parked();
+
+    cx.update(|cx| <dyn fs::Fs>::set_global(app_state.fs.clone(), cx));
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let thread_id = acp::SessionId::new(Arc::from("remote-thread"));
+    save_thread_metadata(
+        thread_id.clone(),
+        Some("Remote Thread".into()),
+        chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        &project,
+        cx,
+    );
+    cx.run_until_parked();
+
+    // Thread should be visible before archiving.
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        entries.iter().any(|e| e.contains("Remote Thread")),
+        "thread should be visible before archive: {entries:?}"
+    );
+
+    // Archive the thread.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.archive_thread(&thread_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    // The thread should be archived and hidden from the sidebar.
+    let is_archived = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&thread_id)
+            .map(|t| t.archived)
+            .unwrap_or(false)
+    });
+    assert!(is_archived, "thread should be archived");
+
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        !entries.iter().any(|e| e.contains("Remote Thread")),
+        "archived thread should be hidden from sidebar: {entries:?}"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_archive_thread_with_disconnected_remote(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    // When the remote connection is not active, archiving a thread should
+    // still archive the thread metadata (hiding it from the sidebar).
+    // The worktree stays on the remote disk untouched because the git
+    // checkpoint/removal can't reach the remote server.
+    init_test(cx);
+
+    cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+
+    let app_state = cx.update(|cx| {
+        let app_state = workspace::AppState::test(cx);
+        workspace::init(app_state.clone(), cx);
+        app_state
+    });
+
+    server_cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+
+    let server_fs = FakeFs::new(server_cx.executor());
+    server_fs
+        .insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" },
+            }),
+        )
+        .await;
+    server_fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+    let (opts, server_session, _) = remote::RemoteClient::fake_server(cx, server_cx);
+
+    server_cx.update(remote_server::HeadlessProject::init);
+    let server_executor = server_cx.executor();
+    let _headless = server_cx.new(|cx| {
+        remote_server::HeadlessProject::new(
+            remote_server::HeadlessAppState {
+                session: server_session,
+                fs: server_fs.clone(),
+                http_client: Arc::new(http_client::BlockedHttpClient),
+                node_runtime: node_runtime::NodeRuntime::unavailable(),
+                languages: Arc::new(language::LanguageRegistry::new(server_executor.clone())),
+                extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+
+    let remote_client = remote::RemoteClient::connect_mock(opts, cx).await;
+    let project = cx.update(|cx| {
+        let project_client = client::Client::new(
+            Arc::new(clock::FakeSystemClock::new()),
+            http_client::FakeHttpClient::with_404_response(),
+            cx,
+        );
+        let user_store = cx.new(|cx| client::UserStore::new(project_client.clone(), cx));
+        project::Project::remote(
+            remote_client.clone(),
+            project_client,
+            node_runtime::NodeRuntime::unavailable(),
+            user_store,
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            false,
+            cx,
+        )
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(Path::new("/project"), true, cx)
+        })
+        .await
+        .expect("should open remote worktree");
+    cx.run_until_parked();
+
+    cx.update(|cx| <dyn fs::Fs>::set_global(app_state.fs.clone(), cx));
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let thread_id = acp::SessionId::new(Arc::from("remote-thread"));
+    save_thread_metadata(
+        thread_id.clone(),
+        Some("Remote Thread".into()),
+        chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        &project,
+        cx,
+    );
+    cx.run_until_parked();
+
+    // Disconnect the remote connection before archiving.
+    remote_client.update_in(cx, |client, _window, cx| {
+        client.simulate_disconnect(cx).detach();
+    });
+    // Don't run_until_parked here — the disconnect itself may trigger
+    // reconnection work that can't complete in the test environment.
+
+    // Archive the thread while disconnected.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.archive_thread(&thread_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    // The thread should still be archived (metadata hidden from sidebar)
+    // even though the remote connection is down.
+    let is_archived = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&thread_id)
+            .map(|t| t.archived)
+            .unwrap_or(false)
+    });
+    assert!(
+        is_archived,
+        "thread should be archived even when remote is disconnected"
+    );
+
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        !entries.iter().any(|e| e.contains("Remote Thread")),
+        "archived thread should be hidden from sidebar: {entries:?}"
+    );
+}
