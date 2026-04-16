@@ -5124,9 +5124,11 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
             }
             if config_files.len() == 1
                 && config_files.get(0)
-                    == Some(&PathBuf::from(
-                        "/path/to/local/project/.devcontainer/docker-compose-context-parent.yml",
-                    ))
+                    == Some(
+                        &project_path
+                            .join(".devcontainer")
+                            .join("docker-compose-context-parent.yml"),
+                    )
             {
                 return Ok(Some(DockerComposeConfig {
                     name: None,
@@ -5153,9 +5155,11 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
             }
             if config_files.len() == 1
                 && config_files.get(0)
-                    == Some(&PathBuf::from(
-                        "/path/to/local/project/.devcontainer/docker-compose-plain.yml",
-                    ))
+                    == Some(
+                        &project_path
+                            .join(".devcontainer")
+                            .join("docker-compose-plain.yml"),
+                    )
             {
                 return Ok(Some(DockerComposeConfig {
                     name: None,
