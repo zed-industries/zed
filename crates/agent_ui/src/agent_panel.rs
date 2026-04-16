@@ -49,7 +49,7 @@ use crate::{
 use crate::{ExpandMessageEditor, ThreadHistoryView};
 use crate::{ManageProfiles, ThreadHistoryViewEvent};
 use crate::{ThreadHistory, agent_connection_store::AgentConnectionStore};
-use agent_settings::{AgentSettings, WindowLayout};
+use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Context as _, Result, anyhow};
 use client::UserStore;
@@ -760,8 +760,6 @@ pub struct AgentPanel {
     pending_serialization: Option<Task<Result<()>>>,
     new_user_onboarding: Entity<AgentPanelOnboarding>,
     new_user_onboarding_upsell_dismissed: AtomicBool,
-    agent_layout_onboarding: Entity<ai_onboarding::AgentLayoutOnboarding>,
-    agent_layout_onboarding_dismissed: AtomicBool,
     selected_agent: Agent,
     worktree_creation_status: Option<(EntityId, WorktreeCreationStatus)>,
     _thread_view_subscription: Option<Subscription>,
@@ -1064,46 +1062,6 @@ impl AgentPanel {
             )
         });
 
-        let weak_panel = cx.entity().downgrade();
-
-        let layout = AgentSettings::get_layout(cx);
-        let is_agent_layout = matches!(layout, WindowLayout::Agent(_));
-
-        let agent_layout_onboarding = cx.new(|_cx| ai_onboarding::AgentLayoutOnboarding {
-            use_agent_layout: Arc::new({
-                let fs = fs.clone();
-                let weak_panel = weak_panel.clone();
-                move |_window, cx| {
-                    let _ = AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
-                    weak_panel
-                        .update(cx, |panel, cx| {
-                            panel.dismiss_agent_layout_onboarding(cx);
-                        })
-                        .ok();
-                }
-            }),
-            revert_to_editor_layout: Arc::new({
-                let fs = fs.clone();
-                let weak_panel = weak_panel.clone();
-                move |_window, cx| {
-                    let _ = AgentSettings::set_layout(WindowLayout::Editor(None), fs.clone(), cx);
-                    weak_panel
-                        .update(cx, |panel, cx| {
-                            panel.dismiss_agent_layout_onboarding(cx);
-                        })
-                        .ok();
-                }
-            }),
-            dismissed: Arc::new(move |_window, cx| {
-                weak_panel
-                    .update(cx, |panel, cx| {
-                        panel.dismiss_agent_layout_onboarding(cx);
-                    })
-                    .ok();
-            }),
-            is_agent_layout,
-        });
-
         // Subscribe to extension events to sync agent servers when extensions change
         let extension_subscription = if let Some(extension_events) = ExtensionEvents::try_global(cx)
         {
@@ -1168,7 +1126,6 @@ impl AgentPanel {
             zoomed: false,
             pending_serialization: None,
             new_user_onboarding: onboarding,
-            agent_layout_onboarding,
             thread_store,
             selected_agent: Agent::default(),
             worktree_creation_status: None,
@@ -1177,9 +1134,6 @@ impl AgentPanel {
             _worktree_creation_task: None,
             show_trust_workspace_message: false,
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
-            agent_layout_onboarding_dismissed: AtomicBool::new(AgentLayoutOnboarding::dismissed(
-                cx,
-            )),
             _base_view_observation: None,
             _draft_editor_observation: None,
         };
@@ -4725,56 +4679,10 @@ impl AgentPanel {
         plan.is_some_and(|plan| plan == Plan::ZedFree) && has_previous_trial
     }
 
-    fn should_render_agent_layout_onboarding(&self, cx: &mut Context<Self>) -> bool {
-        // We only want to show this for existing users: those who
-        // have used the agent panel before the sidebar was introduced.
-        // We can infer that state by users having seen the onboarding
-        // at one point, but not the agent layout onboarding.
-
-        let has_messages = self.active_thread_has_messages(cx);
-        let is_dismissed = self
-            .agent_layout_onboarding_dismissed
-            .load(Ordering::Acquire);
-
-        if is_dismissed || has_messages {
-            return false;
-        }
-
-        match &self.base_view {
-            BaseView::Uninitialized => false,
-            BaseView::AgentThread { .. } => {
-                let existing_user = self
-                    .new_user_onboarding_upsell_dismissed
-                    .load(Ordering::Acquire);
-                existing_user
-            }
-        }
-    }
-
-    fn render_agent_layout_onboarding(
-        &self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
-        if !self.should_render_agent_layout_onboarding(cx) {
-            return None;
-        }
-
-        Some(div().child(self.agent_layout_onboarding.clone()))
-    }
-
-    fn dismiss_agent_layout_onboarding(&mut self, cx: &mut Context<Self>) {
-        self.agent_layout_onboarding_dismissed
-            .store(true, Ordering::Release);
-        AgentLayoutOnboarding::set_dismissed(true, cx);
-        cx.notify();
-    }
-
     fn dismiss_ai_onboarding(&mut self, cx: &mut Context<Self>) {
         self.new_user_onboarding_upsell_dismissed
             .store(true, Ordering::Release);
         OnboardingUpsell::set_dismissed(true, cx);
-        self.dismiss_agent_layout_onboarding(cx);
         cx.notify();
     }
 
@@ -5036,7 +4944,6 @@ impl Render for AgentPanel {
             .child(self.render_toolbar(window, cx))
             .children(self.render_workspace_trust_message(cx))
             .children(self.render_new_user_onboarding(window, cx))
-            .children(self.render_agent_layout_onboarding(window, cx))
             .map(|parent| match self.visible_surface() {
                 VisibleSurface::Uninitialized => parent,
                 VisibleSurface::AgentThread(conversation_view) => parent
@@ -5125,12 +5032,6 @@ struct OnboardingUpsell;
 
 impl Dismissable for OnboardingUpsell {
     const KEY: &'static str = "dismissed-trial-upsell";
-}
-
-struct AgentLayoutOnboarding;
-
-impl Dismissable for AgentLayoutOnboarding {
-    const KEY: &'static str = "dismissed-agent-layout-onboarding";
 }
 
 struct TrialEndUpsell;

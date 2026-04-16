@@ -11,7 +11,7 @@ use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent,
     Render, SharedString, Task, WeakEntity, Window,
 };
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use project::{AgentId, AgentRegistryStore, AgentServerStore};
 use release_channel::ReleaseChannel;
 use remote::RemoteConnectionOptions;
@@ -275,8 +275,12 @@ impl ThreadImportModal {
     fn show_imported_threads_toast(&self, imported_count: usize, cx: &mut App) {
         let status_toast = if imported_count == 0 {
             StatusToast::new("No threads found to import.", cx, |this, _cx| {
-                this.icon(ToastIcon::new(IconName::Info).color(Color::Muted))
-                    .dismiss_button(true)
+                this.icon(
+                    Icon::new(IconName::Info)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .dismiss_button(true)
             })
         } else {
             let message = if imported_count == 1 {
@@ -285,8 +289,12 @@ impl ThreadImportModal {
                 format!("Imported {imported_count} threads.")
             };
             StatusToast::new(message, cx, |this, _cx| {
-                this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
-                    .dismiss_button(true)
+                this.icon(
+                    Icon::new(IconName::Check)
+                        .size(IconSize::Small)
+                        .color(Color::Success),
+                )
+                .dismiss_button(true)
             })
         };
 
@@ -661,7 +669,7 @@ fn show_cross_channel_import_toast(
 ) {
     let status_toast = if imported_count == 0 {
         StatusToast::new("No new threads found to import.", cx, |this, _cx| {
-            this.icon(ToastIcon::new(IconName::Info).color(Color::Muted))
+            this.icon(Icon::new(IconName::Info).color(Color::Muted))
                 .dismiss_button(true)
         })
     } else {
@@ -671,7 +679,7 @@ fn show_cross_channel_import_toast(
             format!("Imported {imported_count} threads from other channels.")
         };
         StatusToast::new(message, cx, |this, _cx| {
-            this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+            this.icon(Icon::new(IconName::Check).color(Color::Success))
                 .dismiss_button(true)
         })
     };
