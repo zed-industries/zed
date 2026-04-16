@@ -92,18 +92,6 @@ spec:
                 secretKeyRef:
                   name: api
                   key: token
-            - name: LLM_API_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: llm-token
-                  key: secret
-            - name: LLM_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: llm-database
-                  key: url
-            - name: LLM_DATABASE_MAX_CONNECTIONS
-              value: "${LLM_DATABASE_MAX_CONNECTIONS}"
             - name: ZED_CLIENT_CHECKSUM_SEED
               valueFrom:
                 secretKeyRef:
@@ -124,46 +112,6 @@ spec:
                 secretKeyRef:
                   name: livekit
                   key: secret
-            - name: OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: openai
-                  key: api_key
-            - name: ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: anthropic
-                  key: api_key
-            - name: ANTHROPIC_STAFF_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: anthropic
-                  key: staff_api_key
-            - name: LLM_CLOSED_BETA_MODEL_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: llm-closed-beta
-                  key: model_name
-            - name: GOOGLE_AI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: google-ai
-                  key: api_key
-            - name: PREDICTION_API_URL
-              valueFrom:
-                secretKeyRef:
-                  name: prediction
-                  key: api_url
-            - name: PREDICTION_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: prediction
-                  key: api_key
-            - name: PREDICTION_MODEL
-              valueFrom:
-                secretKeyRef:
-                  name: prediction
-                  key: model
             - name: BLOB_STORE_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
@@ -214,15 +162,6 @@ spec:
                 secretKeyRef:
                   name: blob-store
                   key: bucket
-            - name: COMPLETE_WITH_LANGUAGE_MODEL_RATE_LIMIT_PER_HOUR
-              value: "1000"
-            - name: SUPERMAVEN_ADMIN_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: supermaven
-                  key: api_key
-            - name: INVITE_LINK_PREFIX
-              value: ${INVITE_LINK_PREFIX}
             - name: RUST_BACKTRACE
               value: "1"
             - name: RUST_LOG
@@ -231,8 +170,6 @@ spec:
               value: "true"
             - name: ZED_ENVIRONMENT
               value: ${ZED_ENVIRONMENT}
-            - name: AUTO_JOIN_CHANNEL_ID
-              value: "${AUTO_JOIN_CHANNEL_ID}"
           securityContext:
             capabilities:
               # TODO - Switch to the more restrictive `PERFMON` capability.

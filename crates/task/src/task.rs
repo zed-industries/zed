@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 
 pub use adapter_schema::{AdapterSchema, AdapterSchemas};
 pub use debug_format::{
@@ -22,8 +23,8 @@ pub use debug_format::{
     Request, TcpArgumentsTemplate, ZedDebugConfig,
 };
 pub use task_template::{
-    DebugArgsRequest, HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates,
-    substitute_variables_in_map, substitute_variables_in_str,
+    DebugArgsRequest, HideStrategy, RevealStrategy, SaveStrategy, TaskHook, TaskTemplate,
+    TaskTemplates, substitute_variables_in_map, substitute_variables_in_str,
 };
 pub use util::shell::{Shell, ShellKind};
 pub use util::shell_builder::ShellBuilder;
@@ -74,6 +75,8 @@ pub struct SpawnInTerminal {
     pub show_command: bool,
     /// Whether to show the rerun button in the terminal tab.
     pub show_rerun: bool,
+    /// Which edited buffers to save before running the task.
+    pub save: SaveStrategy,
 }
 
 impl SpawnInTerminal {
@@ -171,8 +174,17 @@ pub enum VariableName {
     Column,
     /// Text from the latest selection.
     SelectedText,
+    /// The language of the currently opened buffer (e.g., "Rust", "Python").
+    Language,
     /// The symbol selected by the symbol tagging system, specifically the @run capture in a runnables.scm
     RunnableSymbol,
+    /// Open a Picker to select a process ID to use in place
+    /// Can only be used to debug configurations
+    PickProcessId,
+    /// An absolute path of the main (original) git worktree for the current repository.
+    /// For normal checkouts, this equals the worktree root. For linked worktrees,
+    /// this is the original repo's working directory.
+    MainGitWorktree,
     /// Custom variable, provided by the plugin or other external source.
     /// Will be printed with `CUSTOM_` prefix to avoid potential conflicts with other variables.
     Custom(Cow<'static, str>),
@@ -205,8 +217,10 @@ impl FromStr for VariableName {
             "SYMBOL" => Self::Symbol,
             "RUNNABLE_SYMBOL" => Self::RunnableSymbol,
             "SELECTED_TEXT" => Self::SelectedText,
+            "LANGUAGE" => Self::Language,
             "ROW" => Self::Row,
             "COLUMN" => Self::Column,
+            "MAIN_GIT_WORKTREE" => Self::MainGitWorktree,
             _ => {
                 if let Some(custom_name) =
                     without_prefix.strip_prefix(ZED_CUSTOM_VARIABLE_NAME_PREFIX)
@@ -239,7 +253,10 @@ impl std::fmt::Display for VariableName {
             Self::Row => write!(f, "{ZED_VARIABLE_NAME_PREFIX}ROW"),
             Self::Column => write!(f, "{ZED_VARIABLE_NAME_PREFIX}COLUMN"),
             Self::SelectedText => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SELECTED_TEXT"),
+            Self::Language => write!(f, "{ZED_VARIABLE_NAME_PREFIX}LANGUAGE"),
             Self::RunnableSymbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL"),
+            Self::PickProcessId => write!(f, "{ZED_VARIABLE_NAME_PREFIX}PICK_PID"),
+            Self::MainGitWorktree => write!(f, "{ZED_VARIABLE_NAME_PREFIX}MAIN_GIT_WORKTREE"),
             Self::Custom(s) => write!(
                 f,
                 "{ZED_VARIABLE_NAME_PREFIX}{ZED_CUSTOM_VARIABLE_NAME_PREFIX}{s}"
@@ -312,6 +329,24 @@ pub struct TaskContext {
     pub project_env: HashMap<String, String>,
 }
 
+/// A shared reference to a [`TaskContext`], used to avoid cloning the context multiple times.
+#[derive(Clone, Debug, Default)]
+pub struct SharedTaskContext(Arc<TaskContext>);
+
+impl std::ops::Deref for SharedTaskContext {
+    type Target = TaskContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<TaskContext> for SharedTaskContext {
+    fn from(context: TaskContext) -> Self {
+        Self(Arc::new(context))
+    }
+}
+
 /// This is a new type representing a 'tag' on a 'runnable symbol', typically a test of main() function, found via treesitter.
 #[derive(Clone, Debug)]
 pub struct RunnableTag(pub SharedString);
@@ -346,15 +381,28 @@ pub fn shell_to_proto(shell: Shell) -> proto::Shell {
 }
 
 type VsCodeEnvVariable = String;
+type VsCodeCommand = String;
 type ZedEnvVariable = String;
 
 struct EnvVariableReplacer {
     variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>,
+    commands: HashMap<VsCodeCommand, ZedEnvVariable>,
 }
 
 impl EnvVariableReplacer {
     fn new(variables: HashMap<VsCodeEnvVariable, ZedEnvVariable>) -> Self {
-        Self { variables }
+        Self {
+            variables,
+            commands: HashMap::default(),
+        }
+    }
+
+    fn with_commands(
+        mut self,
+        commands: impl IntoIterator<Item = (VsCodeCommand, ZedEnvVariable)>,
+    ) -> Self {
+        self.commands = commands.into_iter().collect();
+        self
     }
 
     fn replace_value(&self, input: serde_json::Value) -> serde_json::Value {
@@ -380,7 +428,13 @@ impl EnvVariableReplacer {
             if left == "env" && !right.is_empty() {
                 let variable_name = &right[1..];
                 return Some(format!("${{{variable_name}}}"));
+            } else if left == "command" && !right.is_empty() {
+                let command_name = &right[1..];
+                if let Some(replacement_command) = self.commands.get(command_name) {
+                    return Some(format!("${{{replacement_command}}}"));
+                }
             }
+
             let (variable_name, default) = (left, right);
             let append_previous_default = |ret: &mut String| {
                 if !default.is_empty() {

@@ -3,11 +3,6 @@ use anyhow::Result;
 #[cfg(windows)]
 pub fn main(_socket: &str) -> Result<()> {
     // It looks like we can't get an async stdio stream on Windows from smol.
-    //
-    // We decided to merge this with a panic on Windows since this is only used
-    // by the experimental Claude Code Agent Server.
-    //
-    // We're tracking this internally, and we will address it before shipping the integration.
     panic!("--nc isn't yet supported on Windows");
 }
 
@@ -16,15 +11,15 @@ pub fn main(_socket: &str) -> Result<()> {
 pub fn main(socket: &str) -> Result<()> {
     use futures::{AsyncReadExt as _, AsyncWriteExt as _, FutureExt as _, io::BufReader, select};
     use net::async_net::UnixStream;
-    use smol::{Async, io::AsyncBufReadExt};
+    use smol::{Unblock, io::AsyncBufReadExt};
 
     smol::block_on(async {
         let socket_stream = UnixStream::connect(socket).await?;
         let (socket_read, mut socket_write) = socket_stream.split();
         let mut socket_reader = BufReader::new(socket_read);
 
-        let mut stdout = Async::new(std::io::stdout())?;
-        let stdin = Async::new(std::io::stdin())?;
+        let mut stdout = Unblock::new(std::io::stdout());
+        let stdin = Unblock::new(std::io::stdin());
         let mut stdin_reader = BufReader::new(stdin);
 
         let mut socket_line = Vec::new();

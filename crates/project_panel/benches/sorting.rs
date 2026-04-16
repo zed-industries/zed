@@ -1,13 +1,15 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use project::{Entry, EntryKind, GitEntry, ProjectEntryId};
 use project_panel::par_sort_worktree_entries;
+use settings::{ProjectPanelSortMode, ProjectPanelSortOrder};
 use std::sync::Arc;
 use util::rel_path::RelPath;
 
 fn load_linux_repo_snapshot() -> Vec<GitEntry> {
-    let file = std::fs::read_to_string(
-        "/Users/hiro/Projects/zed/crates/project_panel/benches/linux_repo_snapshot.txt",
-    )
+    let file = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/benches/linux_repo_snapshot.txt"
+    ))
     .expect("Failed to read file");
     file.lines()
         .filter_map(|line| {
@@ -42,13 +44,33 @@ fn load_linux_repo_snapshot() -> Vec<GitEntry> {
 }
 fn criterion_benchmark(c: &mut Criterion) {
     let snapshot = load_linux_repo_snapshot();
-    c.bench_function("Sort linux worktree snapshot", |b| {
-        b.iter_batched(
-            || snapshot.clone(),
-            |mut snapshot| par_sort_worktree_entries(&mut snapshot),
-            criterion::BatchSize::LargeInput,
-        );
-    });
+
+    let modes = [
+        ("DirectoriesFirst", ProjectPanelSortMode::DirectoriesFirst),
+        ("Mixed", ProjectPanelSortMode::Mixed),
+        ("FilesFirst", ProjectPanelSortMode::FilesFirst),
+    ];
+    let orders = [
+        ("Default", ProjectPanelSortOrder::Default),
+        ("Upper", ProjectPanelSortOrder::Upper),
+        ("Lower", ProjectPanelSortOrder::Lower),
+        ("Unicode", ProjectPanelSortOrder::Unicode),
+    ];
+
+    for (mode_name, mode) in &modes {
+        for (order_name, order) in &orders {
+            c.bench_function(
+                &format!("Sort linux worktree snapshot ({mode_name}, {order_name})"),
+                |b| {
+                    b.iter_batched(
+                        || snapshot.clone(),
+                        |mut snapshot| par_sort_worktree_entries(&mut snapshot, *mode, *order),
+                        criterion::BatchSize::LargeInput,
+                    );
+                },
+            );
+        }
+    }
 }
 
 criterion_group!(benches, criterion_benchmark);

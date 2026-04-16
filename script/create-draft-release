@@ -5,4 +5,5 @@ if [[ "$GITHUB_REF_NAME" == *"-pre" ]]; then
     preview="-p"
 fi
 
-gh release create -t "$GITHUB_REF_NAME" -d "$GITHUB_REF_NAME" -F "$1" $preview
+gh release view "$GITHUB_REF_NAME" ||\
+    gh release create -t "$GITHUB_REF_NAME" -d "$GITHUB_REF_NAME" -F "$1" $preview

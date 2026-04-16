@@ -1,20 +1,25 @@
+---
+title: Debugging Crashes
+description: "Guide to debugging crashes for Zed development."
+---
+
 # Debugging Crashes
 
-When Zed panics or otherwise crashes, Zed sends a message to a sidecar process which inspects the memory of the crashing editor to create a [minidump](https://chromium.googlesource.com/breakpad/breakpad/+/master/docs/getting_started_with_breakpad.md#the-minidump-file-format) file in `~/Library/Logs/Zed` or `$XDG_DATA_HOME/zed/logs`. This minidump can be used to generate backtraces for the stacks of all threads.
+When Zed panics or crashes, it sends a message to a sidecar process that inspects the editor's memory and creates a [minidump](https://chromium.googlesource.com/breakpad/breakpad/+/master/docs/getting_started_with_breakpad.md#the-minidump-file-format) in `~/Library/Logs/Zed` or `$XDG_DATA_HOME/zed/logs`. You can use this minidump to generate backtraces for all thread stacks.
 
-If you have enabled Zed's telemetry these will be uploaded to us when you restart the app. They end up in a [Slack channel](https://zed-industries.slack.com/archives/C0977J9MA1Y) and in [Sentry](https://zed-dev.sentry.io/issues) (both of which are Zed-staff-only).
+If telemetry is enabled, Zed uploads these reports when you restart the app. Reports are sent to a [Slack channel](https://zed-industries.slack.com/archives/C0977J9MA1Y) and to [Sentry](https://zed-dev.sentry.io/issues) (both are Zed-staff-only).
 
-These crash reports contain rich information; but they are hard to read because they don't contain spans or symbol information. You can still work with them locally by downloading sources and an unstripped binary (or separate symbols file) for your Zed release and running:
+These crash reports include useful data, but they are hard to read without spans or symbol information. You can still analyze them locally by downloading source and an unstripped binary (or separate symbols file) for your Zed release, then running:
 
 ```sh
 zstd -d ~/.local/share/zed/<uuid>.dmp -o minidump.dmp
 minidump-stackwalk minidump.dmp
 ```
 
-Alongside the minidump file in your logs dir, there should be a `<uuid>.json` which contains additional metadata like the panic message, span, and system specs.
+Alongside the minidump in your logs directory, you should also see a `<uuid>.json` file with metadata such as the panic message, span, and system specs.
 
 ## Using a Debugger
 
-If you can reproduce the crash consistently, a debugger can be used to inspect the state of the program at the time of the crash, often providing useful insights into the cause of the crash.
+If you can reproduce the crash consistently, use a debugger to inspect program state at the crash point.
 
-You can read more about setting up and using a debugger with Zed, and specifically for debugging crashes [here](./debuggers.md#debugging-panics-and-crashes)
+For setup details, see [Using a debugger](./debuggers.md#debugging-panics-and-crashes).

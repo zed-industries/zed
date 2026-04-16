@@ -6,9 +6,9 @@ use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
     AudioStatus, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
-    Checkbox, CheckboxWithLabel, CollaboratorAvailability, ContentGroup, DecoratedIcon,
-    ElevationIndex, Facepile, IconDecoration, Indicator, KeybindingHint, Switch, TintColor,
-    Tooltip, prelude::*, utils::calculate_contrast_ratio,
+    Checkbox, CollaboratorAvailability, DecoratedIcon, ElevationIndex, Facepile, IconDecoration,
+    Indicator, KeybindingHint, Switch, TintColor, Tooltip, prelude::*,
+    utils::calculate_contrast_ratio,
 };
 
 use crate::{Item, Workspace};
@@ -86,7 +86,7 @@ impl ThemePreview {}
 impl Item for ThemePreview {
     type Event = ();
 
-    fn to_item_events(_: &Self::Event, _: impl FnMut(crate::item::ItemEvent)) {}
+    fn to_item_events(_: &Self::Event, _: &mut dyn FnMut(crate::item::ItemEvent)) {}
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         let name = cx.theme().name.clone();

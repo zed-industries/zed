@@ -15,12 +15,8 @@ export ZED_CHANNEL=$(<crates/zed/RELEASE_CHANNEL)
 export ZED_UPDATE_EXPLANATION="You need to fetch and rebuild zed in $(pwd)"
 script/bundle-linux
 
-target="linux-$(uname -m)"
+arch="$(uname -m)"
 commit=$(git rev-parse HEAD | cut -c 1-7)
-if  [[ "$ZED_CHANNEL" == "dev" ]]; then
-  archive="zed-${commit}-${target}.tar.gz"
-else
-  archive="zed-${target}.tar.gz"
-fi
+archive="zed-linux-${arch}.tar.gz"
 export ZED_BUNDLE_PATH="${CARGO_TARGET_DIR:-target}/release/${archive}"
 script/install.sh

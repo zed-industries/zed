@@ -1,11 +1,12 @@
+pub mod http;
 mod stdio_transport;
-
-use std::pin::Pin;
 
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::Stream;
+use std::pin::Pin;
 
+pub use http::*;
 pub use stdio_transport::*;
 
 #[async_trait]

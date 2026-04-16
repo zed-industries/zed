@@ -1,6 +1,11 @@
+---
+title: Building Zed for FreeBSD
+description: "Guide to building zed for freebsd for Zed development."
+---
+
 # Building Zed for FreeBSD
 
-Note, FreeBSD is not currently a supported platform, and so this is a work-in-progress.
+FreeBSD is not currently a supported platform, so this guide is a work in progress.
 
 ## Repository
 
@@ -40,7 +45,7 @@ cargo run -p cli
 
 ### WebRTC Notice
 
-Currently, building `webrtc-sys` on FreeBSD fails due to missing upstream support and unavailable prebuilt binaries. As a result, some collaboration features (audio calls and screensharing) that depend on WebRTC are temporarily disabled.
+Building `webrtc-sys` on FreeBSD currently fails due to missing upstream support and unavailable prebuilt binaries. As a result, collaboration features that depend on WebRTC (audio calls and screen sharing) are temporarily disabled.
 
 See [Issue #15309: FreeBSD Support] and [Discussion #29550: Unofficial FreeBSD port for Zed] for more.
 

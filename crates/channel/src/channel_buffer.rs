@@ -22,6 +22,7 @@ pub(crate) fn init(client: &AnyProtoClient) {
 pub struct ChannelBuffer {
     pub channel_id: ChannelId,
     connected: bool,
+    rejoining: bool,
     collaborators: HashMap<PeerId, Collaborator>,
     user_store: Entity<UserStore>,
     channel_store: Entity<ChannelStore>,
@@ -71,8 +72,8 @@ impl ChannelBuffer {
                 capability,
                 base_text,
             )
-        })?;
-        buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?;
+        });
+        buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx));
 
         let subscription = client.subscribe_to_entity(channel.id.0)?;
 
@@ -84,6 +85,7 @@ impl ChannelBuffer {
                 buffer_epoch: response.epoch,
                 client,
                 connected: true,
+                rejoining: false,
                 collaborators: Default::default(),
                 acknowledge_task: None,
                 channel_id: channel.id,
@@ -93,7 +95,7 @@ impl ChannelBuffer {
             };
             this.replace_collaborators(response.collaborators, cx);
             this
-        })?)
+        }))
     }
 
     fn release(&mut self, _: &mut App) {
@@ -111,6 +113,7 @@ impl ChannelBuffer {
 
     pub fn connected(&mut self, cx: &mut Context<Self>) {
         self.connected = true;
+        self.rejoining = false;
         if self.subscription.is_none() {
             let Ok(subscription) = self.client.subscribe_to_entity(self.channel_id.0) else {
                 return;
@@ -118,6 +121,10 @@ impl ChannelBuffer {
             self.subscription = Some(subscription.set_entity(&cx.entity(), &cx.to_async()));
             cx.emit(ChannelBufferEvent::Connected);
         }
+    }
+
+    pub(crate) fn set_rejoining(&mut self, rejoining: bool) {
+        self.rejoining = rejoining;
     }
 
     pub fn remote_id(&self, cx: &App) -> BufferId {
@@ -168,7 +175,7 @@ impl ChannelBuffer {
             cx.notify();
             this.buffer
                 .update(cx, |buffer, cx| buffer.apply_ops(ops, cx))
-        })?;
+        });
 
         Ok(())
     }
@@ -182,7 +189,8 @@ impl ChannelBuffer {
             this.replace_collaborators(message.payload.collaborators, cx);
             cx.emit(ChannelBufferEvent::CollaboratorsChanged);
             cx.notify();
-        })
+        });
+        Ok(())
     }
 
     fn on_buffer_update(
@@ -203,6 +211,9 @@ impl ChannelBuffer {
                     return;
                 }
                 let operation = language::proto::serialize_operation(operation);
+                if self.rejoining {
+                    return;
+                }
                 self.client
                     .send(proto::UpdateChannelBuffer {
                         channel_id: self.channel_id.0,
@@ -210,7 +221,7 @@ impl ChannelBuffer {
                     })
                     .log_err();
             }
-            language::BufferEvent::Edited => {
+            language::BufferEvent::Edited { .. } => {
                 cx.emit(ChannelBufferEvent::BufferEdited);
             }
             _ => {}
@@ -262,6 +273,7 @@ impl ChannelBuffer {
         log::info!("channel buffer {} disconnected", self.channel_id);
         if self.connected {
             self.connected = false;
+            self.rejoining = false;
             self.subscription.take();
             cx.emit(ChannelBufferEvent::Disconnected);
             cx.notify()

@@ -8,6 +8,6 @@
   },
   "devDependencies": {
     "danger": "13.0.4",
-    "danger-plugin-pr-hygiene": "0.6.1"
+    "danger-plugin-pr-hygiene": "0.7.1"
   }
 }

@@ -5,16 +5,22 @@ pub(crate) mod memory_view;
 pub(crate) mod module_list;
 pub mod stack_frame_list;
 pub mod variable_list;
-use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    any::Any,
+    path::PathBuf,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
 use crate::{
     ToggleExpandItem,
+    attach_modal::{AttachModal, ModalIntent},
     new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
     session::running::memory_view::MemoryView,
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use breakpoint_list::BreakpointList;
 use collections::{HashMap, IndexMap};
 use console::Console;
@@ -41,8 +47,8 @@ use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
-    BuildTaskDefinition, DebugScenario, Shell, ShellBuilder, SpawnInTerminal, TaskContext,
-    ZedDebugConfig, substitute_variables_in_str,
+    BuildTaskDefinition, DebugScenario, SharedTaskContext, Shell, ShellBuilder, SpawnInTerminal,
+    TaskContext, ZedDebugConfig, substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
 use ui::{
@@ -56,12 +62,16 @@ use workspace::{
     Workspace, item::TabContentParams, move_item, pane::Event,
 };
 
+static PROCESS_ID_PLACEHOLDER: LazyLock<String> =
+    LazyLock::new(|| task::VariableName::PickProcessId.template_value());
+
 pub struct RunningState {
     session: Entity<Session>,
     thread_id: Option<ThreadId>,
     focus_handle: FocusHandle,
     _remote_id: Option<ViewId>,
     workspace: WeakEntity<Workspace>,
+    project: WeakEntity<Project>,
     session_id: SessionId,
     variable_list: Entity<variable_list::VariableList>,
     _subscriptions: Vec<Subscription>,
@@ -134,6 +144,8 @@ pub(crate) struct SubView {
     inner: AnyView,
     item_focus_handle: FocusHandle,
     kind: DebuggerPaneItem,
+    running_state: WeakEntity<RunningState>,
+    host_pane: WeakEntity<Pane>,
     show_indicator: Box<dyn Fn(&App) -> bool>,
     actions: Option<Box<dyn FnMut(&mut Window, &mut App) -> AnyElement>>,
     hovered: bool,
@@ -144,12 +156,16 @@ impl SubView {
         item_focus_handle: FocusHandle,
         view: AnyView,
         kind: DebuggerPaneItem,
+        running_state: WeakEntity<RunningState>,
+        host_pane: WeakEntity<Pane>,
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|_| Self {
             kind,
             inner: view,
             item_focus_handle,
+            running_state,
+            host_pane,
             show_indicator: Box::new(|_| false),
             actions: None,
             hovered: false,
@@ -158,6 +174,8 @@ impl SubView {
 
     pub(crate) fn stack_frame_list(
         stack_frame_list: Entity<StackFrameList>,
+        running_state: WeakEntity<RunningState>,
+        host_pane: WeakEntity<Pane>,
         cx: &mut App,
     ) -> Entity<Self> {
         let weak_list = stack_frame_list.downgrade();
@@ -165,6 +183,8 @@ impl SubView {
             stack_frame_list.focus_handle(cx),
             stack_frame_list.into(),
             DebuggerPaneItem::Frames,
+            running_state,
+            host_pane,
             cx,
         );
 
@@ -179,12 +199,19 @@ impl SubView {
         this
     }
 
-    pub(crate) fn console(console: Entity<Console>, cx: &mut App) -> Entity<Self> {
+    pub(crate) fn console(
+        console: Entity<Console>,
+        running_state: WeakEntity<RunningState>,
+        host_pane: WeakEntity<Pane>,
+        cx: &mut App,
+    ) -> Entity<Self> {
         let weak_console = console.downgrade();
         let this = Self::new(
             console.focus_handle(cx),
             console.into(),
             DebuggerPaneItem::Console,
+            running_state,
+            host_pane,
             cx,
         );
         this.update(cx, |this, _| {
@@ -197,13 +224,20 @@ impl SubView {
         this
     }
 
-    pub(crate) fn breakpoint_list(list: Entity<BreakpointList>, cx: &mut App) -> Entity<Self> {
+    pub(crate) fn breakpoint_list(
+        list: Entity<BreakpointList>,
+        running_state: WeakEntity<RunningState>,
+        host_pane: WeakEntity<Pane>,
+        cx: &mut App,
+    ) -> Entity<Self> {
         let weak_list = list.downgrade();
         let focus_handle = list.focus_handle(cx);
         let this = Self::new(
             focus_handle,
             list.into(),
             DebuggerPaneItem::BreakpointList,
+            running_state,
+            host_pane,
             cx,
         );
 
@@ -228,6 +262,10 @@ impl SubView {
         actions: Box<dyn FnMut(&mut Window, &mut App) -> AnyElement>,
     ) {
         self.actions = Some(actions);
+    }
+
+    fn set_host_pane(&mut self, host_pane: WeakEntity<Pane>) {
+        self.host_pane = host_pane;
     }
 }
 impl Focusable for SubView {
@@ -271,15 +309,84 @@ impl Item for SubView {
 
         label.into_any_element()
     }
+
+    fn handle_drop(
+        &self,
+        active_pane: &Pane,
+        dropped: &dyn Any,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let Some(tab) = dropped.downcast_ref::<DraggedTab>() else {
+            return true;
+        };
+        let Some(this_pane) = self.host_pane.upgrade() else {
+            return true;
+        };
+        let item = if tab.pane == this_pane {
+            active_pane.item_for_index(tab.ix)
+        } else {
+            tab.pane.read(cx).item_for_index(tab.ix)
+        };
+        let Some(item) = item.filter(|item| item.downcast::<SubView>().is_some()) else {
+            return true;
+        };
+        let Some(split_direction) = active_pane.drag_split_direction() else {
+            return false;
+        };
+
+        let source = tab.pane.clone();
+        let item_id_to_move = item.item_id();
+        let weak_running = self.running_state.clone();
+
+        // Source pane may be the one currently updated, so defer the move.
+        window.defer(cx, move |window, cx| {
+            let new_pane = weak_running.update(cx, |running, cx| {
+                let Some(project) = running.project.upgrade() else {
+                    return Err(anyhow!("Debugger project has been dropped"));
+                };
+
+                let new_pane = new_debugger_pane(running.workspace.clone(), project, window, cx);
+                let _previous_subscription = running.pane_close_subscriptions.insert(
+                    new_pane.entity_id(),
+                    cx.subscribe_in(&new_pane, window, RunningState::handle_pane_event),
+                );
+                debug_assert!(_previous_subscription.is_none());
+                running
+                    .panes
+                    .split(&this_pane, &new_pane, split_direction, cx);
+                anyhow::Ok(new_pane)
+            });
+
+            match new_pane.and_then(|result| result) {
+                Ok(new_pane) => {
+                    move_item(
+                        &source,
+                        &new_pane,
+                        item_id_to_move,
+                        new_pane.read(cx).active_item_index(),
+                        true,
+                        window,
+                        cx,
+                    );
+                }
+                Err(err) => {
+                    log::error!("{err:?}");
+                }
+            }
+        });
+
+        true
+    }
 }
 
 impl Render for SubView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .id(SharedString::from(format!(
+            .id(format!(
                 "subview-container-{}",
                 self.kind.to_shared_string()
-            )))
+            ))
             .on_hover(cx.listener(|this, hovered, _, cx| {
                 this.hovered = *hovered;
                 cx.notify();
@@ -301,90 +408,18 @@ pub(crate) fn new_debugger_pane(
     cx: &mut Context<RunningState>,
 ) -> Entity<Pane> {
     let weak_running = cx.weak_entity();
-    let custom_drop_handle = {
-        let workspace = workspace.clone();
-        let project = project.downgrade();
-        let weak_running = weak_running.clone();
-        move |pane: &mut Pane, any: &dyn Any, window: &mut Window, cx: &mut Context<Pane>| {
-            let Some(tab) = any.downcast_ref::<DraggedTab>() else {
-                return ControlFlow::Break(());
-            };
-            let Some(project) = project.upgrade() else {
-                return ControlFlow::Break(());
-            };
-            let this_pane = cx.entity();
-            let item = if tab.pane == this_pane {
-                pane.item_for_index(tab.ix)
-            } else {
-                tab.pane.read(cx).item_for_index(tab.ix)
-            };
-            let Some(item) = item.filter(|item| item.downcast::<SubView>().is_some()) else {
-                return ControlFlow::Break(());
-            };
-
-            let source = tab.pane.clone();
-            let item_id_to_move = item.item_id();
-
-            let Ok(new_split_pane) = pane
-                .drag_split_direction()
-                .map(|split_direction| {
-                    weak_running.update(cx, |running, cx| {
-                        let new_pane =
-                            new_debugger_pane(workspace.clone(), project.clone(), window, cx);
-                        let _previous_subscription = running.pane_close_subscriptions.insert(
-                            new_pane.entity_id(),
-                            cx.subscribe_in(&new_pane, window, RunningState::handle_pane_event),
-                        );
-                        debug_assert!(_previous_subscription.is_none());
-                        running
-                            .panes
-                            .split(&this_pane, &new_pane, split_direction)?;
-                        anyhow::Ok(new_pane)
-                    })
-                })
-                .transpose()
-            else {
-                return ControlFlow::Break(());
-            };
-
-            match new_split_pane.transpose() {
-                // Source pane may be the one currently updated, so defer the move.
-                Ok(Some(new_pane)) => cx
-                    .spawn_in(window, async move |_, cx| {
-                        cx.update(|window, cx| {
-                            move_item(
-                                &source,
-                                &new_pane,
-                                item_id_to_move,
-                                new_pane.read(cx).active_item_index(),
-                                true,
-                                window,
-                                cx,
-                            );
-                        })
-                        .ok();
-                    })
-                    .detach(),
-                // If we drop into existing pane or current pane,
-                // regular pane drop handler will take care of it,
-                // using the right tab index for the operation.
-                Ok(None) => return ControlFlow::Continue(()),
-                err @ Err(_) => {
-                    err.log_err();
-                    return ControlFlow::Break(());
-                }
-            };
-
-            ControlFlow::Break(())
-        }
-    };
 
     cx.new(move |cx| {
+        let can_drop_predicate: Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool> =
+            Arc::new(|any, _window, _cx| {
+                any.downcast_ref::<DraggedTab>()
+                    .is_some_and(|dragged_tab| dragged_tab.item.downcast::<SubView>().is_some())
+            });
         let mut pane = Pane::new(
             workspace.clone(),
             project.clone(),
             Default::default(),
-            None,
+            Some(can_drop_predicate),
             NoAction.boxed_clone(),
             true,
             window,
@@ -423,7 +458,6 @@ pub(crate) fn new_debugger_pane(
         })));
         pane.set_can_toggle_zoom(false, cx);
         pane.display_nav_history_buttons(None);
-        pane.set_custom_drop_handle(cx, custom_drop_handle);
         pane.set_should_display_tab_bar(|_, _| true);
         pane.set_render_tab_bar_buttons(cx, |_, _, _| (None, None));
         pane.set_render_tab_bar(cx, {
@@ -463,8 +497,17 @@ pub(crate) fn new_debugger_pane(
                             })
                             .on_drop(cx.listener(
                                 move |this, dragged_tab: &DraggedTab, window, cx| {
+                                    if dragged_tab.item.downcast::<SubView>().is_none() {
+                                        return;
+                                    }
                                     this.drag_split_direction = None;
-                                    this.handle_tab_drop(dragged_tab, this.items_len(), window, cx)
+                                    this.handle_tab_drop(
+                                        dragged_tab,
+                                        this.items_len(),
+                                        false,
+                                        window,
+                                        cx,
+                                    )
                                 },
                             ))
                             .children(pane.items().enumerate().map(|(ix, item)| {
@@ -474,10 +517,7 @@ pub(crate) fn new_debugger_pane(
                                 let deemphasized = !pane.has_focus(window, cx);
                                 let item_ = item.boxed_clone();
                                 div()
-                                    .id(SharedString::from(format!(
-                                        "debugger_tab_{}",
-                                        item.item_id().as_u64()
-                                    )))
+                                    .id(format!("debugger_tab_{}", item.item_id().as_u64()))
                                     .p_1()
                                     .rounded_md()
                                     .cursor_pointer()
@@ -516,8 +556,11 @@ pub(crate) fn new_debugger_pane(
                                     ))
                                     .on_drop(cx.listener(
                                         move |this, dragged_tab: &DraggedTab, window, cx| {
+                                            if dragged_tab.item.downcast::<SubView>().is_none() {
+                                                return;
+                                            }
                                             this.drag_split_direction = None;
-                                            this.handle_tab_drop(dragged_tab, ix, window, cx)
+                                            this.handle_tab_drop(dragged_tab, ix, false, window, cx)
                                         },
                                     ))
                                     .on_drag(
@@ -597,7 +640,7 @@ impl DebugTerminal {
         let focus_handle = cx.focus_handle();
         let focus_subscription = cx.on_focus(&focus_handle, window, |this, window, cx| {
             if let Some(terminal) = this.terminal.as_ref() {
-                terminal.focus_handle(cx).focus(window);
+                terminal.focus_handle(cx).focus(window, cx);
             }
         });
 
@@ -653,6 +696,40 @@ impl RunningState {
         }
     }
 
+    pub(crate) fn contains_substring(config: &serde_json::Value, substring: &str) -> bool {
+        match config {
+            serde_json::Value::Object(obj) => obj
+                .values()
+                .any(|value| Self::contains_substring(value, substring)),
+            serde_json::Value::Array(array) => array
+                .iter()
+                .any(|value| Self::contains_substring(value, substring)),
+            serde_json::Value::String(s) => s.contains(substring),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn substitute_process_id_in_config(config: &mut serde_json::Value, process_id: i32) {
+        match config {
+            serde_json::Value::Object(obj) => {
+                obj.values_mut().for_each(|value| {
+                    Self::substitute_process_id_in_config(value, process_id);
+                });
+            }
+            serde_json::Value::Array(array) => {
+                array.iter_mut().for_each(|value| {
+                    Self::substitute_process_id_in_config(value, process_id);
+                });
+            }
+            serde_json::Value::String(s) => {
+                if s.contains(PROCESS_ID_PLACEHOLDER.as_str()) {
+                    *s = s.replace(PROCESS_ID_PLACEHOLDER.as_str(), &process_id.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(crate) fn relativize_paths(
         key: Option<&str>,
         config: &mut serde_json::Value,
@@ -695,6 +772,7 @@ impl RunningState {
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let session_id = session.read(cx).session_id();
+        let weak_project = project.downgrade();
         let weak_state = cx.weak_entity();
         let stack_frame_list = cx.new(|cx| {
             StackFrameList::new(
@@ -870,6 +948,7 @@ impl RunningState {
             memory_view,
             session,
             workspace,
+            project: weak_project,
             focus_handle,
             variable_list,
             _subscriptions,
@@ -922,7 +1001,7 @@ impl RunningState {
     pub(crate) fn resolve_scenario(
         &self,
         scenario: DebugScenario,
-        task_context: TaskContext,
+        task_context: SharedTaskContext,
         buffer: Option<Entity<Buffer>>,
         worktree_id: Option<WorktreeId>,
         window: &Window,
@@ -954,6 +1033,31 @@ impl RunningState {
             } = scenario;
             Self::relativize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
+
+            if Self::contains_substring(&config, PROCESS_ID_PLACEHOLDER.as_str()) || label.as_ref().contains(PROCESS_ID_PLACEHOLDER.as_str()) {
+                let (tx, rx) = futures::channel::oneshot::channel::<Option<i32>>();
+
+                let weak_workspace_clone = weak_workspace.clone();
+                weak_workspace.update_in(cx, |workspace, window, cx| {
+                    let project = workspace.project().clone();
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        AttachModal::new(
+                            ModalIntent::ResolveProcessId(Some(tx)),
+                            weak_workspace_clone,
+                            project,
+                            true,
+                            window,
+                            cx,
+                        )
+                    });
+                }).ok();
+
+                let Some(process_id) = rx.await.ok().flatten() else {
+                    bail!("No process selected with config that contains {}", PROCESS_ID_PLACEHOLDER.as_str())
+                };
+
+                Self::substitute_process_id_in_config(&mut config, process_id);
+            }
 
             let request_type = match dap_registry
                 .adapter(&adapter)
@@ -1047,7 +1151,7 @@ impl RunningState {
                             task_with_shell.clone(),
                             cx,
                         )
-                    })?.await?;
+                    }).await?;
 
                 let terminal_view = cx.new_window_entity(|window, cx| {
                     TerminalView::new(
@@ -1069,7 +1173,7 @@ impl RunningState {
                 })?;
 
                 let exit_status = terminal
-                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
+                    .read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx))
                     .await
                     .context("Failed to wait for completed task")?;
 
@@ -1209,6 +1313,7 @@ impl RunningState {
             show_summary: false,
             show_command: false,
             show_rerun: false,
+            save: task::SaveStrategy::default(),
         };
 
         let workspace = self.workspace.clone();
@@ -1236,7 +1341,7 @@ impl RunningState {
                     .pid()
                     .map(|pid| pid.as_u32())
                     .context("Terminal was spawned but PID was not available")
-            })?
+            })
         });
 
         cx.background_spawn(async move { anyhow::Ok(sender.send(terminal_task.await).await?) })
@@ -1245,48 +1350,71 @@ impl RunningState {
     fn create_sub_view(
         &self,
         item_kind: DebuggerPaneItem,
-        _pane: &Entity<Pane>,
+        pane: &Entity<Pane>,
         cx: &mut Context<Self>,
     ) -> Box<dyn ItemHandle> {
+        let running_state = cx.weak_entity();
+        let host_pane = pane.downgrade();
+
         match item_kind {
-            DebuggerPaneItem::Console => Box::new(SubView::console(self.console.clone(), cx)),
+            DebuggerPaneItem::Console => Box::new(SubView::console(
+                self.console.clone(),
+                running_state,
+                host_pane,
+                cx,
+            )),
             DebuggerPaneItem::Variables => Box::new(SubView::new(
                 self.variable_list.focus_handle(cx),
                 self.variable_list.clone().into(),
                 item_kind,
+                running_state,
+                host_pane,
                 cx,
             )),
-            DebuggerPaneItem::BreakpointList => {
-                Box::new(SubView::breakpoint_list(self.breakpoint_list.clone(), cx))
-            }
+            DebuggerPaneItem::BreakpointList => Box::new(SubView::breakpoint_list(
+                self.breakpoint_list.clone(),
+                running_state,
+                host_pane,
+                cx,
+            )),
             DebuggerPaneItem::Frames => Box::new(SubView::new(
                 self.stack_frame_list.focus_handle(cx),
                 self.stack_frame_list.clone().into(),
                 item_kind,
+                running_state,
+                host_pane,
                 cx,
             )),
             DebuggerPaneItem::Modules => Box::new(SubView::new(
                 self.module_list.focus_handle(cx),
                 self.module_list.clone().into(),
                 item_kind,
+                running_state,
+                host_pane,
                 cx,
             )),
             DebuggerPaneItem::LoadedSources => Box::new(SubView::new(
                 self.loaded_sources_list.focus_handle(cx),
                 self.loaded_sources_list.clone().into(),
                 item_kind,
+                running_state,
+                host_pane,
                 cx,
             )),
             DebuggerPaneItem::Terminal => Box::new(SubView::new(
                 self.debug_terminal.focus_handle(cx),
                 self.debug_terminal.clone().into(),
                 item_kind,
+                running_state,
+                host_pane,
                 cx,
             )),
             DebuggerPaneItem::MemoryView => Box::new(SubView::new(
                 self.memory_view.focus_handle(cx),
                 self.memory_view.clone().into(),
                 item_kind,
+                running_state,
+                host_pane,
                 cx,
             )),
         }
@@ -1374,9 +1502,14 @@ impl RunningState {
                     return;
                 };
 
-                persistence::serialize_pane_layout(adapter_name, pane_layout)
-                    .await
-                    .log_err();
+                let kvp = this
+                    .read_with(cx, |_, cx| db::kvp::KeyValueStore::global(cx))
+                    .ok();
+                if let Some(kvp) = kvp {
+                    persistence::serialize_pane_layout(adapter_name, pane_layout, kvp)
+                        .await
+                        .log_err();
+                }
 
                 this.update(cx, |this, _| {
                     this._schedule_serialize.take();
@@ -1395,8 +1528,15 @@ impl RunningState {
     ) {
         this.serialize_layout(window, cx);
         match event {
+            Event::AddItem { item } => {
+                if let Some(sub_view) = item.downcast::<SubView>() {
+                    sub_view.update(cx, |sub_view, _| {
+                        sub_view.set_host_pane(source_pane.downgrade());
+                    });
+                }
+            }
             Event::Remove { .. } => {
-                let _did_find_pane = this.panes.remove(source_pane).is_ok();
+                let _did_find_pane = this.panes.remove(source_pane, cx).is_ok();
                 debug_assert!(_did_find_pane);
                 cx.notify();
             }
@@ -1674,7 +1814,7 @@ impl RunningState {
 
         let is_building = self.session.update(cx, |session, cx| {
             session.shutdown(cx).detach();
-            matches!(session.mode, session::SessionState::Booting(_))
+            matches!(session.state, session::SessionState::Booting(_))
         });
 
         if is_building {
@@ -1736,23 +1876,28 @@ impl RunningState {
         window: &mut Window,
         cx: &mut Context<'_, RunningState>,
     ) -> Member {
+        let running_state = cx.weak_entity();
+
         let leftmost_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+        let leftmost_pane_handle = leftmost_pane.downgrade();
+        let leftmost_frames = SubView::new(
+            stack_frame_list.focus_handle(cx),
+            stack_frame_list.clone().into(),
+            DebuggerPaneItem::Frames,
+            running_state.clone(),
+            leftmost_pane_handle.clone(),
+            cx,
+        );
+        let leftmost_breakpoints = SubView::breakpoint_list(
+            breakpoints.clone(),
+            running_state.clone(),
+            leftmost_pane_handle,
+            cx,
+        );
         leftmost_pane.update(cx, |this, cx| {
+            this.add_item(Box::new(leftmost_frames), true, false, None, window, cx);
             this.add_item(
-                Box::new(SubView::new(
-                    this.focus_handle(cx),
-                    stack_frame_list.clone().into(),
-                    DebuggerPaneItem::Frames,
-                    cx,
-                )),
-                true,
-                false,
-                None,
-                window,
-                cx,
-            );
-            this.add_item(
-                Box::new(SubView::breakpoint_list(breakpoints.clone(), cx)),
+                Box::new(leftmost_breakpoints),
                 true,
                 false,
                 None,
@@ -1761,44 +1906,42 @@ impl RunningState {
             );
             this.activate_item(0, false, false, window, cx);
         });
+
         let center_pane = new_debugger_pane(workspace.clone(), project.clone(), window, cx);
+        let center_pane_handle = center_pane.downgrade();
+        let center_console = SubView::console(
+            console.clone(),
+            running_state.clone(),
+            center_pane_handle.clone(),
+            cx,
+        );
+        let center_variables = SubView::new(
+            variable_list.focus_handle(cx),
+            variable_list.clone().into(),
+            DebuggerPaneItem::Variables,
+            running_state.clone(),
+            center_pane_handle,
+            cx,
+        );
 
         center_pane.update(cx, |this, cx| {
-            let view = SubView::console(console.clone(), cx);
+            this.add_item(Box::new(center_console), true, false, None, window, cx);
 
-            this.add_item(Box::new(view), true, false, None, window, cx);
-
-            this.add_item(
-                Box::new(SubView::new(
-                    variable_list.focus_handle(cx),
-                    variable_list.clone().into(),
-                    DebuggerPaneItem::Variables,
-                    cx,
-                )),
-                true,
-                false,
-                None,
-                window,
-                cx,
-            );
+            this.add_item(Box::new(center_variables), true, false, None, window, cx);
             this.activate_item(0, false, false, window, cx);
         });
 
         let rightmost_pane = new_debugger_pane(workspace.clone(), project, window, cx);
+        let rightmost_terminal = SubView::new(
+            debug_terminal.focus_handle(cx),
+            debug_terminal.clone().into(),
+            DebuggerPaneItem::Terminal,
+            running_state,
+            rightmost_pane.downgrade(),
+            cx,
+        );
         rightmost_pane.update(cx, |this, cx| {
-            this.add_item(
-                Box::new(SubView::new(
-                    debug_terminal.focus_handle(cx),
-                    debug_terminal.clone().into(),
-                    DebuggerPaneItem::Terminal,
-                    cx,
-                )),
-                false,
-                false,
-                None,
-                window,
-                cx,
-            );
+            this.add_item(Box::new(rightmost_terminal), false, false, None, window, cx);
         });
 
         subscriptions.extend(
@@ -1823,9 +1966,9 @@ impl RunningState {
         Member::Axis(group_root)
     }
 
-    pub(crate) fn invert_axies(&mut self) {
+    pub(crate) fn invert_axies(&mut self, cx: &mut App) {
         self.dock_axis = self.dock_axis.invert();
-        self.panes.invert_axies();
+        self.panes.invert_axies(cx);
     }
 }
 

@@ -1,13 +1,27 @@
+---
+title: Agent Server Extensions
+description: "Agent Server Extensions for Zed extensions."
+---
+
 # Agent Server Extensions
 
+<div class="warning">
+
+Note that starting from `v0.221`.x, [the ACP Registry](https://agentclientprotocol.com/registry) is the preferred way to install external agents in Zed.
+You can learn more about it in [the release blog post](https://zed.dev/blog/acp-registry)
+
+At some point in the near future, Agent Server extensions will be deprecated.
+
+</div>
+
 Agent Servers are programs that provide AI agent implementations through the [Agent Client Protocol (ACP)](https://agentclientprotocol.com).
-Agent Server Extensions let you package up an Agent Server so that users can install the extension and have your agent easily available to use in Zed.
+Agent Server Extensions let you package an Agent Server so users can install the extension and use your agent in Zed.
 
 You can see the current Agent Server extensions either by opening the Extensions tab in Zed (execute the `zed: extensions` command) and changing the filter from `All` to `Agent Servers`, or by visiting [the Zed website](https://zed.dev/extensions?filter=agent-servers).
 
 ## Defining Agent Server Extensions
 
-An extension can register one or more agent servers in the `extension.toml` like so:
+An extension can register one or more agent servers in the `extension.toml`:
 
 ```toml
 [agent_servers.my-agent]
@@ -46,14 +60,24 @@ Each target must specify:
 - `archive`: URL to download the archive from (supports `.tar.gz`, `.zip`, etc.)
 - `cmd`: Command to run the agent server (relative to the extracted archive)
 - `args`: Command-line arguments to pass to the agent server (optional)
+- `sha256`: SHA-256 hash string of the archive's bytes (optional, but recommended for security)
+- `env`: Environment variables specific to this target (optional, overrides agent-level env vars with the same name)
 
 ### Optional Fields
 
-You can also optionally specify:
+You can also optionally specify at the agent server level:
 
-- `sha256`: SHA-256 hash string of the archive's bytes. Zed will check this after the archive is downloaded and give an error if it doesn't match, so doing this improves security.
-- `env`: Environment variables to set in the agent's spawned process.
+- `env`: Environment variables to set in the agent's spawned process. These apply to all targets by default.
 - `icon`: Path to an SVG icon (relative to extension root) for display in menus.
+
+### Environment Variables
+
+Environment variables can be configured at two levels:
+
+1. **Agent-level** (`[agent_servers.my-agent.env]`): Variables that apply to all platforms
+2. **Target-level** (`[agent_servers.my-agent.targets.{platform}.env]`): Variables specific to a platform
+
+When both are specified, target-level environment variables override agent-level variables with the same name. Variables defined only at the agent level are inherited by all targets.
 
 ### Complete Example
 
@@ -79,6 +103,9 @@ archive = "https://github.com/example/agent/releases/download/v2.0.0/agent-linux
 cmd = "./bin/agent"
 args = ["serve", "--port", "8080"]
 sha256 = "def456abc123..."
+
+[agent_servers.example-agent.targets.linux-x86_64.env]
+AGENT_MEMORY_LIMIT = "2GB"  # Linux-specific override
 ```
 
 ## Installation Process
@@ -106,7 +133,7 @@ GitHub Releases are a reliable way to distribute agent server binaries:
 
 ## SHA-256 Hashes
 
-It's good for security to include SHA-256 hashes of your archives in `extension.toml`. Here's how to generate it:
+For better supply-chain security, include SHA-256 hashes of your archives in `extension.toml`. Here's how to generate one:
 
 ### macOS and Linux
 
@@ -141,19 +168,15 @@ To test your Agent Server Extension:
 
 ## Icon Guideline
 
-In case your agent server has a logo, we highly recommend adding it as an SVG icon.
-For optimal display, follow these guidelines:
+If your agent server has a logo, add it as an SVG icon.
+For consistent rendering, follow these guidelines:
 
-- Make sure you resize your SVG to fit a 16x16 bounding box, with a padding of around one or two pixels
-- Ensure you have a clean SVG code by processing it through [SVGOMG](https://jakearchibald.github.io/svgomg/)
-- Avoid including icons with gradients as they will often make the SVG more complicated and possibly not render perfectly
+- Resize your SVG to fit a 16x16 bounding box with around one or two pixels of padding
+- Keep the SVG markup clean by processing it through [SVGOMG](https://jakearchibald.github.io/svgomg/)
+- Avoid gradients, which often increase SVG complexity and can render inconsistently
 
 Note that we'll automatically convert your icon to monochrome to preserve Zed's design consistency.
 (You can still use opacity in different paths of your SVG to add visual layering.)
-
----
-
-This is all you need to distribute an agent server through Zed's extension system!
 
 ## Publishing
 

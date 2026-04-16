@@ -1,3 +1,8 @@
+---
+title: Zed on Windows
+description: "Get the latest stable builds via the download page. If you want to download our preview build, you can find it on its [releases p..."
+---
+
 # Zed on Windows
 
 ## Installing Zed
@@ -5,6 +10,14 @@
 Get the latest stable builds via [the download page](https://zed.dev/download). If you want to download our preview build, you can find it on its [releases page](https://zed.dev/releases/preview). After the first manual installation, Zed will periodically check for install updates.
 
 You can also build zed from source, see [these docs](https://zed.dev/docs/development/windows) for instructions.
+
+### Package managers
+
+Additionally, you can install Zed using winget:
+
+```sh
+winget install -e --id ZedIndustries.Zed
+```
 
 ## Uninstall
 

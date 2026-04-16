@@ -11,6 +11,7 @@ use zed_actions::workspace::OpenWithSystem;
 use crate::Item;
 
 /// A view to display when a certain buffer/image/other item fails to open.
+#[derive(Debug)]
 pub struct InvalidItemView {
     /// Which path was attempted to open.
     pub abs_path: Arc<Path>,

@@ -19,11 +19,13 @@ mod state;
 mod surrounds;
 mod visual;
 
+use crate::normal::paste::Paste as VimPaste;
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
-    ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
+    SelectionEffects,
     actions::Paste,
+    display_map::ToDisplayPoint,
     movement::{self, FindRange},
 };
 use gpui::{
@@ -36,9 +38,11 @@ use language::{
 };
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
+use multi_buffer::ToPoint as _;
 use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
+use search::BufferSearchBar;
 use serde::Deserialize;
 use settings::RegisterSetting;
 pub use settings::{
@@ -47,7 +51,7 @@ pub use settings::{
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
 use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
@@ -183,8 +187,6 @@ actions!(
         InnerObject,
         /// Maximizes the current pane.
         MaximizePane,
-        /// Opens the default keymap file.
-        OpenDefaultKeymap,
         /// Resets all pane sizes to default.
         ResetPaneSizes,
         /// Resizes the pane to the right.
@@ -245,6 +247,8 @@ actions!(
         PushReplaceWithRegister,
         /// Toggles comments.
         PushToggleComments,
+        /// Toggles block comments.
+        PushToggleBlockComments,
         /// Selects (count) next menu item
         MenuSelectNext,
         /// Selects (count) previous menu item
@@ -253,6 +257,12 @@ actions!(
         ToggleProjectPanelFocus,
         /// Starts a match operation.
         PushHelixMatch,
+        /// Adds surrounding characters in Helix mode.
+        PushHelixSurroundAdd,
+        /// Replaces surrounding characters in Helix mode.
+        PushHelixSurroundReplace,
+        /// Deletes surrounding characters in Helix mode.
+        PushHelixSurroundDelete,
     ]
 );
 
@@ -314,7 +324,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|_, _: &ToggleProjectPanelFocus, window, cx| {
             if Vim::take_count(cx).is_none() {
-                window.dispatch_action(project_panel::ToggleFocus.boxed_clone(), cx);
+                window.dispatch_action(zed_actions::project_panel::ToggleFocus.boxed_clone(), cx);
             }
         });
 
@@ -343,7 +353,7 @@ pub fn init(cx: &mut App) {
             };
         });
 
-        workspace.register_action(|_, _: &OpenDefaultKeymap, _, cx| {
+        workspace.register_action(|_, _: &zed_actions::vim::OpenDefaultKeymap, _, cx| {
             cx.emit(workspace::Event::OpenBundledFile {
                 text: settings::vim_keymap(),
                 title: "Default Vim Bindings",
@@ -424,8 +434,12 @@ pub fn init(cx: &mut App) {
                 .and_then(|item| item.act_as::<Editor>(cx))
                 .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned());
             let Some(vim) = vim else { return };
-            vim.entity.update(cx, |_, cx| {
-                cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
+            vim.entity.update(cx, |vim, cx| {
+                if !vim.search.cmd_f_search {
+                    cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
+                } else {
+                    cx.propagate()
+                }
             })
         });
         workspace.register_action(|_, _: &GoToTab, window, cx| {
@@ -441,7 +455,10 @@ pub fn init(cx: &mut App) {
                 );
             } else {
                 // If no count is provided, go to the next tab.
-                window.dispatch_action(workspace::pane::ActivateNextItem.boxed_clone(), cx);
+                window.dispatch_action(
+                    workspace::pane::ActivateNextItem::default().boxed_clone(),
+                    cx,
+                );
             }
         });
 
@@ -465,7 +482,10 @@ pub fn init(cx: &mut App) {
                 }
             } else {
                 // No count provided, go to the previous tab.
-                window.dispatch_action(workspace::pane::ActivatePreviousItem.boxed_clone(), cx);
+                window.dispatch_action(
+                    workspace::pane::ActivatePreviousItem::default().boxed_clone(),
+                    cx,
+                );
             }
         });
     })
@@ -504,6 +524,7 @@ pub(crate) struct Vim {
     pub(crate) current_anchor: Option<Selection<Anchor>>,
     pub(crate) undo_modes: HashMap<TransactionId, Mode>,
     pub(crate) undo_last_line_tx: Option<TransactionId>,
+    extended_pending_selection_id: Option<usize>,
 
     selected_register: Option<char>,
     pub search: SearchState,
@@ -562,6 +583,7 @@ impl Vim {
             current_tx: None,
             undo_last_line_tx: None,
             current_anchor: None,
+            extended_pending_selection_id: None,
             undo_modes: HashMap::default(),
 
             status_label: None,
@@ -591,9 +613,11 @@ impl Vim {
         }
 
         let mut was_enabled = Vim::enabled(cx);
+        let mut was_helix_enabled = HelixModeSetting::get_global(cx).0;
         let mut was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
         cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
             let enabled = Vim::enabled(cx);
+            let helix_enabled = HelixModeSetting::get_global(cx).0;
             let toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
             if enabled && was_enabled && (toggle != was_toggle) {
                 if toggle {
@@ -605,15 +629,20 @@ impl Vim {
                     editor.set_relative_line_number(None, cx)
                 }
             }
-            was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
-            if was_enabled == enabled {
+            let helix_changed = was_helix_enabled != helix_enabled;
+            was_toggle = toggle;
+            was_helix_enabled = helix_enabled;
+
+            let state_changed = (was_enabled != enabled) || (was_enabled && helix_changed);
+            if !state_changed {
                 return;
+            }
+            if was_enabled {
+                Self::deactivate(editor, cx);
             }
             was_enabled = enabled;
             if enabled {
-                Self::activate(editor, window, cx)
-            } else {
-                Self::deactivate(editor, cx)
+                Self::activate(editor, window, cx);
             }
         })
         .detach();
@@ -624,12 +653,15 @@ impl Vim {
 
     fn activate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
         let vim = Vim::new(window, cx);
-
-        if !editor.mode().is_full() {
-            vim.update(cx, |vim, _| {
+        let state = vim.update(cx, |vim, cx| {
+            if !editor.use_modal_editing() {
                 vim.mode = Mode::Insert;
-            });
-        }
+            }
+
+            vim.state_for_editor_settings(cx)
+        });
+
+        Vim::sync_vim_settings_to_editor(&state, editor, window, cx);
 
         editor.register_addon(VimAddon {
             entity: vim.clone(),
@@ -869,6 +901,14 @@ impl Vim {
                 vim.push_operator(Operator::ToggleComments, window, cx)
             });
 
+            Vim::action(
+                editor,
+                cx,
+                |vim, _: &PushToggleBlockComments, window, cx| {
+                    vim.push_operator(Operator::ToggleBlockComments, window, cx)
+                },
+            );
+
             Vim::action(editor, cx, |vim, _: &ClearOperators, window, cx| {
                 vim.clear_operator(window, cx)
             });
@@ -924,6 +964,10 @@ impl Vim {
                 cx,
                 |vim, _: &editor::actions::Paste, window, cx| match vim.mode {
                     Mode::Replace => vim.paste_replace(window, cx),
+                    Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                        vim.selected_register.replace('+');
+                        vim.paste(&VimPaste::default(), window, cx);
+                    }
                     _ => {
                         vim.update_editor(cx, |_, editor, cx| editor.paste(&Paste, window, cx));
                     }
@@ -952,9 +996,16 @@ impl Vim {
     }
 
     fn deactivate(editor: &mut Editor, cx: &mut Context<Editor>) {
-        editor.set_cursor_shape(CursorShape::Bar, cx);
+        editor.set_cursor_shape(
+            EditorSettings::get_global(cx)
+                .cursor_shape
+                .unwrap_or_default(),
+            cx,
+        );
         editor.set_clip_at_line_ends(false, cx);
+        editor.set_collapse_matches(false);
         editor.set_input_enabled(true);
+        editor.set_expects_character_input(true);
         editor.set_autoindent(true);
         editor.selections.set_line_mode(false);
         editor.unregister_addon::<VimAddon>();
@@ -972,7 +1023,14 @@ impl Vim {
         cx: &mut Context<Vim>,
         f: impl Fn(&mut Vim, &A, &mut Window, &mut Context<Vim>) + 'static,
     ) {
-        let subscription = editor.register_action(cx.listener(f));
+        let subscription = editor.register_action(cx.listener(move |vim, action, window, cx| {
+            if !Vim::globals(cx).dot_replaying {
+                if vim.status_label.take().is_some() {
+                    cx.notify();
+                }
+            }
+            f(vim, action, window, cx);
+        }));
         cx.on_release(|_, _| drop(subscription)).detach();
     }
 
@@ -980,12 +1038,12 @@ impl Vim {
         self.editor.upgrade()
     }
 
-    pub fn workspace(&self, window: &mut Window) -> Option<Entity<Workspace>> {
-        window.root::<Workspace>().flatten()
+    pub fn workspace(&self, window: &Window, cx: &App) -> Option<Entity<Workspace>> {
+        Workspace::for_window(window, cx)
     }
 
-    pub fn pane(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<Pane>> {
-        self.workspace(window)
+    pub fn pane(&self, window: &Window, cx: &Context<Self>) -> Option<Entity<Pane>> {
+        self.workspace(window, cx)
             .map(|workspace| workspace.read(cx).focused_pane(window, cx))
     }
 
@@ -1131,7 +1189,6 @@ impl Vim {
         let last_mode = self.mode;
         let prior_mode = self.last_mode;
         let prior_tx = self.current_tx;
-        self.status_label.take();
         self.last_mode = last_mode;
         self.mode = mode;
         self.operator_stack.clear();
@@ -1173,7 +1230,7 @@ impl Vim {
             return;
         }
 
-        if !mode.is_visual() && last_mode.is_visual() {
+        if !mode.is_visual() && last_mode.is_visual() && !last_mode.is_helix() {
             self.create_visual_marks(last_mode, window, cx);
         }
 
@@ -1181,7 +1238,7 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             if last_mode != Mode::VisualBlock && last_mode.is_visual() && mode == Mode::VisualBlock
             {
-                vim.visual_block_motion(true, editor, window, cx, |_, point, goal| {
+                vim.visual_block_motion(true, editor, window, cx, &mut |_, point, goal| {
                     Some((point, goal))
                 })
             }
@@ -1209,21 +1266,38 @@ impl Vim {
                     s.select_anchor_ranges(vec![pos..pos])
                 }
 
-                let snapshot = s.display_snapshot();
-                if let Some(pending) = s.pending_anchor_mut()
-                    && pending.reversed
+                let mut should_extend_pending = false;
+                if !last_mode.is_visual()
                     && mode.is_visual()
-                    && !last_mode.is_visual()
+                    && let Some(pending) = s.pending_anchor()
                 {
-                    let mut end = pending.end.to_point(&snapshot.buffer_snapshot());
-                    end = snapshot
-                        .buffer_snapshot()
-                        .clip_point(end + Point::new(0, 1), Bias::Right);
-                    pending.end = snapshot.buffer_snapshot().anchor_before(end);
+                    let snapshot = s.display_snapshot();
+                    let is_empty = pending
+                        .start
+                        .cmp(&pending.end, &snapshot.buffer_snapshot())
+                        .is_eq();
+                    should_extend_pending = pending.reversed
+                        && !is_empty
+                        && vim.extended_pending_selection_id != Some(pending.id);
+                };
+
+                if should_extend_pending {
+                    let snapshot = s.display_snapshot();
+                    s.change_with(&snapshot, |map| {
+                        if let Some(pending) = map.pending_anchor_mut() {
+                            let end = pending.end.to_point(&snapshot.buffer_snapshot());
+                            let end = end.to_display_point(&snapshot);
+                            let new_end = movement::right(&snapshot, end);
+                            pending.end = snapshot
+                                .buffer_snapshot()
+                                .anchor_before(new_end.to_point(&snapshot));
+                        }
+                    });
+                    vim.extended_pending_selection_id = s.pending_anchor().map(|p| p.id)
                 }
 
-                s.move_with(|map, selection| {
-                    if last_mode.is_visual() && !mode.is_visual() {
+                s.move_with(&mut |map, selection| {
+                    if last_mode.is_visual() && !last_mode.is_helix() && !mode.is_visual() {
                         let mut point = selection.head();
                         if !selection.reversed && !selection.is_empty() {
                             point = movement::left(map, selection.head());
@@ -1231,8 +1305,10 @@ impl Vim {
                             point = map.clip_point(point, Bias::Left);
                         }
                         selection.collapse_to(point, selection.goal)
-                    } else if !last_mode.is_visual() && mode.is_visual() && selection.is_empty() {
-                        selection.end = movement::right(map, selection.start);
+                    } else if !last_mode.is_visual() && mode.is_visual() {
+                        if selection.is_empty() {
+                            selection.end = movement::right(map, selection.start);
+                        }
                     }
                 });
             })
@@ -1255,7 +1331,7 @@ impl Vim {
         };
 
         if global_state.dot_recording {
-            global_state.recorded_count = count;
+            global_state.recording_count = count;
         }
         count
     }
@@ -1267,7 +1343,7 @@ impl Vim {
         forced_motion
     }
 
-    pub fn cursor_shape(&self, cx: &mut App) -> CursorShape {
+    pub fn cursor_shape(&self, cx: &App) -> CursorShape {
         let cursor_shape = VimSettings::get_global(cx).cursor_shape;
         match self.mode {
             Mode::Normal => {
@@ -1286,19 +1362,31 @@ impl Vim {
                         _ => CursorShape::Underline,
                     }
                 } else {
-                    cursor_shape.normal.unwrap_or(CursorShape::Block)
+                    cursor_shape.normal
                 }
             }
-            Mode::HelixNormal => cursor_shape.normal.unwrap_or(CursorShape::Block),
-            Mode::Replace => cursor_shape.replace.unwrap_or(CursorShape::Underline),
+            Mode::HelixNormal => cursor_shape.normal,
+            Mode::Replace => cursor_shape.replace,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
-                cursor_shape.visual.unwrap_or(CursorShape::Block)
+                cursor_shape.visual
             }
-            Mode::Insert => cursor_shape.insert.unwrap_or({
-                let editor_settings = EditorSettings::get_global(cx);
-                editor_settings.cursor_shape.unwrap_or_default()
-            }),
+            Mode::Insert => match cursor_shape.insert {
+                InsertModeCursorShape::Explicit(shape) => shape,
+                InsertModeCursorShape::Inherit => {
+                    let editor_settings = EditorSettings::get_global(cx);
+                    editor_settings.cursor_shape.unwrap_or_default()
+                }
+            },
         }
+    }
+
+    fn expects_character_input(&self) -> bool {
+        if let Some(operator) = self.operator_stack.last() {
+            if operator.is_waiting(self.mode) {
+                return true;
+            }
+        }
+        self.editor_input_enabled()
     }
 
     pub fn editor_input_enabled(&self) -> bool {
@@ -1383,13 +1471,30 @@ impl Vim {
     }
 
     fn focused(&mut self, preserve_selection: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // If editor gains focus while search bar is still open (not dismissed),
+        // the user has explicitly navigated away - clear prior_selections so we
+        // don't restore to the old position if they later dismiss the search.
+        if !self.search.prior_selections.is_empty() {
+            if let Some(pane) = self.pane(window, cx) {
+                let search_still_open = pane
+                    .read(cx)
+                    .toolbar()
+                    .read(cx)
+                    .item_of_type::<BufferSearchBar>()
+                    .is_some_and(|bar| !bar.read(cx).is_dismissed());
+                if search_still_open {
+                    self.search.prior_selections.clear();
+                }
+            }
+        }
+
         let Some(editor) = self.editor() else {
             return;
         };
         let newest_selection_empty = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .newest::<usize>(&editor.display_snapshot(cx))
+                .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
                 .is_empty()
         });
         let editor = editor.read(cx);
@@ -1407,7 +1512,7 @@ impl Vim {
                 self.update_editor(cx, |_, editor, cx| {
                     editor.set_clip_at_line_ends(false, cx);
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                        s.move_with(|_, selection| {
+                        s.move_with(&mut |_, selection| {
                             selection.collapse_to(selection.start, selection.goal)
                         })
                     });
@@ -1489,7 +1594,7 @@ impl Vim {
             let snapshot = &editor.snapshot(window, cx);
             let selection = editor
                 .selections
-                .newest::<usize>(&snapshot.display_snapshot);
+                .newest::<MultiBufferOffset>(&snapshot.display_snapshot);
 
             let snapshot = snapshot.buffer_snapshot();
             let (range, kind) =
@@ -1513,7 +1618,8 @@ impl Vim {
             if !globals.dot_replaying {
                 globals.dot_recording = true;
                 globals.recording_actions = Default::default();
-                globals.recorded_count = None;
+                globals.recording_count = None;
+                globals.recording_register_for_dot = self.selected_register;
 
                 let selections = self.editor().map(|editor| {
                     editor.update(cx, |editor, cx| {
@@ -1583,6 +1689,7 @@ impl Vim {
                 .recording_actions
                 .push(ReplayableAction::Action(action.boxed_clone()));
             globals.recorded_actions = mem::take(&mut globals.recording_actions);
+            globals.recorded_count = globals.recording_count.take();
             globals.dot_recording = false;
             globals.stop_recording_after_next_action = false;
         }
@@ -1687,7 +1794,7 @@ impl Vim {
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         match original_mode {
                             Some(Mode::VisualLine) => {
-                                s.move_with(|map, selection| {
+                                s.move_with(&mut |map, selection| {
                                     selection.collapse_to(
                                         map.prev_line_boundary(selection.start.to_point(map)).1,
                                         SelectionGoal::None,
@@ -1700,7 +1807,7 @@ impl Vim {
                                 s.select_anchors(vec![first]);
                             }
                             _ => {
-                                s.move_with(|map, selection| {
+                                s.move_with(&mut |map, selection| {
                                     selection.collapse_to(
                                         map.clip_at_line_end(selection.start),
                                         selection.goal,
@@ -1715,7 +1822,7 @@ impl Vim {
             Mode::Normal => {
                 self.update_editor(cx, |_, editor, cx| {
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                        s.move_with(|map, selection| {
+                        s.move_with(&mut |map, selection| {
                             selection
                                 .collapse_to(map.clip_at_line_end(selection.end), selection.goal)
                         })
@@ -1736,14 +1843,16 @@ impl Vim {
         let newest = editor.read(cx).selections.newest_anchor().clone();
         let is_multicursor = editor.read(cx).selections.count() > 1;
         if self.mode == Mode::Insert && self.current_tx.is_some() {
-            if self.current_anchor.is_none() {
+            if let Some(current_anchor) = &self.current_anchor {
+                if current_anchor != &newest
+                    && let Some(tx_id) = self.current_tx.take()
+                {
+                    self.update_editor(cx, |_, editor, cx| {
+                        editor.group_until_transaction(tx_id, cx)
+                    });
+                }
+            } else {
                 self.current_anchor = Some(newest);
-            } else if self.current_anchor.as_ref().unwrap() != &newest
-                && let Some(tx_id) = self.current_tx.take()
-            {
-                self.update_editor(cx, |_, editor, cx| {
-                    editor.group_until_transaction(tx_id, cx)
-                });
             }
         } else if self.mode == Mode::Normal && newest.start != newest.end {
             if matches!(newest.goal, SelectionGoal::HorizontalRange { .. }) {
@@ -1878,6 +1987,60 @@ impl Vim {
                 }
                 _ => self.clear_operator(window, cx),
             },
+            Some(Operator::HelixSurroundAdd) => match self.mode {
+                Mode::HelixNormal | Mode::HelixSelect => {
+                    self.update_editor(cx, |_, editor, cx| {
+                        editor.change_selections(Default::default(), window, cx, |s| {
+                            s.move_with(&mut |map, selection| {
+                                if selection.is_empty() {
+                                    selection.end = movement::right(map, selection.start);
+                                }
+                            });
+                        });
+                    });
+                    self.helix_surround_add(&text, window, cx);
+                    self.switch_mode(Mode::HelixNormal, false, window, cx);
+                    self.clear_operator(window, cx);
+                }
+                _ => self.clear_operator(window, cx),
+            },
+            Some(Operator::HelixSurroundReplace {
+                replaced_char: Some(old),
+            }) => match self.mode {
+                Mode::HelixNormal | Mode::HelixSelect => {
+                    if let Some(new_char) = text.chars().next() {
+                        self.helix_surround_replace(old, new_char, window, cx);
+                    }
+                    self.clear_operator(window, cx);
+                }
+                _ => self.clear_operator(window, cx),
+            },
+            Some(Operator::HelixSurroundReplace {
+                replaced_char: None,
+            }) => match self.mode {
+                Mode::HelixNormal | Mode::HelixSelect => {
+                    if let Some(ch) = text.chars().next() {
+                        self.pop_operator(window, cx);
+                        self.push_operator(
+                            Operator::HelixSurroundReplace {
+                                replaced_char: Some(ch),
+                            },
+                            window,
+                            cx,
+                        );
+                    }
+                }
+                _ => self.clear_operator(window, cx),
+            },
+            Some(Operator::HelixSurroundDelete) => match self.mode {
+                Mode::HelixNormal | Mode::HelixSelect => {
+                    if let Some(ch) = text.chars().next() {
+                        self.helix_surround_delete(ch, window, cx);
+                    }
+                    self.clear_operator(window, cx);
+                }
+                _ => self.clear_operator(window, cx),
+            },
             Some(Operator::Mark) => self.create_mark(text, window, cx),
             Some(Operator::RecordRegister) => {
                 self.record_register(text.chars().next().unwrap(), window, cx)
@@ -1926,31 +2089,84 @@ impl Vim {
     }
 
     fn sync_vim_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.update_editor(cx, |vim, editor, cx| {
-            editor.set_cursor_shape(vim.cursor_shape(cx), cx);
-            editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
-            editor.set_input_enabled(vim.editor_input_enabled());
-            editor.set_autoindent(vim.should_autoindent());
-            editor
-                .selections
-                .set_line_mode(matches!(vim.mode, Mode::VisualLine));
-
-            let hide_edit_predictions = !matches!(vim.mode, Mode::Insert | Mode::Replace);
-            editor.set_edit_predictions_hidden_for_vim_mode(hide_edit_predictions, window, cx);
+        let state = self.state_for_editor_settings(cx);
+        self.update_editor(cx, |_, editor, cx| {
+            Vim::sync_vim_settings_to_editor(&state, editor, window, cx);
         });
         cx.notify()
     }
+
+    fn state_for_editor_settings(&self, cx: &App) -> VimEditorSettingsState {
+        VimEditorSettingsState {
+            cursor_shape: self.cursor_shape(cx),
+            clip_at_line_ends: self.clip_at_line_ends(),
+            collapse_matches: !HelixModeSetting::get_global(cx).0 && !self.search.cmd_f_search,
+            input_enabled: self.editor_input_enabled(),
+            expects_character_input: self.expects_character_input(),
+            autoindent: self.should_autoindent(),
+            cursor_offset_on_selection: self.mode.is_visual() || self.mode.is_helix(),
+            line_mode: matches!(self.mode, Mode::VisualLine),
+            hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace),
+        }
+    }
+
+    fn sync_vim_settings_to_editor(
+        state: &VimEditorSettingsState,
+        editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        editor.set_cursor_shape(state.cursor_shape, cx);
+        editor.set_clip_at_line_ends(state.clip_at_line_ends, cx);
+        editor.set_collapse_matches(state.collapse_matches);
+        editor.set_input_enabled(state.input_enabled);
+        editor.set_expects_character_input(state.expects_character_input);
+        editor.set_autoindent(state.autoindent);
+        editor.set_cursor_offset_on_selection(state.cursor_offset_on_selection);
+        editor.selections.set_line_mode(state.line_mode);
+        editor.set_edit_predictions_hidden_for_vim_mode(state.hide_edit_predictions, window, cx);
+    }
+
+    fn set_status_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Editor>) {
+        self.status_label = Some(label.into());
+        cx.notify();
+    }
 }
 
-#[derive(RegisterSetting)]
+struct VimEditorSettingsState {
+    cursor_shape: CursorShape,
+    clip_at_line_ends: bool,
+    collapse_matches: bool,
+    input_enabled: bool,
+    expects_character_input: bool,
+    autoindent: bool,
+    cursor_offset_on_selection: bool,
+    line_mode: bool,
+    hide_edit_predictions: bool,
+}
+
+#[derive(Clone, RegisterSetting)]
 struct VimSettings {
     pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: settings::UseSystemClipboard,
     pub use_smartcase_find: bool,
+    pub use_regex_search: bool,
+    pub gdefault: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
     pub cursor_shape: CursorShapeSettings,
+}
+
+/// Cursor shape configuration for insert mode.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum InsertModeCursorShape {
+    /// Inherit cursor shape from the editor's base cursor_shape setting.
+    /// This allows users to set their preferred editor cursor and have
+    /// it automatically apply to vim insert mode.
+    Inherit,
+    /// Use an explicit cursor shape for insert mode.
+    Explicit(CursorShape),
 }
 
 /// The settings for cursor shape.
@@ -1959,28 +2175,48 @@ pub struct CursorShapeSettings {
     /// Cursor shape for the normal mode.
     ///
     /// Default: block
-    pub normal: Option<CursorShape>,
+    pub normal: CursorShape,
     /// Cursor shape for the replace mode.
     ///
     /// Default: underline
-    pub replace: Option<CursorShape>,
+    pub replace: CursorShape,
     /// Cursor shape for the visual mode.
     ///
     /// Default: block
-    pub visual: Option<CursorShape>,
+    pub visual: CursorShape,
     /// Cursor shape for the insert mode.
     ///
-    /// The default value follows the primary cursor_shape.
-    pub insert: Option<CursorShape>,
+    /// Default: Inherit (follows editor.cursor_shape)
+    pub insert: InsertModeCursorShape,
+}
+
+impl From<settings::VimInsertModeCursorShape> for InsertModeCursorShape {
+    fn from(shape: settings::VimInsertModeCursorShape) -> Self {
+        match shape {
+            settings::VimInsertModeCursorShape::Inherit => InsertModeCursorShape::Inherit,
+            settings::VimInsertModeCursorShape::Bar => {
+                InsertModeCursorShape::Explicit(CursorShape::Bar)
+            }
+            settings::VimInsertModeCursorShape::Block => {
+                InsertModeCursorShape::Explicit(CursorShape::Block)
+            }
+            settings::VimInsertModeCursorShape::Underline => {
+                InsertModeCursorShape::Explicit(CursorShape::Underline)
+            }
+            settings::VimInsertModeCursorShape::Hollow => {
+                InsertModeCursorShape::Explicit(CursorShape::Hollow)
+            }
+        }
+    }
 }
 
 impl From<settings::CursorShapeSettings> for CursorShapeSettings {
     fn from(settings: settings::CursorShapeSettings) -> Self {
         Self {
-            normal: settings.normal.map(Into::into),
-            replace: settings.replace.map(Into::into),
-            visual: settings.visual.map(Into::into),
-            insert: settings.insert.map(Into::into),
+            normal: settings.normal.unwrap().into(),
+            replace: settings.replace.unwrap().into(),
+            visual: settings.visual.unwrap().into(),
+            insert: settings.insert.unwrap().into(),
         }
     }
 }
@@ -2002,6 +2238,8 @@ impl Settings for VimSettings {
             toggle_relative_line_numbers: vim.toggle_relative_line_numbers.unwrap(),
             use_system_clipboard: vim.use_system_clipboard.unwrap(),
             use_smartcase_find: vim.use_smartcase_find.unwrap(),
+            use_regex_search: vim.use_regex_search.unwrap(),
+            gdefault: vim.gdefault.unwrap(),
             custom_digraphs: vim.custom_digraphs.unwrap(),
             highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
             cursor_shape: vim.cursor_shape.unwrap().into(),

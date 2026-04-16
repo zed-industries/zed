@@ -37,6 +37,7 @@ collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
+semver.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }

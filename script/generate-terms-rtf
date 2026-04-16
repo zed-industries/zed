@@ -7,6 +7,4 @@ then
     brew install pandoc   # Install pandoc using Homebrew
 fi
 
-pandoc ./legal/terms.md -f markdown-smart -t html -o ./script/terms/terms.html
-textutil -convert rtf ./script/terms/terms.html -output ./script/terms/terms.rtf
-rm ./script/terms/terms.html
+pandoc ./legal/terms.md -f markdown-smart -t rtf -o ./script/terms/terms.rtf --standalone

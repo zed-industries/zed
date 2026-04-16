@@ -38,13 +38,16 @@ impl QuickActionBar {
 
         let editor = self.active_editor()?;
 
-        let is_local_project = editor
+        let is_valid_project = editor
             .read(cx)
             .workspace()
-            .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+            .map(|workspace| {
+                let project = workspace.read(cx).project().read(cx);
+                !project.is_via_collab()
+            })
             .unwrap_or(false);
 
-        if !is_local_project {
+        if !is_valid_project {
             return None;
         }
 
@@ -283,6 +286,21 @@ impl QuickActionBar {
             return div().into_any_element();
         };
 
+        let store = repl::ReplStore::global(cx);
+        if !store.read(cx).has_python_kernelspecs(worktree_id) {
+            if let Some(project) = editor
+                .read(cx)
+                .workspace()
+                .map(|workspace| workspace.read(cx).project().clone())
+            {
+                store
+                    .update(cx, |store, cx| {
+                        store.refresh_python_kernelspecs(worktree_id, &project, cx)
+                    })
+                    .detach_and_log_err(cx);
+            }
+        }
+
         let session = repl::session(editor.downgrade(), cx);
 
         let current_kernelspec = match session {
@@ -301,7 +319,17 @@ impl QuickActionBar {
         KernelSelector::new(
             {
                 Box::new(move |kernelspec, window, cx| {
-                    repl::assign_kernelspec(kernelspec, editor.downgrade(), window, cx).ok();
+                    if kernelspec.has_ipykernel() {
+                        repl::assign_kernelspec(kernelspec, editor.downgrade(), window, cx).ok();
+                    } else {
+                        repl::install_ipykernel_and_assign(
+                            kernelspec,
+                            editor.downgrade(),
+                            window,
+                            cx,
+                        )
+                        .ok();
+                    }
                 })
             },
             worktree_id,
@@ -388,16 +416,55 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
         }
     };
 
-    match &session.kernel {
-        Kernel::Restarting => ReplMenuState {
-            tooltip: format!("Restarting {}", kernel_name).into(),
-            icon_is_animating: true,
-            popover_disabled: true,
+    let transitional =
+        |tooltip: SharedString, animating: bool, popover_disabled: bool| ReplMenuState {
+            tooltip,
+            icon_is_animating: animating,
+            popover_disabled,
             icon_color: Color::Muted,
             indicator: Some(Indicator::dot().color(Color::Muted)),
             status: session.kernel.status(),
             ..fill_fields()
-        },
+        };
+
+    let starting = || transitional(format!("{} is starting", kernel_name).into(), true, true);
+    let restarting = || transitional(format!("Restarting {}", kernel_name).into(), true, true);
+    let shutting_down = || {
+        transitional(
+            format!("{} is shutting down", kernel_name).into(),
+            false,
+            true,
+        )
+    };
+    let auto_restarting = || {
+        transitional(
+            format!("Auto-restarting {}", kernel_name).into(),
+            true,
+            true,
+        )
+    };
+    let unknown = || transitional(format!("{} state unknown", kernel_name).into(), false, true);
+    let other = |state: &str| {
+        transitional(
+            format!("{} state: {}", kernel_name, state).into(),
+            false,
+            true,
+        )
+    };
+
+    let shutdown = || ReplMenuState {
+        tooltip: "Nothing running".into(),
+        icon: IconName::ReplNeutral,
+        icon_color: Color::Default,
+        icon_is_animating: false,
+        popover_disabled: false,
+        indicator: None,
+        status: KernelStatus::Shutdown,
+        ..fill_fields()
+    };
+
+    match &session.kernel {
+        Kernel::Restarting => restarting(),
         Kernel::RunningKernel(kernel) => match &kernel.execution_state() {
             ExecutionState::Idle => ReplMenuState {
                 tooltip: format!("Run code on {} ({})", kernel_name, kernel_language).into(),
@@ -413,16 +480,15 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
                 status: session.kernel.status(),
                 ..fill_fields()
             },
+            ExecutionState::Unknown => unknown(),
+            ExecutionState::Starting => starting(),
+            ExecutionState::Restarting => restarting(),
+            ExecutionState::Terminating => shutting_down(),
+            ExecutionState::AutoRestarting => auto_restarting(),
+            ExecutionState::Dead => shutdown(),
+            ExecutionState::Other(state) => other(state),
         },
-        Kernel::StartingKernel(_) => ReplMenuState {
-            tooltip: format!("{} is starting", kernel_name).into(),
-            icon_is_animating: true,
-            popover_disabled: true,
-            icon_color: Color::Muted,
-            indicator: Some(Indicator::dot().color(Color::Muted)),
-            status: session.kernel.status(),
-            ..fill_fields()
-        },
+        Kernel::StartingKernel(_) => starting(),
         Kernel::ErroredLaunch(e) => ReplMenuState {
             tooltip: format!("Error with kernel {}: {}", kernel_name, e).into(),
             popover_disabled: false,
@@ -430,23 +496,7 @@ fn session_state(session: Entity<Session>, cx: &mut App) -> ReplMenuState {
             status: session.kernel.status(),
             ..fill_fields()
         },
-        Kernel::ShuttingDown => ReplMenuState {
-            tooltip: format!("{} is shutting down", kernel_name).into(),
-            popover_disabled: true,
-            icon_color: Color::Muted,
-            indicator: Some(Indicator::dot().color(Color::Muted)),
-            status: session.kernel.status(),
-            ..fill_fields()
-        },
-        Kernel::Shutdown => ReplMenuState {
-            tooltip: "Nothing running".into(),
-            icon: IconName::ReplNeutral,
-            icon_color: Color::Default,
-            icon_is_animating: false,
-            popover_disabled: false,
-            indicator: None,
-            status: KernelStatus::Shutdown,
-            ..fill_fields()
-        },
+        Kernel::ShuttingDown => shutting_down(),
+        Kernel::Shutdown => shutdown(),
     }
 }

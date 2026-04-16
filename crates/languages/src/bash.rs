@@ -11,6 +11,7 @@ pub(super) fn bash_task_context() -> ContextProviderWithTasks {
         TaskTemplate {
             label: format!("run '{}'", VariableName::File.template_value()),
             command: VariableName::File.template_value(),
+            tags: vec!["bash-script".to_owned()],
             ..TaskTemplate::default()
         },
     ]))
@@ -44,7 +45,11 @@ mod tests {
 
             let expect_indents_to =
                 |buffer: &mut Buffer, cx: &mut Context<Buffer>, input: &str, expected: &str| {
-                    buffer.edit( [(0..buffer.len(), input)], Some(AutoindentMode::EachLine), cx, );
+                    buffer.edit(
+                        [(0..buffer.len(), input)],
+                        Some(AutoindentMode::EachLine),
+                        cx,
+                    );
                     assert_eq!(buffer.text(), expected);
                 };
 

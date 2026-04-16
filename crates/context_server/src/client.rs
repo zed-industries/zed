@@ -6,6 +6,7 @@ use parking_lot::Mutex;
 use postage::barrier;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, value::RawValue};
+use slotmap::SlotMap;
 use smol::channel;
 use std::{
     fmt,
@@ -34,7 +35,7 @@ pub const METHOD_NOT_FOUND: i32 = -32601;
 pub const INVALID_PARAMS: i32 = -32602;
 pub const INTERNAL_ERROR: i32 = -32603;
 
-type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
+type ResponseHandler = Box<dyn Send + FnOnce(String)>;
 type NotificationHandler = Box<dyn Send + FnMut(Value, AsyncApp)>;
 type RequestHandler = Box<dyn Send + FnMut(RequestId, &RawValue, AsyncApp)>;
 
@@ -50,7 +51,7 @@ pub(crate) struct Client {
     next_id: AtomicI32,
     outbound_tx: channel::Sender<String>,
     name: Arc<str>,
-    notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
+    subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
     #[allow(clippy::type_complexity)]
     #[allow(dead_code)]
@@ -61,6 +62,14 @@ pub(crate) struct Client {
     #[allow(dead_code)]
     transport: Arc<dyn Transport>,
     request_timeout: Option<Duration>,
+    /// Single-slot side channel for the last transport-level error. When the
+    /// output task encounters a send failure it stashes the error here and
+    /// exits; the next request to observe cancellation `.take()`s it so it can
+    /// propagate a typed error (e.g. `TransportError::AuthRequired`) instead
+    /// of a generic "cancelled". This works because `initialize` is the sole
+    /// in-flight request at startup, but would need rethinking if concurrent
+    /// requests are ever issued during that phase.
+    last_transport_error: Arc<Mutex<Option<anyhow::Error>>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -175,7 +184,7 @@ impl Client {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(String::new);
 
-        let timeout = binary.timeout.map(Duration::from_millis);
+        let timeout = binary.timeout.map(Duration::from_secs);
         let transport = Arc::new(StdioTransport::new(binary, working_directory, &cx)?);
         Self::new(server_id, server_name.into(), transport, timeout, cx)
     }
@@ -191,21 +200,20 @@ impl Client {
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
 
-        let notification_handlers =
-            Arc::new(Mutex::new(HashMap::<_, NotificationHandler>::default()));
+        let subscription_set = Arc::new(Mutex::new(NotificationSubscriptionSet::default()));
         let response_handlers =
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
         let request_handlers = Arc::new(Mutex::new(HashMap::<_, RequestHandler>::default()));
 
         let receive_input_task = cx.spawn({
-            let notification_handlers = notification_handlers.clone();
+            let subscription_set = subscription_set.clone();
             let response_handlers = response_handlers.clone();
             let request_handlers = request_handlers.clone();
             let transport = transport.clone();
             async move |cx| {
                 Self::handle_input(
                     transport,
-                    notification_handlers,
+                    subscription_set,
                     request_handlers,
                     response_handlers,
                     cx,
@@ -223,20 +231,23 @@ impl Client {
             input.or(err)
         });
 
+        let last_transport_error: Arc<Mutex<Option<anyhow::Error>>> = Arc::new(Mutex::new(None));
         let output_task = cx.background_spawn({
             let transport = transport.clone();
+            let last_transport_error = last_transport_error.clone();
             Self::handle_output(
                 transport,
                 outbound_rx,
                 output_done_tx,
                 response_handlers.clone(),
+                last_transport_error,
             )
             .log_err()
         });
 
         Ok(Self {
             server_id,
-            notification_handlers,
+            subscription_set,
             response_handlers,
             name: server_name,
             next_id: Default::default(),
@@ -246,6 +257,7 @@ impl Client {
             output_done_rx: Mutex::new(Some(output_done_rx)),
             transport,
             request_timeout,
+            last_transport_error,
         })
     }
 
@@ -257,7 +269,7 @@ impl Client {
     /// to pending requests) and notifications (which trigger registered handlers).
     async fn handle_input(
         transport: Arc<dyn Transport>,
-        notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
+        subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
         request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         cx: &mut AsyncApp,
@@ -279,13 +291,14 @@ impl Client {
                 if let Some(handlers) = response_handlers.lock().as_mut()
                     && let Some(handler) = handlers.remove(&response.id)
                 {
-                    handler(Ok(message.to_string()));
+                    handler(message.to_string());
                 }
             } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&message) {
-                let mut notification_handlers = notification_handlers.lock();
-                if let Some(handler) = notification_handlers.get_mut(notification.method.as_str()) {
-                    handler(notification.params.unwrap_or(Value::Null), cx.clone());
-                }
+                subscription_set.lock().notify(
+                    &notification.method,
+                    notification.params.unwrap_or(Value::Null),
+                    cx,
+                )
             } else {
                 log::error!("Unhandled JSON from context_server: {}", message);
             }
@@ -314,6 +327,7 @@ impl Client {
         outbound_rx: channel::Receiver<String>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        last_transport_error: Arc<Mutex<Option<anyhow::Error>>>,
     ) -> anyhow::Result<()> {
         let _clear_response_handlers = util::defer({
             let response_handlers = response_handlers.clone();
@@ -323,7 +337,11 @@ impl Client {
         });
         while let Ok(message) = outbound_rx.recv().await {
             log::trace!("outgoing message: {}", message);
-            transport.send(message).await?;
+            if let Err(err) = transport.send(message).await {
+                log::debug!("transport send failed: {:#}", err);
+                *last_transport_error.lock() = Some(err);
+                return Ok(());
+            }
         }
         drop(output_done_tx);
         Ok(())
@@ -407,7 +425,7 @@ impl Client {
             response = rx.fuse() => {
                 let elapsed = started.elapsed();
                 log::trace!("took {elapsed:?} to receive response to {method:?} id {id}");
-                match response? {
+                match response {
                     Ok(response) => {
                         let parsed: AnyResponse = serde_json::from_str(&response)?;
                         if let Some(error) = parsed.error {
@@ -418,7 +436,12 @@ impl Client {
                             anyhow::bail!("Invalid response: no result or error");
                         }
                     }
-                    Err(_) => anyhow::bail!("cancelled")
+                    Err(_canceled) => {
+                        if let Some(err) = self.last_transport_error.lock().take() {
+                            return Err(err);
+                        }
+                        anyhow::bail!("cancelled")
+                    }
                 }
             }
             _ = cancel_fut => {
@@ -451,12 +474,18 @@ impl Client {
         Ok(())
     }
 
+    #[must_use]
     pub fn on_notification(
         &self,
         method: &'static str,
         f: Box<dyn 'static + Send + FnMut(Value, AsyncApp)>,
-    ) {
-        self.notification_handlers.lock().insert(method, f);
+    ) -> NotificationSubscription {
+        let mut notification_subscriptions = self.subscription_set.lock();
+
+        NotificationSubscription {
+            id: notification_subscriptions.add_handler(method, f),
+            set: self.subscription_set.clone(),
+        }
     }
 }
 
@@ -483,5 +512,75 @@ impl fmt::Debug for Client {
             .field("id", &self.server_id.0)
             .field("name", &self.name)
             .finish_non_exhaustive()
+    }
+}
+
+slotmap::new_key_type! {
+    struct NotificationSubscriptionId;
+}
+
+#[derive(Default)]
+pub struct NotificationSubscriptionSet {
+    // we have very few subscriptions at the moment
+    methods: Vec<(&'static str, Vec<NotificationSubscriptionId>)>,
+    handlers: SlotMap<NotificationSubscriptionId, NotificationHandler>,
+}
+
+impl NotificationSubscriptionSet {
+    #[must_use]
+    fn add_handler(
+        &mut self,
+        method: &'static str,
+        handler: NotificationHandler,
+    ) -> NotificationSubscriptionId {
+        let id = self.handlers.insert(handler);
+        if let Some((_, handler_ids)) = self
+            .methods
+            .iter_mut()
+            .find(|(probe_method, _)| method == *probe_method)
+        {
+            debug_assert!(
+                handler_ids.len() < 20,
+                "Too many MCP handlers for {}. Consider using a different data structure.",
+                method
+            );
+
+            handler_ids.push(id);
+        } else {
+            self.methods.push((method, vec![id]));
+        };
+        id
+    }
+
+    fn notify(&mut self, method: &str, payload: Value, cx: &mut AsyncApp) {
+        let Some((_, handler_ids)) = self
+            .methods
+            .iter_mut()
+            .find(|(probe_method, _)| method == *probe_method)
+        else {
+            return;
+        };
+
+        for handler_id in handler_ids {
+            if let Some(handler) = self.handlers.get_mut(*handler_id) {
+                handler(payload.clone(), cx.clone());
+            }
+        }
+    }
+}
+
+pub struct NotificationSubscription {
+    id: NotificationSubscriptionId,
+    set: Arc<Mutex<NotificationSubscriptionSet>>,
+}
+
+impl Drop for NotificationSubscription {
+    fn drop(&mut self) {
+        let mut set = self.set.lock();
+        set.handlers.remove(self.id);
+        set.methods.retain_mut(|(_, handler_ids)| {
+            handler_ids.retain(|id| *id != self.id);
+            !handler_ids.is_empty()
+        });
     }
 }

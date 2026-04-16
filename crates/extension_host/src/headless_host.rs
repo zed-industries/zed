@@ -96,7 +96,7 @@ impl HeadlessExtensionStore {
 
             for extension in to_load {
                 if let Err(e) = Self::load_extension(this.clone(), extension.clone(), cx).await {
-                    log::info!("failed to load extension: {}, {:?}", extension.id, e);
+                    log::info!("failed to load extension: {}, {:#}", extension.id, e);
                     missing.push(extension)
                 } else if extension.dev {
                     missing.push(extension)
@@ -138,7 +138,9 @@ impl HeadlessExtensionStore {
 
         for language_path in &manifest.languages {
             let language_path = extension_dir.join(language_path);
-            let config = fs.load(&language_path.join("config.toml")).await?;
+            let config = fs
+                .load(&language_path.join(LanguageConfig::FILE_NAME))
+                .await?;
             let mut config = ::toml::from_str::<LanguageConfig>(&config)?;
 
             this.update(cx, |this, _cx| {
@@ -245,8 +247,7 @@ impl HeadlessExtensionStore {
                         cx,
                     ));
                 }
-            })
-            .ok();
+            });
             let _ = join_all(removal_tasks).await;
 
             fs.remove_dir(
@@ -279,7 +280,8 @@ impl HeadlessExtensionStore {
             }
 
             fs.rename(&tmp_path, &path, RenameOptions::default())
-                .await?;
+                .await
+                .with_context(|| format!("Failed to rename {tmp_path:?} to {path:?}"))?;
 
             Self::load_extension(this, extension, cx).await
         })
@@ -303,7 +305,7 @@ impl HeadlessExtensionStore {
         let missing_extensions = extension_store
             .update(&mut cx, |extension_store, cx| {
                 extension_store.sync_extensions(requested_extensions.collect(), cx)
-            })?
+            })
             .await?;
 
         Ok(proto::SyncExtensionsResponse {
@@ -342,7 +344,7 @@ impl HeadlessExtensionStore {
                     PathBuf::from(envelope.payload.tmp_dir),
                     cx,
                 )
-            })?
+            })
             .await?;
 
         Ok(proto::Ack {})

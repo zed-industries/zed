@@ -23,6 +23,7 @@ pub const FSMONITOR_DAEMON: &str = "fsmonitor--daemon";
 pub const LFS_DIR: &str = "lfs";
 pub const COMMIT_MESSAGE: &str = "COMMIT_EDITMSG";
 pub const INDEX_LOCK: &str = "index.lock";
+pub const REPO_EXCLUDE: &str = "info/exclude";
 
 actions!(
     git,
@@ -39,10 +40,15 @@ actions!(
         /// Restores the selected hunks to their original state.
         #[action(deprecated_aliases = ["editor::RevertSelectedHunks"])]
         Restore,
+        /// Restores the selected hunks to their original state and moves to the
+        /// next one.
+        RestoreAndNext,
         // per-file
         /// Shows git blame information for the current file.
         #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
         Blame,
+        /// Shows the git history for the current file.
+        FileHistory,
         /// Stages the current file.
         StageFile,
         /// Unstages the current file.
@@ -156,6 +162,14 @@ impl Oid {
     }
 }
 
+impl TryFrom<&str> for Oid {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> std::prelude::v1::Result<Self, Self::Error> {
+        Oid::from_str(value)
+    }
+}
+
 impl FromStr for Oid {
     type Err = anyhow::Error;
 
@@ -224,5 +238,30 @@ impl From<Oid> for usize {
         u64_bytes.copy_from_slice(&bytes[..8]);
 
         u64::from_ne_bytes(u64_bytes) as usize
+    }
+}
+
+#[repr(i32)]
+#[derive(Copy, Clone, Debug)]
+pub enum RunHook {
+    PreCommit,
+}
+
+impl RunHook {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::PreCommit => "pre-commit",
+        }
+    }
+
+    pub fn to_proto(&self) -> i32 {
+        *self as i32
+    }
+
+    pub fn from_proto(value: i32) -> Option<Self> {
+        match value {
+            0 => Some(Self::PreCommit),
+            _ => None,
+        }
     }
 }

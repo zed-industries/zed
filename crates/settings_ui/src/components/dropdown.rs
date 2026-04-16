@@ -17,7 +17,7 @@ where
     labels: &'static [&'static str],
     should_do_title_case: bool,
     tab_index: Option<isize>,
-    on_change: Rc<dyn Fn(T, &mut App) + 'static>,
+    on_change: Rc<dyn Fn(T, &mut ui::Window, &mut App) + 'static>,
 }
 
 impl<T> EnumVariantDropdown<T>
@@ -29,7 +29,7 @@ where
         current_value: T,
         variants: &'static [T],
         labels: &'static [&'static str],
-        on_change: impl Fn(T, &mut App) + 'static,
+        on_change: impl Fn(T, &mut ui::Window, &mut App) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
@@ -78,8 +78,8 @@ where
                         value == current_value,
                         IconPosition::End,
                         None,
-                        move |_, cx| {
-                            on_change(value, cx);
+                        move |window, cx| {
+                            on_change(value, window, cx);
                         },
                     );
                 }
