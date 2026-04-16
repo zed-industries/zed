@@ -230,6 +230,7 @@ impl DevContainerManifest {
                 else {
                     return None;
                 };
+                log::error!("confirmed docker compose. Main service: {:?}", main_service);
                 main_service.build.and_then(|b| {
                     let compose_file = docker_compose_manifest.files.first()?;
                     resolve_compose_dockerfile(
