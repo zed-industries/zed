@@ -2211,6 +2211,8 @@ fn resolve_compose_dockerfile(
     dockerfile: &str,
 ) -> Option<PathBuf> {
     let dockerfile = PathBuf::from(dockerfile);
+    log::error!("Dockerfile: {:?}", dockerfile);
+    log::error!("compose_file: {:?}", compose_file);
     if dockerfile.is_absolute() {
         return Some(dockerfile);
     }
