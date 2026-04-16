@@ -4760,8 +4760,8 @@ impl ThreadView {
                         .into_any()
                 }
             }
-            AgentThreadEntry::ToolCall(tool_call) => self
-                .render_any_tool_call(
+            AgentThreadEntry::ToolCall(tool_call) => {
+                let tool_call = self.render_any_tool_call(
                     self.thread.read(cx).session_id(),
                     entry_ix,
                     tool_call,
@@ -4769,8 +4769,19 @@ impl ThreadView {
                     false,
                     window,
                     cx,
-                )
-                .into_any(),
+                );
+
+                if let Some(handle) = self
+                    .entry_view_state
+                    .read(cx)
+                    .entry(entry_ix)
+                    .and_then(|entry| entry.focus_handle(cx))
+                {
+                    tool_call.track_focus(&handle).into_any()
+                } else {
+                    tool_call.into_any()
+                }
+            }
             AgentThreadEntry::CompletedPlan(entries) => {
                 self.render_completed_plan(entries, window, cx)
             }
