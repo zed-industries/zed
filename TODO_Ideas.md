@@ -1,4 +1,6 @@
 after next main merge, test this:
+- The file finder now matches search terms in any order.
+- With "Focus Follows Mouse" enabled, focus is automatically transferred to whichever panel your mouse is hovering over.
 - https://github.com/zed-industries/zed/pull/49802 (project_panel: Add diagnostic count badges and color priority)
 - outline UI ("document_symbols": "on"). (enable this and test) (https://github.com/zed-industries/zed/pull/48780)
 - https://github.com/zed-industries/zed/pull/49624 (git_ui: Show uncommitted change count badge on git panel icon)
