@@ -55,6 +55,7 @@ pub struct ThreadItem {
     project_name: Option<SharedString>,
     worktrees: Vec<ThreadItemWorktreeInfo>,
     is_remote: bool,
+    archived: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
     action_slot: Option<AnyElement>,
@@ -86,6 +87,7 @@ impl ThreadItem {
             project_name: None,
             worktrees: Vec::new(),
             is_remote: false,
+            archived: false,
             on_click: None,
             on_hover: Box::new(|_, _, _| {}),
             action_slot: None,
@@ -180,6 +182,11 @@ impl ThreadItem {
 
     pub fn is_remote(mut self, is_remote: bool) -> Self {
         self.is_remote = is_remote;
+        self
+    }
+
+    pub fn archived(mut self, archived: bool) -> Self {
+        self.archived = archived;
         self
     }
 
@@ -431,6 +438,14 @@ impl RenderOnce for ThreadItem {
                     h_flex()
                         .gap_1p5()
                         .child(icon_container()) // Icon Spacing
+                        .when(self.archived, |this| {
+                            this.child(
+                                Icon::new(IconName::Archive).size(IconSize::XSmall).color(
+                                    Color::Custom(cx.theme().colors().icon_muted.opacity(0.5)),
+                                ),
+                            )
+                            // .child(dot_separator())
+                        })
                         .when(
                             has_project_name || has_project_paths || has_worktree,
                             |this| {
