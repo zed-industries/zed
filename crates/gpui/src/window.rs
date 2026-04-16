@@ -1057,6 +1057,12 @@ struct InputLatencyTracker {
     /// Count of input events that arrived mid-draw and were excluded from
     /// latency recording because their effects won't appear until the next frame.
     mid_draw_events_dropped: u64,
+    /// Snapshot of `latency_histogram` at the time of the last report.
+    previous_latency_histogram: Option<Histogram<u64>>,
+    /// Snapshot of `events_per_frame_histogram` at the time of the last report.
+    previous_events_per_frame_histogram: Option<Histogram<u64>>,
+    /// Timestamp of the last report.
+    previous_report_timestamp: Option<chrono::DateTime<chrono::Local>>,
 }
 
 impl InputLatencyTracker {
@@ -1069,6 +1075,9 @@ impl InputLatencyTracker {
             events_per_frame_histogram: Histogram::new(3)
                 .map_err(|e| anyhow!("Failed to create events per frame histogram: {e}"))?,
             mid_draw_events_dropped: 0,
+            previous_latency_histogram: None,
+            previous_events_per_frame_histogram: None,
+            previous_report_timestamp: None,
         })
     }
 
@@ -1100,7 +1109,9 @@ impl InputLatencyTracker {
     }
 
     /// Returns a formatted text report of the latency and coalescing histograms.
-    fn format_report(&self) -> String {
+    /// Also saves a snapshot of the current histograms so the next report can
+    /// show a delta.
+    fn format_report(&mut self) -> String {
         let histogram = &self.latency_histogram;
         let total = histogram.len();
 
@@ -1108,24 +1119,6 @@ impl InputLatencyTracker {
             return "No input latency samples recorded yet.\n\nTry typing or clicking in a buffer first.".to_string();
         }
 
-        let ns_to_ms = |ns: u64| ns as f64 / 1_000_000.0;
-
-        let mut report = String::new();
-        report.push_str("Input Latency Histogram\n");
-        report.push_str("=======================\n");
-
-        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z");
-        report.push_str(&format!("Timestamp: {timestamp}\n"));
-        report.push_str(&format!("Samples: {total}\n"));
-        if self.mid_draw_events_dropped > 0 {
-            report.push_str(&format!(
-                "Mid-draw events excluded: {}\n",
-                self.mid_draw_events_dropped
-            ));
-        }
-        report.push('\n');
-
-        report.push_str("Percentiles:\n");
         let percentiles: &[(&str, f64)] = &[
             ("min  ", 0.0),
             ("p50  ", 0.50),
@@ -1136,56 +1129,25 @@ impl InputLatencyTracker {
             ("p99.9", 0.999),
             ("max  ", 1.0),
         ];
-        for (label, quantile) in percentiles {
-            let value_ns = if *quantile == 0.0 {
-                histogram.min()
-            } else if *quantile == 1.0 {
-                histogram.max()
-            } else {
-                histogram.value_at_quantile(*quantile)
-            };
-            let hz = if value_ns > 0 {
-                1_000_000_000.0 / value_ns as f64
-            } else {
-                f64::INFINITY
-            };
+
+        let now = chrono::Local::now();
+
+        let mut report = String::new();
+        report.push_str("Input Latency Histogram\n");
+        report.push_str("=======================\n");
+
+        let timestamp = now.format("%Y-%m-%d %H:%M:%S %Z");
+        report.push_str(&format!("Timestamp: {timestamp}\n"));
+        report.push_str(&format!("Samples: {total}\n"));
+        if self.mid_draw_events_dropped > 0 {
             report.push_str(&format!(
-                "  {label}: {:>8.2}ms  ({:>7.1} Hz)\n",
-                ns_to_ms(value_ns),
-                hz
+                "Mid-draw events excluded: {}\n",
+                self.mid_draw_events_dropped
             ));
         }
 
-        report.push('\n');
-        report.push_str("Distribution:\n");
-
-        // Perceptual latency buckets. Upper bounds are exclusive except for the last.
-        let buckets: &[(u64, u64, &str, &str)] = &[
-            (0, 4_000_000, "0\u{2013}4ms", "(excellent)"),
-            (4_000_000, 8_000_000, "4\u{2013}8ms", "(120fps)"),
-            (8_000_000, 16_000_000, "8\u{2013}16ms", "(60fps)"),
-            (16_000_000, 33_000_000, "16\u{2013}33ms", "(30fps)"),
-            (33_000_000, 100_000_000, "33\u{2013}100ms", ""),
-            (100_000_000, u64::MAX, "100ms+", "(sluggish)"),
-        ];
-
-        let bar_width = 30usize;
-        for (low, high, range, note) in buckets {
-            let count: u64 = histogram
-                .iter_recorded()
-                .filter(|value| {
-                    value.value_iterated_to() >= *low && value.value_iterated_to() < *high
-                })
-                .map(|value| value.count_at_value())
-                .sum();
-            let fraction = count as f64 / total as f64;
-            let bar_len = (fraction * bar_width as f64) as usize;
-            let bar = "\u{2588}".repeat(bar_len);
-            report.push_str(&format!(
-                "  {range:>8}  {note:<11}: {count:>6} ({:>5.1}%) {bar}\n",
-                fraction * 100.0,
-            ));
-        }
+        write_latency_percentiles(&mut report, "Percentiles", histogram, percentiles);
+        write_latency_distribution(&mut report, "Distribution", histogram);
 
         let coalesce = &self.events_per_frame_histogram;
         let coalesce_total = coalesce.len();
@@ -1205,6 +1167,7 @@ impl InputLatencyTracker {
 
             report.push('\n');
             report.push_str("Distribution:\n");
+            let bar_width = 30usize;
             let max_count = coalesce.max();
             for n in 1..=max_count {
                 let count = coalesce
@@ -1225,7 +1188,115 @@ impl InputLatencyTracker {
             }
         }
 
+        // Delta section: compare against the previous report's snapshot.
+        if let (Some(prev_latency), Some(prev_timestamp)) = (
+            &self.previous_latency_histogram,
+            &self.previous_report_timestamp,
+        ) {
+            let prev_total = prev_latency.len();
+            let delta_total = total - prev_total;
+
+            report.push('\n');
+            report.push_str("Delta Since Last Report\n");
+            report.push_str("-----------------------\n");
+            let prev_ts = prev_timestamp.format("%Y-%m-%d %H:%M:%S %Z");
+            let elapsed_secs = (now - *prev_timestamp).num_seconds().max(0);
+            report.push_str(&format!(
+                "Previous report: {prev_ts} ({elapsed_secs}s ago)\n"
+            ));
+            report.push_str(&format!("New samples: {delta_total}\n"));
+
+            if delta_total > 0 {
+                let mut delta_histogram = histogram.clone();
+                delta_histogram.subtract(prev_latency).ok();
+
+                write_latency_percentiles(
+                    &mut report,
+                    "Percentiles (new samples only)",
+                    &delta_histogram,
+                    percentiles,
+                );
+                write_latency_distribution(
+                    &mut report,
+                    "Distribution (new samples only)",
+                    &delta_histogram,
+                );
+            }
+        }
+
+        // Save snapshots for next report's delta.
+        self.previous_latency_histogram = Some(self.latency_histogram.clone());
+        self.previous_events_per_frame_histogram = Some(self.events_per_frame_histogram.clone());
+        self.previous_report_timestamp = Some(now);
+
         report
+    }
+}
+
+fn write_latency_percentiles(
+    report: &mut String,
+    heading: &str,
+    histogram: &Histogram<u64>,
+    percentiles: &[(&str, f64)],
+) {
+    let ns_to_ms = |ns: u64| ns as f64 / 1_000_000.0;
+
+    report.push('\n');
+    report.push_str(heading);
+    report.push_str(":\n");
+    for (label, quantile) in percentiles {
+        let value_ns = if *quantile == 0.0 {
+            histogram.min()
+        } else if *quantile == 1.0 {
+            histogram.max()
+        } else {
+            histogram.value_at_quantile(*quantile)
+        };
+        let hz = if value_ns > 0 {
+            1_000_000_000.0 / value_ns as f64
+        } else {
+            f64::INFINITY
+        };
+        report.push_str(&format!(
+            "  {label}: {:>8.2}ms  ({:>7.1} Hz)\n",
+            ns_to_ms(value_ns),
+            hz
+        ));
+    }
+}
+
+fn write_latency_distribution(report: &mut String, heading: &str, histogram: &Histogram<u64>) {
+    const BUCKETS: &[(u64, u64, &str, &str)] = &[
+        (0, 4_000_000, "0\u{2013}4ms", "(excellent)"),
+        (4_000_000, 8_000_000, "4\u{2013}8ms", "(120fps)"),
+        (8_000_000, 16_000_000, "8\u{2013}16ms", "(60fps)"),
+        (16_000_000, 33_000_000, "16\u{2013}33ms", "(30fps)"),
+        (33_000_000, 100_000_000, "33\u{2013}100ms", ""),
+        (100_000_000, u64::MAX, "100ms+", "(sluggish)"),
+    ];
+    let bar_width = 30usize;
+    let total = histogram.len() as f64;
+
+    report.push('\n');
+    report.push_str(heading);
+    report.push_str(":\n");
+    for (low, high, range, note) in BUCKETS {
+        let count: u64 = histogram
+            .iter_recorded()
+            .filter(|value| value.value_iterated_to() >= *low && value.value_iterated_to() < *high)
+            .map(|value| value.count_at_value())
+            .sum();
+        let fraction = if total > 0.0 {
+            count as f64 / total
+        } else {
+            0.0
+        };
+        let bar_len = (fraction * bar_width as f64) as usize;
+        let bar = "\u{2588}".repeat(bar_len);
+        report.push_str(&format!(
+            "  {range:>8}  {note:<11}: {count:>6} ({:>5.1}%) {bar}\n",
+            fraction * 100.0,
+        ));
     }
 }
 
@@ -2571,9 +2642,16 @@ impl Window {
         self.needs_present.set(false);
         profiling::finish_frame!();
     }
+    
+    #[cfg(feature = "input_latency_histogram")]
+    pub fn take_histogra(&mut self) -> Histogram {
+        
+    }
 
     /// Returns a formatted text report of the input-to-frame latency histogram.
-    pub fn format_input_latency_report(&self) -> String {
+    /// If a previous report was generated, includes a delta section showing
+    /// changes since that report.
+    pub fn format_input_latency_report(&mut self) -> String {
         self.input_latency_tracker.format_report()
     }
 

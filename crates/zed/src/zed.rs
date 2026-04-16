@@ -102,12 +102,18 @@ use zed_actions::{
 };
 
 actions!(
+    dev,
+    [
+        /// Opens a buffer showing the input-to-frame latency histogram for the current window.
+        DumpInputLatencyHistogram,
+    ]
+);
+
+actions!(
     zed,
     [
         /// Opens the element inspector for debugging UI.
         DebugElements,
-        /// Opens a buffer showing the input-to-frame latency histogram for the current window.
-        DumpInputLatencyHistogram,
         /// Hides the application window.
         Hide,
         /// Hides all other application windows.
