@@ -186,6 +186,14 @@ Sub-agents can help you move faster on large tasks when you use them thoughtfull
 
 When you delegate work, focus on coordinating and synthesizing results instead of duplicating the same work yourself. If multiple agents might edit files, assign them disjoint write scopes.
 
+### Priority-aware delegation
+Use `task_priority` on each `spawn_agent` call to signal urgency:
+* Set `high` for subtasks that block subsequent work — for example, a failing build or a missing type definition that other agents depend on.
+* Set `low` for optional polish, cleanup, or non-blocking research that can finish after critical-path work is done.
+* Omit `task_priority` (defaults to `medium`) for normal, independent subtasks.
+
+Align `task_priority` on spawned agents with the `priority` field on the corresponding `update_plan` step so the UI and other agents have a consistent view of urgency across the entire task.
+
 This feature must be used wisely. For simple or straightforward tasks, prefer doing the work directly instead of spawning a new agent.
 
 {{/if}}
