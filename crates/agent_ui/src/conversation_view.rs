@@ -433,7 +433,7 @@ pub struct ConversationView {
     thread_store: Option<Entity<ThreadStore>>,
     prompt_store: Option<Entity<PromptStore>>,
     pub(crate) thread_id: ThreadId,
-    root_session_id: Option<acp::SessionId>,
+    pub(crate) root_session_id: Option<acp::SessionId>,
     server_state: ServerState,
     focus_handle: FocusHandle,
     notifications: Vec<WindowHandle<AgentNotification>>,
@@ -703,7 +703,7 @@ impl ConversationView {
             thread_store,
             prompt_store,
             thread_id,
-            root_session_id: None,
+            root_session_id: resume_session_id.clone(),
             server_state: Self::initial_state(
                 agent.clone(),
                 connection_store,

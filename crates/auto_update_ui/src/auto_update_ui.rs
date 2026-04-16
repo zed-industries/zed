@@ -9,6 +9,7 @@ use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Window, actions, prelude::*,
 };
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
+use notifications::status_toast::StatusToast;
 use release_channel::{AppVersion, ReleaseChannel};
 use semver::Version;
 use serde::Deserialize;
@@ -207,17 +208,17 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
         let fs = <dyn Fs>::global(cx);
         Some(AnnouncementContent {
             heading: "Introducing Parallel Agents".into(),
-            description: "Run multiple agent threads simultaneously across projects.".into(),
+            description: "Run multiple threads of your favorite agents simultaneously across projects in a new workspace layout, tailored for agentic workflows.".into(),
             bullet_items: vec![
                 "Use your favorite agents in parallel".into(),
                 "Optionally isolate agents using worktrees".into(),
                 "Combine multiple projects in one window".into(),
             ],
-            primary_action_label: "Try Now".into(),
+            primary_action_label: "Try Agentic Layout".into(),
             primary_action_url: None,
             primary_action_callback: Some(Arc::new(move |window, cx| {
-                let already_agent_layout =
-                    matches!(AgentSettings::get_layout(cx), WindowLayout::Agent(_));
+                let get_layout = AgentSettings::get_layout(cx);
+                let already_agent_layout = matches!(get_layout, WindowLayout::Agent(_));
 
                 let update;
                 if !already_agent_layout {
@@ -230,6 +231,7 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
                     update = None;
                 }
 
+                let revert_fs = fs.clone();
                 window
                     .spawn(cx, async move |cx| {
                         if let Some(update) = update {
@@ -237,6 +239,35 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
                         }
 
                         cx.update(|window, cx| {
+                            if !already_agent_layout {
+                                if let Some(workspace) = Workspace::for_window(window, cx) {
+                                    let toast = StatusToast::new(
+                                        "You are in the new agentic layout!",
+                                        cx,
+                                        move |this, _cx| {
+                                            this.icon(
+                                                Icon::new(IconName::Check)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Success),
+                                            )
+                                            .action("Revert", move |_window, cx| {
+                                                let _ = AgentSettings::set_layout(
+                                                    get_layout.clone(),
+                                                    revert_fs.clone(),
+                                                    cx,
+                                                );
+                                            })
+                                            .auto_dismiss(false)
+                                            .dismiss_button(true)
+                                        },
+                                    );
+
+                                    workspace.update(cx, |workspace, cx| {
+                                        workspace.toggle_status_toast(toast, cx);
+                                    });
+                                }
+                            }
+
                             window.dispatch_action(Box::new(FocusWorkspaceSidebar), cx);
                             window.dispatch_action(Box::new(FocusAgent), cx);
                         })
@@ -381,8 +412,10 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
     }
 
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);
+
     cx.spawn(async move |cx| {
         let should_show_notification = should_show_notification.await?;
+
         if should_show_notification {
             cx.update(|cx| {
                 show_update_notification(cx);

@@ -25,7 +25,7 @@ pub use project::WorktreePaths;
 use project::{AgentId, linked_worktree_short_name};
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::{App, Context, SharedString, ThreadItemWorktreeInfo, WorktreeKind};
-use util::ResultExt as _;
+use util::{ResultExt as _, debug_panic};
 use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
 
 use crate::DEFAULT_THREAD_TITLE;
@@ -54,6 +54,31 @@ impl Column for ThreadId {
 
 const THREAD_REMOTE_CONNECTION_MIGRATION_KEY: &str = "thread-metadata-remote-connection-backfill";
 const THREAD_ID_MIGRATION_KEY: &str = "thread-metadata-thread-id-backfill";
+
+/// List all sidebar thread metadata from an arbitrary SQLite connection.
+///
+/// This is used to read thread metadata from another release channel's
+/// database without opening a full `ThreadSafeConnection`.
+pub(crate) fn list_thread_metadata_from_connection(
+    connection: &db::sqlez::connection::Connection,
+) -> anyhow::Result<Vec<ThreadMetadata>> {
+    connection.select::<ThreadMetadata>(ThreadMetadataDb::LIST_QUERY)?()
+}
+
+/// Run the `ThreadMetadataDb` migrations on a raw connection.
+///
+/// This is used in tests to set up the sidebar_threads schema in a
+/// temporary database.
+#[cfg(test)]
+pub(crate) fn run_thread_metadata_migrations(connection: &db::sqlez::connection::Connection) {
+    connection
+        .migrate(
+            ThreadMetadataDb::NAME,
+            ThreadMetadataDb::MIGRATIONS,
+            &mut |_, _, _| false,
+        )
+        .expect("thread metadata migrations should succeed");
+}
 
 pub fn init(cx: &mut App) {
     ThreadMetadataStore::init_global(cx);
@@ -102,6 +127,7 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
                         created_at: entry.created_at,
                         worktree_paths: WorktreePaths::from_folder_paths(&entry.folder_paths),
                         remote_connection: None,
+                        last_user_interaction: entry.updated_at,
                         archived: true,
                     })
                 })
@@ -271,6 +297,7 @@ pub struct ThreadMetadata {
     pub created_at: Option<DateTime<Utc>>,
     pub worktree_paths: WorktreePaths,
     pub remote_connection: Option<RemoteConnectionOptions>,
+    pub last_user_interaction: DateTime<Utc>,
     pub archived: bool,
 }
 
@@ -593,20 +620,7 @@ impl ThreadMetadataStore {
                     this.threads_by_session.clear();
 
                     for row in rows {
-                        if let Some(sid) = &row.session_id {
-                            this.threads_by_session.insert(sid.clone(), row.thread_id);
-                        }
-                        this.threads_by_paths
-                            .entry(row.folder_paths().clone())
-                            .or_default()
-                            .insert(row.thread_id);
-                        if !row.main_worktree_paths().is_empty() {
-                            this.threads_by_main_paths
-                                .entry(row.main_worktree_paths().clone())
-                                .or_default()
-                                .insert(row.thread_id);
-                        }
-                        this.threads.insert(row.thread_id, row);
+                        this.cache_thread_metadata(row);
                     }
 
                     cx.notify();
@@ -631,6 +645,11 @@ impl ThreadMetadataStore {
     }
 
     fn save_internal(&mut self, metadata: ThreadMetadata) {
+        if metadata.session_id.is_none() {
+            debug_panic!("cannot store thread metadata without a session_id");
+            return;
+        };
+
         if let Some(thread) = self.threads.get(&metadata.thread_id) {
             if thread.folder_paths() != metadata.folder_paths() {
                 if let Some(thread_ids) = self.threads_by_paths.get_mut(thread.folder_paths()) {
@@ -649,10 +668,34 @@ impl ThreadMetadataStore {
             }
         }
 
-        if let Some(sid) = &metadata.session_id {
-            self.threads_by_session
-                .insert(sid.clone(), metadata.thread_id);
+        self.cache_thread_metadata(metadata.clone());
+        self.pending_thread_ops_tx
+            .try_send(DbOperation::Upsert(metadata))
+            .log_err();
+    }
+
+    pub fn update_last_user_interaction(
+        &mut self,
+        thread_id: ThreadId,
+        time: DateTime<Utc>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.threads.get(&thread_id).cloned() {
+            self.save_internal(ThreadMetadata {
+                last_user_interaction: time,
+                ..thread
+            });
+            cx.notify();
         }
+    }
+    fn cache_thread_metadata(&mut self, metadata: ThreadMetadata) {
+        let Some(session_id) = metadata.session_id.as_ref() else {
+            debug_panic!("cannot store thread metadata without a session_id");
+            return;
+        };
+
+        self.threads_by_session
+            .insert(session_id.clone(), metadata.thread_id);
 
         self.threads.insert(metadata.thread_id, metadata.clone());
 
@@ -667,10 +710,6 @@ impl ThreadMetadataStore {
                 .or_default()
                 .insert(metadata.thread_id);
         }
-
-        self.pending_thread_ops_tx
-            .try_send(DbOperation::Upsert(metadata))
-            .log_err();
     }
 
     pub fn update_working_directories(
@@ -1167,6 +1206,7 @@ impl ThreadMetadataStore {
             updated_at,
             worktree_paths,
             remote_connection,
+            last_user_interaction: updated_at,
             archived,
         };
 
@@ -1254,6 +1294,48 @@ impl Domain for ThreadMetadataDb {
             DROP TABLE sidebar_threads;
             ALTER TABLE sidebar_threads_v2 RENAME TO sidebar_threads;
         ),
+        sql!(
+            ALTER TABLE sidebar_threads ADD COLUMN last_user_interaction TEXT;
+
+            UPDATE sidebar_threads SET last_user_interaction = updated_at
+            WHERE last_user_interaction IS NULL;
+
+            CREATE TABLE sidebar_threads_v3(
+                thread_id BLOB PRIMARY KEY,
+                session_id TEXT,
+                agent_id TEXT,
+                title TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                created_at TEXT,
+                folder_paths TEXT,
+                folder_paths_order TEXT,
+                archived INTEGER DEFAULT 0,
+                main_worktree_paths TEXT,
+                main_worktree_paths_order TEXT,
+                remote_connection TEXT,
+                last_user_interaction TEXT NOT NULL
+            ) STRICT;
+
+            INSERT INTO sidebar_threads_v3(thread_id, session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection, last_user_interaction)
+            SELECT thread_id, session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection, last_user_interaction
+            FROM sidebar_threads;
+
+            DROP TABLE sidebar_threads;
+            ALTER TABLE sidebar_threads_v3 RENAME TO sidebar_threads;
+        ),
+        sql!(
+            DELETE FROM thread_archived_worktrees
+            WHERE thread_id IN (
+                SELECT thread_id FROM sidebar_threads WHERE session_id IS NULL
+            );
+
+            DELETE FROM sidebar_threads WHERE session_id IS NULL;
+
+            DELETE FROM archived_git_worktrees
+            WHERE id NOT IN (
+                SELECT archived_worktree_id FROM thread_archived_worktrees
+            );
+        ),
     ];
 }
 
@@ -1264,21 +1346,32 @@ impl ThreadMetadataDb {
     pub fn list_ids(&self) -> anyhow::Result<Vec<ThreadId>> {
         self.select::<ThreadId>(
             "SELECT thread_id FROM sidebar_threads \
+             WHERE session_id IS NOT NULL \
              ORDER BY updated_at DESC",
         )?()
     }
 
+    const LIST_QUERY: &str = "SELECT thread_id, session_id, agent_id, title, updated_at, \
+        created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, \
+        main_worktree_paths_order, remote_connection, last_user_interaction \
+        FROM sidebar_threads \
+        WHERE session_id IS NOT NULL \
+        ORDER BY updated_at DESC";
+
     /// List all sidebar thread metadata, ordered by updated_at descending.
+    ///
+    /// Only returns threads that have a `session_id`.
     pub fn list(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
-        self.select::<ThreadMetadata>(
-            "SELECT thread_id, session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection \
-             FROM sidebar_threads \
-             ORDER BY updated_at DESC"
-        )?()
+        self.select::<ThreadMetadata>(Self::LIST_QUERY)?()
     }
 
     /// Upsert metadata for a thread.
     pub async fn save(&self, row: ThreadMetadata) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            row.session_id.is_some(),
+            "refusing to persist thread metadata without a session_id"
+        );
+
         let session_id = row.session_id.as_ref().map(|s| s.0.clone());
         let agent_id = if row.agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
             None
@@ -1313,10 +1406,11 @@ impl ThreadMetadataDb {
             .context("serialize thread metadata remote connection")?;
         let thread_id = row.thread_id;
         let archived = row.archived;
+        let last_user_interaction = row.last_user_interaction.to_rfc3339();
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
+            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection, last_user_interaction) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
                        ON CONFLICT(thread_id) DO UPDATE SET \
                            session_id = excluded.session_id, \
                            agent_id = excluded.agent_id, \
@@ -1328,7 +1422,8 @@ impl ThreadMetadataDb {
                            archived = excluded.archived, \
                            main_worktree_paths = excluded.main_worktree_paths, \
                            main_worktree_paths_order = excluded.main_worktree_paths_order, \
-                           remote_connection = excluded.remote_connection";
+                           remote_connection = excluded.remote_connection, \
+                           last_user_interaction = excluded.last_user_interaction";
             let mut stmt = Statement::prepare(conn, sql)?;
             let mut i = stmt.bind(&thread_id, 1)?;
             i = stmt.bind(&session_id, i)?;
@@ -1341,7 +1436,8 @@ impl ThreadMetadataDb {
             i = stmt.bind(&archived, i)?;
             i = stmt.bind(&main_worktree_paths, i)?;
             i = stmt.bind(&main_worktree_paths_order, i)?;
-            stmt.bind(&remote_connection, i)?;
+            i = stmt.bind(&remote_connection, i)?;
+            stmt.bind(&last_user_interaction, i)?;
             stmt.exec()
         })
         .await
@@ -1497,6 +1593,7 @@ impl Column for ThreadMetadata {
             Column::column(statement, next)?;
         let (remote_connection_json, next): (Option<String>, i32) =
             Column::column(statement, next)?;
+        let (last_user_interaction_str, next): (String, i32) = Column::column(statement, next)?;
 
         let agent_id = agent_id
             .map(|id| AgentId::new(id))
@@ -1533,6 +1630,9 @@ impl Column for ThreadMetadata {
             .transpose()
             .context("deserialize thread metadata remote connection")?;
 
+        let last_user_interaction =
+            DateTime::parse_from_rfc3339(&last_user_interaction_str)?.with_timezone(&Utc);
+
         let worktree_paths = WorktreePaths::from_path_lists(main_worktree_paths, folder_paths)
             .unwrap_or_else(|_| WorktreePaths::default());
 
@@ -1552,6 +1652,7 @@ impl Column for ThreadMetadata {
                 created_at,
                 worktree_paths,
                 remote_connection,
+                last_user_interaction,
                 archived,
             },
             next,
@@ -1641,6 +1742,7 @@ mod tests {
             created_at: Some(updated_at),
             worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
             remote_connection: None,
+            last_user_interaction: updated_at,
         }
     }
 
@@ -1683,7 +1785,7 @@ mod tests {
             .unwrap();
     }
 
-    fn run_thread_metadata_migrations(cx: &mut TestAppContext) {
+    fn run_store_migrations(cx: &mut TestAppContext) {
         clear_thread_metadata_remote_connection_backfill(cx);
         cx.update(|cx| {
             let migration_task = migrate_thread_metadata(cx);
@@ -1822,6 +1924,7 @@ mod tests {
             created_at: Some(updated_time),
             worktree_paths: WorktreePaths::from_folder_paths(&second_paths),
             remote_connection: None,
+            last_user_interaction: updated_time,
             archived: false,
         };
 
@@ -1905,6 +2008,7 @@ mod tests {
             created_at: Some(now - chrono::Duration::seconds(10)),
             worktree_paths: WorktreePaths::from_folder_paths(&project_a_paths),
             remote_connection: None,
+            last_user_interaction: now - chrono::Duration::seconds(10),
             archived: false,
         };
 
@@ -1962,7 +2066,7 @@ mod tests {
             cx.run_until_parked();
         }
 
-        run_thread_metadata_migrations(cx);
+        run_store_migrations(cx);
 
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
@@ -2025,6 +2129,7 @@ mod tests {
             created_at: Some(existing_updated_at),
             worktree_paths: WorktreePaths::from_folder_paths(&project_paths),
             remote_connection: None,
+            last_user_interaction: existing_updated_at,
             archived: false,
         };
 
@@ -2053,7 +2158,7 @@ mod tests {
         save_task.await.unwrap();
         cx.run_until_parked();
 
-        run_thread_metadata_migrations(cx);
+        run_store_migrations(cx);
 
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
@@ -2191,7 +2296,7 @@ mod tests {
             cx.run_until_parked();
         }
 
-        run_thread_metadata_migrations(cx);
+        run_store_migrations(cx);
 
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
@@ -2698,6 +2803,7 @@ mod tests {
             created_at: Some(now),
             worktree_paths: linked_worktree_paths.clone(),
             remote_connection: None,
+            last_user_interaction: now,
         };
 
         let remote_linked_thread = ThreadMetadata {
@@ -2710,6 +2816,7 @@ mod tests {
             created_at: Some(now - chrono::Duration::seconds(1)),
             worktree_paths: linked_worktree_paths,
             remote_connection: Some(remote_a.clone()),
+            last_user_interaction: now - chrono::Duration::seconds(1),
         };
 
         cx.update(|cx| {
@@ -3370,14 +3477,9 @@ mod tests {
             .unwrap()()
         .unwrap();
 
-        // Run all migrations (0-7). sqlez skips 0-6 and runs only migration 7.
-        connection
-            .migrate(
-                ThreadMetadataDb::NAME,
-                ThreadMetadataDb::MIGRATIONS,
-                &mut |_, _, _| false,
-            )
-            .expect("new migration should succeed");
+        // Run all current migrations. sqlez skips the already-applied ones and
+        // runs the remaining migrations.
+        run_thread_metadata_migrations(&connection);
 
         // All 3 rows should survive with non-NULL thread_ids.
         let count: i64 = connection

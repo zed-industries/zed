@@ -50,7 +50,7 @@ use language_model::{
 };
 use menu;
 use multi_buffer::ExcerptBoundaryInfo;
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use panel::{PanelHeader, panel_button, panel_filled_button, panel_icon_button};
 use project::{
     Fs, Project, ProjectPath,
@@ -3864,9 +3864,17 @@ impl GitPanel {
             let status_toast = StatusToast::new(message, cx, move |this, _cx| {
                 use remote_output::SuccessStyle::*;
                 match style {
-                    Toast => this.icon(ToastIcon::new(IconName::GitBranch).color(Color::Muted)),
+                    Toast => this.icon(
+                        Icon::new(IconName::GitBranch)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    ),
                     ToastWithLog { output } => this
-                        .icon(ToastIcon::new(IconName::GitBranch).color(Color::Muted))
+                        .icon(
+                            Icon::new(IconName::GitBranch)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
                         .action("View Log", move |window, cx| {
                             let output = output.clone();
                             let output =
@@ -3878,7 +3886,11 @@ impl GitPanel {
                                 .ok();
                         }),
                     PushPrLink { text, link } => this
-                        .icon(ToastIcon::new(IconName::GitBranch).color(Color::Muted))
+                        .icon(
+                            Icon::new(IconName::GitBranch)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
                         .action(text, move |_, cx| cx.open_url(&link)),
                 }
                 .dismiss_button(true)
@@ -6479,16 +6491,20 @@ pub(crate) fn show_error_toast(
         workspace.update(cx, |workspace, cx| {
             let workspace_weak = cx.weak_entity();
             let toast = StatusToast::new(format!("git {} failed", action), cx, |this, _cx| {
-                this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                    .action("View Log", move |window, cx| {
-                        let message = message.clone();
-                        let action = action.clone();
-                        workspace_weak
-                            .update(cx, move |workspace, cx| {
-                                open_output(action, workspace, &message, window, cx)
-                            })
-                            .ok();
-                    })
+                this.icon(
+                    Icon::new(IconName::XCircle)
+                        .size(IconSize::Small)
+                        .color(Color::Error),
+                )
+                .action("View Log", move |window, cx| {
+                    let message = message.clone();
+                    let action = action.clone();
+                    workspace_weak
+                        .update(cx, move |workspace, cx| {
+                            open_output(action, workspace, &message, window, cx)
+                        })
+                        .ok();
+                })
             });
             workspace.toggle_status_toast(toast, cx)
         });

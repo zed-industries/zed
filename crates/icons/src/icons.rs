@@ -153,6 +153,7 @@ pub enum IconName {
     GitWorktree,
     Github,
     Hash,
+    History,
     HistoryRerun,
     Image,
     Inception,

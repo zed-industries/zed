@@ -969,7 +969,7 @@ impl PickerDelegate for WorktreeListDelegate {
                             }
                         })),
                 )
-                .when(!entry.is_new, |this| {
+                .when(!entry.is_new && !is_current, |this| {
                     let focus_handle = self.focus_handle.clone();
                     let open_in_new_window_button =
                         IconButton::new(("open-new-window", ix), IconName::ArrowUpRight)
@@ -1007,6 +1007,13 @@ impl PickerDelegate for WorktreeListDelegate {
         let is_creating = selected_entry.is_some_and(|entry| entry.is_new);
         let can_delete = selected_entry
             .is_some_and(|entry| entry.can_delete(self.forbidden_deletion_path.as_ref()));
+        let is_current = selected_entry.is_some_and(|entry| {
+            !entry.is_new
+                && self
+                    .current_worktree_path
+                    .as_ref()
+                    .is_some_and(|current| *current == entry.worktree.path)
+        });
 
         let footer_container = h_flex()
             .w_full()
@@ -1066,20 +1073,22 @@ impl PickerDelegate for WorktreeListDelegate {
                                 }),
                         )
                     })
-                    .child(
-                        Button::new("open-in-new-window", "Open in New Window")
-                            .key_binding(
-                                KeyBinding::for_action_in(
-                                    &menu::SecondaryConfirm,
-                                    &focus_handle,
-                                    cx,
+                    .when(!is_current, |this| {
+                        this.child(
+                            Button::new("open-in-new-window", "Open in New Window")
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &menu::SecondaryConfirm,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(12.))),
                                 )
-                                .map(|kb| kb.size(rems_from_px(12.))),
-                            )
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
-                            }),
-                    )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                                }),
+                        )
+                    })
                     .child(
                         Button::new("open-in-window", "Open")
                             .key_binding(
