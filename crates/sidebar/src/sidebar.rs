@@ -366,6 +366,7 @@ pub struct Sidebar {
     view: SidebarView,
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
+    project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
     _subscriptions: Vec<gpui::Subscription>,
     /// For the thread import banners, if there is just one we show "Import
@@ -459,6 +460,7 @@ impl Sidebar {
             view: SidebarView::default(),
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
+            project_header_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
             _subscriptions: Vec::new(),
             import_banners_use_verbose_labels: None,
@@ -1332,6 +1334,7 @@ impl Sidebar {
                             panel.active_thread_is_draft(cx)
                                 || panel.active_conversation_view().is_none()
                         });
+                self.project_header_menu_handles.entry(ix).or_default();
                 self.render_project_header(
                     ix,
                     false,
@@ -1408,13 +1411,14 @@ impl Sidebar {
         let group_name = SharedString::from(format!("{id_prefix}header-group-{ix}"));
 
         let is_collapsed = self.is_group_collapsed(key, cx);
-        let (disclosure_icon, disclosure_tooltip) = if is_collapsed {
-            (IconName::ChevronRight, "Expand Project")
+        let disclosure_icon = if is_collapsed {
+            IconName::ChevronRight
         } else {
-            (IconName::ChevronDown, "Collapse Project")
+            IconName::ChevronDown
         };
 
         let key_for_toggle = key.clone();
+        let key_for_focus = key.clone();
 
         let label = if highlight_positions.is_empty() {
             Label::new(label.clone())
@@ -1446,8 +1450,6 @@ impl Sidebar {
                 .gradient_stop(0.75)
                 .group_name(group_name_for_gradient.clone())
         };
-
-        let is_ellipsis_menu_open = self.project_header_menu_ix == Some(ix);
 
         let header = h_flex()
             .id(id)
@@ -1521,9 +1523,6 @@ impl Sidebar {
             .child(gradient_overlay())
             .child(
                 h_flex()
-                    .when(!is_ellipsis_menu_open && !has_active_draft, |this| {
-                        this.visible_on_hover(&group_name)
-                    })
                     .child(gradient_overlay())
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
@@ -1540,6 +1539,7 @@ impl Sidebar {
                         )
                         .icon_size(IconSize::Small)
                         .when(has_active_draft, |this| this.icon_color(Color::Accent))
+                        .when(!has_active_draft, |this| this.visible_on_hover(&group_name))
                         .tooltip(move |_, cx| {
                             Tooltip::for_action_in(
                                 "Start New Agent Thread",
@@ -1560,47 +1560,31 @@ impl Sidebar {
                             },
                         ))
                     })
-                    .child(self.render_project_header_ellipsis_menu(ix, id_prefix, key, cx)),
+                    .child(self.render_project_header_ellipsis_menu(
+                        ix,
+                        id_prefix,
+                        key,
+                        is_active,
+                        has_threads,
+                        &group_name,
+                        cx,
+                    )),
             )
-            .tooltip(Tooltip::element({
-                move |_, cx| {
-                    v_flex()
-                        .gap_1()
-                        .child(Label::new(disclosure_tooltip))
-                        .child(
-                            h_flex()
-                                .pt_1()
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .child(h_flex().flex_shrink_0().children(render_modifiers(
-                                    &Modifiers::secondary_key(),
-                                    PlatformStyle::platform(),
-                                    None,
-                                    Some(TextSize::Default.rems(cx).into()),
-                                    false,
-                                )))
-                                .child(
-                                    Label::new("-click to activate most recent workspace")
-                                        .color(Color::Muted),
-                                ),
-                        )
-                        .into_any_element()
-                }
-            }))
-            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                if event.modifiers().platform {
-                    let key = key_for_toggle.clone();
-                    if let Some(workspace) = this.workspace_for_group(&key, cx) {
-                        this.activate_workspace(&workspace, window, cx);
+            .on_click(
+                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                    if event.modifiers().secondary() {
+                        if let Some(workspace) = this.workspace_for_group(&key_for_focus, cx) {
+                            this.activate_workspace(&workspace, window, cx);
+                        } else {
+                            this.open_workspace_for_group(&key_for_focus, window, cx);
+                        }
+                        this.selection = None;
+                        this.active_entry = None;
                     } else {
-                        this.open_workspace_for_group(&key, window, cx);
+                        this.toggle_collapse(&key_for_toggle, window, cx);
                     }
-                    this.selection = None;
-                    this.active_entry = None;
-                } else {
-                    this.toggle_collapse(&key_for_toggle, window, cx);
-                }
-            }));
+                }),
+            );
 
         if !is_collapsed && !has_threads {
             v_flex()
@@ -1632,49 +1616,37 @@ impl Sidebar {
         ix: usize,
         id_prefix: &str,
         project_group_key: &ProjectGroupKey,
+        is_active: bool,
+        has_threads: bool,
+        group_name: &SharedString,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let multi_workspace = self.multi_workspace.clone();
         let project_group_key = project_group_key.clone();
 
-        let show_menu = multi_workspace
+        let show_multi_project_entries = multi_workspace
             .read_with(cx, |mw, _| {
                 project_group_key.host().is_none() && mw.project_group_keys().len() >= 2
             })
             .unwrap_or(false);
 
-        if !show_menu {
-            return IconButton::new(
-                SharedString::from(format!("{id_prefix}-close-project-{ix}")),
-                IconName::Close,
-            )
-            .icon_size(IconSize::Small)
-            .tooltip(Tooltip::text("Remove Project"))
-            .on_click(cx.listener({
-                move |_, _, window, cx| {
-                    multi_workspace
-                        .update(cx, |multi_workspace, cx| {
-                            multi_workspace
-                                .remove_project_group(&project_group_key, window, cx)
-                                .detach_and_log_err(cx);
-                        })
-                        .ok();
-                }
-            }))
-            .into_any_element();
-        }
-
         let this = cx.weak_entity();
 
+        let trigger_id = SharedString::from(format!("{id_prefix}-ellipsis-menu-{ix}"));
+        let menu_handle = self
+            .project_header_menu_handles
+            .get(&ix)
+            .cloned()
+            .unwrap_or_default();
+        let is_menu_open = menu_handle.is_deployed();
+
         PopoverMenu::new(format!("{id_prefix}project-header-menu-{ix}"))
+            .with_handle(menu_handle)
             .trigger(
-                IconButton::new(
-                    SharedString::from(format!("{id_prefix}-ellipsis-menu-{ix}")),
-                    IconName::Ellipsis,
-                )
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .icon_size(IconSize::Small)
-                .tooltip(Tooltip::text("Toggle Project Menu")),
+                IconButton::new(trigger_id, IconName::Ellipsis)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    .icon_size(IconSize::Small)
+                    .when(!is_menu_open, |el| el.visible_on_hover(group_name)),
             )
             .on_open(Rc::new({
                 let this = this.clone();
@@ -1689,22 +1661,106 @@ impl Sidebar {
             .menu(move |window, cx| {
                 let multi_workspace = multi_workspace.clone();
                 let project_group_key = project_group_key.clone();
+                let this_for_menu = this.clone();
 
                 let menu =
                     ContextMenu::build_persistent(window, cx, move |menu, _window, menu_cx| {
                         let weak_menu = menu_cx.weak_entity();
 
-                        let menu = menu.entry(
-                            "Open Project in New Window",
-                            Some(Box::new(workspace::MoveProjectToNewWindow)),
-                            {
-                                let project_group_key = project_group_key.clone();
-                                let multi_workspace = multi_workspace.clone();
-                                move |window, cx| {
+                        let menu = menu.when(show_multi_project_entries, |this| {
+                            this.entry(
+                                "Open Project in New Window",
+                                Some(Box::new(workspace::MoveProjectToNewWindow)),
+                                {
+                                    let project_group_key = project_group_key.clone();
+                                    let multi_workspace = multi_workspace.clone();
+                                    move |window, cx| {
+                                        multi_workspace
+                                            .update(cx, |multi_workspace, cx| {
+                                                multi_workspace
+                                                    .open_project_group_in_new_window(
+                                                        &project_group_key,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                    .detach_and_log_err(cx);
+                                            })
+                                            .ok();
+                                    }
+                                },
+                            )
+                        });
+
+                        let menu = menu
+                            .custom_entry(
+                                {
+                                    move |_window, cx| {
+                                        let action = h_flex()
+                                            .opacity(0.6)
+                                            .children(render_modifiers(
+                                                &Modifiers::secondary_key(),
+                                                PlatformStyle::platform(),
+                                                None,
+                                                Some(TextSize::Default.rems(cx).into()),
+                                                false,
+                                            ))
+                                            .child(Label::new("-click").color(Color::Muted));
+
+                                        let label = if has_threads {
+                                            "Focus Last Workspace"
+                                        } else {
+                                            "Focus Workspace"
+                                        };
+
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .gap_4()
+                                            .child(
+                                                Label::new(label)
+                                                    .when(is_active, |s| s.color(Color::Disabled)),
+                                            )
+                                            .child(action)
+                                            .into_any_element()
+                                    }
+                                },
+                                {
+                                    let project_group_key = project_group_key.clone();
+                                    let this = this_for_menu.clone();
+                                    move |window, cx| {
+                                        if is_active {
+                                            return;
+                                        }
+                                        this.update(cx, |sidebar, cx| {
+                                            if let Some(workspace) =
+                                                sidebar.workspace_for_group(&project_group_key, cx)
+                                            {
+                                                sidebar.activate_workspace(&workspace, window, cx);
+                                            } else {
+                                                sidebar.open_workspace_for_group(
+                                                    &project_group_key,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                            sidebar.selection = None;
+                                            sidebar.active_entry = None;
+                                        })
+                                        .ok();
+                                    }
+                                },
+                            )
+                            .selectable(!is_active);
+
+                        menu.when(show_multi_project_entries, |menu| {
+                            let project_group_key = project_group_key.clone();
+                            let multi_workspace = multi_workspace.clone();
+                            menu.separator()
+                                .entry("Remove Project", None, move |window, cx| {
                                     multi_workspace
                                         .update(cx, |multi_workspace, cx| {
                                             multi_workspace
-                                                .open_project_group_in_new_window(
+                                                .remove_project_group(
                                                     &project_group_key,
                                                     window,
                                                     cx,
@@ -1712,25 +1768,13 @@ impl Sidebar {
                                                 .detach_and_log_err(cx);
                                         })
                                         .ok();
-                                }
-                            },
-                        );
-
-                        let project_group_key = project_group_key.clone();
-                        let multi_workspace = multi_workspace.clone();
-                        menu.entry("Remove Project", None, move |window, cx| {
-                            multi_workspace
-                                .update(cx, |multi_workspace, cx| {
-                                    multi_workspace
-                                        .remove_project_group(&project_group_key, window, cx)
-                                        .detach_and_log_err(cx);
+                                    weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                                 })
-                                .ok();
-                            weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                         })
                     });
 
                 let this = this.clone();
+
                 window
                     .subscribe(&menu, cx, move |_, _: &gpui::DismissEvent, _window, cx| {
                         this.update(cx, |sidebar, cx| {
@@ -4212,7 +4256,7 @@ impl Sidebar {
                 )
             })
             .child(
-                IconButton::new("archive", IconName::Archive)
+                IconButton::new("history", IconName::History)
                     .icon_size(IconSize::Small)
                     .toggle_state(is_archive)
                     .tooltip(move |_, cx| {

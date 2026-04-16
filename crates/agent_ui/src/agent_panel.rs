@@ -4101,7 +4101,7 @@ impl AgentPanel {
             let current_path = &repo.work_directory_abs_path;
 
             return linked_worktree_short_name(main_path, current_path)
-                .unwrap_or_else(|| "main".into());
+                .unwrap_or_else(|| "main worktree".into());
         }
 
         project

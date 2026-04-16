@@ -391,7 +391,7 @@ impl Render for ThreadImportModal {
                             .headline("Import External Agent Threads")
                             .description(
                                 "Import threads from agents like Claude Agent, Codex, and more, whether started in Zed or another client. \
-                                Choose which agents to include, and their threads will appear in your archive."
+                                Choose which agents to include, and their threads will appear in your list."
                             )
                             .show_dismiss_button(true),
 
