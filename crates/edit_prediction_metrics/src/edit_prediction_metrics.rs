@@ -21,5 +21,6 @@ pub use patch_metrics::exact_lines_match;
 pub use patch_metrics::extract_changed_lines_from_diff;
 pub use patch_metrics::has_isolated_whitespace_changes;
 pub use patch_metrics::is_editable_region_correct;
+pub use patch_metrics::reconstruct_texts_from_diff;
 pub use reversal::compute_prediction_reversal_ratio_from_history;
 pub use tree_sitter::count_tree_sitter_errors;

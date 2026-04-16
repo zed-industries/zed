@@ -407,6 +407,35 @@ fn apply_patch_to_excerpt(
     excerpt_start_row: u32,
 ) -> Result<String, String> {
     let hunks = parse_diff_hunks(patch);
+
+    let result = try_apply_hunks(base, &hunks, excerpt_start_row);
+
+    // Predicted patches may use excerpt-relative line numbers instead of
+    // file-global ones. When all hunks fall outside the excerpt window the
+    // result is identical to the base text. Retry with a zero offset so the
+    // line numbers are interpreted relative to the excerpt.
+    if excerpt_start_row > 0 && !hunks.is_empty() {
+        let should_retry = match &result {
+            Ok(text) => text == base,
+            Err(_) => true,
+        };
+
+        if should_retry {
+            let fallback = try_apply_hunks(base, &hunks, 0);
+            if matches!(&fallback, Ok(text) if text != base) {
+                return fallback;
+            }
+        }
+    }
+
+    result
+}
+
+fn try_apply_hunks(
+    base: &str,
+    hunks: &[ParsedHunk],
+    excerpt_start_row: u32,
+) -> Result<String, String> {
     let base_has_trailing_newline = base.ends_with('\n');
     let mut lines = split_preserving_final_empty_line(base);
     let original_line_count = lines.len() as u32;
@@ -415,7 +444,7 @@ fn apply_patch_to_excerpt(
     let mut line_delta: i64 = 0;
 
     for hunk in hunks {
-        let filtered = match filter_hunk_to_excerpt(&hunk, excerpt_start_row, excerpt_end_row) {
+        let filtered = match filter_hunk_to_excerpt(hunk, excerpt_start_row, excerpt_end_row) {
             Some(filtered) => filtered,
             None => continue,
         };
@@ -655,5 +684,27 @@ mod tests {
 
         let actual = apply_patch_to_excerpt(base, patch, 1).unwrap();
         assert_eq!(actual, "x\ny\nd\n");
+    }
+
+    #[test]
+    fn applies_patch_with_excerpt_relative_line_numbers() {
+        let base = "a\nb\nc\nd\n";
+        // Patch uses excerpt-relative line numbers (line 2 of excerpt)
+        // even though the excerpt starts at file row 100.
+        let patch = "@@ -2,2 +2,2 @@\n-b\n-c\n+x\n+y\n";
+
+        let actual = apply_patch_to_excerpt(base, patch, 100).unwrap();
+        assert_eq!(actual, "a\nx\ny\nd\n");
+    }
+
+    #[test]
+    fn prefers_file_global_line_numbers_over_excerpt_relative() {
+        let base = "a\nb\nc\n";
+        // Patch uses file-global line numbers: excerpt starts at row 5,
+        // hunk targets line 6 (1-based) = row 5 (0-based) = first line.
+        let patch = "@@ -6,2 +6,2 @@\n-a\n-b\n+x\n+y\n";
+
+        let actual = apply_patch_to_excerpt(base, patch, 5).unwrap();
+        assert_eq!(actual, "x\ny\nc\n");
     }
 }
