@@ -242,8 +242,9 @@ async fn remove_root_after_worktree_removal(
     let result = receiver
         .await
         .map_err(|_| anyhow!("git worktree metadata cleanup was canceled"))?;
-    // Keep the temporary project alive until after the await so the headless
-    // project isn't dropped mid-operation.
+    // `project` may be a live workspace project or a temporary one created
+    // by `find_or_create_repository`. In the temporary case we must keep it
+    // alive until the repo removes the worktree
     drop(project);
     result.context("git worktree metadata cleanup failed")?;
 
@@ -581,6 +582,8 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
         .map_err(|_| anyhow!("update_ref canceled"))
         .and_then(|r| r)
         .with_context(|| format!("failed to create ref {ref_name} on main repo"))?;
+    // See note in `remove_root_after_worktree_removal`: this may be a live
+    // or temporary project; dropping only matters in the temporary case.
     drop(_temp_project);
 
     Ok(archived_worktree_id)
@@ -598,6 +601,9 @@ pub async fn rollback_persist(archived_worktree_id: i64, root: &RootPlan, cx: &m
         let ref_name = archived_worktree_ref_name(archived_worktree_id);
         let rx = main_repo.update(cx, |repo, _cx| repo.delete_ref(ref_name));
         rx.await.ok().and_then(|r| r.log_err());
+        // See note in `remove_root_after_worktree_removal`: this may be a
+        // live or temporary project; dropping only matters in the temporary
+        // case.
         drop(_temp_project);
     }
 
@@ -801,7 +807,9 @@ pub async fn cleanup_archived_worktree_record(
             Ok(Err(error)) => log::warn!("Failed to delete archive ref: {error}"),
             Err(_) => log::warn!("Archive ref deletion was canceled"),
         }
-        // Keep _temp_project alive until after the await so the headless project isn't dropped mid-operation
+        // See note in `remove_root_after_worktree_removal`: this may be a
+        // live or temporary project; dropping only matters in the temporary
+        // case.
         drop(_temp_project);
     }
 

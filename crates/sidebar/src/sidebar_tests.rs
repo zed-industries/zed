@@ -10559,7 +10559,10 @@ async fn test_remote_archive_thread_with_active_connection(
         !server_fs
             .is_dir(Path::new("/worktrees/project/feature-a/project"))
             .await,
-        "linked worktree directory should be removed from remote fs via git worktree remove RPC"
+        "linked worktree directory should be removed from remote fs \
+         (the GitRemoveWorktree RPC runs `Repository::remove_worktree` \
+         on the headless server, which deletes the directory via `Fs::remove_dir` \
+         before running `git worktree remove --force`)"
     );
 
     let entries = visible_entries_as_strings(&sidebar, cx);
