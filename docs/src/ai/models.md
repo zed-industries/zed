@@ -19,6 +19,10 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 |                        | Anthropic | Output              | $25.00                       | $27.50                  |
 |                        | Anthropic | Input - Cache Write | $6.25                        | $6.875                  |
 |                        | Anthropic | Input - Cache Read  | $0.50                        | $0.55                   |
+| Claude Opus 4.7        | Anthropic | Input               | $5.00                        | $5.50                   |
+|                        | Anthropic | Output              | $25.00                       | $27.50                  |
+|                        | Anthropic | Input - Cache Write | $6.25                        | $6.875                  |
+|                        | Anthropic | Input - Cache Read  | $0.50                        | $0.55                   |
 | Claude Sonnet 4.5      | Anthropic | Input               | $3.00                        | $3.30                   |
 |                        | Anthropic | Output              | $15.00                       | $16.50                  |
 |                        | Anthropic | Input - Cache Write | $3.75                        | $4.125                  |
@@ -72,7 +76,7 @@ Zed's plans offer hosted versions of major LLMs with higher rate limits than dir
 
 As of February 19, 2026, Zed Pro serves newer model versions in place of the retired models below:
 
-- Claude Opus 4.1 → Claude Opus 4.5 or Claude Opus 4.6
+- Claude Opus 4.1 → Claude Opus 4.5, Claude Opus 4.6, or Claude Opus 4.7
 - Claude Sonnet 4 → Claude Sonnet 4.5 or Claude Sonnet 4.6
 - Claude Sonnet 3.7 (retired Feb 19) → Claude Sonnet 4.5 or Claude Sonnet 4.6
 - GPT-5.1 and GPT-5 → GPT-5.2 or GPT-5.2-Codex
@@ -94,6 +98,7 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | --------------------------- | --------- | ------------------------- |
 | Claude Opus 4.5             | Anthropic | 200k                      |
 | Claude Opus 4.6             | Anthropic | 1M                        |
+| Claude Opus 4.7             | Anthropic | 1M                        |
 | Claude Sonnet 4.5           | Anthropic | 200k                      |
 | Claude Sonnet 4.6           | Anthropic | 1M                        |
 | Claude Haiku 4.5            | Anthropic | 200k                      |
