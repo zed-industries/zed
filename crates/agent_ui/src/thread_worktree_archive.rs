@@ -310,19 +310,22 @@ fn remove_empty_ancestors(child_path: &Path, base_path: &Path) {
 }
 
 /// Finds a live `Repository` entity for the given path, or creates a temporary
-/// `Project::local` to obtain one.
+/// project to obtain one.
 ///
 /// `Repository` entities can only be obtained through a `Project` because
 /// `GitStore` (which creates and manages `Repository` entities) is owned by
 /// `Project`. When no open workspace contains the repo we need, we spin up a
-/// headless `Project::local` just to get a `Repository` handle. The caller
-/// keeps the returned `Option<Entity<Project>>` alive for the duration of the
+/// headless project just to get a `Repository` handle. For local paths this is
+/// a `Project::local`; for remote paths we build a `Project::remote` through
+/// the connection pool (reusing the existing SSH transport), which requires
+/// the caller to pass the matching `RemoteConnectionOptions` so we only match
+/// and fall back onto projects that share the same remote identity. The
+/// caller keeps the returned `Entity<Project>` alive for the duration of the
 /// git operations, then drops it.
 ///
 /// Future improvement: decoupling `GitStore` from `Project` so that
 /// `Repository` entities can be created standalone would eliminate this
 /// temporary-project workaround.
-/// todo! update doc comment
 async fn find_or_create_repository(
     repo_path: &Path,
     remote_connection: Option<&RemoteConnectionOptions>,
