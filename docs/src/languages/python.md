@@ -400,7 +400,7 @@ These can be combined to tailor the experience for web servers, test runners, or
 
 #### Debug a Django App
 
-For projects using Django using the following structure:
+For projects using Django with a structure similar to the following:
 
 ```
 my_django_project/
