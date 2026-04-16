@@ -7,6 +7,8 @@
     allow(dead_code)
 )]
 
+#![windows_subsystem = "windows"]
+
 use anyhow::{Context as _, Result};
 use clap::Parser;
 use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
