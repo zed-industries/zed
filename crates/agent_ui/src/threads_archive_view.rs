@@ -852,6 +852,12 @@ impl ThreadsArchiveView {
             .filter(|item| matches!(item, ArchiveListItem::Entry { .. }))
             .count();
 
+        let has_archived_threads = ThreadMetadataStore::global(cx)
+            .read(cx)
+            .archived_entries()
+            .next()
+            .is_some();
+
         let count_label = if entry_count == 1 {
             if self.show_open_only {
                 "1 open thread".to_string()
@@ -877,20 +883,22 @@ impl ThreadsArchiveView {
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
-            .child(
-                IconButton::new("toggle-open-only", IconName::Filter)
-                    .icon_size(IconSize::Small)
-                    .toggle_state(self.show_open_only)
-                    .tooltip(Tooltip::text(if self.show_open_only {
-                        "Show Archived Threads"
-                    } else {
-                        "Hide Archived Threads"
-                    }))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_open_only = !this.show_open_only;
-                        this.update_items(cx);
-                    })),
-            )
+            .when(has_archived_threads, |this| {
+                this.child(
+                    IconButton::new("toggle-open-only", IconName::Filter)
+                        .icon_size(IconSize::Small)
+                        .toggle_state(self.show_open_only)
+                        .tooltip(Tooltip::text(if self.show_open_only {
+                            "Show Archived Threads"
+                        } else {
+                            "Hide Archived Threads"
+                        }))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.show_open_only = !this.show_open_only;
+                            this.update_items(cx);
+                        })),
+                )
+            })
     }
 }
 
