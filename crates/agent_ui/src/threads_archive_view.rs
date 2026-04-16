@@ -139,7 +139,7 @@ pub struct ThreadsArchiveView {
     archived_thread_ids: HashSet<ThreadId>,
     archived_branch_names: HashMap<ThreadId, HashMap<PathBuf, String>>,
     _load_branch_names_task: Task<()>,
-    show_archived_only: bool,
+    show_open_only: bool,
 }
 
 impl ThreadsArchiveView {
@@ -213,7 +213,7 @@ impl ThreadsArchiveView {
             archived_thread_ids: HashSet::default(),
             archived_branch_names: HashMap::default(),
             _load_branch_names_task: Task::ready(()),
-            show_archived_only: false,
+            show_open_only: false,
         };
 
         this.update_items(cx);
@@ -252,11 +252,11 @@ impl ThreadsArchiveView {
     }
 
     fn update_items(&mut self, cx: &mut Context<Self>) {
-        let show_archived_only = self.show_archived_only;
+        let show_open_only = self.show_open_only;
         let sessions = ThreadMetadataStore::global(cx)
             .read(cx)
             .entries()
-            .filter(|t| !show_archived_only || t.archived)
+            .filter(|t| !show_open_only || !t.archived)
             .sorted_by_cached_key(|t| t.created_at.unwrap_or(t.updated_at))
             .rev()
             .cloned()
@@ -853,13 +853,13 @@ impl ThreadsArchiveView {
             .count();
 
         let count_label = if entry_count == 1 {
-            if self.show_archived_only {
-                "1 archived thread".to_string()
+            if self.show_open_only {
+                "1 open thread".to_string()
             } else {
                 "1 thread".to_string()
             }
-        } else if self.show_archived_only {
-            format!("{} archived threads", entry_count)
+        } else if self.show_open_only {
+            format!("{} open threads", entry_count)
         } else {
             format!("{} threads", entry_count)
         };
@@ -878,16 +878,16 @@ impl ThreadsArchiveView {
                     .color(Color::Muted),
             )
             .child(
-                IconButton::new("toggle-archived-only", IconName::Archive)
+                IconButton::new("toggle-open-only", IconName::Filter)
                     .icon_size(IconSize::Small)
-                    .toggle_state(self.show_archived_only)
-                    .tooltip(Tooltip::text(if self.show_archived_only {
-                        "Show All Threads"
+                    .toggle_state(self.show_open_only)
+                    .tooltip(Tooltip::text(if self.show_open_only {
+                        "Show Archived Threads"
                     } else {
-                        "Show Archived Only"
+                        "Hide Archived Threads"
                     }))
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_archived_only = !this.show_archived_only;
+                        this.show_open_only = !this.show_open_only;
                         this.update_items(cx);
                     })),
             )
