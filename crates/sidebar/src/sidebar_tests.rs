@@ -251,6 +251,90 @@ async fn save_named_thread_metadata(
     cx.run_until_parked();
 }
 
+/// Spins up a fresh remote project backed by a headless server sharing
+/// `server_fs`, opens the given worktree path on it, and returns the
+/// project together with the headless entity (which the caller must keep
+/// alive for the duration of the test) and the `RemoteConnectionOptions`
+/// used for the fake server. Passing those options back into
+/// `reuse_opts` on a subsequent call makes the new project share the
+/// same `RemoteConnectionIdentity`, matching how Zed treats multiple
+/// projects on the same SSH host.
+async fn start_remote_project(
+    server_fs: &Arc<FakeFs>,
+    worktree_path: &Path,
+    app_state: &Arc<workspace::AppState>,
+    reuse_opts: Option<&remote::RemoteConnectionOptions>,
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) -> (
+    Entity<project::Project>,
+    Entity<remote_server::HeadlessProject>,
+    remote::RemoteConnectionOptions,
+) {
+    // Bare `_` on the guard so it's dropped immediately; holding onto it
+    // would deadlock `connect_mock` below since the client waits on the
+    // guard before completing the mock handshake.
+    let (opts, server_session) = match reuse_opts {
+        Some(existing) => {
+            let (session, _) = remote::RemoteClient::fake_server_with_opts(existing, cx, server_cx);
+            (existing.clone(), session)
+        }
+        None => {
+            let (opts, session, _) = remote::RemoteClient::fake_server(cx, server_cx);
+            (opts, session)
+        }
+    };
+
+    server_cx.update(remote_server::HeadlessProject::init);
+    let server_executor = server_cx.executor();
+    let fs = server_fs.clone();
+    let headless = server_cx.new(|cx| {
+        remote_server::HeadlessProject::new(
+            remote_server::HeadlessAppState {
+                session: server_session,
+                fs,
+                http_client: Arc::new(http_client::BlockedHttpClient),
+                node_runtime: node_runtime::NodeRuntime::unavailable(),
+                languages: Arc::new(language::LanguageRegistry::new(server_executor.clone())),
+                extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+
+    let remote_client = remote::RemoteClient::connect_mock(opts.clone(), cx).await;
+    let project = cx.update(|cx| {
+        let project_client = client::Client::new(
+            Arc::new(clock::FakeSystemClock::new()),
+            http_client::FakeHttpClient::with_404_response(),
+            cx,
+        );
+        let user_store = cx.new(|cx| client::UserStore::new(project_client.clone(), cx));
+        project::Project::remote(
+            remote_client,
+            project_client,
+            node_runtime::NodeRuntime::unavailable(),
+            user_store,
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            false,
+            cx,
+        )
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(worktree_path, true, cx)
+        })
+        .await
+        .expect("should open remote worktree");
+    cx.run_until_parked();
+
+    (project, headless, opts)
+}
+
 fn save_thread_metadata(
     session_id: acp::SessionId,
     title: Option<SharedString>,
@@ -4985,6 +5069,7 @@ async fn test_restore_worktree_when_branch_has_moved(cx: &mut TestAppContext) {
                     unstaged_commit_hash: unstaged_hash,
                     original_commit_hash: "original-sha".to_string(),
                 },
+                None,
                 &mut cx,
             )
             .await
@@ -5093,6 +5178,7 @@ async fn test_restore_worktree_when_branch_has_not_moved(cx: &mut TestAppContext
                     unstaged_commit_hash: unstaged_hash,
                     original_commit_hash: "original-sha".to_string(),
                 },
+                None,
                 &mut cx,
             )
             .await
@@ -5193,6 +5279,7 @@ async fn test_restore_worktree_when_branch_does_not_exist(cx: &mut TestAppContex
                     unstaged_commit_hash: unstaged_hash,
                     original_commit_hash: "original-sha".to_string(),
                 },
+                None,
                 &mut cx,
             )
             .await
@@ -10504,6 +10591,303 @@ fn test_worktree_info_missing_branch_returns_none() {
     assert_eq!(infos[0].kind, ui::WorktreeKind::Main);
     assert_eq!(infos[0].branch_name, None);
     assert_eq!(infos[0].name, SharedString::from("myapp"));
+}
+
+#[gpui::test]
+async fn test_remote_archive_thread_with_active_connection(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    // End-to-end test of archiving a remote thread tied to a linked git
+    // worktree. Archival should:
+    //  1. Persist the worktree's git state via the remote repository RPCs
+    //     (head_sha / create_archive_checkpoint / update_ref).
+    //  2. Remove the linked worktree directory from the *remote* filesystem
+    //     via the GitRemoveWorktree RPC.
+    //  3. Mark the thread metadata archived and hide it from the sidebar.
+    //
+    // The mock remote transport only supports one live `RemoteClient` per
+    // connection at a time (each client's `start_proxy` replaces the
+    // previous server channel), so we can't split the main repo and the
+    // linked worktree across two remote projects the way Zed does in
+    // production. Opening both as visible worktrees of a single remote
+    // project still exercises every interesting path of the archive flow
+    // while staying within the mock's multiplexing limits.
+    init_test(cx);
+
+    cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+
+    let app_state = cx.update(|cx| {
+        let app_state = workspace::AppState::test(cx);
+        workspace::init(app_state.clone(), cx);
+        app_state
+    });
+
+    server_cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+
+    // Set up the remote filesystem with a main repo and one linked worktree.
+    let server_fs = FakeFs::new(server_cx.executor());
+    server_fs
+        .insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a",
+                        },
+                    },
+                },
+                "src": { "main.rs": "fn main() {}" },
+            }),
+        )
+        .await;
+    server_fs
+        .insert_tree(
+            "/worktrees/project/feature-a/project",
+            serde_json::json!({
+                ".git": "gitdir: /project/.git/worktrees/feature-a",
+                "src": { "lib.rs": "// feature" },
+            }),
+        )
+        .await;
+    server_fs
+        .add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            false,
+            git::repository::Worktree {
+                path: PathBuf::from("/worktrees/project/feature-a/project"),
+                ref_name: Some("refs/heads/feature-a".into()),
+                sha: "abc".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+    server_fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+    server_fs.set_head_for_repo(
+        Path::new("/project/.git"),
+        &[("src/main.rs", "fn main() {}".into())],
+        "head-sha",
+    );
+
+    // Open a single remote project with both the main repo and the linked
+    // worktree as visible worktrees. The mock transport doesn't multiplex
+    // multiple `RemoteClient`s over one pooled connection cleanly (each
+    // client's `start_proxy` clobbers the previous one's server channel),
+    // so we can't build two separate `Project::remote` instances in this
+    // test. Folding both worktrees into one project still exercises the
+    // archive flow's interesting paths: `build_root_plan` classifies the
+    // linked worktree correctly, and `find_or_create_repository` finds
+    // the main repo live on that same project — avoiding the temp-project
+    // fallback that would also run into the multiplexing limitation.
+    let (project, _headless, _opts) = start_remote_project(
+        &server_fs,
+        Path::new("/project"),
+        &app_state,
+        None,
+        cx,
+        server_cx,
+    )
+    .await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(
+                Path::new("/worktrees/project/feature-a/project"),
+                true,
+                cx,
+            )
+        })
+        .await
+        .expect("should open linked worktree on remote");
+    project.update(cx, |p, cx| p.git_scans_complete(cx)).await;
+    cx.run_until_parked();
+
+    cx.update(|cx| <dyn fs::Fs>::set_global(app_state.fs.clone(), cx));
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // The worktree thread's (main_worktree_path, folder_path) pair points
+    // the folder at the linked worktree checkout and the main at the
+    // parent repo, so `build_root_plan` targets the linked worktree
+    // specifically and knows which main repo owns it.
+    let remote_connection = project.read_with(cx, |p, cx| p.remote_connection_options(cx));
+    let wt_thread_id = acp::SessionId::new(Arc::from("worktree-thread"));
+    cx.update(|_window, cx| {
+        let metadata = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(wt_thread_id.clone()),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Worktree Thread".into()),
+            updated_at: chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 1, 1, 0, 0, 0)
+                .unwrap(),
+            created_at: None,
+            worktree_paths: WorktreePaths::from_path_lists(
+                PathList::new(&[PathBuf::from("/project")]),
+                PathList::new(&[PathBuf::from("/worktrees/project/feature-a/project")]),
+            )
+            .unwrap(),
+            archived: false,
+            remote_connection,
+        };
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
+    });
+    cx.run_until_parked();
+
+    assert!(
+        server_fs
+            .is_dir(Path::new("/worktrees/project/feature-a/project"))
+            .await,
+        "linked worktree directory should exist on remote before archiving"
+    );
+
+    sidebar.update_in(cx, |sidebar: &mut Sidebar, window, cx| {
+        sidebar.archive_thread(&wt_thread_id, window, cx);
+    });
+    cx.run_until_parked();
+    server_cx.run_until_parked();
+
+    let is_archived = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&wt_thread_id)
+            .map(|t| t.archived)
+            .unwrap_or(false)
+    });
+    assert!(is_archived, "worktree thread should be archived");
+
+    assert!(
+        !server_fs
+            .is_dir(Path::new("/worktrees/project/feature-a/project"))
+            .await,
+        "linked worktree directory should be removed from remote fs \
+         (the GitRemoveWorktree RPC runs `Repository::remove_worktree` \
+         on the headless server, which deletes the directory via `Fs::remove_dir` \
+         before running `git worktree remove --force`)"
+    );
+
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        !entries.iter().any(|e| e.contains("Worktree Thread")),
+        "archived worktree thread should be hidden from sidebar: {entries:?}"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_archive_thread_with_disconnected_remote(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    // When a remote thread has no linked-worktree state to archive (only
+    // a main worktree), archival is a pure metadata operation: no RPCs
+    // are issued against the remote server. This must succeed even when
+    // the connection has dropped out, because losing connectivity should
+    // not block users from cleaning up their thread list.
+    //
+    // Threads that *do* have linked-worktree state require a live
+    // connection to run the git worktree removal on the server; that
+    // path is covered by `test_remote_archive_thread_with_active_connection`.
+    init_test(cx);
+
+    cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+
+    let app_state = cx.update(|cx| {
+        let app_state = workspace::AppState::test(cx);
+        workspace::init(app_state.clone(), cx);
+        app_state
+    });
+
+    server_cx.update(|cx| {
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+    });
+
+    let server_fs = FakeFs::new(server_cx.executor());
+    server_fs
+        .insert_tree(
+            "/project",
+            serde_json::json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" },
+            }),
+        )
+        .await;
+    server_fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+    let (project, _headless, _opts) = start_remote_project(
+        &server_fs,
+        Path::new("/project"),
+        &app_state,
+        None,
+        cx,
+        server_cx,
+    )
+    .await;
+    let remote_client = project
+        .read_with(cx, |project, _cx| project.remote_client())
+        .expect("remote project should expose its client");
+
+    cx.update(|cx| <dyn fs::Fs>::set_global(app_state.fs.clone(), cx));
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let thread_id = acp::SessionId::new(Arc::from("remote-thread"));
+    save_thread_metadata(
+        thread_id.clone(),
+        Some("Remote Thread".into()),
+        chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        &project,
+        cx,
+    );
+    cx.run_until_parked();
+
+    // Sanity-check: there is nothing on the remote fs outside the main
+    // repo, so archival should not need to touch the server.
+    assert!(
+        !server_fs.is_dir(Path::new("/worktrees")).await,
+        "no linked worktrees on the server before archiving"
+    );
+
+    // Disconnect the remote connection before archiving. We don't
+    // `run_until_parked` here because the disconnect itself triggers
+    // reconnection work that can't complete in the test environment.
+    remote_client.update_in(cx, |client, _window, cx| {
+        client.simulate_disconnect(cx).detach();
+    });
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.archive_thread(&thread_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    let is_archived = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&thread_id)
+            .map(|t| t.archived)
+            .unwrap_or(false)
+    });
+    assert!(
+        is_archived,
+        "thread should be archived even when remote is disconnected"
+    );
+
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        !entries.iter().any(|e| e.contains("Remote Thread")),
+        "archived thread should be hidden from sidebar: {entries:?}"
+    );
 }
 
 #[gpui::test]

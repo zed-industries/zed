@@ -17,7 +17,7 @@ use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
-use fs::Fs;
+use fs::{Fs, RemoveOptions};
 use futures::{
     FutureExt, StreamExt,
     channel::{
@@ -6349,7 +6349,34 @@ impl Repository {
             Some(format!("git worktree remove: {}", path.display()).into()),
             move |repo, _cx| async move {
                 match repo {
-                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    RepositoryState::Local(LocalRepositoryState { backend, fs, .. }) => {
+                        // When forcing, delete the worktree directory ourselves before
+                        // invoking git. `git worktree remove` can remove the admin
+                        // metadata in `.git/worktrees/<name>` but fail to delete the
+                        // working directory (it continues past directory-removal errors),
+                        // leaving an orphaned folder on disk. Deleting first guarantees
+                        // the directory is gone, and `git worktree remove --force`
+                        // tolerates a missing working tree while cleaning up the admin
+                        // entry. We keep this inside the `Local` arm so that for remote
+                        // projects the deletion runs on the remote machine (where the
+                        // `GitRemoveWorktree` RPC is handled against the local repo on
+                        // the headless server) using its own filesystem.
+                        //
+                        // Non-force removals are left untouched: `git worktree remove`
+                        // must see the dirty working tree to refuse the operation.
+                        if force {
+                            fs.remove_dir(
+                                &path,
+                                RemoveOptions {
+                                    recursive: true,
+                                    ignore_if_not_exists: true,
+                                },
+                            )
+                            .await
+                            .with_context(|| {
+                                format!("failed to delete worktree directory '{}'", path.display())
+                            })?;
+                        }
                         backend.remove_worktree(path, force).await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {

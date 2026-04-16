@@ -2602,10 +2602,18 @@ impl Sidebar {
 
                 let mut path_replacements: Vec<(PathBuf, PathBuf)> = Vec::new();
                 for row in &archived_worktrees {
-                    match thread_worktree_archive::restore_worktree_via_git(row, &mut *cx).await {
+                    match thread_worktree_archive::restore_worktree_via_git(
+                        row,
+                        metadata.remote_connection.as_ref(),
+                        &mut *cx,
+                    )
+                    .await
+                    {
                         Ok(restored_path) => {
                             thread_worktree_archive::cleanup_archived_worktree_record(
-                                row, &mut *cx,
+                                row,
+                                metadata.remote_connection.as_ref(),
+                                &mut *cx,
                             )
                             .await;
                             path_replacements.push((row.worktree_path.clone(), restored_path));
@@ -2882,7 +2890,12 @@ impl Sidebar {
                     .folder_paths()
                     .ordered_paths()
                     .filter_map(|path| {
-                        thread_worktree_archive::build_root_plan(path, &workspaces, cx)
+                        thread_worktree_archive::build_root_plan(
+                            path,
+                            metadata.remote_connection.as_ref(),
+                            &workspaces,
+                            cx,
+                        )
                     })
                     .filter(|plan| {
                         thread_id.map_or(true, |tid| {
@@ -3273,14 +3286,9 @@ impl Sidebar {
             return None;
         }
 
-        let fs = self
-            .multi_workspace
-            .upgrade()
-            .map(|mw| mw.read(cx).workspace().read(cx).app_state().fs.clone())?;
-
         let (cancel_tx, cancel_rx) = smol::channel::bounded::<()>(1);
         let task = cx.spawn(async move |_this, cx| {
-            match Self::archive_worktree_roots(roots, fs, cancel_rx, cx).await {
+            match Self::archive_worktree_roots(roots, cancel_rx, cx).await {
                 Ok(ArchiveWorktreeOutcome::Success) => {
                     cx.update(|cx| {
                         ThreadMetadataStore::global(cx).update(cx, |store, _cx| {
@@ -3305,7 +3313,6 @@ impl Sidebar {
 
     async fn archive_worktree_roots(
         roots: Vec<thread_worktree_archive::RootPlan>,
-        fs: Arc<dyn fs::Fs>,
         cancel_rx: smol::channel::Receiver<()>,
         cx: &mut gpui::AsyncApp,
     ) -> anyhow::Result<ArchiveWorktreeOutcome> {
@@ -3338,9 +3345,7 @@ impl Sidebar {
                 return Ok(ArchiveWorktreeOutcome::Cancelled);
             }
 
-            if let Err(error) =
-                thread_worktree_archive::remove_root(root.clone(), fs.clone(), cx).await
-            {
+            if let Err(error) = thread_worktree_archive::remove_root(root.clone(), cx).await {
                 if let Some(&(id, ref completed_root)) = completed_persists.last() {
                     if completed_root.root_path == root.root_path {
                         thread_worktree_archive::rollback_persist(id, completed_root, cx).await;
