@@ -6488,7 +6488,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             keys,
-            vec![project_key.clone()],
+            vec![project_key],
             "project group should exist before CloseProject: {keys:?}"
         );
 
