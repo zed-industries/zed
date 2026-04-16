@@ -37,6 +37,9 @@ use std::{
 /// Strategy injected into `#[gpui::property_test]` tests to control the seed
 /// given to the scheduler. Doesn't shrink, since all scheduler seeds are
 /// equivalent in complexity. If `$SEED` is set, it always uses that value.
+/// 
+/// Note: this function is not intended to be used directly. Rather, it is
+/// public so that it can be used from the `property_test` macro.
 pub fn seed_strategy() -> impl Strategy<Value = u64> {
     match std::env::var("SEED") {
         Ok(val) => Just(val.parse().unwrap()).boxed(),
@@ -44,18 +47,14 @@ pub fn seed_strategy() -> impl Strategy<Value = u64> {
     }
 }
 
-/// Returns a proptest config that is deterministic by default, matching
-/// `#[gpui::test]`'s behavior of using fixed seeds. When `$SEED` is set,
-/// uses that value; otherwise defaults to `0`.
-pub fn default_proptest_config() -> proptest::test_runner::Config {
-    apply_seed_to_config(proptest::test_runner::Config::default())
-}
-
 /// Applies a fixed RNG seed to a proptest config so that case generation
 /// is deterministic. Uses `$SEED` if set, otherwise defaults to `0`.
 /// This bridges the GPUI `SEED` env var to proptest's RNG seed, so that
 /// a single variable controls both the scheduler seed and case generation.
-pub fn apply_seed_to_config(
+/// 
+/// Note: this function is not intended to be used directly. Rather, it is
+/// public so that it can be used from the `property_test` macro.
+pub fn apply_seed_to_proptest_config(
     mut config: proptest::test_runner::Config,
 ) -> proptest::test_runner::Config {
     let seed = env::var("SEED")

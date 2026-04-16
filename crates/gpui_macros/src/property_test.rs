@@ -1,16 +1,25 @@
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote, quote_spanned};
+use quote::{ToTokens, format_ident, quote, quote_spanned};
 use syn::{
-    FnArg, Ident, ItemFn, Type, parse2, punctuated::Punctuated, spanned::Spanned, token::Comma,
+    Expr, FnArg, Ident, ItemFn, MetaNameValue, Token, Type,
+    parse::{Parse, ParseStream},
+    parse2,
+    punctuated::Punctuated,
+    spanned::Spanned,
+    token::Comma,
 };
 
 pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     let item_span = item.span();
-    let args = inject_seed_config(args);
     let Ok(func) = parse2::<ItemFn>(item) else {
         return quote_spanned! { item_span =>
             compile_error!("#[gpui::property_test] must be placed on a function");
         };
+    };
+
+    let args = match parse2::<Args>(args) {
+        Ok(args) => args,
+        Err(e) => return e.to_compile_error(),
     };
 
     let test_name = func.sig.ident.clone();
@@ -52,10 +61,12 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
         },
     };
 
+    let fixed_macro_invocation = args.render();
+
     quote! {
         #arg_errors
 
-        #[::gpui::proptest::property_test(proptest_path = "::gpui::proptest", #args)]
+        #fixed_macro_invocation
         #(#outer_fn_attributes)*
         fn #test_name(#proptest_args) {
             #inner_fn
@@ -70,56 +81,61 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
-fn inject_seed_config(args: TokenStream) -> TokenStream {
-    use proc_macro2::TokenTree;
+struct Args {
+    config: Option<Expr>,
+    remaining_args: Vec<MetaNameValue>,
+    errors: TokenStream,
+}
 
-    let mut segments: Vec<Vec<TokenTree>> = vec![vec![]];
-    for tt in args {
-        match &tt {
-            TokenTree::Punct(p) if p.as_char() == ',' => {
-                segments.push(vec![]);
+impl Args {
+    /// By default, proptest uses random seeds unless `$PROPTEST_SEED` is set.
+    /// Rather than managing both `$SEED` and `$PROPTEST_SEED`, we intercept
+    /// `config = ...` tokens and add a call to `gpui::apply_seed_to_config`.
+    fn render(&self) -> TokenStream {
+        let user_provided_config = match &self.config {
+            None => quote! { ::gpui::proptest::prelude::ProptestConfig::default() },
+            Some(config) => config.into_token_stream(),
+        };
+
+        let fixed_config = quote!(::gpui::apply_seed_to_proptest_config(#user_provided_config));
+        let remaining_args = &self.remaining_args;
+        let errors = &self.errors;
+
+        quote! {
+            #errors
+            #[::gpui::proptest::property_test(
+                proptest_path = "::gpui::proptest",
+                config = #fixed_config,
+                #(#remaining_args,)*
+            )]
+        }
+    }
+}
+
+impl Parse for Args {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let pairs = Punctuated::<MetaNameValue, Token![,]>::parse_terminated(input)?;
+
+        let mut config = None;
+        let mut remaining_args = vec![];
+        let mut errors = quote!();
+
+        for pair in pairs {
+            match pair.path.get_ident().map(Ident::to_string).as_deref() {
+                Some("config") => config = Some(pair.value),
+                Some("proptest_path") => errors.extend(quote_spanned! {pair.span() => 
+                    compile_error!("`gpui::property_test` overrides the `proptest_path` parameter")
+                }),
+                _ => remaining_args.push(pair),
             }
-            _ => {
-                segments
-                    .last_mut()
-                    .expect("segments should never be empty")
-                    .push(tt);
-            }
         }
+
+        Ok(Self {
+            config,
+            remaining_args,
+            errors,
+        })
     }
-    segments.retain(|s| !s.is_empty());
-
-    let mut found_config = false;
-    let mut result_segments: Vec<TokenStream> = Vec::new();
-
-    for segment in segments {
-        let is_config = segment
-            .first()
-            .is_some_and(|tt| matches!(tt, TokenTree::Ident(ident) if *ident == "config"));
-
-        if is_config {
-            found_config = true;
-            let expr_tokens: TokenStream = segment.into_iter().skip(2).collect();
-            result_segments.push(quote!(config = ::gpui::apply_seed_to_config(#expr_tokens)));
-        } else {
-            let segment_stream: TokenStream = segment.into_iter().collect();
-            result_segments.push(segment_stream);
-        }
-    }
-
-    if !found_config {
-        result_segments.push(quote!(config = ::gpui::default_proptest_config()));
-    }
-
-    let mut result = TokenStream::new();
-    for (i, segment) in result_segments.iter().enumerate() {
-        if i > 0 {
-            result.extend(quote!(,));
-        }
-        result.extend(segment.clone());
-    }
-
-    result
 }
 
 #[derive(Default)]
