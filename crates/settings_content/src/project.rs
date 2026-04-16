@@ -527,6 +527,15 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: Option<String>,
+    /// Whether to automatically fetch from all remotes in the background.
+    ///
+    /// Default: false
+    pub auto_fetch: Option<bool>,
+    /// How often to automatically fetch from all remotes, in seconds.
+    /// Only used when `auto_fetch` is enabled. (min: 15)
+    ///
+    /// Default: 60
+    pub auto_fetch_interval_secs: Option<u64>,
 }
 
 #[with_fallible_options]

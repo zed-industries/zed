@@ -1579,6 +1579,11 @@
     //
     // Trailing slashes are ignored.
     "worktree_directory": "../worktrees",
+    // Whether to automatically fetch from all remotes in the background.
+    "auto_fetch": false,
+    // How often to automatically fetch from all remotes, in seconds.
+    // Only applies when auto_fetch is enabled. (min: 15)
+    "auto_fetch_interval_secs": 60,
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [

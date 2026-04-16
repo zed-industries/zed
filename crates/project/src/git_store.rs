@@ -3,6 +3,7 @@ mod conflict_set;
 pub mod git_traversal;
 pub mod pending_op;
 
+use crate::project_settings::ProjectSettings;
 use crate::{
     ProjectEnvironment, ProjectItem, ProjectPath,
     buffer_store::{BufferStore, BufferStoreEvent},
@@ -59,7 +60,7 @@ use rpc::{
     proto::{self, git_reset, split_repository_update},
 };
 use serde::Deserialize;
-use settings::WorktreeId;
+use settings::{Settings, SettingsStore, WorktreeId};
 use smol::future::yield_now;
 use std::{
     cmp::Ordering,
@@ -73,7 +74,7 @@ use std::{
         Arc,
         atomic::{self, AtomicU64},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use sum_tree::{Edit, SumTree, TreeMap};
 use task::Shell;
@@ -347,6 +348,23 @@ pub struct Repository {
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
     graph_commit_data_handler: GraphCommitHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
+    auto_fetch: AutoFetchState,
+}
+
+struct AutoFetchState {
+    enabled: bool,
+    interval_secs: u64,
+    task: Option<Task<()>>,
+}
+
+impl Default for AutoFetchState {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: 60,
+            task: None,
+        }
+    }
 }
 
 impl std::ops::Deref for Repository {
@@ -467,6 +485,7 @@ enum GitJobKey {
     ReloadBufferDiffBases,
     RefreshStatuses,
     ReloadGitState,
+    AutoFetch,
 }
 
 impl GitStore {
@@ -4217,6 +4236,19 @@ impl Repository {
         })
         .detach();
 
+        cx.observe_global::<SettingsStore>(|this: &mut Self, cx| {
+            this.restart_auto_fetch_timer(cx);
+        })
+        .detach();
+
+        let weak = cx.weak_entity();
+        cx.defer(move |cx| {
+            weak.update(cx, |this, cx| {
+                this.restart_auto_fetch_timer(cx);
+            })
+            .ok();
+        });
+
         Repository {
             this: cx.weak_entity(),
             git_store,
@@ -4233,6 +4265,7 @@ impl Repository {
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
             graph_commit_data_handler: GraphCommitHandlerState::Closed,
+            auto_fetch: AutoFetchState::default(),
         }
     }
 
@@ -4271,6 +4304,7 @@ impl Repository {
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
             graph_commit_data_handler: GraphCommitHandlerState::Closed,
+            auto_fetch: AutoFetchState::default(),
         }
     }
 
@@ -5654,6 +5688,89 @@ impl Repository {
                 }
             }
         })
+    }
+
+    fn restart_auto_fetch_timer(&mut self, cx: &mut Context<Self>) {
+        let git_settings = &ProjectSettings::get_global(cx).git;
+        let enabled = git_settings.auto_fetch;
+        let interval_secs = git_settings.auto_fetch_interval_secs;
+
+        if self.auto_fetch.enabled == enabled && self.auto_fetch.interval_secs == interval_secs {
+            return;
+        }
+
+        self.auto_fetch.enabled = enabled;
+        self.auto_fetch.interval_secs = interval_secs;
+
+        if !enabled {
+            self.auto_fetch.task = None;
+            return;
+        }
+
+        let interval = Duration::from_secs(interval_secs);
+
+        self.auto_fetch.task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(interval).await;
+                let Ok(fetch_rx) = this.update(cx, |this, cx| this.auto_fetch(cx)) else {
+                    break;
+                };
+                if let Ok(result) = fetch_rx.await {
+                    if let Err(error) = result {
+                        log::debug!("auto-fetch failed: {error:#}");
+                    }
+                }
+            }
+        }));
+    }
+
+    fn auto_fetch(
+        &mut self,
+        _cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
+        let askpass_delegates = self.askpass_delegates.clone();
+        let askpass_id = util::post_inc(&mut self.latest_askpass_id);
+        let id = self.id;
+
+        self.send_keyed_job(
+            Some(GitJobKey::AutoFetch),
+            Some("git fetch".into()),
+            move |git_repo, mut cx| async move {
+                let askpass = AskPassDelegate::no_op(&mut cx);
+                match git_repo {
+                    RepositoryState::Local(LocalRepositoryState {
+                        backend,
+                        environment,
+                        ..
+                    }) => {
+                        backend
+                            .fetch(FetchOptions::All, askpass, environment, cx)
+                            .await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        askpass_delegates.lock().insert(askpass_id, askpass);
+                        let _defer = util::defer(|| {
+                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
+                            debug_assert!(askpass_delegate.is_some());
+                        });
+
+                        let response = client
+                            .request(proto::Fetch {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                askpass_id,
+                                remote: FetchOptions::All.to_proto(),
+                            })
+                            .await?;
+
+                        Ok(RemoteCommandOutput {
+                            stdout: response.stdout,
+                            stderr: response.stderr,
+                        })
+                    }
+                }
+            },
+        )
     }
 
     pub fn fetch(

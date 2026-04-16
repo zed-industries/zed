@@ -61,6 +61,12 @@ impl AskPassDelegate {
         }
     }
 
+    pub fn no_op(cx: &mut AsyncApp) -> Self {
+        Self::new(cx, |_prompt, _tx, _cx| {
+            // Drop tx without sending — causes fetch to fail if credentials are needed
+        })
+    }
+
     pub fn ask_password(&mut self, prompt: String) -> Task<Option<EncryptedPassword>> {
         let mut this_tx = self.tx.clone();
         self.executor.spawn(async move {

@@ -6775,7 +6775,7 @@ fn terminal_page() -> SettingsPage {
 }
 
 fn version_control_page() -> SettingsPage {
-    fn git_integration_section() -> [SettingsPageItem; 2] {
+    fn git_integration_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Git Integration"),
             SettingsPageItem::DynamicItem(DynamicItem {
@@ -6871,6 +6871,50 @@ fn version_control_page() -> SettingsPage {
                             metadata: None,
                         },
                     ],
+                ],
+            }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Auto Fetch",
+                    description: "Automatically fetch from all remotes in the background.",
+                    field: Box::new(SettingField::<bool> {
+                        json_path: Some("git.auto_fetch"),
+                        pick: |settings_content| settings_content.git.as_ref()?.auto_fetch.as_ref(),
+                        write: |settings_content, value| {
+                            settings_content.git.get_or_insert_default().auto_fetch = value;
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    let enabled = settings_content.git.as_ref()?.auto_fetch.unwrap_or(false);
+                    Some(if enabled { 1 } else { 0 })
+                },
+                fields: vec![
+                    vec![],
+                    vec![SettingItem {
+                        files: USER,
+                        title: "Auto Fetch Interval",
+                        description: "How often to fetch from all remotes, in seconds. (min: 15)",
+                        field: Box::new(SettingField::<u64> {
+                            json_path: Some("git.auto_fetch_interval_secs"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .git
+                                    .as_ref()?
+                                    .auto_fetch_interval_secs
+                                    .as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .git
+                                    .get_or_insert_default()
+                                    .auto_fetch_interval_secs = value;
+                            },
+                        }),
+                        metadata: None,
+                    }],
                 ],
             }),
         ]
