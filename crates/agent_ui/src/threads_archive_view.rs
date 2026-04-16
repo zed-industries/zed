@@ -616,13 +616,14 @@ impl ThreadsArchiveView {
                     &branch_names_for_thread,
                 );
 
-                let archived_color = Color::Custom(cx.theme().colors().text_muted.opacity(0.85));
+                let archived_color = Color::Custom(cx.theme().colors().icon_muted.opacity(0.6));
 
                 let base = ThreadItem::new(id, thread.display_title())
                     .icon(icon)
                     .when(is_archived, |this| {
-                        this.icon_color(archived_color)
-                            .title_label_color(archived_color)
+                        this.archived(true)
+                            .icon_color(archived_color)
+                            .title_label_color(Color::Muted)
                     })
                     .when_some(icon_from_external_svg, |this, svg| {
                         this.custom_icon_from_external_svg(svg)
