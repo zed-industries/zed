@@ -74,6 +74,7 @@ struct SessionConfigResponse {
     config_options: Option<Vec<acp::SessionConfigOption>>,
 }
 
+#[derive(Clone)]
 struct ConfigOptions {
     config_options: Rc<RefCell<Vec<acp::SessionConfigOption>>>,
     tx: Rc<RefCell<watch::Sender<()>>>,
@@ -315,10 +316,14 @@ impl AcpConnection {
             let status_fut = child.status();
             async move |cx| {
                 let status = status_fut.await?;
+                let threads: Vec<_> = sessions
+                    .borrow()
+                    .values()
+                    .map(|session| session.thread.clone())
+                    .collect();
 
-                for session in sessions.borrow().values() {
-                    session
-                        .thread
+                for thread in threads {
+                    thread
                         .update(cx, |thread, cx| {
                             thread.emit_load_error(LoadError::Exited { status }, cx)
                         })
@@ -1866,17 +1871,24 @@ impl acp::Client for ClientDelegate {
         &self,
         notification: acp::SessionNotification,
     ) -> Result<(), acp::Error> {
-        let sessions = self.sessions.borrow();
-        let session = sessions
-            .get(&notification.session_id)
-            .context("Failed to get session")?;
+        let (thread, session_modes, session_config_options) = {
+            let sessions = self.sessions.borrow();
+            let session = sessions
+                .get(&notification.session_id)
+                .context("Failed to get session")?;
+            (
+                session.thread.clone(),
+                session.session_modes.clone(),
+                session.config_options.clone(),
+            )
+        };
 
         if let acp::SessionUpdate::CurrentModeUpdate(acp::CurrentModeUpdate {
             current_mode_id,
             ..
         }) = &notification.update
         {
-            if let Some(session_modes) = &session.session_modes {
+            if let Some(session_modes) = &session_modes {
                 session_modes.borrow_mut().current_mode_id = current_mode_id.clone();
             }
         }
@@ -1886,7 +1898,7 @@ impl acp::Client for ClientDelegate {
             ..
         }) = &notification.update
         {
-            if let Some(opts) = &session.config_options {
+            if let Some(opts) = &session_config_options {
                 *opts.config_options.borrow_mut() = config_options.clone();
                 opts.tx.borrow_mut().send(()).ok();
             }
@@ -1913,7 +1925,7 @@ impl acp::Client for ClientDelegate {
                             .and_then(|v| v.as_str().map(PathBuf::from));
 
                         // Create a minimal display-only lower-level terminal and register it.
-                        let _ = session.thread.update(&mut self.cx.clone(), |thread, cx| {
+                        let _ = thread.update(&mut self.cx.clone(), |thread, cx| {
                             let builder = TerminalBuilder::new_display_only(
                                 CursorShape::default(),
                                 AlternateScroll::On,
@@ -1941,7 +1953,7 @@ impl acp::Client for ClientDelegate {
         }
 
         // Forward the update to the acp_thread as usual.
-        session.thread.update(&mut self.cx.clone(), |thread, cx| {
+        thread.update(&mut self.cx.clone(), |thread, cx| {
             thread.handle_session_update(notification.update.clone(), cx)
         })??;
 
@@ -1953,7 +1965,7 @@ impl acp::Client for ClientDelegate {
                         let terminal_id = acp::TerminalId::new(id_str);
                         if let Some(s) = term_out.get("data").and_then(|v| v.as_str()) {
                             let data = s.as_bytes().to_vec();
-                            let _ = session.thread.update(&mut self.cx.clone(), |thread, cx| {
+                            let _ = thread.update(&mut self.cx.clone(), |thread, cx| {
                                 thread.on_terminal_provider_event(
                                     TerminalProviderEvent::Output { terminal_id, data },
                                     cx,
@@ -1980,7 +1992,7 @@ impl acp::Client for ClientDelegate {
                                     .and_then(|v| v.as_str().map(|s| s.to_string())),
                             );
 
-                        let _ = session.thread.update(&mut self.cx.clone(), |thread, cx| {
+                        let _ = thread.update(&mut self.cx.clone(), |thread, cx| {
                             thread.on_terminal_provider_event(
                                 TerminalProviderEvent::Exit {
                                     terminal_id,
