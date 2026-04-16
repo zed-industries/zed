@@ -1113,6 +1113,9 @@ impl InputLatencyTracker {
         let mut report = String::new();
         report.push_str("Input Latency Histogram\n");
         report.push_str("=======================\n");
+
+        let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z");
+        report.push_str(&format!("Timestamp: {timestamp}\n"));
         report.push_str(&format!("Samples: {total}\n"));
         if self.mid_draw_events_dropped > 0 {
             report.push_str(&format!(
