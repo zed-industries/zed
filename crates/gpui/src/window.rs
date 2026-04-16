@@ -28,6 +28,7 @@ use futures::FutureExt;
 use futures::channel::oneshot;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
+#[cfg(feature = "input-latency-histogram")]
 use hdrhistogram::Histogram;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
@@ -970,6 +971,7 @@ pub struct Window {
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
+    #[cfg(feature = "input-latency-histogram")]
     input_latency_tracker: InputLatencyTracker,
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
@@ -1044,6 +1046,7 @@ impl InputRateTracker {
 /// Records the time between when the first input event in a frame is dispatched
 /// and when the resulting frame is presented, capturing worst-case latency when
 /// multiple events are coalesced into a single frame.
+#[cfg(feature = "input-latency-histogram")]
 struct InputLatencyTracker {
     /// Timestamp of the first unrendered input event in the current frame;
     /// cleared when a frame is presented.
@@ -1065,6 +1068,7 @@ struct InputLatencyTracker {
     previous_report_timestamp: Option<chrono::DateTime<chrono::Local>>,
 }
 
+#[cfg(feature = "input-latency-histogram")]
 impl InputLatencyTracker {
     fn new() -> Result<Self> {
         Ok(Self {
@@ -1233,6 +1237,7 @@ impl InputLatencyTracker {
     }
 }
 
+#[cfg(feature = "input-latency-histogram")]
 fn write_latency_percentiles(
     report: &mut String,
     heading: &str,
@@ -1265,6 +1270,7 @@ fn write_latency_percentiles(
     }
 }
 
+#[cfg(feature = "input-latency-histogram")]
 fn write_latency_distribution(report: &mut String, heading: &str, histogram: &Histogram<u64>) {
     const BUCKETS: &[(u64, u64, &str, &str)] = &[
         (0, 4_000_000, "0\u{2013}4ms", "(excellent)"),
@@ -1750,6 +1756,7 @@ impl Window {
             hovered,
             needs_present,
             input_rate_tracker,
+            #[cfg(feature = "input-latency-histogram")]
             input_latency_tracker: InputLatencyTracker::new()?,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
@@ -2638,19 +2645,16 @@ impl Window {
     #[profiling::function]
     fn present(&mut self) {
         self.platform_window.draw(&self.rendered_frame.scene);
+        #[cfg(feature = "input-latency-histogram")]
         self.input_latency_tracker.record_frame_presented();
         self.needs_present.set(false);
         profiling::finish_frame!();
-    }
-    
-    #[cfg(feature = "input_latency_histogram")]
-    pub fn take_histogra(&mut self) -> Histogram {
-        
     }
 
     /// Returns a formatted text report of the input-to-frame latency histogram.
     /// If a previous report was generated, includes a delta section showing
     /// changes since that report.
+    #[cfg(feature = "input-latency-histogram")]
     pub fn format_input_latency_report(&mut self) -> String {
         self.input_latency_tracker.format_report()
     }
@@ -4401,6 +4405,7 @@ impl Window {
     /// Dispatch a mouse or keyboard event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
+        #[cfg(feature = "input-latency-histogram")]
         let dispatch_time = Instant::now();
         let update_count_before = self.invalidator.update_count();
         // Track input modality for focus-visible styling and hover suppression.
@@ -4514,6 +4519,7 @@ impl Window {
 
         if self.invalidator.update_count() > update_count_before {
             self.input_rate_tracker.borrow_mut().record_input();
+            #[cfg(feature = "input-latency-histogram")]
             if self.invalidator.not_drawing() {
                 self.input_latency_tracker.record_input(dispatch_time);
             } else {
