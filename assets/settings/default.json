@@ -1908,10 +1908,8 @@
     "path_hyperlink_timeout_ms": 1,
     // Whether to show a badge on the terminal panel icon with the count of open terminals.
     "show_count_badge": false,
-    "bell": {
-      // Whether to invoke the OS-default alert sound when the terminal bell (BEL character) is printed.
-      "system": true,
-    },
+    // Whether to invoke the OS-specific alert sound when the terminal bell (BEL character) is printed.
+    "bell": "system",
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.

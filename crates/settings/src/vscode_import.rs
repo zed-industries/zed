@@ -895,8 +895,12 @@ impl VsCodeSettings {
                     self.read_value("terminal.integrated.enableBell")
                         .map(|v| v.as_bool() == Some(true) || v.as_str() == Some("both"))
                 })
-                .map(|system| TerminalBell {
-                    system: Some(system),
+                .map(|enabled| {
+                    if enabled {
+                        TerminalBell::System
+                    } else {
+                        TerminalBell::Off
+                    }
                 }),
             minimum_contrast: None,
             option_as_meta: self.read_bool("terminal.integrated.macOptionIsMeta"),

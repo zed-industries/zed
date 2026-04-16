@@ -6565,22 +6565,9 @@ fn terminal_page() -> SettingsPage {
                 description: "Whether to play a sound when the BEL character (`\\a`, `0x07`) is printed",
                 field: Box::new(SettingField {
                     json_path: Some("terminal.bell.system"),
-                    pick: |settings_content| {
-                        settings_content
-                            .terminal
-                            .as_ref()?
-                            .bell
-                            .as_ref()?
-                            .system
-                            .as_ref()
-                    },
+                    pick: |settings_content| settings_content.terminal.as_ref()?.bell.as_ref(),
                     write: |settings_content, value| {
-                        settings_content
-                            .terminal
-                            .get_or_insert_default()
-                            .bell
-                            .get_or_insert_default()
-                            .system = value;
+                        settings_content.terminal.get_or_insert_default().bell = value;
                     },
                 }),
                 metadata: None,

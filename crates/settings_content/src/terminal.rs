@@ -179,9 +179,9 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: false
     pub show_count_badge: Option<bool>,
-    /// Whether to play a system-defined sound when the `BEL` character (`\a`) is printed to terminal.
+    /// What to do when the `BEL` character (`\a`) is printed to terminal.
     ///
-    /// Default: true
+    /// Default: "system"
     pub bell: Option<TerminalBell>,
 }
 
@@ -398,14 +398,27 @@ pub struct TerminalToolbarContent {
     pub breadcrumbs: Option<bool>,
 }
 
-#[with_fallible_options]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
-pub struct TerminalBell {
-    /// Whether to invoke an OS-defined bell (usually an audible alert sound) when a
-    /// BEL character (`\a`, `\x07`) is printed to the terminal.
-    ///
-    /// Default: true
-    pub system: Option<bool>,
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalBell {
+    /// Play an OS-specific alert sound.
+    #[default]
+    System,
+    /// Do not play any sound.
+    Off,
 }
 
 #[derive(

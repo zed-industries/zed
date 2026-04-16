@@ -2082,9 +2082,7 @@ mod tests {
             r#"{ "accessibility.signals.terminalBell": { "sound": "on" } }"#.to_owned(),
             r#"{
               "terminal": {
-                "bell": {
-                  "system": true
-                }
+                "bell": "system"
               },
               "base_keymap": "VSCode"
             }
@@ -2103,9 +2101,7 @@ mod tests {
             r#"{ "accessibility.signals.terminalBell": { "sound": "off" } }"#.to_owned(),
             r#"{
               "terminal": {
-                "bell": {
-                  "system": false
-                }
+                "bell": "off"
               },
               "base_keymap": "VSCode"
             }
@@ -2124,9 +2120,7 @@ mod tests {
             r#"{ "terminal.integrated.enableBell": true }"#.to_owned(),
             r#"{
               "terminal": {
-                "bell": {
-                  "system": true
-                }
+                "bell": "system"
               },
               "base_keymap": "VSCode"
             }
@@ -2145,9 +2139,7 @@ mod tests {
             r#"{ "terminal.integrated.enableBell": false }"#.to_owned(),
             r#"{
               "terminal": {
-                "bell": {
-                  "system": false
-                }
+                "bell": "off"
               },
               "base_keymap": "VSCode"
             }
@@ -2170,9 +2162,7 @@ mod tests {
             .to_owned(),
             r#"{
               "terminal": {
-                "bell": {
-                  "system": false
-                }
+                "bell": "off"
               },
               "base_keymap": "VSCode"
             }
