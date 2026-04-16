@@ -68,8 +68,8 @@ gpui::actions!(
     [
         /// Creates a new thread in the currently selected or active project group.
         NewThreadInGroup,
-        /// Toggles between the thread list and the archive view.
-        ViewAllThreads,
+        /// Toggles between the thread list and the thread history.
+        ToggleThreadHistory,
     ]
 );
 
@@ -89,7 +89,8 @@ const MAX_WIDTH: Pixels = px(800.0);
 enum SerializedSidebarView {
     #[default]
     ThreadList,
-    Archive,
+    #[serde(alias = "Archive")]
+    History,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -4211,14 +4212,19 @@ impl Sidebar {
                 )
             })
             .child(
-                IconButton::new("history", IconName::History)
+                IconButton::new("history", IconName::Clock)
                     .icon_size(IconSize::Small)
                     .toggle_state(is_archive)
                     .tooltip(move |_, cx| {
-                        Tooltip::for_action("View All Threads", &ViewAllThreads, cx)
+                        let label = if is_archive {
+                            "Hide Thread History"
+                        } else {
+                            "Show Thread History"
+                        };
+                        Tooltip::for_action(label, &ToggleThreadHistory, cx)
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.toggle_archive(&ViewAllThreads, window, cx);
+                        this.toggle_archive(&ToggleThreadHistory, window, cx);
                     })),
             )
             .child(self.render_recent_projects_button(cx));
@@ -4357,14 +4363,14 @@ impl Sidebar {
         )
     }
 
-    fn toggle_archive(&mut self, _: &ViewAllThreads, window: &mut Window, cx: &mut Context<Self>) {
+    fn toggle_archive(&mut self, _: &ToggleThreadHistory, window: &mut Window, cx: &mut Context<Self>) {
         match &self.view {
             SidebarView::ThreadList => {
                 let side = match self.side(cx) {
                     SidebarSide::Left => "left",
                     SidebarSide::Right => "right",
                 };
-                telemetry::event!("Sidebar Archive Viewed", side = side);
+                telemetry::event!("Thread History Viewed", side = side);
                 self.show_archive(window, cx);
             }
             SidebarView::Archive(_) => self.show_thread_list(window, cx),
@@ -4544,7 +4550,7 @@ impl WorkspaceSidebar for Sidebar {
             width: Some(f32::from(self.width)),
             active_view: match self.view {
                 SidebarView::ThreadList => SerializedSidebarView::ThreadList,
-                SidebarView::Archive(_) => SerializedSidebarView::Archive,
+                SidebarView::Archive(_) => SerializedSidebarView::History,
             },
         };
         serde_json::to_string(&serialized).ok()
@@ -4560,7 +4566,7 @@ impl WorkspaceSidebar for Sidebar {
             if let Some(width) = serialized.width {
                 self.width = px(width).clamp(MIN_WIDTH, MAX_WIDTH);
             }
-            if serialized.active_view == SerializedSidebarView::Archive {
+            if serialized.active_view == SerializedSidebarView::History {
                 cx.defer_in(window, |this, window, cx| {
                     this.show_archive(window, cx);
                 });

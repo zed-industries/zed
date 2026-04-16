@@ -66,6 +66,7 @@ pub enum IconName {
     ChevronUpDown,
     Circle,
     CircleHelp,
+    Clock,
     Close,
     CloudDownload,
     Code,
