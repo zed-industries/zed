@@ -392,13 +392,13 @@ impl RenderOnce for ThreadItem {
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
 
-        let visible_worktree_count = self
+        let linked_worktree_count = self
             .worktrees
             .iter()
-            .filter(|wt| !(wt.kind == WorktreeKind::Main && wt.branch_name.is_none()))
+            .filter(|wt| wt.kind == WorktreeKind::Linked)
             .count();
 
-        let worktree_tooltip_title = match (self.is_remote, visible_worktree_count > 1) {
+        let worktree_tooltip_title = match (self.is_remote, linked_worktree_count > 1) {
             (true, true) => "Thread Running in Remote Git Worktrees",
             (true, false) => "Thread Running in a Remote Git Worktree",
             (false, true) => "Thread Running in Local Git Worktrees",
@@ -410,44 +410,9 @@ impl RenderOnce for ThreadItem {
         let slash_color = Color::Custom(cx.theme().colors().text_muted.opacity(0.4));
 
         for wt in self.worktrees {
-            match (wt.kind, wt.branch_name) {
-                (WorktreeKind::Main, None) => continue,
-                (WorktreeKind::Main, Some(branch)) => {
-                    let chip_index = worktree_labels.len();
-                    let tooltip_title = worktree_tooltip_title;
-                    let full_path = wt.full_path.clone();
-
-                    worktree_labels.push(
-                        h_flex()
-                            .id(format!("{}-worktree-{chip_index}", self.id.clone()))
-                            .min_w_0()
-                            .when(visible_worktree_count > 1, |this| {
-                                this.child(
-                                    Label::new(wt.name)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .truncate(),
-                                )
-                                .child(
-                                    Label::new("/")
-                                        .size(LabelSize::Small)
-                                        .color(slash_color)
-                                        .flex_shrink_0(),
-                                )
-                            })
-                            .child(
-                                Label::new(branch)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .truncate(),
-                            )
-                            .tooltip(move |_, cx| {
-                                Tooltip::with_meta(tooltip_title, None, full_path.clone(), cx)
-                            })
-                            .into_any_element(),
-                    );
-                }
-                (WorktreeKind::Linked, branch) => {
+            match wt.kind {
+                WorktreeKind::Main => continue,
+                WorktreeKind::Linked => {
                     let chip_index = worktree_labels.len();
                     let tooltip_title = worktree_tooltip_title;
                     let full_path = wt.full_path.clone();
@@ -477,7 +442,7 @@ impl RenderOnce for ThreadItem {
                                     .color(Color::Muted),
                             )
                             .child(label)
-                            .when_some(branch, |this, branch| {
+                            .when_some(wt.branch_name, |this, branch| {
                                 this.child(
                                     Label::new("/")
                                         .size(LabelSize::Small)
@@ -789,7 +754,7 @@ impl Component for ThreadItem {
                     .into_any_element(),
             ),
             single_example(
-                "Main Branch + Changes + Timestamp",
+                "Main Worktree (hidden) + Changes + Timestamp",
                 container()
                     .child(
                         ThreadItem::new("ti-5e", "Main worktree branch with diff stats")
