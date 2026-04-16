@@ -1900,11 +1900,12 @@ impl BufferSearchBar {
 
 #[cfg(test)]
 mod tests {
-    use std::ops::Range;
+    use std::{ops::Range, time::Duration};
 
     use super::*;
     use editor::{
-        DisplayPoint, Editor, MultiBuffer, PathKey, SearchSettings, SelectionEffects,
+        DisplayPoint, Editor, HighlightKey, MultiBuffer, PathKey,
+        SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT, SearchSettings, SelectionEffects,
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
@@ -3786,6 +3787,80 @@ mod tests {
             e.select_next(&Default::default(), window, cx).unwrap();
         });
         editor_cx.assert_editor_state("«ˇfoo»\n«ˇFOO»\nFoo\nfoo");
+    }
+
+    #[gpui::test]
+    async fn test_regex_search_does_not_highlight_non_matching_occurrences(
+        cx: &mut TestAppContext,
+    ) {
+        init_globals(cx);
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                "something is at the top\nsomething is behind something\nsomething is at the bottom\n",
+                cx,
+            )
+        });
+        let cx = cx.add_empty_window();
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        let search_bar = cx.new_window_entity(|window, cx| {
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_search_option(SearchOptions::REGEX, window, cx);
+        });
+
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("^something", None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.select_next_match(&SelectNextMatch, window, cx);
+        });
+
+        // Advance past the debounce so the selection occurrence highlight would
+        // have fired if it were not suppressed by the active buffer search.
+        cx.executor()
+            .advance_clock(SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(1));
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            assert!(
+                !editor.has_background_highlights(HighlightKey::SelectedTextHighlight),
+                "selection occurrence highlights must be suppressed during buffer search"
+            );
+            assert_eq!(
+                editor.search_background_highlights(cx).len(),
+                3,
+                "expected exactly 3 search highlights (one per line start)"
+            );
+        });
+
+        // Manually select "something" — this should restore occurrence highlights
+        // because it clears the search-navigation flag.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([Point::new(0, 0)..Point::new(0, 9)])
+            });
+        });
+
+        cx.executor()
+            .advance_clock(SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(1));
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, _cx| {
+            assert!(
+                editor.has_background_highlights(HighlightKey::SelectedTextHighlight),
+                "selection occurrence highlights must be restored after a manual selection"
+            );
+        });
     }
 
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {

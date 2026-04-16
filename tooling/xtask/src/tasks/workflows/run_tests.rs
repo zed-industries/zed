@@ -1,5 +1,5 @@
 use gh_workflow::{
-    Concurrency, Container, Event, Expression, Input, Job, Level, Permissions, Port, PullRequest,
+    Container, Event, Expression, Input, Job, Level, MergeGroup, Permissions, Port, PullRequest,
     Push, Run, Step, Strategy, Use, UsesJob, Workflow,
 };
 use indexmap::IndexMap;
@@ -48,25 +48,55 @@ pub(crate) fn run_tests() -> Workflow {
     let mut jobs = vec![
         orchestrate,
         check_style(),
-        should_run_tests.guard(clippy(Platform::Windows, None)),
-        should_run_tests.guard(clippy(Platform::Linux, None)),
-        should_run_tests.guard(clippy(Platform::Mac, None)),
-        should_run_tests.guard(clippy(Platform::Mac, Some(Arch::X86_64))),
-        should_run_tests.guard(run_platform_tests(Platform::Windows)),
-        should_run_tests.guard(run_platform_tests(Platform::Linux)),
-        should_run_tests.guard(run_platform_tests(Platform::Mac)),
-        should_run_tests.guard(doctests()),
-        should_run_tests.guard(check_workspace_binaries()),
-        should_run_tests.guard(check_wasm()),
-        should_run_tests.guard(check_dependencies()), // could be more specific here?
-        should_check_docs.guard(check_docs()),
-        should_check_licences.guard(check_licenses()),
-        should_check_scripts.guard(check_scripts()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Windows, None)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Linux, None)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Mac, None)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Mac, Some(Arch::X86_64))),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(run_platform_tests(Platform::Windows)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(run_platform_tests(Platform::Linux)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(run_platform_tests(Platform::Mac)),
+        should_run_tests.and_not_in_merge_queue().then(doctests()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(check_workspace_binaries()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(build_visual_tests_binary()),
+        should_run_tests.and_not_in_merge_queue().then(check_wasm()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(check_dependencies()), // could be more specific here?
+        should_check_docs
+            .and_not_in_merge_queue()
+            .then(check_docs()),
+        should_check_licences
+            .and_not_in_merge_queue()
+            .then(check_licenses()),
+        should_check_scripts.and_always().then(check_scripts()),
     ];
     let ext_tests = extension_tests();
     let tests_pass = tests_pass(&jobs, &[&ext_tests.name]);
 
-    jobs.push(should_run_tests.guard(check_postgres_and_protobuf_migrations())); // could be more specific here?
+    // TODO: For merge queues, this should fail in the merge queue context
+    jobs.push(
+        should_run_tests
+            .and_always()
+            .then(check_postgres_and_protobuf_migrations()),
+    ); // could be more specific here?
 
     named::workflow()
         .add_event(
@@ -76,16 +106,10 @@ pub(crate) fn run_tests() -> Workflow {
                         .add_branch("main")
                         .add_branch("v[0-9]+.[0-9]+.x"),
                 )
-                .pull_request(PullRequest::default().add_branch("**")),
+                .pull_request(PullRequest::default().add_branch("**"))
+                .merge_group(MergeGroup::default()),
         )
-        .concurrency(
-            Concurrency::default()
-                .group(concat!(
-                    "${{ github.workflow }}-${{ github.ref_name }}-",
-                    "${{ github.ref_name == 'main' && github.sha || 'anysha' }}"
-                ))
-                .cancel_in_progress(true),
-        )
+        .concurrency(vars::one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
@@ -202,7 +226,7 @@ fn orchestrate_impl(rules: &[&PathCondition], target: OrchestrateTarget) -> Name
 
           # If assets/ changed, add crates that depend on those assets
           if echo "$CHANGED_FILES" | grep -qP '^assets/'; then
-            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "storybook" "assets" | sort -u)
+            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "assets" | sort -u)
           fi
 
           # Combine all changed packages
@@ -407,21 +431,15 @@ fn check_style() -> NamedJob {
 fn check_dependencies() -> NamedJob {
     fn install_cargo_machete() -> Step<Use> {
         named::uses(
-            "clechasseur",
-            "rs-cargo",
-            "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
+            "taiki-e",
+            "install-action",
+            "02cc5f8ca9f2301050c0c099055816a41ee05507",
         )
-        .add_with(("command", "install"))
-        .add_with(("args", "cargo-machete@0.7.0"))
+        .add_with(("tool", "cargo-machete@0.7.0"))
     }
 
-    fn run_cargo_machete() -> Step<Use> {
-        named::uses(
-            "clechasseur",
-            "rs-cargo",
-            "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
-        )
-        .add_with(("command", "machete"))
+    fn run_cargo_machete() -> Step<Run> {
+        named::bash("cargo machete")
     }
 
     fn check_cargo_lock() -> Step<Run> {
@@ -596,12 +614,25 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             .when(!filter_packages, |job| {
                 job.add_step(steps::cargo_nextest(platform))
             })
-            .when(platform == Platform::Mac, |job| {
-                job.add_step(steps::cargo_build_visual_tests())
-            })
             .add_step(steps::show_sccache_stats(platform))
             .add_step(steps::cleanup_cargo_config(platform)),
     }
+}
+
+fn build_visual_tests_binary() -> NamedJob {
+    pub fn cargo_build_visual_tests() -> Step<Run> {
+        named::bash("cargo build -p zed --bin zed_visual_test_runner --features visual-tests")
+    }
+
+    named::job(
+        Job::default()
+            .runs_on(runners::MAC_DEFAULT)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Mac))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(cargo_build_visual_tests())
+            .add_step(steps::cleanup_cargo_config(Platform::Mac)),
+    )
 }
 
 pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {

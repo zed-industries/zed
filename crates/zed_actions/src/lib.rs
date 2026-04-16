@@ -72,6 +72,8 @@ actions!(
         OpenPerformanceProfiler,
         /// Opens the onboarding view.
         OpenOnboarding,
+        /// Shows the auto-update notification for testing.
+        ShowUpdateNotification,
     ]
 );
 
@@ -448,8 +450,6 @@ pub mod agent {
             OpenSettings,
             /// Opens the agent onboarding modal.
             OpenOnboardingModal,
-            /// Opens the ACP onboarding modal.
-            OpenAcpOnboardingModal,
             /// Resets the agent onboarding state.
             ResetOnboarding,
             /// Starts a chat conversation with the agent.
@@ -520,7 +520,8 @@ pub mod assistant {
             /// Toggles the agent panel.
             Toggle,
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
-            ToggleFocus
+            ToggleFocus,
+            FocusAgent,
         ]
     );
 

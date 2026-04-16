@@ -267,6 +267,7 @@ impl ManageProfilesModal {
                                         effort: model
                                             .default_effort_level()
                                             .map(|effort| effort.value.to_string()),
+                                        speed: None,
                                     });
                                 }
                             }

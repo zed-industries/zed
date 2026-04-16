@@ -46,7 +46,7 @@ use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
     ManifestQuery, OffsetRangeExt, Point, ToPoint, Toolchain, ToolchainList, ToolchainLister,
     ToolchainMetadata,
-    language_settings::{LanguageSettings, LanguageSettingsContent},
+    language_settings::{Formatter, FormatterList, LanguageSettings, LanguageSettingsContent},
     markdown_lang, rust_lang, tree_sitter_typescript,
 };
 use lsp::{
@@ -4902,6 +4902,85 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
     assert_eq!(completions[0].new_text, "fully\nQualified\nName");
 }
 
+#[gpui::test]
+async fn test_supports_range_formatting_ignores_unrelated_language_servers(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+                ));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.ts": "",
+            "b.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    language_registry.add(rust_lang());
+
+    let mut typescript_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            name: "typescript-fake-language-server",
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let mut rust_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-fake-language-server",
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                document_range_formatting_provider: Some(lsp::OneOf::Left(false)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (typescript_buffer, _typescript_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .unwrap();
+    let (rust_buffer, _rust_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/b.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _typescript_language_server = typescript_language_servers.next().await.unwrap();
+    let _rust_language_server = rust_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    assert!(project.read_with(cx, |project, cx| {
+        project.supports_range_formatting(&typescript_buffer, cx)
+    }));
+    assert!(!project.read_with(cx, |project, cx| {
+        project.supports_range_formatting(&rust_buffer, cx)
+    }));
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -9087,6 +9166,68 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
                     DiffHunkStatus::modified(NoSecondaryHunk),
                 ),
             ],
+        );
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_uncommitted_diff_opened_before_unstaged_diff(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_contents = "one\ntwo\nthree\n";
+    let file_contents = "one\nTWO\nthree\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": file_contents,
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("file.txt", committed_contents.into())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file.txt", cx)
+        })
+        .await
+        .unwrap();
+
+    let uncommitted_diff_task = project.update(cx, |project, cx| {
+        project.open_uncommitted_diff(buffer.clone(), cx)
+    });
+    let unstaged_diff_task = project.update(cx, |project, cx| {
+        project.open_unstaged_diff(buffer.clone(), cx)
+    });
+    let (uncommitted_diff, _unstaged_diff) =
+        futures::future::join(uncommitted_diff_task, unstaged_diff_task).await;
+    let uncommitted_diff = uncommitted_diff.unwrap();
+    let _unstaged_diff = _unstaged_diff.unwrap();
+
+    cx.run_until_parked();
+
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            diff.snapshot(cx).hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                &snapshot,
+            ),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(HasSecondaryHunk),
+            )],
         );
     });
 }

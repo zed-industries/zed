@@ -573,6 +573,14 @@ impl EditPredictionButton {
         current_provider: EditPredictionProvider,
         cx: &mut App,
     ) -> ContextMenu {
+        let organization_configuration = self
+            .user_store
+            .read(cx)
+            .current_organization_configuration();
+
+        let is_zed_provider_disabled = organization_configuration
+            .is_some_and(|configuration| !configuration.edit_prediction.is_enabled);
+
         let available_providers = get_available_providers(cx);
 
         let providers: Vec<_> = available_providers
@@ -592,7 +600,26 @@ impl EditPredictionButton {
 
                 menu = menu.item(
                     ContextMenuEntry::new(name)
-                        .toggleable(IconPosition::Start, is_current)
+                        .toggleable(
+                            IconPosition::Start,
+                            is_current
+                                && (provider == EditPredictionProvider::Zed
+                                    && !is_zed_provider_disabled),
+                        )
+                        .disabled(
+                            provider == EditPredictionProvider::Zed && is_zed_provider_disabled,
+                        )
+                        .when(
+                            provider == EditPredictionProvider::Zed && is_zed_provider_disabled,
+                            |item| {
+                                item.documentation_aside(DocumentationSide::Left, move |_cx| {
+                                    Label::new(
+                                        "Edit predictions are disabled for this organization.",
+                                    )
+                                    .into_any_element()
+                                })
+                            },
+                        )
                         .handler(move |_, cx| {
                             set_completion_provider(fs.clone(), cx, provider);
                         }),
@@ -790,7 +817,7 @@ impl EditPredictionButton {
                             .toggleable(IconPosition::Start, data_collection.is_enabled())
                             .icon(icon_name)
                             .icon_color(icon_color)
-                            .disabled(cx.is_staff())
+                            .disabled(!provider.can_toggle_data_collection(cx))
                             .documentation_aside(DocumentationSide::Left, move |cx| {
                                 let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                     (true, true) => (

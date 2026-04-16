@@ -7,13 +7,14 @@ use std::cell::RefCell;
 use acp_thread::{ContentBlock, PlanEntry};
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
+use feature_flags::AcpBetaFeatureFlag;
 
-use crate::StartThreadIn;
 use crate::message_editor::SharedSessionCapabilities;
+
 use gpui::{Corner, List};
 use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
-use settings::update_settings_file;
+use settings::{SidebarSide, update_settings_file};
 use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 
@@ -205,7 +206,6 @@ impl RenderOnce for GeneratingSpinnerElement {
 }
 
 pub enum AcpThreadViewEvent {
-    FirstSendRequested { content: Vec<acp::ContentBlock> },
     MessageSentOrQueued,
 }
 
@@ -262,8 +262,8 @@ impl PermissionSelection {
 }
 
 pub struct ThreadView {
-    pub id: acp::SessionId,
-    pub parent_id: Option<acp::SessionId>,
+    pub session_id: acp::SessionId,
+    pub parent_session_id: Option<acp::SessionId>,
     pub thread: Entity<AcpThread>,
     pub(crate) conversation: Entity<super::Conversation>,
     pub server_view: WeakEntity<ConversationView>,
@@ -294,7 +294,7 @@ pub struct ThreadView {
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
-    pub subagent_scroll_handles: RefCell<HashMap<agent_client_protocol::SessionId, ScrollHandle>>,
+    pub subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
     pub queue_expanded: bool,
@@ -330,13 +330,14 @@ pub struct ThreadView {
     pub hovered_recent_history_item: Option<usize>,
     pub show_external_source_prompt_warning: bool,
     pub show_codex_windows_warning: bool,
+    pub multi_root_callout_dismissed: bool,
     pub generating_indicator_in_list: bool,
     pub history: Option<Entity<ThreadHistory>>,
     pub _history_subscription: Option<Subscription>,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        if self.parent_id.is_some() {
+        if self.parent_session_id.is_some() {
             self.focus_handle.clone()
         } else {
             self.active_editor(cx).focus_handle(cx)
@@ -356,7 +357,6 @@ pub struct TurnFields {
 
 impl ThreadView {
     pub(crate) fn new(
-        parent_id: Option<acp::SessionId>,
         thread: Entity<AcpThread>,
         conversation: Entity<super::Conversation>,
         server_view: WeakEntity<ConversationView>,
@@ -382,7 +382,8 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let id = thread.read(cx).session_id().clone();
+        let session_id = thread.read(cx).session_id().clone();
+        let parent_session_id = thread.read(cx).parent_session_id().cloned();
 
         let has_commands = !session_capabilities.read().available_commands().is_empty();
         let placeholder = placeholder_text(agent_display_name.as_ref(), has_commands);
@@ -491,8 +492,8 @@ impl ThreadView {
                     None
                 };
                 this.update(cx, |this, cx| {
-                    this.thread.update(cx, |thread, _cx| {
-                        thread.set_draft_prompt(draft);
+                    this.thread.update(cx, |thread, cx| {
+                        thread.set_draft_prompt(draft, cx);
                     });
                     this.schedule_save(cx);
                 })
@@ -506,8 +507,8 @@ impl ThreadView {
             .unwrap_or_default();
 
         let mut this = Self {
-            id,
-            parent_id,
+            session_id,
+            parent_session_id,
             focus_handle: cx.focus_handle(),
             thread,
             conversation,
@@ -573,6 +574,7 @@ impl ThreadView {
             history,
             _history_subscription: history_subscription,
             show_codex_windows_warning,
+            multi_root_callout_dismissed: false,
             generating_indicator_in_list: false,
         };
 
@@ -642,6 +644,10 @@ impl ThreadView {
         }
     }
 
+    pub fn is_draft(&self, cx: &App) -> bool {
+        self.thread.read(cx).entries().is_empty()
+    }
+
     pub(crate) fn as_native_connection(
         &self,
         cx: &App,
@@ -690,7 +696,7 @@ impl ThreadView {
     }
 
     fn is_subagent(&self) -> bool {
-        self.parent_id.is_some()
+        self.parent_session_id.is_some()
     }
 
     /// Returns the currently active editor, either for a message that is being
@@ -747,6 +753,7 @@ impl ThreadView {
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
+                    && self.thread.read(cx).supports_truncate(cx)
                     && user_message.id.is_some()
                     && !self.is_subagent()
                 {
@@ -757,6 +764,7 @@ impl ThreadView {
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::LostFocus) => {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
+                    && self.thread.read(cx).supports_truncate(cx)
                     && user_message.id.is_some()
                     && !self.is_subagent()
                 {
@@ -899,49 +907,6 @@ impl ThreadView {
 
         let message_editor = self.message_editor.clone();
 
-        // Intercept the first send so the agent panel can capture the full
-        // content blocks — needed for "Start thread in New Worktree",
-        // which must create a workspace before sending the message there.
-        let intercept_first_send = self.thread.read(cx).entries().is_empty()
-            && !message_editor.read(cx).is_empty(cx)
-            && self
-                .workspace
-                .upgrade()
-                .and_then(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
-                .is_some_and(|panel| {
-                    !matches!(
-                        panel.read(cx).start_thread_in(),
-                        StartThreadIn::LocalProject
-                    )
-                });
-
-        if intercept_first_send {
-            cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
-            let content_task = self.resolve_message_contents(&message_editor, cx);
-
-            cx.spawn(async move |this, cx| match content_task.await {
-                Ok((content, _tracked_buffers)) => {
-                    if content.is_empty() {
-                        return;
-                    }
-
-                    this.update(cx, |_, cx| {
-                        cx.emit(AcpThreadViewEvent::FirstSendRequested { content });
-                    })
-                    .ok();
-                }
-                Err(error) => {
-                    this.update(cx, |this, cx| {
-                        this.handle_thread_error(error, cx);
-                    })
-                    .ok();
-                }
-            })
-            .detach();
-
-            return;
-        }
-
         let is_editor_empty = message_editor.read(cx).is_empty(cx);
         let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
 
@@ -1066,6 +1031,11 @@ impl ThreadView {
         })
         .detach();
 
+        let side = match AgentSettings::get_global(cx).sidebar_side() {
+            SidebarSide::Left => "left",
+            SidebarSide::Right => "right",
+        };
+
         let task = cx.spawn_in(window, async move |this, cx| {
             let Some((contents, tracked_buffers)) = contents_task.await? else {
                 return Ok(());
@@ -1134,7 +1104,8 @@ impl ThreadView {
                     session = session_id,
                     parent_session_id = parent_session_id.as_ref().map(|id| id.to_string()),
                     model = model_id,
-                    mode = mode_id
+                    mode = mode_id,
+                    side = side
                 );
 
                 thread.send(contents, cx)
@@ -1163,6 +1134,7 @@ impl ThreadView {
                 mode = mode_id,
                 status,
                 turn_time_ms,
+                side = side
             );
             res.map(|_| ())
         });
@@ -1259,6 +1231,62 @@ impl ThreadView {
                 ThreadError::AuthenticationRequired(message) => {
                     ("authentication_required", None, message.clone())
                 }
+                ThreadError::RateLimitExceeded { provider } => (
+                    "rate_limit_exceeded",
+                    None,
+                    format!("{provider}'s rate limit was reached.").into(),
+                ),
+                ThreadError::ServerOverloaded { provider } => (
+                    "server_overloaded",
+                    None,
+                    format!("{provider}'s servers are temporarily unavailable.").into(),
+                ),
+                ThreadError::PromptTooLarge => (
+                    "prompt_too_large",
+                    None,
+                    "Context too large for the model's context window.".into(),
+                ),
+                ThreadError::NoApiKey { provider } => (
+                    "no_api_key",
+                    None,
+                    format!("No API key configured for {provider}.").into(),
+                ),
+                ThreadError::StreamError { provider } => (
+                    "stream_error",
+                    None,
+                    format!("Connection to {provider}'s API was interrupted.").into(),
+                ),
+                ThreadError::InvalidApiKey { provider } => (
+                    "invalid_api_key",
+                    None,
+                    format!("Invalid or expired API key for {provider}.").into(),
+                ),
+                ThreadError::PermissionDenied { provider } => (
+                    "permission_denied",
+                    None,
+                    format!(
+                        "{provider}'s API rejected the request due to insufficient permissions."
+                    )
+                    .into(),
+                ),
+                ThreadError::RequestFailed => (
+                    "request_failed",
+                    None,
+                    "Request could not be completed after multiple attempts.".into(),
+                ),
+                ThreadError::MaxOutputTokens => (
+                    "max_output_tokens",
+                    None,
+                    "Model reached its maximum output length.".into(),
+                ),
+                ThreadError::NoModelSelected => {
+                    ("no_model_selected", None, "No model selected.".into())
+                }
+                ThreadError::ApiError { provider } => (
+                    "api_error",
+                    None,
+                    format!("{provider}'s API returned an unexpected error.").into(),
+                ),
                 ThreadError::Other {
                     acp_error_code,
                     message,
@@ -1452,6 +1480,9 @@ impl ThreadView {
         let Some(queued) = self.remove_from_queue(index, cx) else {
             return;
         };
+
+        self.message_editor.focus_handle(cx).focus(window, cx);
+
         let content = queued.content;
         let tracked_buffers = queued.tracked_buffers;
 
@@ -1678,8 +1709,9 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
+        let session_id = self.thread.read(cx).session_id().clone();
         self.conversation.update(cx, |conversation, cx| {
-            conversation.authorize_pending_tool_call(&self.id, kind, cx)
+            conversation.authorize_pending_tool_call(&session_id, kind, cx)
         })?;
         if self.should_be_following {
             self.workspace
@@ -1719,8 +1751,9 @@ impl ThreadView {
             _ => acp::PermissionOptionKind::AllowOnce,
         };
 
+        let session_id = self.thread.read(cx).session_id().clone();
         self.authorize_tool_call(
-            self.id.clone(),
+            session_id,
             tool_call_id,
             SelectedPermissionOutcome::new(option_id, option_kind),
             window,
@@ -1798,10 +1831,20 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let (session_id, tool_call_id, options) =
-            self.conversation.read(cx).pending_tool_call(&self.id, cx)?;
+        let session_id = self.thread.read(cx).session_id().clone();
+        let (returned_session_id, tool_call_id, options) = self
+            .conversation
+            .read(cx)
+            .pending_tool_call(&session_id, cx)?;
         let options = options.clone();
-        self.authorize_with_granularity(session_id, tool_call_id, &options, is_allow, window, cx)
+        self.authorize_with_granularity(
+            returned_session_id,
+            tool_call_id,
+            &options,
+            is_allow,
+            window,
+            cx,
+        )
     }
 
     fn authorize_with_granularity(
@@ -2199,12 +2242,14 @@ impl ThreadView {
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
 
-        div()
+        h_flex()
             .w_full()
-            .max_w(max_content_width)
-            .mx_auto()
+            .justify_center()
             .child(
                 v_flex()
+                    .flex_basis(max_content_width)
+                    .flex_shrink()
+                    .flex_grow_0()
                     .mx_2()
                     .bg(self.activity_bar_bg(cx))
                     .border_1()
@@ -2485,6 +2530,35 @@ impl ThreadView {
             )
     }
 
+    fn collect_subagent_items_for_sessions(
+        entries: &[AgentThreadEntry],
+        awaiting_session_ids: &[acp::SessionId],
+        cx: &App,
+    ) -> Vec<(SharedString, usize)> {
+        let tool_calls_by_session: HashMap<_, _> = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(entry_ix, entry)| {
+                let AgentThreadEntry::ToolCall(tool_call) = entry else {
+                    return None;
+                };
+                let info = tool_call.subagent_session_info.as_ref()?;
+                let summary_text = tool_call.label.read(cx).source().to_string();
+                let subagent_summary = if summary_text.is_empty() {
+                    SharedString::from("Subagent")
+                } else {
+                    SharedString::from(summary_text)
+                };
+                Some((info.session_id.clone(), (subagent_summary, entry_ix)))
+            })
+            .collect();
+
+        awaiting_session_ids
+            .iter()
+            .filter_map(|session_id| tool_calls_by_session.get(session_id).cloned())
+            .collect()
+    }
+
     fn render_subagents_awaiting_permission(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let awaiting = self.conversation.read(cx).subagents_awaiting_permission(cx);
 
@@ -2492,30 +2566,15 @@ impl ThreadView {
             return None;
         }
 
+        let awaiting_session_ids: Vec<_> = awaiting
+            .iter()
+            .map(|(session_id, _)| session_id.clone())
+            .collect();
+
         let thread = self.thread.read(cx);
         let entries = thread.entries();
-        let mut subagent_items: Vec<(SharedString, usize)> = Vec::new();
-
-        for (session_id, _) in &awaiting {
-            for (entry_ix, entry) in entries.iter().enumerate() {
-                if let AgentThreadEntry::ToolCall(tool_call) = entry {
-                    if let Some(info) = &tool_call.subagent_session_info {
-                        if &info.session_id == session_id {
-                            let subagent_summary: SharedString = {
-                                let summary_text = tool_call.label.read(cx).source().to_string();
-                                if !summary_text.is_empty() {
-                                    summary_text.into()
-                                } else {
-                                    "Subagent".into()
-                                }
-                            };
-                            subagent_items.push((subagent_summary, entry_ix));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
+        let subagent_items =
+            Self::collect_subagent_items_for_sessions(entries, &awaiting_session_ids, cx);
 
         if subagent_items.is_empty() {
             return None;
@@ -3029,7 +3088,7 @@ impl ThreadView {
     }
 
     fn is_subagent_canceled_or_failed(&self, cx: &App) -> bool {
-        let Some(parent_session_id) = self.parent_id.as_ref() else {
+        let Some(parent_session_id) = self.parent_session_id.as_ref() else {
             return false;
         };
 
@@ -3037,7 +3096,7 @@ impl ThreadView {
 
         self.server_view
             .upgrade()
-            .and_then(|sv| sv.read(cx).thread_view(parent_session_id))
+            .and_then(|sv| sv.read(cx).thread_view(parent_session_id, cx))
             .is_some_and(|parent_view| {
                 parent_view
                     .read(cx)
@@ -3056,9 +3115,10 @@ impl ThreadView {
     }
 
     pub(crate) fn render_subagent_titlebar(&mut self, cx: &mut Context<Self>) -> Option<Div> {
-        let Some(parent_session_id) = self.parent_id.clone() else {
+        if self.parent_session_id.is_none() {
             return None;
-        };
+        }
+        let parent_session_id = self.thread.read(cx).parent_session_id()?.clone();
 
         let server_view = self.server_view.clone();
         let thread = self.thread.clone();
@@ -3126,7 +3186,7 @@ impl ThreadView {
                                         .tooltip(Tooltip::text("Minimize Subagent"))
                                         .on_click(move |_, window, cx| {
                                             let _ = server_view.update(cx, |server_view, cx| {
-                                                server_view.navigate_to_session(
+                                                server_view.navigate_to_thread(
                                                     parent_session_id.clone(),
                                                     window,
                                                     cx,
@@ -3450,6 +3510,19 @@ impl ThreadView {
         let usage = thread.token_usage()?;
         let show_split = self.supports_split_token_display(cx);
 
+        let cost_label = if cx.has_flag::<AcpBetaFeatureFlag>() {
+            thread.cost().map(|cost| {
+                let precision = if cost.amount > 0.0 && cost.amount < 0.01 {
+                    4
+                } else {
+                    2
+                };
+                format!("{:.prec$} {}", cost.amount, cost.currency, prec = precision)
+            })
+        } else {
+            None
+        };
+
         let progress_color = |ratio: f32| -> Hsla {
             if ratio >= 0.85 {
                 cx.theme().status().warning
@@ -3520,6 +3593,7 @@ impl ThreadView {
                 let output_max_label = output_max_label.clone();
                 let project_entry_ids = project_entry_ids.clone();
                 let workspace = workspace.clone();
+                let cost_label = cost_label.clone();
                 cx.new(move |_cx| TokenUsageTooltip {
                     percentage,
                     used,
@@ -3529,6 +3603,7 @@ impl ThreadView {
                     input_max: input_max_label,
                     output_max: output_max_label,
                     show_split,
+                    cost_label,
                     separator_color: tooltip_separator_color,
                     user_rules_count,
                     first_user_rules_id,
@@ -4176,6 +4251,7 @@ struct TokenUsageTooltip {
     input_max: String,
     output_max: String,
     show_split: bool,
+    cost_label: Option<String>,
     separator_color: Color,
     user_rules_count: usize,
     first_user_rules_id: Option<uuid::Uuid>,
@@ -4195,6 +4271,7 @@ impl Render for TokenUsageTooltip {
         let input_max = self.input_max.clone();
         let output_max = self.output_max.clone();
         let show_split = self.show_split;
+        let cost_label = self.cost_label.clone();
         let user_rules_count = self.user_rules_count;
         let first_user_rules_id = self.first_user_rules_id;
         let project_rules_count = self.project_rules_count;
@@ -4240,6 +4317,22 @@ impl Render for TokenUsageTooltip {
                                     .child(Label::new("/").color(separator_color))
                                     .child(Label::new(output_max).color(Color::Muted)),
                             ),
+                    )
+                })
+                .when_some(cost_label, |this, cost_label| {
+                    this.child(
+                        v_flex()
+                            .mt_1p5()
+                            .pt_1p5()
+                            .gap_0p5()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(
+                                Label::new("Cost")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .child(Label::new(cost_label)),
                     )
                 })
                 .when(
@@ -4331,17 +4424,27 @@ impl Render for TokenUsageTooltip {
 
 impl ThreadView {
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
+        let max_content_width = AgentSettings::get_global(cx).max_content_width;
+        let centered_container = move |content: AnyElement| {
+            h_flex()
+                .w_full()
+                .justify_center()
+                .child(div().max_w(max_content_width).w_full().child(content))
+        };
+
         list(
             self.list_state.clone(),
             cx.processor(move |this, index: usize, window, cx| {
                 let entries = this.thread.read(cx).entries();
                 if let Some(entry) = entries.get(index) {
-                    this.render_entry(index, entries.len(), entry, window, cx)
+                    let rendered = this.render_entry(index, entries.len(), entry, window, cx);
+                    centered_container(rendered.into_any_element()).into_any_element()
                 } else if this.generating_indicator_in_list {
                     let confirmation = entries
                         .last()
                         .is_some_and(|entry| Self::is_waiting_for_confirmation(entry));
-                    this.render_generating(confirmation, cx).into_any_element()
+                    let rendered = this.render_generating(confirmation, cx);
+                    centered_container(rendered.into_any_element()).into_any_element()
                 } else {
                     Empty.into_any()
                 }
@@ -4390,7 +4493,8 @@ impl ThreadView {
                     .is_some_and(|checkpoint| checkpoint.show);
 
                 let is_subagent = self.is_subagent();
-                let is_editable = message.id.is_some() && !is_subagent;
+                let can_rewind = self.thread.read(cx).supports_truncate(cx);
+                let is_editable = can_rewind && message.id.is_some() && !is_subagent;
                 let agent_name = if is_subagent {
                     "subagents".into()
                 } else {
@@ -4617,7 +4721,7 @@ impl ThreadView {
             }
             AgentThreadEntry::ToolCall(tool_call) => self
                 .render_any_tool_call(
-                    &self.id,
+                    self.thread.read(cx).session_id(),
                     entry_ix,
                     tool_call,
                     &self.focus_handle(cx),
@@ -4872,9 +4976,20 @@ impl ThreadView {
                 },
             );
 
-        if AgentSettings::get_global(cx).enable_feedback
-            && self.thread.read(cx).connection().telemetry().is_some()
-        {
+        let enable_thread_feedback = util::maybe!({
+            let project = thread.read(cx).project().read(cx);
+            let user_store = project.user_store();
+            if let Some(configuration) = user_store.read(cx).current_organization_configuration() {
+                if !configuration.is_agent_thread_feedback_enabled {
+                    return false;
+                }
+            }
+
+            AgentSettings::get_global(cx).enable_feedback
+                && self.thread.read(cx).connection().telemetry().is_some()
+        });
+
+        if enable_thread_feedback {
             let feedback = self.thread_feedback.feedback;
 
             let tooltip_meta = || {
@@ -5159,6 +5274,7 @@ impl ThreadView {
                         let mut editor =
                             Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
                         editor.set_breadcrumb_header(thread_title);
+                        editor.disable_mouse_wheel_zoom();
                         editor
                     })),
                     None,
@@ -6039,7 +6155,7 @@ impl ThreadView {
             .when_some(confirmation_options, |this, options| {
                 let is_first = self.is_first_tool_call(active_session_id, &tool_call.id, cx);
                 this.child(self.render_permission_buttons(
-                    self.id.clone(),
+                    self.thread.read(cx).session_id().clone(),
                     is_first,
                     options,
                     entry_ix,
@@ -6061,7 +6177,8 @@ impl ThreadView {
             .read(cx)
             .pending_tool_call(active_session_id, cx)
             .map_or(false, |(pending_session_id, pending_tool_call_id, _)| {
-                self.id == pending_session_id && tool_call_id == &pending_tool_call_id
+                self.thread.read(cx).session_id() == &pending_session_id
+                    && tool_call_id == &pending_tool_call_id
             })
     }
 
@@ -6273,7 +6390,7 @@ impl ThreadView {
                         )
                     })
                     .child(self.render_permission_buttons(
-                        self.id.clone(),
+                        self.thread.read(cx).session_id().clone(),
                         self.is_first_tool_call(active_session_id, &tool_call.id, cx),
                         options,
                         entry_ix,
@@ -7032,10 +7149,10 @@ impl ThreadView {
                     })
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener({
-                        let session_id = session_id.clone();
                         let tool_call_id = tool_call_id.clone();
                         let option_id = option.option_id.clone();
                         let option_kind = option.kind;
+                        let session_id = session_id.clone();
                         move |this, _, window, cx| {
                             this.authorize_tool_call(
                                 session_id.clone(),
@@ -7588,11 +7705,11 @@ impl ThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        let subagent_thread_view = subagent_session_id.and_then(|id| {
+        let subagent_thread_view = subagent_session_id.and_then(|session_id| {
             self.server_view
                 .upgrade()
                 .and_then(|server_view| server_view.read(cx).as_connected())
-                .and_then(|connected| connected.threads.get(&id))
+                .and_then(|connected| connected.threads.get(&session_id))
         });
 
         let content = self.render_subagent_card(
@@ -7629,12 +7746,11 @@ impl ThreadView {
             .map(|log| log.read(cx).changed_buffers(cx))
             .unwrap_or_default();
 
-        let is_pending_tool_call = thread
+        let is_pending_tool_call = thread_view
             .as_ref()
-            .and_then(|thread| {
-                self.conversation
-                    .read(cx)
-                    .pending_tool_call(thread.read(cx).session_id(), cx)
+            .and_then(|tv| {
+                let sid = tv.read(cx).thread.read(cx).session_id();
+                self.conversation.read(cx).pending_tool_call(sid, cx)
             })
             .is_some();
 
@@ -7860,12 +7976,13 @@ impl ThreadView {
             )
             .when_some(thread_view, |this, thread_view| {
                 let thread = &thread_view.read(cx).thread;
+                let tv_session_id = thread.read(cx).session_id();
                 let pending_tool_call = self
                     .conversation
                     .read(cx)
-                    .pending_tool_call(thread.read(cx).session_id(), cx);
+                    .pending_tool_call(tv_session_id, cx);
 
-                let session_id = thread.read(cx).session_id().clone();
+                let nav_session_id = tv_session_id.clone();
 
                 let fullscreen_toggle = h_flex()
                     .id(entry_ix)
@@ -7887,7 +8004,7 @@ impl ThreadView {
                         telemetry::event!("Subagent Maximized");
                         this.server_view
                             .update(cx, |this, cx| {
-                                this.navigate_to_session(session_id.clone(), window, cx);
+                                this.navigate_to_thread(nav_session_id.clone(), window, cx);
                             })
                             .ok();
                     }));
@@ -7984,7 +8101,7 @@ impl ThreadView {
         let scroll_handle = self
             .subagent_scroll_handles
             .borrow_mut()
-            .entry(session_id.clone())
+            .entry(subagent_view.session_id.clone())
             .or_default()
             .clone();
 
@@ -8076,6 +8193,109 @@ impl ThreadView {
                 self.render_authentication_required_error(error.clone(), cx)
             }
             ThreadError::PaymentRequired => self.render_payment_required_error(cx),
+            ThreadError::RateLimitExceeded { provider } => self.render_error_callout(
+                "Rate Limit Reached",
+                format!(
+                    "{provider}'s rate limit was reached. Zed will retry automatically. \
+                    You can also wait a moment and try again."
+                )
+                .into(),
+                true,
+                true,
+                cx,
+            ),
+            ThreadError::ServerOverloaded { provider } => self.render_error_callout(
+                "Provider Unavailable",
+                format!(
+                    "{provider}'s servers are temporarily unavailable. Zed will retry \
+                    automatically. If the problem persists, check the provider's status page."
+                )
+                .into(),
+                true,
+                true,
+                cx,
+            ),
+            ThreadError::PromptTooLarge => self.render_prompt_too_large_error(cx),
+            ThreadError::NoApiKey { provider } => self.render_error_callout(
+                "API Key Missing",
+                format!(
+                    "No API key is configured for {provider}. \
+                    Add your key via the Agent Panel settings to continue."
+                )
+                .into(),
+                false,
+                true,
+                cx,
+            ),
+            ThreadError::StreamError { provider } => self.render_error_callout(
+                "Connection Interrupted",
+                format!(
+                    "The connection to {provider}'s API was interrupted. Zed will retry \
+                    automatically. If the problem persists, check your network connection."
+                )
+                .into(),
+                true,
+                true,
+                cx,
+            ),
+            ThreadError::InvalidApiKey { provider } => self.render_error_callout(
+                "Invalid API Key",
+                format!(
+                    "The API key for {provider} is invalid or has expired. \
+                    Update your key via the Agent Panel settings to continue."
+                )
+                .into(),
+                false,
+                false,
+                cx,
+            ),
+            ThreadError::PermissionDenied { provider } => self.render_error_callout(
+                "Permission Denied",
+                format!(
+                    "{provider}'s API rejected the request due to insufficient permissions. \
+                    Check that your API key has access to this model."
+                )
+                .into(),
+                false,
+                false,
+                cx,
+            ),
+            ThreadError::RequestFailed => self.render_error_callout(
+                "Request Failed",
+                "The request could not be completed after multiple attempts. \
+                Try again in a moment."
+                    .into(),
+                true,
+                false,
+                cx,
+            ),
+            ThreadError::MaxOutputTokens => self.render_error_callout(
+                "Output Limit Reached",
+                "The model stopped because it reached its maximum output length. \
+                You can ask it to continue where it left off."
+                    .into(),
+                false,
+                false,
+                cx,
+            ),
+            ThreadError::NoModelSelected => self.render_error_callout(
+                "No Model Selected",
+                "Select a model from the model picker below to get started.".into(),
+                false,
+                false,
+                cx,
+            ),
+            ThreadError::ApiError { provider } => self.render_error_callout(
+                "API Error",
+                format!(
+                    "{provider}'s API returned an unexpected error. \
+                    If the problem persists, try switching models or restarting Zed."
+                )
+                .into(),
+                true,
+                true,
+                cx,
+            ),
         };
 
         Some(div().child(content))
@@ -8134,6 +8354,72 @@ impl ThreadView {
                     .child(self.create_copy_button(ERROR_MESSAGE)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_error_callout(
+        &self,
+        title: &'static str,
+        message: SharedString,
+        show_retry: bool,
+        show_copy: bool,
+        cx: &mut Context<Self>,
+    ) -> Callout {
+        let can_resume = show_retry && self.thread.read(cx).can_retry(cx);
+        let show_actions = can_resume || show_copy;
+
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title(title)
+            .description(message.clone())
+            .when(show_actions, |callout| {
+                callout.actions_slot(
+                    h_flex()
+                        .gap_0p5()
+                        .when(can_resume, |this| this.child(self.retry_button(cx)))
+                        .when(show_copy, |this| {
+                            this.child(self.create_copy_button(message.clone()))
+                        }),
+                )
+            })
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_prompt_too_large_error(&self, cx: &mut Context<Self>) -> Callout {
+        const MESSAGE: &str = "This conversation is too long for the model's context window. \
+            Start a new thread or remove some attached files to continue.";
+
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title("Context Too Large")
+            .description(MESSAGE)
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.new_thread_button(cx))
+                    .child(self.create_copy_button(MESSAGE)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn retry_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("retry", "Retry")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Filled)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.retry_generation(cx);
+            }))
+    }
+
+    fn new_thread_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("new_thread", "New Thread")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Filled)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.clear_thread_error(cx);
+                window.dispatch_action(NewThread.boxed_clone(), cx);
+            }))
     }
 
     fn upgrade_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -8338,6 +8624,53 @@ impl ThreadView {
             )
     }
 
+    fn render_multi_root_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
+        if self.multi_root_callout_dismissed {
+            return None;
+        }
+
+        if self.as_native_connection(cx).is_some() {
+            return None;
+        }
+
+        let project = self.project.upgrade()?;
+        let worktree_count = project.read(cx).visible_worktrees(cx).count();
+        if worktree_count <= 1 {
+            return None;
+        }
+
+        let work_dirs = self.thread.read(cx).work_dirs()?;
+        let active_dir = work_dirs
+            .ordered_paths()
+            .next()
+            .and_then(|p| p.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "one folder".to_string());
+
+        let description = format!(
+            "This agent only operates on \"{}\". Other folders in this workspace are not accessible to it.",
+            active_dir
+        );
+
+        Some(
+            Callout::new()
+                .severity(Severity::Warning)
+                .icon(IconName::Warning)
+                .title("External Agents currently don't support multi-root workspaces")
+                .description(description)
+                .border_position(ui::BorderPosition::Bottom)
+                .dismiss_action(
+                    IconButton::new("dismiss-multi-root-callout", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Dismiss"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.multi_root_callout_dismissed = true;
+                            cx.notify();
+                        })),
+                ),
+        )
+    }
+
     fn render_new_version_callout(&self, version: &SharedString, cx: &mut Context<Self>) -> Div {
         let server_view = self.server_view.clone();
         let has_version = !version.is_empty();
@@ -8467,13 +8800,20 @@ impl ThreadView {
             return;
         };
         thread.update(cx, |thread, cx| {
-            thread.set_speed(
-                thread
-                    .speed()
-                    .map(|speed| speed.toggle())
-                    .unwrap_or(Speed::Fast),
-                cx,
-            );
+            let new_speed = thread
+                .speed()
+                .map(|speed| speed.toggle())
+                .unwrap_or(Speed::Fast);
+            thread.set_speed(new_speed, cx);
+
+            let fs = thread.project().read(cx).fs().clone();
+            update_settings_file(fs, cx, move |settings, _| {
+                if let Some(agent) = settings.agent.as_mut()
+                    && let Some(default_model) = agent.default_model.as_mut()
+                {
+                    default_model.speed = Some(new_speed);
+                }
+            });
         });
     }
 
@@ -8539,7 +8879,6 @@ impl ThreadView {
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
-        let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let list_state = self.list_state.clone();
 
         let conversation = v_flex()
@@ -8550,13 +8889,7 @@ impl Render for ThreadView {
                 if has_messages {
                     this.flex_1()
                         .size_full()
-                        .child(
-                            v_flex()
-                                .mx_auto()
-                                .max_w(max_content_width)
-                                .size_full()
-                                .child(self.render_entries(cx)),
-                        )
+                        .child(self.render_entries(cx))
                         .vertical_scrollbar_for(&list_state, window, cx)
                         .into_any()
                 } else {
@@ -8568,15 +8901,15 @@ impl Render for ThreadView {
             .key_context("AcpThread")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
-                if this.parent_id.is_none() {
+                if this.parent_session_id.is_none() {
                     this.cancel_generation(cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &workspace::GoBack, window, cx| {
-                if let Some(parent_session_id) = this.parent_id.clone() {
+                if let Some(parent_session_id) = this.thread.read(cx).parent_session_id().cloned() {
                     this.server_view
                         .update(cx, |view, cx| {
-                            view.navigate_to_session(parent_session_id, window, cx);
+                            view.navigate_to_thread(parent_session_id, window, cx);
                         })
                         .ok();
                 }
@@ -8741,6 +9074,7 @@ impl Render for ThreadView {
             .size_full()
             .children(self.render_subagent_titlebar(cx))
             .child(conversation)
+            .children(self.render_multi_root_callout(cx))
             .children(self.render_activity_bar(window, cx))
             .when(self.show_external_source_prompt_warning, |this| {
                 this.child(self.render_external_source_prompt_warning(cx))

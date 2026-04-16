@@ -645,20 +645,25 @@ impl Item for Editor {
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        self.buffer()
-            .read(cx)
+        let multi_buffer = self.buffer().read(cx);
+        if let Some(file) = multi_buffer
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
             .and_then(|file| File::from_dyn(Some(file)))
-            .map(|file| {
+        {
+            Some(
                 file.worktree
                     .read(cx)
                     .absolutize(&file.path)
                     .compact()
                     .to_string_lossy()
                     .into_owned()
-                    .into()
-            })
+                    .into(),
+            )
+        } else {
+            let title = multi_buffer.title(cx);
+            (!title.is_empty()).then(|| title.to_string().into())
+        }
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -889,12 +894,18 @@ impl Item for Editor {
                 .collect()
         };
 
+        let format_trigger = if options.force_format {
+            FormatTrigger::Manual
+        } else {
+            FormatTrigger::Save
+        };
+
         cx.spawn_in(window, async move |this, cx| {
             if options.format {
                 this.update_in(cx, |editor, window, cx| {
                     editor.perform_format(
                         project.clone(),
-                        FormatTrigger::Save,
+                        format_trigger,
                         FormatTarget::Buffers(buffers_to_save.clone()),
                         window,
                         cx,
@@ -1409,7 +1420,10 @@ impl SerializableItem for Editor {
         self.should_serialize_buffer()
             && matches!(
                 event,
-                EditorEvent::Saved | EditorEvent::DirtyChanged | EditorEvent::BufferEdited
+                EditorEvent::Saved
+                    | EditorEvent::DirtyChanged
+                    | EditorEvent::BufferEdited
+                    | EditorEvent::FileHandleChanged
             )
     }
 }
@@ -1689,9 +1703,14 @@ impl SearchableItem for Editor {
         } else {
             Autoscroll::fit()
         };
-        self.change_selections(SelectionEffects::scroll(autoscroll), window, cx, |s| {
-            s.select_ranges([range]);
-        })
+        self.change_selections(
+            SelectionEffects::scroll(autoscroll).from_search(true),
+            window,
+            cx,
+            |s| {
+                s.select_ranges([range]);
+            },
+        )
     }
 
     fn select_matches(
@@ -2383,6 +2402,81 @@ mod tests {
                 assert!(buffer.file().is_some());
             });
         }
+    }
+
+    // Verify that renaming an open file emits EditorEvent::FileHandleChanged so that
+    // the workspace re-serializes the editor with the updated path.
+    #[gpui::test]
+    async fn test_file_handle_changed_on_rename(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        use util::rel_path::rel_path;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "file.rs": "fn main() {}" }))
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/file.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let received_file_handle_changed = Rc::new(RefCell::new(false));
+        let (editor, cx) = cx.add_window_view({
+            let project = project.clone();
+            let received_file_handle_changed = received_file_handle_changed.clone();
+            move |window, cx| {
+                let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+                editor.set_should_serialize(true, cx);
+                let entity = cx.entity();
+                cx.subscribe_in(&entity, window, move |_, _, event: &EditorEvent, _, _| {
+                    if matches!(event, EditorEvent::FileHandleChanged) {
+                        *received_file_handle_changed.borrow_mut() = true;
+                    }
+                })
+                .detach();
+                editor
+            }
+        });
+
+        cx.run_until_parked();
+
+        let (entry_id, worktree_id) = project.update(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            let worktree = worktree.read(cx);
+            let entry = worktree.entry_for_path(rel_path("file.rs")).unwrap();
+            (entry.id, worktree.id())
+        });
+
+        project
+            .update(cx, |project, cx| {
+                project.rename_entry(entry_id, (worktree_id, rel_path("renamed.rs")).into(), cx)
+            })
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        assert!(
+            *received_file_handle_changed.borrow(),
+            "EditorEvent::FileHandleChanged must be emitted when the open file is renamed"
+        );
+
+        editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            let path = buffer.read(cx).file().unwrap().path();
+            assert!(
+                path.as_std_path().ends_with("renamed.rs"),
+                "buffer path must reflect the renamed file, got {path:?}"
+            );
+        });
     }
 
     // Regression test for https://github.com/zed-industries/zed/issues/35947
