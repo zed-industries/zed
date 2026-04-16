@@ -63,6 +63,18 @@ use uuid::Uuid;
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
+pub const DEFAULT_MAX_SUBAGENT_DEPTH: u8 = MAX_SUBAGENT_DEPTH;
+
+/// Returns the effective maximum sub-agent depth, consulting `AgentSettings` when available.
+///
+/// Falls back to `MAX_SUBAGENT_DEPTH` if no override has been configured, preserving
+/// backward-compatible behavior for all existing single-level orchestration patterns.
+pub fn effective_max_subagent_depth(cx: &App) -> u8 {
+    agent_settings::AgentSettings::get_global(cx)
+        .max_subagent_depth
+        .unwrap_or(DEFAULT_MAX_SUBAGENT_DEPTH)
+        .min(4) // Hard safety ceiling: prevent unbounded recursive delegation
+}
 
 /// Returned when a turn is attempted but no language model has been selected.
 #[derive(Debug)]
