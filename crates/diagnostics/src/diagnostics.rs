@@ -989,6 +989,7 @@ async fn context_range_for_entry(
         cx,
     )
     .await
+    .filter(|rows| rows.start() != rows.end())
     {
         Range {
             start: Point::new(*rows.start(), 0),

@@ -1,9 +1,7 @@
 use crate::types::TableCell;
 use gpui::{AnyElement, Entity};
 use std::ops::Range;
-use ui::{
-    ColumnWidthConfig, RedistributableColumnsState, Table, UncheckedTableRow, div, prelude::*,
-};
+use ui::{ColumnWidthConfig, ResizableColumnsState, Table, UncheckedTableRow, div, prelude::*};
 
 use crate::{
     CsvPreviewView,
@@ -13,10 +11,10 @@ use crate::{
 
 impl CsvPreviewView {
     /// Creates a new table.
-    /// Column number is derived from the `RedistributableColumnsState` entity.
+    /// Column number is derived from the `ResizableColumnsState` entity.
     pub(crate) fn create_table(
         &self,
-        current_widths: &Entity<RedistributableColumnsState>,
+        current_widths: &Entity<ResizableColumnsState>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         self.create_table_inner(self.engine.contents.rows.len(), current_widths, cx)
@@ -25,7 +23,7 @@ impl CsvPreviewView {
     fn create_table_inner(
         &self,
         row_count: usize,
-        current_widths: &Entity<RedistributableColumnsState>,
+        current_widths: &Entity<ResizableColumnsState>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let cols = current_widths.read(cx).cols();
@@ -54,7 +52,7 @@ impl CsvPreviewView {
         Table::new(cols)
             .interactable(&self.table_interaction_state)
             .striped()
-            .width_config(ColumnWidthConfig::redistributable(current_widths.clone()))
+            .width_config(ColumnWidthConfig::Resizable(current_widths.clone()))
             .header(headers)
             .disable_base_style()
             .map(|table| {

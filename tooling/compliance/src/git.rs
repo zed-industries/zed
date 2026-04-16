@@ -110,6 +110,10 @@ impl ToString for VersionTag {
 pub struct CommitSha(pub(crate) String);
 
 impl CommitSha {
+    pub fn new(sha: String) -> Self {
+        Self(sha)
+    }
+
     pub fn short(&self) -> &str {
         self.0.as_str().split_at(8).0
     }
@@ -121,6 +125,17 @@ pub struct CommitDetails {
     author: Committer,
     title: String,
     body: String,
+}
+
+impl CommitDetails {
+    pub fn new(sha: CommitSha, author: Committer, title: String, body: String) -> Self {
+        Self {
+            sha,
+            author,
+            title,
+            body,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,7 +236,7 @@ impl CommitList {
         self.0
             .first()
             .zip(self.0.last())
-            .map(|(first, last)| format!("{}..{}", first.sha().0, last.sha().0))
+            .map(|(first, last)| format!("{}..{}", last.sha().0, first.sha().0))
     }
 }
 
@@ -303,12 +318,12 @@ impl FromStr for VersionTagList {
     }
 }
 
-pub struct CommitsFromVersionToHead {
+pub struct CommitsFromVersionToVersion {
     version_tag: VersionTag,
     branch: String,
 }
 
-impl CommitsFromVersionToHead {
+impl CommitsFromVersionToVersion {
     pub fn new(version_tag: VersionTag, branch: String) -> Self {
         Self {
             version_tag,
@@ -317,7 +332,7 @@ impl CommitsFromVersionToHead {
     }
 }
 
-impl Subcommand for CommitsFromVersionToHead {
+impl Subcommand for CommitsFromVersionToVersion {
     type ParsedOutput = CommitList;
 
     fn args(&self) -> impl IntoIterator<Item = String> {

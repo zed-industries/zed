@@ -1,7 +1,7 @@
 use crate::{
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
-    WorkspaceItemBuilder, ZoomIn, ZoomOut,
+    CloseWindow, NewCenterTerminal, NewFile, NewTerminal, OpenInTerminal, OpenOptions,
+    OpenTerminal, OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom,
+    Workspace, WorkspaceItemBuilder, ZoomIn, ZoomOut,
     focus_follows_mouse::FocusFollowsMouse as _,
     invalid_item_view::InvalidItemView,
     item::{
@@ -83,6 +83,8 @@ pub enum SaveIntent {
     /// write all files (even if unchanged)
     /// prompt before overwriting on-disk changes
     Save,
+    /// same as Save, but always formats regardless of the format_on_save setting
+    FormatAndSave,
     /// same as Save, but without auto formatting
     SaveWithoutFormat,
     /// write any files that have local changes
@@ -195,6 +197,16 @@ pub struct DeploySearch {
     pub included_files: Option<String>,
     #[serde(default)]
     pub excluded_files: Option<String>,
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub regex: Option<bool>,
+    #[serde(default)]
+    pub case_sensitive: Option<bool>,
+    #[serde(default)]
+    pub whole_word: Option<bool>,
+    #[serde(default)]
+    pub include_ignored: Option<bool>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema, Default)]
@@ -305,16 +317,6 @@ actions!(
         UnpinAllTabs,
     ]
 );
-
-impl DeploySearch {
-    pub fn find() -> Self {
-        Self {
-            replace_enabled: false,
-            included_files: None,
-            excluded_files: None,
-        }
-    }
-}
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -2267,7 +2269,10 @@ impl Pane {
         })?;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
-        if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
+        if save_intent == SaveIntent::Save
+            || save_intent == SaveIntent::FormatAndSave
+            || save_intent == SaveIntent::SaveWithoutFormat
+        {
             is_dirty = true;
         }
 
@@ -2282,6 +2287,7 @@ impl Pane {
         }
 
         let should_format = save_intent != SaveIntent::SaveWithoutFormat;
+        let force_format = save_intent == SaveIntent::FormatAndSave;
 
         if has_conflict && can_save {
             if has_deleted_file && is_singleton {
@@ -2301,6 +2307,7 @@ impl Pane {
                             item.save(
                                 SaveOptions {
                                     format: should_format,
+                                    force_format,
                                     autosave: false,
                                 },
                                 project,
@@ -2335,6 +2342,7 @@ impl Pane {
                             item.save(
                                 SaveOptions {
                                     format: should_format,
+                                    force_format,
                                     autosave: false,
                                 },
                                 project,
@@ -2416,6 +2424,7 @@ impl Pane {
                     item.save(
                         SaveOptions {
                             format: should_format,
+                            force_format,
                             autosave: false,
                         },
                         project,
@@ -2500,6 +2509,7 @@ impl Pane {
             item.save(
                 SaveOptions {
                     format,
+                    force_format: false,
                     autosave: true,
                 },
                 project,
@@ -4185,18 +4195,14 @@ fn default_render_tab_bar_buttons(
                         menu.action("New File", NewFile.boxed_clone())
                             .action("Open File", ToggleFileFinder::default().boxed_clone())
                             .separator()
-                            .action(
-                                "Search Project",
-                                DeploySearch {
-                                    replace_enabled: false,
-                                    included_files: None,
-                                    excluded_files: None,
-                                }
-                                .boxed_clone(),
-                            )
+                            .action("Search Project", DeploySearch::default().boxed_clone())
                             .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
                             .separator()
                             .action("New Terminal", NewTerminal::default().boxed_clone())
+                            .action(
+                                "New Center Terminal",
+                                NewCenterTerminal::default().boxed_clone(),
+                            )
                     }))
                 }),
         )
@@ -4398,21 +4404,37 @@ impl Render for Pane {
                         .detach_and_log_err(cx)
                 },
             ))
-            .on_action(
-                cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, _, cx| {
-                    let entry_id = action
-                        .entry_id
-                        .map(ProjectEntryId::from_proto)
-                        .or_else(|| pane.active_item()?.project_entry_ids(cx).first().copied());
-                    if let Some(entry_id) = entry_id {
-                        pane.project
-                            .update(cx, |_, cx| {
-                                cx.emit(project::Event::RevealInProjectPanel(entry_id))
-                            })
-                            .ok();
-                    }
-                }),
-            )
+            .on_action(cx.listener(
+                |pane: &mut Self, action: &RevealInProjectPanel, _window, cx| {
+                    let active_item = pane.active_item();
+                    let entry_id = active_item.as_ref().and_then(|item| {
+                        action
+                            .entry_id
+                            .map(ProjectEntryId::from_proto)
+                            .or_else(|| item.project_entry_ids(cx).first().copied())
+                    });
+
+                    pane.project
+                        .update(cx, |project, cx| {
+                            if let Some(entry_id) = entry_id
+                                && project
+                                    .worktree_for_entry(entry_id, cx)
+                                    .is_some_and(|worktree| worktree.read(cx).is_visible())
+                            {
+                                return cx.emit(project::Event::RevealInProjectPanel(entry_id));
+                            }
+
+                            // When no entry is found, which is the case when
+                            // working with an unsaved buffer, or the worktree
+                            // is not visible, for example, a file that doesn't
+                            // belong to an open project, we can't reveal the
+                            // entry but we still want to activate the project
+                            // panel.
+                            cx.emit(project::Event::ActivateProjectPanel);
+                        })
+                        .log_err();
+                },
+            ))
             .on_action(cx.listener(|_, _: &menu::Cancel, window, cx| {
                 if cx.stop_active_drag(window) {
                 } else {
@@ -4855,36 +4877,9 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>, path_style: PathStyle) ->
 }
 
 pub fn tab_details(items: &[Box<dyn ItemHandle>], _window: &Window, cx: &App) -> Vec<usize> {
-    let mut tab_details = items.iter().map(|_| 0).collect::<Vec<_>>();
-    let mut tab_descriptions = HashMap::default();
-    let mut done = false;
-    while !done {
-        done = true;
-
-        // Store item indices by their tab description.
-        for (ix, (item, detail)) in items.iter().zip(&tab_details).enumerate() {
-            let description = item.tab_content_text(*detail, cx);
-            if *detail == 0 || description != item.tab_content_text(detail - 1, cx) {
-                tab_descriptions
-                    .entry(description)
-                    .or_insert(Vec::new())
-                    .push(ix);
-            }
-        }
-
-        // If two or more items have the same tab description, increase their level
-        // of detail and try again.
-        for (_, item_ixs) in tab_descriptions.drain() {
-            if item_ixs.len() > 1 {
-                done = false;
-                for ix in item_ixs {
-                    tab_details[ix] += 1;
-                }
-            }
-        }
-    }
-
-    tab_details
+    util::disambiguate::compute_disambiguation_details(items, |item, detail| {
+        item.tab_content_text(detail, cx)
+    })
 }
 
 pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &App) -> Option<Indicator> {

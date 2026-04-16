@@ -113,6 +113,10 @@ pub enum Model {
     MistralLarge3,
     #[serde(rename = "pixtral-large")]
     PixtralLarge,
+    #[serde(rename = "devstral-2-123b")]
+    Devstral2_123B,
+    #[serde(rename = "ministral-14b")]
+    Ministral14B,
 
     // Qwen models
     #[serde(rename = "qwen3-32b")]
@@ -146,9 +150,27 @@ pub enum Model {
     #[serde(rename = "gpt-oss-120b")]
     GptOss120B,
 
+    // NVIDIA Nemotron models
+    #[serde(rename = "nemotron-super-3-120b")]
+    NemotronSuper3_120B,
+    #[serde(rename = "nemotron-nano-3-30b")]
+    NemotronNano3_30B,
+
     // MiniMax models
     #[serde(rename = "minimax-m2")]
     MiniMaxM2,
+    #[serde(rename = "minimax-m2-1")]
+    MiniMaxM2_1,
+    #[serde(rename = "minimax-m2-5")]
+    MiniMaxM2_5,
+
+    // Z.AI GLM models
+    #[serde(rename = "glm-5")]
+    GLM5,
+    #[serde(rename = "glm-4-7")]
+    GLM4_7,
+    #[serde(rename = "glm-4-7-flash")]
+    GLM4_7Flash,
 
     // Moonshot models
     #[serde(rename = "kimi-k2-thinking")]
@@ -217,6 +239,8 @@ impl Model {
             Self::MagistralSmall => "magistral-small",
             Self::MistralLarge3 => "mistral-large-3",
             Self::PixtralLarge => "pixtral-large",
+            Self::Devstral2_123B => "devstral-2-123b",
+            Self::Ministral14B => "ministral-14b",
             Self::Qwen3_32B => "qwen3-32b",
             Self::Qwen3VL235B => "qwen3-vl-235b",
             Self::Qwen3_235B => "qwen3-235b",
@@ -230,7 +254,14 @@ impl Model {
             Self::Nova2Lite => "nova-2-lite",
             Self::GptOss20B => "gpt-oss-20b",
             Self::GptOss120B => "gpt-oss-120b",
+            Self::NemotronSuper3_120B => "nemotron-super-3-120b",
+            Self::NemotronNano3_30B => "nemotron-nano-3-30b",
             Self::MiniMaxM2 => "minimax-m2",
+            Self::MiniMaxM2_1 => "minimax-m2-1",
+            Self::MiniMaxM2_5 => "minimax-m2-5",
+            Self::GLM5 => "glm-5",
+            Self::GLM4_7 => "glm-4-7",
+            Self::GLM4_7Flash => "glm-4-7-flash",
             Self::KimiK2Thinking => "kimi-k2-thinking",
             Self::KimiK2_5 => "kimi-k2-5",
             Self::DeepSeekR1 => "deepseek-r1",
@@ -257,6 +288,8 @@ impl Model {
             Self::MagistralSmall => "mistral.magistral-small-2509",
             Self::MistralLarge3 => "mistral.mistral-large-3-675b-instruct",
             Self::PixtralLarge => "mistral.pixtral-large-2502-v1:0",
+            Self::Devstral2_123B => "mistral.devstral-2-123b",
+            Self::Ministral14B => "mistral.ministral-3-14b-instruct",
             Self::Qwen3VL235B => "qwen.qwen3-vl-235b-a22b",
             Self::Qwen3_32B => "qwen.qwen3-32b-v1:0",
             Self::Qwen3_235B => "qwen.qwen3-235b-a22b-2507-v1:0",
@@ -270,7 +303,14 @@ impl Model {
             Self::Nova2Lite => "amazon.nova-2-lite-v1:0",
             Self::GptOss20B => "openai.gpt-oss-20b-1:0",
             Self::GptOss120B => "openai.gpt-oss-120b-1:0",
+            Self::NemotronSuper3_120B => "nvidia.nemotron-super-3-120b",
+            Self::NemotronNano3_30B => "nvidia.nemotron-nano-3-30b",
             Self::MiniMaxM2 => "minimax.minimax-m2",
+            Self::MiniMaxM2_1 => "minimax.minimax-m2.1",
+            Self::MiniMaxM2_5 => "minimax.minimax-m2.5",
+            Self::GLM5 => "zai.glm-5",
+            Self::GLM4_7 => "zai.glm-4.7",
+            Self::GLM4_7Flash => "zai.glm-4.7-flash",
             Self::KimiK2Thinking => "moonshot.kimi-k2-thinking",
             Self::KimiK2_5 => "moonshotai.kimi-k2.5",
             Self::DeepSeekR1 => "deepseek.r1-v1:0",
@@ -297,6 +337,8 @@ impl Model {
             Self::MagistralSmall => "Magistral Small",
             Self::MistralLarge3 => "Mistral Large 3",
             Self::PixtralLarge => "Pixtral Large",
+            Self::Devstral2_123B => "Devstral 2 123B",
+            Self::Ministral14B => "Ministral 14B",
             Self::Qwen3VL235B => "Qwen3 VL 235B",
             Self::Qwen3_32B => "Qwen3 32B",
             Self::Qwen3_235B => "Qwen3 235B",
@@ -310,7 +352,14 @@ impl Model {
             Self::Nova2Lite => "Amazon Nova 2 Lite",
             Self::GptOss20B => "GPT OSS 20B",
             Self::GptOss120B => "GPT OSS 120B",
+            Self::NemotronSuper3_120B => "Nemotron Super 3 120B",
+            Self::NemotronNano3_30B => "Nemotron Nano 3 30B",
             Self::MiniMaxM2 => "MiniMax M2",
+            Self::MiniMaxM2_1 => "MiniMax M2.1",
+            Self::MiniMaxM2_5 => "MiniMax M2.5",
+            Self::GLM5 => "GLM 5",
+            Self::GLM4_7 => "GLM 4.7",
+            Self::GLM4_7Flash => "GLM 4.7 Flash",
             Self::KimiK2Thinking => "Kimi K2 Thinking",
             Self::KimiK2_5 => "Kimi K2.5",
             Self::DeepSeekR1 => "DeepSeek R1",
@@ -338,6 +387,7 @@ impl Model {
             Self::Llama4Scout17B | Self::Llama4Maverick17B => 128_000,
             Self::Gemma3_4B | Self::Gemma3_12B | Self::Gemma3_27B => 128_000,
             Self::MagistralSmall | Self::MistralLarge3 | Self::PixtralLarge => 128_000,
+            Self::Devstral2_123B | Self::Ministral14B => 256_000,
             Self::Qwen3_32B
             | Self::Qwen3VL235B
             | Self::Qwen3_235B
@@ -349,7 +399,9 @@ impl Model {
             Self::NovaPremier => 1_000_000,
             Self::Nova2Lite => 300_000,
             Self::GptOss20B | Self::GptOss120B => 128_000,
-            Self::MiniMaxM2 => 128_000,
+            Self::NemotronSuper3_120B | Self::NemotronNano3_30B => 262_000,
+            Self::MiniMaxM2 | Self::MiniMaxM2_1 | Self::MiniMaxM2_5 => 196_000,
+            Self::GLM5 | Self::GLM4_7 | Self::GLM4_7Flash => 203_000,
             Self::KimiK2Thinking | Self::KimiK2_5 => 128_000,
             Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => 128_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
@@ -373,6 +425,7 @@ impl Model {
             | Self::MagistralSmall
             | Self::MistralLarge3
             | Self::PixtralLarge => 8_192,
+            Self::Devstral2_123B | Self::Ministral14B => 131_000,
             Self::Qwen3_32B
             | Self::Qwen3VL235B
             | Self::Qwen3_235B
@@ -382,7 +435,9 @@ impl Model {
             | Self::Qwen3Coder480B => 8_192,
             Self::NovaLite | Self::NovaPro | Self::NovaPremier | Self::Nova2Lite => 5_000,
             Self::GptOss20B | Self::GptOss120B => 16_000,
-            Self::MiniMaxM2 => 16_000,
+            Self::NemotronSuper3_120B | Self::NemotronNano3_30B => 131_000,
+            Self::MiniMaxM2 | Self::MiniMaxM2_1 | Self::MiniMaxM2_5 => 98_000,
+            Self::GLM5 | Self::GLM4_7 | Self::GLM4_7Flash => 101_000,
             Self::KimiK2Thinking | Self::KimiK2_5 => 16_000,
             Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => 16_000,
             Self::Custom {
@@ -419,6 +474,7 @@ impl Model {
             | Self::ClaudeSonnet4_6 => true,
             Self::NovaLite | Self::NovaPro | Self::NovaPremier | Self::Nova2Lite => true,
             Self::MistralLarge3 | Self::PixtralLarge | Self::MagistralSmall => true,
+            Self::Devstral2_123B | Self::Ministral14B => true,
             // Gemma accepts toolConfig without error but produces unreliable tool
             // calls -- malformed JSON args, hallucinated tool names, dropped calls.
             Self::Qwen3_32B
@@ -428,7 +484,9 @@ impl Model {
             | Self::Qwen3Coder30B
             | Self::Qwen3CoderNext
             | Self::Qwen3Coder480B => true,
-            Self::MiniMaxM2 => true,
+            Self::MiniMaxM2 | Self::MiniMaxM2_1 | Self::MiniMaxM2_5 => true,
+            Self::NemotronSuper3_120B | Self::NemotronNano3_30B => true,
+            Self::GLM5 | Self::GLM4_7 | Self::GLM4_7Flash => true,
             Self::KimiK2Thinking | Self::KimiK2_5 => true,
             Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => true,
             _ => false,

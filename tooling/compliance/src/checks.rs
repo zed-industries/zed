@@ -5,8 +5,8 @@ use itertools::Itertools as _;
 use crate::{
     git::{CommitDetails, CommitList},
     github::{
-        CommitAuthor, GitHubClient, GitHubUser, GithubLogin, PullRequestComment, PullRequestData,
-        PullRequestReview, ReviewState,
+        CommitAuthor, GithubClient, GithubLogin, PullRequestComment, PullRequestData,
+        PullRequestReview, Repository, ReviewState,
     },
     report::Report,
 };
@@ -18,7 +18,6 @@ const ZED_ZIPPY_GROUP_APPROVAL: &str = "@zed-industries/approved";
 pub enum ReviewSuccess {
     ApprovingComment(Vec<PullRequestComment>),
     CoAuthored(Vec<CommitAuthor>),
-    ExternalMergedContribution { merged_by: GitHubUser },
     PullRequestReviewed(Vec<PullRequestReview>),
 }
 
@@ -35,9 +34,6 @@ impl ReviewSuccess {
                 .iter()
                 .map(|comment| format!("@{}", comment.user.login))
                 .collect_vec(),
-            Self::ExternalMergedContribution { merged_by } => {
-                vec![format!("@{}", merged_by.login)]
-            }
         };
 
         let reviewers = reviewers.into_iter().unique().collect_vec();
@@ -60,9 +56,6 @@ impl fmt::Display for ReviewSuccess {
             Self::ApprovingComment(_) => {
                 formatter.write_str("Approved by an organization approval comment")
             }
-            Self::ExternalMergedContribution { .. } => {
-                formatter.write_str("External merged contribution")
-            }
         }
     }
 }
@@ -72,7 +65,6 @@ pub enum ReviewFailure {
     // todo: We could still query the GitHub API here to search for one
     NoPullRequestFound,
     Unreviewed,
-    UnableToDetermineReviewer,
     Other(anyhow::Error),
 }
 
@@ -82,7 +74,6 @@ impl fmt::Display for ReviewFailure {
             Self::NoPullRequestFound => formatter.write_str("No pull request found"),
             Self::Unreviewed => formatter
                 .write_str("No qualifying organization approval found for the pull request"),
-            Self::UnableToDetermineReviewer => formatter.write_str("Could not determine reviewer"),
             Self::Other(error) => write!(formatter, "Failed to inspect review state: {error}"),
         }
     }
@@ -98,11 +89,11 @@ impl<E: Into<anyhow::Error>> From<E> for ReviewFailure {
 
 pub struct Reporter<'a> {
     commits: CommitList,
-    github_client: &'a GitHubClient,
+    github_client: &'a GithubClient,
 }
 
 impl<'a> Reporter<'a> {
-    pub fn new(commits: CommitList, github_client: &'a GitHubClient) -> Self {
+    pub fn new(commits: CommitList, github_client: &'a GithubClient) -> Self {
         Self {
             commits,
             github_client,
@@ -110,14 +101,23 @@ impl<'a> Reporter<'a> {
     }
 
     /// Method that checks every commit for compliance
-    async fn check_commit(&self, commit: &CommitDetails) -> Result<ReviewSuccess, ReviewFailure> {
+    pub async fn check_commit(
+        &self,
+        commit: &CommitDetails,
+    ) -> Result<ReviewSuccess, ReviewFailure> {
         let Some(pr_number) = commit.pr_number() else {
             return Err(ReviewFailure::NoPullRequestFound);
         };
 
-        let pull_request = self.github_client.get_pull_request(pr_number).await?;
+        let pull_request = self
+            .github_client
+            .get_pull_request(&Repository::ZED, pr_number)
+            .await?;
 
-        if let Some(approval) = self.check_pull_request_approved(&pull_request).await? {
+        if let Some(approval) = self
+            .check_approving_pull_request_review(&pull_request)
+            .await?
+        {
             return Ok(approval);
         }
 
@@ -132,10 +132,6 @@ impl<'a> Reporter<'a> {
             return Ok(approval);
         }
 
-        // if let Some(approval) = self.check_external_merged_pr(pr_number).await? {
-        //     return Ok(approval);
-        // }
-
         Err(ReviewFailure::Unreviewed)
     }
 
@@ -146,7 +142,7 @@ impl<'a> Reporter<'a> {
         if commit.co_authors().is_some()
             && let Some(commit_authors) = self
                 .github_client
-                .get_commit_authors([commit.sha()])
+                .get_commit_authors(&Repository::ZED, &[commit.sha()])
                 .await?
                 .get(commit.sha())
                 .and_then(|authors| authors.co_authors())
@@ -156,7 +152,7 @@ impl<'a> Reporter<'a> {
                 if let Some(github_login) = co_author.user()
                     && self
                         .github_client
-                        .check_org_membership(github_login)
+                        .check_repo_write_permission(&Repository::ZED, github_login)
                         .await?
                 {
                     org_co_authors.push(co_author.clone());
@@ -172,38 +168,13 @@ impl<'a> Reporter<'a> {
         }
     }
 
-    #[allow(unused)]
-    async fn check_external_merged_pr(
-        &self,
-        pull_request: PullRequestData,
-    ) -> Result<Option<ReviewSuccess>, ReviewFailure> {
-        if let Some(user) = pull_request.user
-            && self
-                .github_client
-                .check_org_membership(&GithubLogin::new(user.login))
-                .await?
-                .not()
-        {
-            pull_request.merged_by.map_or(
-                Err(ReviewFailure::UnableToDetermineReviewer),
-                |merged_by| {
-                    Ok(Some(ReviewSuccess::ExternalMergedContribution {
-                        merged_by,
-                    }))
-                },
-            )
-        } else {
-            Ok(None)
-        }
-    }
-
-    async fn check_pull_request_approved(
+    async fn check_approving_pull_request_review(
         &self,
         pull_request: &PullRequestData,
     ) -> Result<Option<ReviewSuccess>, ReviewFailure> {
         let pr_reviews = self
             .github_client
-            .get_pull_request_reviews(pull_request.number)
+            .get_pull_request_reviews(&Repository::ZED, pull_request.number)
             .await?;
 
         if !pr_reviews.is_empty() {
@@ -214,12 +185,19 @@ impl<'a> Reporter<'a> {
                         .user
                         .as_ref()
                         .is_none_or(|pr_user| pr_user.login != github_login.login)
-                    && review
+                    && (review
                         .state
                         .is_some_and(|state| state == ReviewState::Approved)
+                        || review
+                            .body
+                            .as_deref()
+                            .is_some_and(Self::contains_approving_pattern))
                     && self
                         .github_client
-                        .check_org_membership(&GithubLogin::new(github_login.login.clone()))
+                        .check_repo_write_permission(
+                            &Repository::ZED,
+                            &GithubLogin::new(github_login.login.clone()),
+                        )
                         .await?
                 {
                     org_approving_reviews.push(review);
@@ -241,7 +219,7 @@ impl<'a> Reporter<'a> {
     ) -> Result<Option<ReviewSuccess>, ReviewFailure> {
         let other_comments = self
             .github_client
-            .get_pull_request_comments(pull_request.number)
+            .get_pull_request_comments(&Repository::ZED, pull_request.number)
             .await?;
 
         if !other_comments.is_empty() {
@@ -252,13 +230,16 @@ impl<'a> Reporter<'a> {
                     .user
                     .as_ref()
                     .is_some_and(|pr_author| pr_author.login != comment.user.login)
-                    && comment.body.as_ref().is_some_and(|body| {
-                        body.contains(ZED_ZIPPY_COMMENT_APPROVAL_PATTERN)
-                            || body.contains(ZED_ZIPPY_GROUP_APPROVAL)
-                    })
+                    && comment
+                        .body
+                        .as_deref()
+                        .is_some_and(Self::contains_approving_pattern)
                     && self
                         .github_client
-                        .check_org_membership(&GithubLogin::new(comment.user.login.clone()))
+                        .check_repo_write_permission(
+                            &Repository::ZED,
+                            &GithubLogin::new(comment.user.login.clone()),
+                        )
                         .await?
                 {
                     org_approving_comments.push(comment);
@@ -272,6 +253,10 @@ impl<'a> Reporter<'a> {
         } else {
             Ok(None)
         }
+    }
+
+    fn contains_approving_pattern(body: &str) -> bool {
+        body.contains(ZED_ZIPPY_COMMENT_APPROVAL_PATTERN) || body.contains(ZED_ZIPPY_GROUP_APPROVAL)
     }
 
     pub async fn generate_report(mut self) -> anyhow::Result<Report> {
@@ -308,13 +293,13 @@ mod tests {
 
     use crate::git::{CommitDetails, CommitList, CommitSha};
     use crate::github::{
-        AuthorsForCommits, GitHubApiClient, GitHubClient, GitHubUser, GithubLogin,
-        PullRequestComment, PullRequestData, PullRequestReview, ReviewState,
+        AuthorsForCommits, GithubApiClient, GithubClient, GithubLogin, GithubUser,
+        PullRequestComment, PullRequestData, PullRequestReview, Repository, ReviewState,
     };
 
     use super::{Reporter, ReviewFailure, ReviewSuccess};
 
-    struct MockGitHubApi {
+    struct MockGithubApi {
         pull_request: PullRequestData,
         reviews: Vec<PullRequestReview>,
         comments: Vec<PullRequestComment>,
@@ -323,13 +308,18 @@ mod tests {
     }
 
     #[async_trait::async_trait(?Send)]
-    impl GitHubApiClient for MockGitHubApi {
-        async fn get_pull_request(&self, _pr_number: u64) -> anyhow::Result<PullRequestData> {
+    impl GithubApiClient for MockGithubApi {
+        async fn get_pull_request(
+            &self,
+            _repo: &Repository<'_>,
+            _pr_number: u64,
+        ) -> anyhow::Result<PullRequestData> {
             Ok(self.pull_request.clone())
         }
 
         async fn get_pull_request_reviews(
             &self,
+            _repo: &Repository<'_>,
             _pr_number: u64,
         ) -> anyhow::Result<Vec<PullRequestReview>> {
             Ok(self.reviews.clone())
@@ -337,6 +327,7 @@ mod tests {
 
         async fn get_pull_request_comments(
             &self,
+            _repo: &Repository<'_>,
             _pr_number: u64,
         ) -> anyhow::Result<Vec<PullRequestComment>> {
             Ok(self.comments.clone())
@@ -344,20 +335,26 @@ mod tests {
 
         async fn get_commit_authors(
             &self,
+            _repo: &Repository<'_>,
             _commit_shas: &[&CommitSha],
         ) -> anyhow::Result<AuthorsForCommits> {
             serde_json::from_value(self.commit_authors_json.clone()).map_err(Into::into)
         }
 
-        async fn check_org_membership(&self, login: &GithubLogin) -> anyhow::Result<bool> {
+        async fn check_repo_write_permission(
+            &self,
+            _repo: &Repository<'_>,
+            login: &GithubLogin,
+        ) -> anyhow::Result<bool> {
             Ok(self
                 .org_members
                 .iter()
                 .any(|member| member == login.as_str()))
         }
 
-        async fn ensure_pull_request_has_label(
+        async fn add_label_to_issue(
             &self,
+            _repo: &Repository<'_>,
             _label: &str,
             _pr_number: u64,
         ) -> anyhow::Result<()> {
@@ -385,16 +382,17 @@ mod tests {
 
     fn review(login: &str, state: ReviewState) -> PullRequestReview {
         PullRequestReview {
-            user: Some(GitHubUser {
+            user: Some(GithubUser {
                 login: login.to_owned(),
             }),
             state: Some(state),
+            body: None,
         }
     }
 
     fn comment(login: &str, body: &str) -> PullRequestComment {
         PullRequestComment {
-            user: GitHubUser {
+            user: GithubUser {
                 login: login.to_owned(),
             },
             body: Some(body.to_owned()),
@@ -415,10 +413,11 @@ mod tests {
             Self {
                 pull_request: PullRequestData {
                     number: 1234,
-                    user: Some(GitHubUser {
+                    user: Some(GithubUser {
                         login: "alice".to_owned(),
                     }),
                     merged_by: None,
+                    labels: None,
                 },
                 reviews: vec![],
                 comments: vec![],
@@ -460,14 +459,14 @@ mod tests {
         }
 
         async fn run_scenario(self) -> Result<ReviewSuccess, ReviewFailure> {
-            let mock = MockGitHubApi {
+            let mock = MockGithubApi {
                 pull_request: self.pull_request,
                 reviews: self.reviews,
                 comments: self.comments,
                 commit_authors_json: self.commit_authors_json,
                 org_members: self.org_members,
             };
-            let client = GitHubClient::new(Rc::new(mock));
+            let client = GithubClient::new(Rc::new(mock));
             let reporter = Reporter::new(CommitList::default(), &client);
             reporter.check_commit(&self.commit).await
         }
@@ -589,11 +588,11 @@ mod tests {
                         "email": "alice@test.com",
                         "user": { "login": "alice" }
                     },
-                    "authors": [{
+                    "authors": { "nodes": [{
                         "name": "Charlie",
                         "email": "charlie@test.com",
                         "user": { "login": "charlie" }
-                    }]
+                    }] }
                 }
             }))
             .with_commit(make_commit(
@@ -619,11 +618,11 @@ mod tests {
                         "email": "alice@test.com",
                         "user": { "login": "alice" }
                     },
-                    "authors": [{
+                    "authors": { "nodes": [{
                         "name": "Bob",
                         "email": "bob@test.com",
                         "user": { "login": "bob" }
-                    }]
+                    }] }
                 }
             }))
             .with_commit(make_commit(
@@ -642,6 +641,65 @@ mod tests {
     #[tokio::test]
     async fn no_reviews_no_comments_no_coauthors_is_unreviewed() {
         let result = TestScenario::single_commit().run_scenario().await;
+        assert!(matches!(result, Err(ReviewFailure::Unreviewed)));
+    }
+
+    #[tokio::test]
+    async fn review_with_zippy_approval_body_is_accepted() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("bob", ReviewState::Other).with_body("@zed-zippy approve"),
+            ])
+            .with_org_members(vec!["bob"])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Ok(ReviewSuccess::PullRequestReviewed(_))));
+    }
+
+    #[tokio::test]
+    async fn review_with_group_approval_body_is_accepted() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("bob", ReviewState::Other).with_body("@zed-industries/approved"),
+            ])
+            .with_org_members(vec!["bob"])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Ok(ReviewSuccess::PullRequestReviewed(_))));
+    }
+
+    #[tokio::test]
+    async fn review_with_non_approving_body_is_not_accepted() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("bob", ReviewState::Other).with_body("looks good to me"),
+            ])
+            .with_org_members(vec!["bob"])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Err(ReviewFailure::Unreviewed)));
+    }
+
+    #[tokio::test]
+    async fn review_with_approving_body_from_external_user_is_not_accepted() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("bob", ReviewState::Other).with_body("@zed-zippy approve"),
+            ])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Err(ReviewFailure::Unreviewed)));
+    }
+
+    #[tokio::test]
+    async fn review_with_approving_body_from_pr_author_is_rejected() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("alice", ReviewState::Other).with_body("@zed-zippy approve"),
+            ])
+            .with_org_members(vec!["alice"])
+            .run_scenario()
+            .await;
         assert!(matches!(result, Err(ReviewFailure::Unreviewed)));
     }
 }

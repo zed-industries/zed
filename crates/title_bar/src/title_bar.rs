@@ -5,9 +5,6 @@ mod plan_chip;
 mod title_bar_settings;
 mod update_version;
 
-#[cfg(feature = "stories")]
-mod stories;
-
 use crate::application_menu::{ApplicationMenu, show_menus};
 use crate::plan_chip::PlanChip;
 pub use platform_title_bar::{
@@ -27,17 +24,18 @@ use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, WeakEntity, Window, actions, div,
+    Action, Animation, AnimationExt, AnyElement, App, Context, Corner, Element, Entity, Focusable,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
+    pulsating_between,
 };
 use onboarding_banner::OnboardingBanner;
 use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
-use settings::WorktreeId;
-use std::collections::HashSet;
+
 use std::sync::Arc;
+use std::time::Duration;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
@@ -47,15 +45,12 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    MultiWorkspace, ToggleWorktreeSecurity, Workspace, WorkspaceId, notifications::NotifyResultExt,
+    MultiWorkspace, ToggleWorktreeSecurity, Workspace, notifications::NotifyResultExt,
 };
 
 use zed_actions::OpenRemote;
 
 pub use onboarding_banner::restore_banner;
-
-#[cfg(feature = "stories")]
-pub use stories::*;
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
@@ -256,6 +251,18 @@ impl Render for TitleBar {
         let user = self.user_store.read(cx).current_user();
 
         let signed_in = user.is_some();
+        let is_signing_in = user.is_none()
+            && matches!(
+                status,
+                client::Status::Authenticating
+                    | client::Status::Authenticated
+                    | client::Status::Connecting
+            );
+        let is_signed_out_or_auth_error = user.is_none()
+            && matches!(
+                status,
+                client::Status::SignedOut | client::Status::AuthenticationError
+            );
 
         children.push(
             h_flex()
@@ -272,9 +279,25 @@ impl Render for TitleBar {
                 .children(self.render_connection_status(status, cx))
                 .child(self.update_version.clone())
                 .when(
-                    user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
+                    user.is_none()
+                        && is_signed_out_or_auth_error
+                        && TitleBarSettings::get_global(cx).show_sign_in,
                     |this| this.child(self.render_sign_in_button(cx)),
                 )
+                .when(is_signing_in, |this| {
+                    this.child(
+                        Label::new("Signing in…")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .with_animation(
+                                "signing-in",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                |label, delta| label.alpha(delta),
+                            ),
+                    )
+                })
                 .when(TitleBarSettings::get_global(cx).show_user_menu, |this| {
                     this.child(self.render_user_menu_button(cx))
                 })
@@ -353,27 +376,13 @@ impl TitleBar {
                 cx.notify()
             }),
         );
-        subscriptions.push(
-            cx.subscribe(&project, |this, _, event: &project::Event, cx| {
-                if let project::Event::BufferEdited = event {
-                    // Clear override when user types in any editor,
-                    // so the title bar reflects the project they're actually working in
-                    this.clear_active_worktree_override(cx);
-                    cx.notify();
-                }
-            }),
-        );
+
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(
-            cx.subscribe(&git_store, move |this, _, event, cx| match event {
-                GitStoreEvent::ActiveRepositoryChanged(_) => {
-                    // Clear override when focus-derived active repo changes
-                    // (meaning the user focused a file from a different project)
-                    this.clear_active_worktree_override(cx);
-                    cx.notify();
-                }
-                GitStoreEvent::RepositoryUpdated(_, _, true) => {
+            cx.subscribe(&git_store, move |_, _, event, cx| match event {
+                GitStoreEvent::ActiveRepositoryChanged(_)
+                | GitStoreEvent::RepositoryUpdated(_, _, true) => {
                     cx.notify();
                 }
                 _ => {}
@@ -427,19 +436,10 @@ impl TitleBar {
     }
 
     /// Returns the worktree to display in the title bar.
-    /// - If there's an override set on the workspace, use that (if still valid)
-    /// - Otherwise, derive from the active repository
+    /// - Prefer the worktree owning the project's active repository
     /// - Fall back to the first visible worktree
     pub fn effective_active_worktree(&self, cx: &App) -> Option<Entity<project::Worktree>> {
         let project = self.project.read(cx);
-
-        if let Some(workspace) = self.workspace.upgrade() {
-            if let Some(override_id) = workspace.read(cx).active_worktree_override() {
-                if let Some(worktree) = project.worktree_for_id(override_id, cx) {
-                    return Some(worktree);
-                }
-            }
-        }
 
         if let Some(repo) = project.active_repository(cx) {
             let repo = repo.read(cx);
@@ -454,28 +454,6 @@ impl TitleBar {
         }
 
         project.visible_worktrees(cx).next()
-    }
-
-    pub fn set_active_worktree_override(
-        &mut self,
-        worktree_id: WorktreeId,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(workspace) = self.workspace.upgrade() {
-            workspace.update(cx, |workspace, cx| {
-                workspace.set_active_worktree_override(Some(worktree_id), cx);
-            });
-        }
-        cx.notify();
-    }
-
-    fn clear_active_worktree_override(&mut self, cx: &mut Context<Self>) {
-        if let Some(workspace) = self.workspace.upgrade() {
-            workspace.update(cx, |workspace, cx| {
-                workspace.clear_active_worktree_override(cx);
-            });
-        }
-        cx.notify();
     }
 
     fn get_repository_for_worktree(
@@ -733,23 +711,18 @@ impl TitleBar {
             .map(|w| w.read(cx).focus_handle(cx))
             .unwrap_or_else(|| cx.focus_handle());
 
-        let sibling_workspace_ids: HashSet<WorkspaceId> = self
+        let window_project_groups: Vec<_> = self
             .multi_workspace
             .as_ref()
             .and_then(|mw| mw.upgrade())
-            .map(|mw| {
-                mw.read(cx)
-                    .workspaces()
-                    .filter_map(|ws| ws.read(cx).database_id())
-                    .collect()
-            })
+            .map(|mw| mw.read(cx).project_group_keys())
             .unwrap_or_default();
 
         PopoverMenu::new("recent-projects-menu")
             .menu(move |window, cx| {
                 Some(recent_projects::RecentProjects::popover(
                     workspace.clone(),
-                    sibling_workspace_ids.clone(),
+                    window_project_groups.clone(),
                     false,
                     focus_handle.clone(),
                     window,
@@ -795,23 +768,18 @@ impl TitleBar {
             .map(|w| w.read(cx).focus_handle(cx))
             .unwrap_or_else(|| cx.focus_handle());
 
-        let sibling_workspace_ids: HashSet<WorkspaceId> = self
+        let window_project_groups: Vec<_> = self
             .multi_workspace
             .as_ref()
             .and_then(|mw| mw.upgrade())
-            .map(|mw| {
-                mw.read(cx)
-                    .workspaces()
-                    .filter_map(|ws| ws.read(cx).database_id())
-                    .collect()
-            })
+            .map(|mw| mw.read(cx).project_group_keys())
             .unwrap_or_default();
 
         PopoverMenu::new("sidebar-title-recent-projects-menu")
             .menu(move |window, cx| {
                 Some(recent_projects::RecentProjects::popover(
                     workspace.clone(),
-                    sibling_workspace_ids.clone(),
+                    window_project_groups.clone(),
                     false,
                     focus_handle.clone(),
                     window,
@@ -1147,7 +1115,9 @@ impl TitleBar {
                                     .w_full()
                                     .justify_between()
                                     .child(Label::new(user_login))
-                                    .child(PlanChip::new(plan.unwrap_or(Plan::ZedFree)))
+                                    .when(!has_organization, |parent| {
+                                        parent.child(PlanChip::new(plan.unwrap_or(Plan::ZedFree)))
+                                    })
                                     .into_any_element()
                             },
                             move |_, cx| {
@@ -1210,7 +1180,7 @@ impl TitleBar {
                                                         )
                                                     }),
                                             )
-                                            .child(PlanChip::new(plan.unwrap_or(Plan::ZedFree)))
+                                            .children(plan.map(|plan| PlanChip::new(plan)))
                                             .into_any_element()
                                     }
                                 },

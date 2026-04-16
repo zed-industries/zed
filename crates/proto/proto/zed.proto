@@ -477,13 +477,18 @@ message Envelope {
     GitDiffCheckpointsResponse git_diff_checkpoints_response = 439;
     GitGetHeadSha git_get_head_sha = 440;
     GitGetHeadShaResponse git_get_head_sha_response = 441;
+    GitRepairWorktrees git_repair_worktrees = 442;
+    GitEditRef git_edit_ref = 443;
+    GitCreateArchiveCheckpoint git_create_archive_checkpoint = 444;
+    GitCreateArchiveCheckpointResponse git_create_archive_checkpoint_response = 445;
+    GitRestoreArchiveCheckpoint git_restore_archive_checkpoint = 446;
     
-    PrepareCallHierarchy prepare_call_hierarchy = 442;
-    PrepareCallHierarchyResponse prepare_call_hierarchy_response = 443;
-    GetIncomingCalls get_incoming_calls = 444;
-    GetIncomingCallsResponse get_incoming_calls_response = 445;
-    GetOutgoingCalls get_outgoing_calls = 446;
-    GetOutgoingCallsResponse get_outgoing_calls_response = 447; // current max
+    PrepareCallHierarchy prepare_call_hierarchy = 447;
+    PrepareCallHierarchyResponse prepare_call_hierarchy_response = 448;
+    GetIncomingCalls get_incoming_calls = 449;
+    GetIncomingCallsResponse get_incoming_calls_response = 450;
+    GetOutgoingCalls get_outgoing_calls = 451;
+    GetOutgoingCallsResponse get_outgoing_calls_response = 452; // current max
   }
 
   reserved 87 to 88;

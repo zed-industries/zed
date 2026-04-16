@@ -507,6 +507,10 @@ impl TerminalView {
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal::default()))
+                .action(
+                    "New Center Terminal",
+                    Box::new(NewCenterTerminal::default()),
+                )
                 .separator()
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
@@ -1356,7 +1360,9 @@ impl Item for TerminalView {
         h_flex()
             .gap_1()
             .group("term-tab-icon")
-            .track_focus(&self.focus_handle)
+            .when(!params.selected, |this| {
+                this.track_focus(&self.focus_handle)
+            })
             .on_action(move |action: &RenameTerminal, window, cx| {
                 self_handle
                     .update(cx, |this, cx| this.rename_terminal(action, window, cx))

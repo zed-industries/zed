@@ -458,6 +458,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
         .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
         .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
+        .add_basic_renderer::<settings::CliDefaultOpenBehavior>(render_dropdown)
         .add_basic_renderer::<settings::CloseWindowWhenNoItems>(render_dropdown)
         .add_basic_renderer::<settings::TextRenderingMode>(render_dropdown)
         .add_basic_renderer::<settings::FontFamilyName>(render_font_picker)
@@ -474,6 +475,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DockSide>(render_dropdown)
         .add_basic_renderer::<settings::TerminalDockPosition>(render_dropdown)
         .add_basic_renderer::<settings::DockPosition>(render_dropdown)
+        .add_basic_renderer::<settings::SidebarDockPosition>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitPathStyle>(render_dropdown)
@@ -486,6 +488,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ShowCloseButton>(render_dropdown)
         .add_basic_renderer::<settings::ProjectPanelEntrySpacing>(render_dropdown)
         .add_basic_renderer::<settings::ProjectPanelSortMode>(render_dropdown)
+        .add_basic_renderer::<settings::ProjectPanelSortOrder>(render_dropdown)
         .add_basic_renderer::<settings::RewrapBehavior>(render_dropdown)
         .add_basic_renderer::<settings::FormatOnSave>(render_dropdown)
         .add_basic_renderer::<settings::IndentGuideColoring>(render_dropdown)
@@ -584,9 +587,9 @@ pub fn open_settings_editor(
 
         settings_window.opening_link = true;
         settings_window.search_bar.update(cx, |editor, cx| {
-            editor.set_text(query, window, cx);
+            editor.set_text(query.clone(), window, cx);
         });
-        settings_window.apply_match_indices(indices.iter().copied());
+        settings_window.apply_match_indices(indices.iter().copied(), &query);
 
         if indices.len() == 1
             && let Some(search_index) = settings_window.search_index.as_ref()
@@ -1211,7 +1214,8 @@ fn render_settings_item(
                 .child(
                     Label::new(SharedString::new_static(setting_item.description))
                         .size(LabelSize::Small)
-                        .color(Color::Muted),
+                        .color(Color::Muted)
+                        .render_code_spans(),
                 ),
         )
         .child(control)
@@ -1869,7 +1873,7 @@ impl SettingsWindow {
         indices
     }
 
-    fn apply_match_indices(&mut self, match_indices: impl Iterator<Item = usize>) {
+    fn apply_match_indices(&mut self, match_indices: impl Iterator<Item = usize>, query: &str) {
         let Some(search_index) = self.search_index.as_ref() else {
             return;
         };
@@ -1891,8 +1895,11 @@ impl SettingsWindow {
         }
         self.has_query = true;
         self.filter_matches_to_file();
-        self.open_first_nav_page();
+        let query_lower = query.to_lowercase();
+        let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+        self.open_best_matching_nav_page(&query_words);
         self.reset_list_state();
+        self.scroll_content_to_best_match(&query_words);
     }
 
     fn update_matches(&mut self, cx: &mut Context<SettingsWindow>) {
@@ -1913,7 +1920,7 @@ impl SettingsWindow {
         if is_json_link_query {
             let indices = self.filter_by_json_path(&query);
             if !indices.is_empty() {
-                self.apply_match_indices(indices.into_iter());
+                self.apply_match_indices(indices.into_iter(), &query);
                 cx.notify();
                 return;
             }
@@ -1956,19 +1963,18 @@ impl SettingsWindow {
             let fuzzy_matches = fuzzy_search_task.await;
             let exact_matches = exact_match_task.await;
 
-            _ = this
-                .update(cx, |this, cx| {
-                    let exact_indices = exact_matches.into_iter();
-                    let fuzzy_indices = fuzzy_matches
-                        .into_iter()
-                        .take_while(|fuzzy_match| fuzzy_match.score >= 0.5)
-                        .map(|fuzzy_match| fuzzy_match.candidate_id);
-                    let merged_indices = exact_indices.chain(fuzzy_indices);
+            this.update(cx, |this, cx| {
+                let exact_indices = exact_matches.into_iter();
+                let fuzzy_indices = fuzzy_matches
+                    .into_iter()
+                    .take_while(|fuzzy_match| fuzzy_match.score >= 0.5)
+                    .map(|fuzzy_match| fuzzy_match.candidate_id);
+                let merged_indices = exact_indices.chain(fuzzy_indices);
 
-                    this.apply_match_indices(merged_indices);
-                    cx.notify();
-                })
-                .ok();
+                this.apply_match_indices(merged_indices, &query);
+                cx.notify();
+            })
+            .ok();
 
             cx.background_executor().timer(Duration::from_secs(1)).await;
             telemetry::event!("Settings Searched", query = query)
@@ -2243,6 +2249,58 @@ impl SettingsWindow {
         }
 
         self.sub_page_stack.clear();
+    }
+
+    fn open_best_matching_nav_page(&mut self, query_words: &[&str]) {
+        let mut entries = self.visible_navbar_entries().peekable();
+        let first_entry = entries.peek().map(|(index, _)| (0, *index));
+        let best_match = entries
+            .enumerate()
+            .filter(|(_, (_, entry))| !entry.is_root)
+            .map(|(logical_index, (index, entry))| {
+                let title_lower = entry.title.to_lowercase();
+                let matching_words = query_words
+                    .iter()
+                    .filter(|query_word| {
+                        title_lower
+                            .split_whitespace()
+                            .any(|title_word| title_word.starts_with(*query_word))
+                    })
+                    .count();
+                (logical_index, index, matching_words)
+            })
+            .filter(|(_, _, count)| *count > 0)
+            .max_by_key(|(_, _, count)| *count)
+            .map(|(logical_index, index, _)| (logical_index, index));
+        if let Some((logical_index, navbar_entry_index)) = best_match.or(first_entry) {
+            self.open_navbar_entry_page(navbar_entry_index);
+            self.navbar_scroll_handle
+                .scroll_to_item(logical_index + 1, gpui::ScrollStrategy::Top);
+        }
+    }
+
+    fn scroll_content_to_best_match(&self, query_words: &[&str]) {
+        let position = self
+            .visible_page_items()
+            .enumerate()
+            .find(|(_, (_, item))| match item {
+                SettingsPageItem::SectionHeader(title) => {
+                    let title_lower = title.to_lowercase();
+                    query_words.iter().all(|query_word| {
+                        title_lower
+                            .split_whitespace()
+                            .any(|title_word| title_word.starts_with(query_word))
+                    })
+                }
+                _ => false,
+            })
+            .map(|(position, _)| position);
+        if let Some(position) = position {
+            self.list_state.scroll_to(gpui::ListOffset {
+                item_ix: position + 1,
+                offset_in_item: px(0.),
+            });
+        }
     }
 
     fn open_first_nav_page(&mut self) {

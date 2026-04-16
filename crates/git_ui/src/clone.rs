@@ -1,7 +1,7 @@
 use gpui::{App, Context, WeakEntity, Window};
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use std::sync::Arc;
-use ui::{Color, IconName, SharedString};
+use ui::{Color, Icon, IconName, IconSize, SharedString};
 use util::ResultExt;
 use workspace::{self, Workspace};
 
@@ -48,8 +48,12 @@ pub fn clone_and_open(
                 workspace
                     .update(cx, |workspace, cx| {
                         let toast = StatusToast::new(error.to_string(), cx, |this, _| {
-                            this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                                .dismiss_button(true)
+                            this.icon(
+                                Icon::new(IconName::XCircle)
+                                    .size(IconSize::Small)
+                                    .color(Color::Error),
+                            )
+                            .dismiss_button(true)
                         });
                         workspace.toggle_status_toast(toast, cx);
                     })

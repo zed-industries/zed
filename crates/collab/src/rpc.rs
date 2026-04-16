@@ -439,6 +439,10 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateWorktree>)
             .add_request_handler(disallow_guest_request::<proto::GitRemoveWorktree>)
             .add_request_handler(disallow_guest_request::<proto::GitRenameWorktree>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitEditRef>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitRepairWorktrees>)
+            .add_request_handler(disallow_guest_request::<proto::GitCreateArchiveCheckpoint>)
+            .add_request_handler(disallow_guest_request::<proto::GitRestoreArchiveCheckpoint>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
             .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
             .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
@@ -1894,6 +1898,7 @@ async fn join_project(
             root_name: worktree.root_name.clone(),
             visible: worktree.visible,
             abs_path: worktree.abs_path.clone(),
+            root_repo_common_dir: None,
         })
         .collect::<Vec<_>>();
 

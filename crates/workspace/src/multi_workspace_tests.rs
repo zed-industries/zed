@@ -1,10 +1,13 @@
+use std::path::PathBuf;
+
 use super::*;
-use feature_flags::FeatureFlagAppExt;
-use fs::FakeFs;
+use client::proto;
+use fs::{FakeFs, Fs};
 use gpui::TestAppContext;
-use project::{DisableAiSettings, ProjectGroupKey};
+use project::DisableAiSettings;
 use serde_json::json;
 use settings::SettingsStore;
+use util::path;
 
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
@@ -12,7 +15,6 @@ fn init_test(cx: &mut TestAppContext) {
         cx.set_global(settings_store);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         DisableAiSettings::register(cx);
-        cx.update_flags(false, vec!["agent-v2".into()]);
     });
 }
 
@@ -104,9 +106,9 @@ async fn test_project_group_keys_initial(cx: &mut TestAppContext) {
     });
 
     multi_workspace.read_with(cx, |mw, _cx| {
-        let keys: Vec<&ProjectGroupKey> = mw.project_group_keys().collect();
+        let keys: Vec<ProjectGroupKey> = mw.project_group_keys();
         assert_eq!(keys.len(), 1, "should have exactly one key on creation");
-        assert_eq!(*keys[0], expected_key);
+        assert_eq!(keys[0], expected_key);
     });
 }
 
@@ -134,7 +136,7 @@ async fn test_project_group_keys_add_workspace(cx: &mut TestAppContext) {
     });
 
     multi_workspace.read_with(cx, |mw, _cx| {
-        assert_eq!(mw.project_group_keys().count(), 1);
+        assert_eq!(mw.project_group_keys().len(), 1);
     });
 
     // Adding a workspace with a different project root adds a new key.
@@ -143,15 +145,116 @@ async fn test_project_group_keys_add_workspace(cx: &mut TestAppContext) {
     });
 
     multi_workspace.read_with(cx, |mw, _cx| {
-        let keys: Vec<&ProjectGroupKey> = mw.project_group_keys().collect();
+        let keys: Vec<ProjectGroupKey> = mw.project_group_keys();
         assert_eq!(
             keys.len(),
             2,
             "should have two keys after adding a second workspace"
         );
-        assert_eq!(*keys[0], key_a);
-        assert_eq!(*keys[1], key_b);
+        assert_eq!(keys[0], key_b);
+        assert_eq!(keys[1], key_a);
     });
+}
+
+#[gpui::test]
+async fn test_open_new_window_does_not_open_sidebar_on_existing_window(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/project_a"), json!({ "file.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/project_b"), json!({ "file.txt": "" }))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/project_a").as_ref()], cx).await;
+
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert!(!mw.sidebar_open(), "sidebar should start closed",);
+        })
+        .unwrap();
+
+    cx.update(|cx| {
+        open_paths(
+            &[PathBuf::from(path!("/project_b"))],
+            app_state,
+            OpenOptions {
+                open_mode: OpenMode::NewWindow,
+                ..OpenOptions::default()
+            },
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert!(
+                !mw.sidebar_open(),
+                "opening a project in a new window must not open the sidebar on the original window",
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn test_open_directory_in_empty_workspace_does_not_open_sidebar(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/project"), json!({ "file.txt": "" }))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [], cx).await;
+    let window = cx.add_window(|window, cx| {
+        let mw = MultiWorkspace::test_new(project, window, cx);
+        // Simulate a blank project that has an untitled editor tab,
+        // so that workspace_windows_for_location finds this window.
+        mw.workspace().update(cx, |workspace, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                let item = cx.new(|cx| item::test::TestItem::new(cx));
+                pane.add_item(Box::new(item), false, false, None, window, cx);
+            });
+        });
+        mw
+    });
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert!(!mw.sidebar_open(), "sidebar should start closed");
+        })
+        .unwrap();
+
+    // Simulate what open_workspace_for_paths does for an empty workspace:
+    // it downgrades OpenMode::NewWindow to Activate and sets requesting_window.
+    cx.update(|cx| {
+        open_paths(
+            &[PathBuf::from(path!("/project"))],
+            app_state,
+            OpenOptions {
+                requesting_window: Some(window),
+                open_mode: OpenMode::Activate,
+                ..OpenOptions::default()
+            },
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert!(
+                !mw.sidebar_open(),
+                "opening a directory in a blank project via the file picker must not open the sidebar",
+            );
+        })
+        .unwrap();
 }
 
 #[gpui::test]
@@ -179,7 +282,7 @@ async fn test_project_group_keys_duplicate_not_added(cx: &mut TestAppContext) {
     });
 
     multi_workspace.read_with(cx, |mw, _cx| {
-        let keys: Vec<&ProjectGroupKey> = mw.project_group_keys().collect();
+        let keys: Vec<ProjectGroupKey> = mw.project_group_keys();
         assert_eq!(
             keys.len(),
             1,
@@ -189,155 +292,374 @@ async fn test_project_group_keys_duplicate_not_added(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_project_group_keys_on_worktree_added(cx: &mut TestAppContext) {
+async fn test_adding_worktree_updates_project_group_key(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
-    fs.insert_tree("/root_b", json!({ "file.txt": "" })).await;
-    let project = Project::test(fs, ["/root_a".as_ref()], cx).await;
+    fs.insert_tree("/root_b", json!({ "other.txt": "" })).await;
+    let project = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
 
     let initial_key = project.read_with(cx, |p, cx| p.project_group_key(cx));
 
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
+    // Open sidebar to retain the workspace and create the initial group.
     multi_workspace.update(cx, |mw, cx| {
         mw.open_sidebar(cx);
     });
+    cx.run_until_parked();
 
-    // Add a second worktree to the same project.
-    let (worktree, _) = project
+    multi_workspace.read_with(cx, |mw, _cx| {
+        let keys = mw.project_group_keys();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0], initial_key);
+    });
+
+    // Add a second worktree to the project. This triggers WorktreeAdded →
+    // handle_workspace_key_change, which should update the group key.
+    project
         .update(cx, |project, cx| {
             project.find_or_create_worktree("/root_b", true, cx)
         })
         .await
-        .unwrap();
-    worktree
-        .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
-        .await;
+        .expect("adding worktree should succeed");
     cx.run_until_parked();
 
     let updated_key = project.read_with(cx, |p, cx| p.project_group_key(cx));
     assert_ne!(
         initial_key, updated_key,
-        "key should change after adding a worktree"
+        "adding a worktree should change the project group key"
     );
 
     multi_workspace.read_with(cx, |mw, _cx| {
-        let keys: Vec<&ProjectGroupKey> = mw.project_group_keys().collect();
-        assert_eq!(
-            keys.len(),
-            2,
-            "should have both the original and updated key"
+        let keys = mw.project_group_keys();
+        assert!(
+            keys.contains(&updated_key),
+            "should contain the updated key; got {keys:?}"
         );
-        assert_eq!(*keys[0], initial_key);
-        assert_eq!(*keys[1], updated_key);
     });
 }
 
 #[gpui::test]
-async fn test_project_group_keys_on_worktree_removed(cx: &mut TestAppContext) {
-    init_test(cx);
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
-    fs.insert_tree("/root_b", json!({ "file.txt": "" })).await;
-    let project = Project::test(fs, ["/root_a".as_ref(), "/root_b".as_ref()], cx).await;
-
-    let initial_key = project.read_with(cx, |p, cx| p.project_group_key(cx));
-
-    let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-
-    multi_workspace.update(cx, |mw, cx| {
-        mw.open_sidebar(cx);
-    });
-
-    // Remove one worktree.
-    let worktree_b_id = project.read_with(cx, |project, cx| {
-        project
-            .worktrees(cx)
-            .find(|wt| wt.read(cx).root_name().as_unix_str() == "root_b")
-            .unwrap()
-            .read(cx)
-            .id()
-    });
-    project.update(cx, |project, cx| {
-        project.remove_worktree(worktree_b_id, cx);
-    });
-    cx.run_until_parked();
-
-    let updated_key = project.read_with(cx, |p, cx| p.project_group_key(cx));
-    assert_ne!(
-        initial_key, updated_key,
-        "key should change after removing a worktree"
-    );
-
-    multi_workspace.read_with(cx, |mw, _cx| {
-        let keys: Vec<&ProjectGroupKey> = mw.project_group_keys().collect();
-        assert_eq!(
-            keys.len(),
-            2,
-            "should accumulate both the original and post-removal key"
-        );
-        assert_eq!(*keys[0], initial_key);
-        assert_eq!(*keys[1], updated_key);
-    });
-}
-
-#[gpui::test]
-async fn test_project_group_keys_across_multiple_workspaces_and_worktree_changes(
+async fn test_find_or_create_local_workspace_reuses_active_workspace_when_sidebar_closed(
     cx: &mut TestAppContext,
 ) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
-    fs.insert_tree("/root_b", json!({ "file.txt": "" })).await;
-    fs.insert_tree("/root_c", json!({ "file.txt": "" })).await;
-    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
-    let project_b = Project::test(fs.clone(), ["/root_b".as_ref()], cx).await;
-
-    let key_a = project_a.read_with(cx, |p, cx| p.project_group_key(cx));
-    let key_b = project_b.read_with(cx, |p, cx| p.project_group_key(cx));
+    let project = Project::test(fs, ["/root_a".as_ref()], cx).await;
 
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+    let active_workspace = multi_workspace.read_with(cx, |mw, cx| {
+        assert!(
+            mw.project_groups(cx).is_empty(),
+            "sidebar-closed setup should start with no retained project groups"
+        );
+        mw.workspace().clone()
+    });
+    let active_workspace_id = active_workspace.entity_id();
+
+    let workspace = multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            mw.find_or_create_local_workspace(
+                PathList::new(&[PathBuf::from("/root_a")]),
+                None,
+                &[],
+                None,
+                OpenMode::Activate,
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("reopening the same local workspace should succeed");
+
+    assert_eq!(
+        workspace.entity_id(),
+        active_workspace_id,
+        "should reuse the current active workspace when the sidebar is closed"
+    );
+
+    multi_workspace.read_with(cx, |mw, _cx| {
+        assert_eq!(
+            mw.workspace().entity_id(),
+            active_workspace_id,
+            "active workspace should remain unchanged after reopening the same path"
+        );
+        assert_eq!(
+            mw.workspaces().count(),
+            1,
+            "reusing the active workspace should not create a second open workspace"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_find_or_create_workspace_uses_project_group_key_when_paths_are_missing(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        json!({
+            ".git": {},
+            "src": {},
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+    let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let project_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+    let main_workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+    let main_workspace_id = main_workspace.entity_id();
+
+    let workspace = multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            mw.find_or_create_workspace(
+                PathList::new(&[PathBuf::from("/wt-feature-a")]),
+                None,
+                Some(project_group_key.clone()),
+                |_options, _window, _cx| Task::ready(Ok(None)),
+                &[],
+                None,
+                OpenMode::Activate,
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("opening a missing linked-worktree path should fall back to the project group key workspace");
+
+    assert_eq!(
+        workspace.entity_id(),
+        main_workspace_id,
+        "missing linked-worktree paths should reuse the main worktree workspace from the project group key"
+    );
+
+    multi_workspace.read_with(cx, |mw, cx| {
+        assert_eq!(
+            mw.workspace().entity_id(),
+            main_workspace_id,
+            "the active workspace should remain the main worktree workspace"
+        );
+        assert_eq!(
+            PathList::new(&mw.workspace().read(cx).root_paths(cx)),
+            project_group_key.path_list().clone(),
+            "the activated workspace should use the project group key path list rather than the missing linked-worktree path"
+        );
+        assert_eq!(
+            mw.workspaces().count(),
+            1,
+            "falling back to the project group key should not create a second workspace"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_find_or_create_local_workspace_reuses_active_workspace_after_sidebar_open(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    let project = Project::test(fs, ["/root_a".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
     multi_workspace.update(cx, |mw, cx| {
         mw.open_sidebar(cx);
     });
-
-    multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.test_add_workspace(project_b, window, cx);
-    });
-
-    multi_workspace.read_with(cx, |mw, _cx| {
-        assert_eq!(mw.project_group_keys().count(), 2);
-    });
-
-    // Now add a worktree to project_a. This should produce a third key.
-    let (worktree, _) = project_a
-        .update(cx, |project, cx| {
-            project.find_or_create_worktree("/root_c", true, cx)
-        })
-        .await
-        .unwrap();
-    worktree
-        .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
-        .await;
     cx.run_until_parked();
 
-    let key_a_updated = project_a.read_with(cx, |p, cx| p.project_group_key(cx));
-    assert_ne!(key_a, key_a_updated);
+    let active_workspace = multi_workspace.read_with(cx, |mw, cx| {
+        assert_eq!(
+            mw.project_groups(cx).len(),
+            1,
+            "opening the sidebar should retain the active workspace in a project group"
+        );
+        mw.workspace().clone()
+    });
+    let active_workspace_id = active_workspace.entity_id();
+
+    let workspace = multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            mw.find_or_create_local_workspace(
+                PathList::new(&[PathBuf::from("/root_a")]),
+                None,
+                &[],
+                None,
+                OpenMode::Activate,
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("reopening the same retained local workspace should succeed");
+
+    assert_eq!(
+        workspace.entity_id(),
+        active_workspace_id,
+        "should reuse the retained active workspace after the sidebar is opened"
+    );
 
     multi_workspace.read_with(cx, |mw, _cx| {
-        let keys: Vec<&ProjectGroupKey> = mw.project_group_keys().collect();
         assert_eq!(
-            keys.len(),
-            3,
-            "should have key_a, key_b, and the updated key_a with root_c"
+            mw.workspaces().count(),
+            1,
+            "reopening the same retained workspace should not create another workspace"
         );
-        assert_eq!(*keys[0], key_a);
-        assert_eq!(*keys[1], key_b);
-        assert_eq!(*keys[2], key_a_updated);
+    });
+}
+
+#[gpui::test]
+async fn test_switching_projects_with_sidebar_closed_detaches_old_active_workspace(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file_a.txt": "" })).await;
+    fs.insert_tree("/root_b", json!({ "file_b.txt": "" })).await;
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    let project_b = Project::test(fs, ["/root_b".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    let workspace_a = multi_workspace.read_with(cx, |mw, cx| {
+        assert!(
+            mw.project_groups(cx).is_empty(),
+            "sidebar-closed setup should start with no retained project groups"
+        );
+        mw.workspace().clone()
+    });
+    assert!(
+        workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_some()),
+        "initial active workspace should start attached to the session"
+    );
+
+    let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b, window, cx)
+    });
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |mw, _cx| {
+        assert_eq!(
+            mw.workspace().entity_id(),
+            workspace_b.entity_id(),
+            "the new workspace should become active"
+        );
+        assert_eq!(
+            mw.workspaces().count(),
+                        1,
+                        "only the new active workspace should remain open after switching with the sidebar closed"
+        );
+    });
+
+    assert!(
+        workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_none()),
+        "the previous active workspace should be detached when switching away with the sidebar closed"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_worktree_without_git_updates_project_group(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/local", json!({ "file.txt": "" })).await;
+    let project = Project::test(fs.clone(), ["/local".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
+    cx.run_until_parked();
+
+    let initial_key = project.read_with(cx, |p, cx| p.project_group_key(cx));
+    multi_workspace.read_with(cx, |mw, _cx| {
+        let keys = mw.project_group_keys();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0], initial_key);
+    });
+
+    // Add a remote worktree without git repo info.
+    let remote_worktree = project.update(cx, |project, cx| {
+        project.add_test_remote_worktree("/remote/project", cx)
+    });
+    cx.run_until_parked();
+
+    // The remote worktree has no entries yet, so project_group_key should
+    // still exclude it.
+    let key_after_add = project.read_with(cx, |p, cx| p.project_group_key(cx));
+    assert_eq!(
+        key_after_add, initial_key,
+        "remote worktree without entries should not affect the group key"
+    );
+
+    // Send an UpdateWorktree to the remote worktree with entries but no repo.
+    // This triggers UpdatedRootRepoCommonDir on the first update (the fix),
+    // which propagates through WorktreeStore → Project → MultiWorkspace.
+    let worktree_id = remote_worktree.read_with(cx, |wt, _| wt.id().to_proto());
+    remote_worktree.update(cx, |worktree, _cx| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(proto::UpdateWorktree {
+                project_id: 0,
+                worktree_id,
+                abs_path: "/remote/project".to_string(),
+                root_name: "project".to_string(),
+                updated_entries: vec![proto::Entry {
+                    id: 1,
+                    is_dir: true,
+                    path: "".to_string(),
+                    inode: 1,
+                    mtime: Some(proto::Timestamp {
+                        seconds: 0,
+                        nanos: 0,
+                    }),
+                    is_ignored: false,
+                    is_hidden: false,
+                    is_external: false,
+                    is_fifo: false,
+                    size: None,
+                    canonical_path: None,
+                }],
+                removed_entries: vec![],
+                scan_id: 1,
+                is_last_update: true,
+                updated_repositories: vec![],
+                removed_repositories: vec![],
+                root_repo_common_dir: None,
+            });
+    });
+    cx.run_until_parked();
+
+    let updated_key = project.read_with(cx, |p, cx| p.project_group_key(cx));
+    assert_ne!(
+        initial_key, updated_key,
+        "adding a remote worktree should change the project group key"
+    );
+
+    multi_workspace.read_with(cx, |mw, _cx| {
+        let keys = mw.project_group_keys();
+        assert!(
+            keys.contains(&updated_key),
+            "should contain the updated key; got {keys:?}"
+        );
     });
 }

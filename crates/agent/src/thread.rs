@@ -64,6 +64,18 @@ const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
 
+/// Returned when a turn is attempted but no language model has been selected.
+#[derive(Debug)]
+pub struct NoModelConfiguredError;
+
+impl std::fmt::Display for NoModelConfiguredError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "no language model configured")
+    }
+}
+
+impl std::error::Error for NoModelConfiguredError {}
+
 /// Context passed to a subagent thread for lifecycle management
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubagentContext {
@@ -999,6 +1011,7 @@ impl Thread {
             parent_thread_id: parent_thread.read(cx).id().clone(),
             depth: parent_thread.read(cx).depth() + 1,
         });
+        thread.inherit_parent_settings(parent_thread, cx);
         thread
     }
 
@@ -1040,6 +1053,10 @@ impl Thread {
             .default_model
             .as_ref()
             .and_then(|model| model.effort.clone());
+        let speed = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.speed);
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
         Self {
@@ -1071,7 +1088,7 @@ impl Thread {
             model,
             summarization_model: None,
             thinking_enabled: enable_thinking,
-            speed: None,
+            speed,
             thinking_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
@@ -1083,6 +1100,19 @@ impl Thread {
             ui_scroll_position: None,
             running_subagents: Vec::new(),
         }
+    }
+
+    /// Copies runtime-mutable settings from the parent thread so that
+    /// subagents start with the same configuration the user selected.
+    /// Every property that `set_*` propagates to `running_subagents`
+    /// should be inherited here as well.
+    fn inherit_parent_settings(&mut self, parent_thread: &Entity<Thread>, cx: &mut Context<Self>) {
+        let parent = parent_thread.read(cx);
+        self.speed = parent.speed;
+        self.thinking_enabled = parent.thinking_enabled;
+        self.thinking_effort = parent.thinking_effort.clone();
+        self.summarization_model = parent.summarization_model.clone();
+        self.profile_id = parent.profile_id.clone();
     }
 
     pub fn id(&self) -> &acp::SessionId {
@@ -1754,7 +1784,9 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let model = self.model().context("No language model configured")?;
+        let model = self
+            .model()
+            .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
 
         log::info!("Thread::send called with model: {}", model.name().0);
         self.advance_prompt_id();
@@ -1878,7 +1910,10 @@ impl Thread {
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
             let (model, request) = this.update(cx, |this, cx| {
-                let model = this.model.clone().context("No language model configured")?;
+                let model = this
+                    .model
+                    .clone()
+                    .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
                 anyhow::Ok((model, request))
@@ -2724,7 +2759,9 @@ impl Thread {
                 completion_intent
             };
 
-        let model = self.model().context("No language model configured")?;
+        let model = self
+            .model()
+            .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
         let tools = if let Some(turn) = self.running_turn.as_ref() {
             turn.tools
                 .iter()
@@ -4264,6 +4301,30 @@ mod tests {
                     "Subagent thinking effort should be None after parent clears it"
                 );
             }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_subagent_inherits_settings_at_creation(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_speed(Speed::Fast, cx);
+                thread.set_thinking_enabled(true, cx);
+                thread.set_thinking_effort(Some("high".to_string()), cx);
+                thread.set_profile(AgentProfileId("custom-profile".into()), cx);
+            });
+        });
+
+        let subagents = setup_parent_with_subagents(cx, &parent, 1);
+
+        cx.update(|cx| {
+            let sub = subagents[0].read(cx);
+            assert_eq!(sub.speed(), Some(Speed::Fast));
+            assert!(sub.thinking_enabled());
+            assert_eq!(sub.thinking_effort().map(|s| s.as_str()), Some("high"));
+            assert_eq!(sub.profile(), &AgentProfileId("custom-profile".into()));
         });
     }
 
