@@ -1789,6 +1789,12 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::TitleUpdated);
     }
 
+    pub fn clear_provisional_title(&mut self, cx: &mut Context<Self>) {
+        if self.provisional_title.take().is_some() {
+            cx.emit(AcpThreadEvent::TitleUpdated);
+        }
+    }
+
     pub fn subagent_spawned(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
         cx.emit(AcpThreadEvent::SubagentSpawned(session_id));
     }

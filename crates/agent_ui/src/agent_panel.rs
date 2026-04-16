@@ -80,8 +80,8 @@ use terminal::terminal_settings::TerminalSettings;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
-    Button, Callout, ContextMenu, ContextMenuEntry, PopoverMenu, PopoverMenuHandle, Tab, Tooltip,
-    prelude::*, utils::WithRemSize,
+    Button, Callout, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle,
+    Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
@@ -3811,10 +3811,13 @@ impl AgentPanel {
         let content = match self.visible_surface() {
             VisibleSurface::AgentThread(conversation_view) => {
                 let server_view_ref = conversation_view.read(cx);
-                let is_generating_title = server_view_ref.as_native_thread(cx).is_some()
-                    && server_view_ref.root_thread_view().map_or(false, |tv| {
-                        tv.read(cx).thread.read(cx).has_provisional_title()
-                    });
+                let native_thread = server_view_ref.as_native_thread(cx);
+                let is_generating_title = server_view_ref.root_thread_view().map_or(false, |tv| {
+                    tv.read(cx).thread.read(cx).has_provisional_title()
+                });
+                let title_generation_failed = native_thread
+                    .as_ref()
+                    .is_some_and(|thread| thread.read(cx).has_failed_title_generation());
 
                 if let Some(title_editor) = server_view_ref
                     .root_thread_view()
@@ -3830,6 +3833,31 @@ impl AgentPanel {
                                     .repeat()
                                     .with_easing(pulsating_between(0.4, 0.8)),
                                 |label, delta| label.alpha(delta),
+                            )
+                            .into_any_element()
+                    } else if title_generation_failed {
+                        h_flex()
+                            .w_full()
+                            .gap_1()
+                            .items_center()
+                            .child(
+                                Label::new(conversation_view.read(cx).title(cx))
+                                    .color(Color::Muted)
+                                    .truncate(),
+                            )
+                            .child(
+                                IconButton::new("retry-thread-title", IconName::RotateCw)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Retry generating thread title"))
+                                    .on_click({
+                                        let conversation_view = conversation_view.clone();
+                                        move |_event, _window, cx| {
+                                            Self::handle_regenerate_thread_title(
+                                                conversation_view.clone(),
+                                                cx,
+                                            );
+                                        }
+                                    }),
                             )
                             .into_any_element()
                     } else {
@@ -3883,7 +3911,10 @@ impl AgentPanel {
         conversation_view.update(cx, |conversation_view, cx| {
             if let Some(thread) = conversation_view.as_native_thread(cx) {
                 thread.update(cx, |thread, cx| {
-                    thread.generate_title(cx);
+                    if !thread.is_generating_title() {
+                        thread.generate_title(cx);
+                        cx.notify();
+                    }
                 });
             }
         });

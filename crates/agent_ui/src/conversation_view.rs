@@ -1542,9 +1542,11 @@ impl ConversationView {
                 );
             }
             AcpThreadEvent::TitleUpdated => {
-                if let Some(title) = thread.read(cx).title()
-                    && let Some(active_thread) = self.thread_view(&session_id)
-                {
+                if let Some(active_thread) = self.thread_view(&session_id) {
+                    let title = thread
+                        .read(cx)
+                        .title()
+                        .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
                     let title_editor = active_thread.read(cx).title_editor.clone();
                     title_editor.update(cx, |editor, cx| {
                         if editor.text(cx) != title {
