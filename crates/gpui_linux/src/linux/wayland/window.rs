@@ -117,6 +117,7 @@ pub struct WaylandWindowState {
     active: bool,
     hovered: bool,
     pub(crate) force_render_after_recovery: bool,
+    renderer_presented: bool,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -392,6 +393,7 @@ impl WaylandWindowState {
             active: false,
             hovered: false,
             force_render_after_recovery: false,
+            renderer_presented: false,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -1384,12 +1386,22 @@ impl PlatformWindow for WaylandWindow {
             return;
         }
 
-        state.renderer.draw(scene);
+        state.renderer_presented = state.renderer.draw(scene);
     }
 
     fn completed_frame(&self) {
-        let state = self.borrow();
-        state.surface.commit();
+        let mut state = self.borrow_mut();
+        // When wgpu presented a frame, Mesa's Vulkan WSI commits the wl_surface
+        // asynchronously from its presentation thread (after GPU completion),
+        // picking up any pending frame callbacks. A second commit from us would
+        // race with that, stealing the frame callback before the buffer is
+        // attached and causing wl_callback::Done to fire too early. Only commit
+        // ourselves when wgpu didn't present — to keep the frame callback cadence
+        // alive in cases where there is nothing new to draw.
+        if !state.renderer_presented {
+            state.surface.commit();
+        }
+        state.renderer_presented = false;
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
