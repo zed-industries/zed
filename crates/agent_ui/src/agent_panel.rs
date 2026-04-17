@@ -1095,7 +1095,7 @@ impl AgentPanel {
                                 });
                             } else {
                                 this.pending_worktree_draft = Some(text);
-                                cx.notify();
+                                this.ensure_thread_initialized(window, cx);
                             }
                         }
                     }
@@ -2240,6 +2240,7 @@ impl AgentPanel {
                     |this, server_view, window, cx| {
                         this._thread_view_subscription =
                             Self::subscribe_to_active_thread_view(&server_view, window, cx);
+                        this.apply_pending_worktree_draft(window, cx);
                         cx.emit(AgentPanelEvent::ActiveViewChanged);
                         this.serialize(cx);
                         cx.notify();
@@ -2783,8 +2784,12 @@ impl AgentPanel {
             self.activate_draft(false, window, cx);
         }
 
-        // Apply any draft text stashed during a worktree switch that couldn't
-        // be applied earlier because the thread view didn't exist yet.
+        self.apply_pending_worktree_draft(window, cx);
+    }
+
+    /// Tries to insert text stashed in `pending_worktree_draft` into the
+    /// active thread view's message editor.
+    fn apply_pending_worktree_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.pending_worktree_draft.take() {
             if let Some(thread_view) = self.active_thread_view(cx) {
                 thread_view.update(cx, |thread_view, cx| {
@@ -2793,6 +2798,8 @@ impl AgentPanel {
                         editor.insert_text(&text, window, cx);
                     });
                 });
+            } else {
+                self.pending_worktree_draft = Some(text);
             }
         }
     }
