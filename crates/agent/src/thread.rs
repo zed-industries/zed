@@ -11,8 +11,8 @@ use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 use feature_flags::{
-    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
-    UpdateTitleToolFeatureFlag,
+    CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag,
+    UpdatePlanToolFeatureFlag, UpdateTitleToolFeatureFlag,
 };
 
 use agent_client_protocol::schema as acp;
@@ -1826,8 +1826,10 @@ impl Thread {
         // Sibling-thread tools are exposed at every depth: a subagent should
         // still be able to kick off independent sibling work on behalf of the
         // user, even when it can no longer nest further subagents.
-        self.add_tool(CreateThreadTool::new(environment.clone()));
-        self.add_tool(ListAgentsAndModelsTool::new(environment));
+        if cx.has_flag::<CreateThreadToolFeatureFlag>() {
+            self.add_tool(CreateThreadTool::new(environment.clone()));
+            self.add_tool(ListAgentsAndModelsTool::new(environment));
+        }
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
