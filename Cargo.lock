@@ -6198,6 +6198,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "feature_flags_ui"
+version = "0.1.0"
+dependencies = [
+ "feature_flags",
+ "gpui",
+ "menu",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "feedback"
 version = "0.1.0"
 dependencies = [
@@ -22266,6 +22277,7 @@ dependencies = [
  "extension_host",
  "extensions_ui",
  "feature_flags",
+ "feature_flags_ui",
  "feedback",
  "file_finder",
  "fs",

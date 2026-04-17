@@ -1,0 +1,19 @@
+[package]
+name = "feature_flags_ui"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/feature_flags_ui.rs"
+
+[dependencies]
+feature_flags.workspace = true
+gpui.workspace = true
+menu.workspace = true
+ui.workspace = true
+workspace.workspace = true

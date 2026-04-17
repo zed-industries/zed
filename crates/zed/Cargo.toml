@@ -107,6 +107,7 @@ extension.workspace = true
 extension_host.workspace = true
 extensions_ui.workspace = true
 feature_flags.workspace = true
+feature_flags_ui.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
 fs.workspace = true

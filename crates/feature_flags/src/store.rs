@@ -188,6 +188,52 @@ impl FeatureFlagStore {
         self.flag_value::<T>().is_some()
     }
 
+    /// The override key the UI should show as "selected" for a flag whose
+    /// concrete type isn't known (e.g. when rendering a generated list of
+    /// descriptors in the configuration UI).
+    ///
+    /// Returns `None` if the flag resolves to "off" — either because the user
+    /// explicitly disabled it or because nothing has enabled it.
+    pub fn resolved_key(&self, descriptor: &FeatureFlagDescriptor) -> Option<&'static str> {
+        let first_variant_key = || {
+            let variants = (descriptor.variants)();
+            variants.first().map(|v| v.override_key)
+        };
+
+        if (descriptor.enabled_for_all)() {
+            return first_variant_key();
+        }
+
+        if let Some(override_value) = self.overrides.get(descriptor.name) {
+            return match override_value {
+                None => None,
+                Some(requested) => (descriptor.variants)()
+                    .into_iter()
+                    .find(|v| v.override_key == requested.as_str())
+                    .map(|v| v.override_key),
+            };
+        }
+
+        if (cfg!(debug_assertions) || self.staff)
+            && !*ZED_DISABLE_STAFF
+            && (descriptor.enabled_for_staff)()
+        {
+            return first_variant_key();
+        }
+
+        if self.server_flags.contains_key(descriptor.name) {
+            return first_variant_key();
+        }
+
+        None
+    }
+
+    /// Whether this flag is forced on by `enabled_for_all` and therefore not
+    /// user-overridable. The UI uses this to render the row as disabled.
+    pub fn is_forced_on(descriptor: &FeatureFlagDescriptor) -> bool {
+        (descriptor.enabled_for_all)()
+    }
+
     pub fn has_flag_default<T: FeatureFlag>() -> bool {
         if T::enabled_for_all() {
             return true;

@@ -74,6 +74,7 @@ members = [
     "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feature_flags_macros",
+    "crates/feature_flags_ui",
     "crates/feedback",
     "crates/file_finder",
     "crates/file_icons",
@@ -328,6 +329,7 @@ extension_host = { path = "crates/extension_host" }
 extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
 feature_flags_macros = { path = "crates/feature_flags_macros" }
+feature_flags_ui = { path = "crates/feature_flags_ui" }
 feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
