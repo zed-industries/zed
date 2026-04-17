@@ -69,6 +69,9 @@ pub struct DbThread {
     pub profile: Option<AgentProfileId>,
     #[serde(default)]
     pub imported: bool,
+    /// Subagent lifecycle metadata. `None` for root-agent threads.
+    /// The `timeout_budget_secs` and `priority` fields inside were added in
+    /// schema version 0.4.0 and are backward-compatible via `#[serde(default)]`.
     #[serde(default)]
     pub subagent_context: Option<crate::SubagentContext>,
     #[serde(default)]
