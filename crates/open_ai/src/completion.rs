@@ -29,6 +29,7 @@ pub fn into_open_ai(
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
+    drop_reasoning_blocks: bool,
 ) -> crate::Request {
     let stream = !model_id.starts_with("o1-");
 
@@ -36,7 +37,16 @@ pub fn into_open_ai(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                MessageContent::Thinking { text, .. } => {
+                    if !drop_reasoning_blocks {
+                        add_message_content_part(
+                            MessagePart::Text { text },
+                            message.role,
+                            &mut messages,
+                        );
+                    }
+                }
+                MessageContent::Text(text) => {
                     let should_add = if message.role == Role::User {
                         // Including whitespace-only user messages can cause error with OpenAI compatible APIs
                         // See https://github.com/zed-industries/zed/issues/40097
@@ -163,6 +173,7 @@ pub fn into_open_ai_response(
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
+    drop_reasoning_blocks: bool,
 ) -> ResponseRequest {
     let stream = !model_id.starts_with("o1-");
 
@@ -182,7 +193,7 @@ pub fn into_open_ai_response(
 
     let mut input_items = Vec::new();
     for (index, message) in messages.into_iter().enumerate() {
-        append_message_to_response_items(message, index, &mut input_items);
+        append_message_to_response_items(message, index, &mut input_items, drop_reasoning_blocks);
     }
 
     let tools: Vec<_> = tools
@@ -229,6 +240,7 @@ fn append_message_to_response_items(
     message: LanguageModelRequestMessage,
     index: usize,
     input_items: &mut Vec<ResponseInputItem>,
+    drop_reasoning_blocks: bool,
 ) {
     let mut content_parts: Vec<ResponseInputContent> = Vec::new();
 
@@ -238,7 +250,9 @@ fn append_message_to_response_items(
                 push_response_text_part(&message.role, text, &mut content_parts);
             }
             MessageContent::Thinking { text, .. } => {
-                push_response_text_part(&message.role, text, &mut content_parts);
+                if !drop_reasoning_blocks {
+                    push_response_text_part(&message.role, text, &mut content_parts);
+                }
             }
             MessageContent::RedactedThinking(_) => {}
             MessageContent::Image(image) => {

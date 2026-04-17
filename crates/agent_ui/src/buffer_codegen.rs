@@ -426,7 +426,7 @@ impl CodegenAlternative {
             let request = self.build_request(&model, user_prompt, context_task, cx)?;
             let completion_events = cx.spawn({
                 let model = model.clone();
-                async move |_, cx| model.stream_completion(request.await, cx).await
+                async move |_, cx| Ok(language_model::extract_thinking_from_stream(model.stream_completion(request.await, cx).await?))
             });
             self.generation = self.handle_completion(model, completion_events, cx);
         } else {

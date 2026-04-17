@@ -1933,10 +1933,12 @@ impl Thread {
 
             log::debug!("Calling model.stream_completion, attempt {}", attempt);
 
+
             let (mut events, mut error) = match model.stream_completion(request, cx).await {
-                Ok(events) => (events.fuse(), None),
-                Err(err) => (stream::empty().boxed().fuse(), Some(err)),
+                Ok(events) => (language_model::extract_thinking_from_stream(events).fuse(), None),
+                Err(err) => (futures::stream::empty().boxed().fuse(), Some(err)),
             };
+
             let mut tool_results: FuturesUnordered<Task<LanguageModelToolResult>> =
                 FuturesUnordered::new();
             let mut early_tool_results: Vec<LanguageModelToolResult> = Vec::new();
@@ -2587,7 +2589,7 @@ impl Thread {
         let task = cx
             .spawn(async move |this, cx| {
                 let mut summary = String::new();
-                let mut messages = model.stream_completion(request, cx).await.log_err()?;
+                let mut messages = language_model::extract_thinking_from_stream(model.stream_completion(request, cx).await.log_err()?);
                 while let Some(event) = messages.next().await {
                     let event = event.log_err()?;
                     let text = match event {
@@ -2645,7 +2647,7 @@ impl Thread {
             let mut title = String::new();
 
             let generate = async {
-                let mut messages = model.stream_completion(request, cx).await?;
+                let mut messages = language_model::extract_thinking_from_stream(model.stream_completion(request, cx).await?);
                 while let Some(event) = messages.next().await {
                     let event = event?;
                     let text = match event {

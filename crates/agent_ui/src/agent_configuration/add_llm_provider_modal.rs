@@ -104,6 +104,8 @@ struct ModelCapabilityToggles {
     pub supports_parallel_tool_calls: ToggleState,
     pub supports_prompt_cache_key: ToggleState,
     pub supports_chat_completions: ToggleState,
+    pub parse_reasoning_tags: ToggleState,
+    pub drop_reasoning_blocks: ToggleState,
 }
 
 struct ModelInput {
@@ -170,6 +172,8 @@ impl ModelInput {
                 supports_parallel_tool_calls: parallel_tool_calls.into(),
                 supports_prompt_cache_key: prompt_cache_key.into(),
                 supports_chat_completions: chat_completions.into(),
+                parse_reasoning_tags: false.into(),
+                drop_reasoning_blocks: false.into(),
             },
         }
     }
@@ -180,6 +184,8 @@ impl ModelInput {
             return Err(SharedString::from("Model Name cannot be empty"));
         }
         Ok(AvailableModel {
+            parse_reasoning_tags: self.capabilities.parse_reasoning_tags.selected(),
+            drop_reasoning_blocks: self.capabilities.drop_reasoning_blocks.selected(),
             name,
             display_name: None,
             max_completion_tokens: Some(
@@ -442,6 +448,34 @@ impl AddLlmProviderModal {
                         .on_click(cx.listener(
                             move |this, checked, _window, cx| {
                                 this.input.models[ix].capabilities.supports_chat_completions =
+                                    *checked;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        Checkbox::new(
+                            ("parse-reasoning-tags", ix),
+                            model.capabilities.parse_reasoning_tags,
+                        )
+                        .label("Parse streaming reasoning tags (for providers that stream thoughts)")
+                        .on_click(cx.listener(
+                            move |this, checked, _window, cx| {
+                                this.input.models[ix].capabilities.parse_reasoning_tags =
+                                    *checked;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        Checkbox::new(
+                            ("drop-reasoning-blocks", ix),
+                            model.capabilities.drop_reasoning_blocks,
+                        )
+                        .label("Drop past reasoning blocks to save context window")
+                        .on_click(cx.listener(
+                            move |this, checked, _window, cx| {
+                                this.input.models[ix].capabilities.drop_reasoning_blocks =
                                     *checked;
                                 cx.notify();
                             },

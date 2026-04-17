@@ -325,6 +325,47 @@ pub trait LanguageModelProviderState: 'static {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::{StreamExt, stream};
+
+    #[gpui::test]
+    async fn test_extract_thinking_from_stream() {
+        let events = vec![
+            Ok(LanguageModelCompletionEvent::Text("Hello ".to_string())),
+            Ok(LanguageModelCompletionEvent::Text("<thi".to_string())),
+            Ok(LanguageModelCompletionEvent::Text(
+                "nking>Wait, ".to_string(),
+            )),
+            Ok(LanguageModelCompletionEvent::Text("I am ".to_string())),
+            Ok(LanguageModelCompletionEvent::Text("thinking</".to_string())),
+            Ok(LanguageModelCompletionEvent::Text("thinking>".to_string())),
+            Ok(LanguageModelCompletionEvent::Text("World!".to_string())),
+        ];
+
+        let stream = stream::iter(events).boxed();
+        let mut extracted = extract_thinking_from_stream(stream);
+
+        let mut results = Vec::new();
+        while let Some(event) = extracted.next().await {
+            results.push(event.unwrap());
+        }
+
+        assert_eq!(
+            results,
+            vec![
+                LanguageModelCompletionEvent::Text("Hello ".to_string()),
+                LanguageModelCompletionEvent::Thinking {
+                    text: "Wait, I am thinking".to_string(),
+                    signature: None,
+                },
+                LanguageModelCompletionEvent::Text("World!".to_string()),
+            ]
+        );
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum LanguageModelCostInfo {
     /// Cost per 1,000 input and output tokens
@@ -361,4 +402,162 @@ impl LanguageModelCostInfo {
             SharedString::from(format!("{:.2}", cost))
         }
     }
+}
+
+pub fn extract_thinking_from_stream(
+    stream: futures::stream::BoxStream<
+        'static,
+        Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+    >,
+) -> futures::stream::BoxStream<
+    'static,
+    Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+> {
+    struct State {
+        stream: futures::stream::BoxStream<
+            'static,
+            Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+        >,
+        buffer: String,
+        in_thinking_tag: Option<&'static str>,
+        pending_events: std::collections::VecDeque<LanguageModelCompletionEvent>,
+    }
+
+    futures::stream::unfold(
+        State {
+            stream,
+            buffer: String::new(),
+            in_thinking_tag: None,
+            pending_events: std::collections::VecDeque::new(),
+        },
+        |mut state| async move {
+            use futures::StreamExt;
+            loop {
+                if let Some(event) = state.pending_events.pop_front() {
+                    return Some((Ok(event), state));
+                }
+
+                match state.stream.next().await {
+                    Some(Ok(LanguageModelCompletionEvent::Text(text))) => {
+                        state.buffer.push_str(&text);
+
+                        loop {
+                            if let Some(closing_tag) = state.in_thinking_tag {
+                                if let Some(end_idx) = state.buffer.find(closing_tag) {
+                                    if end_idx > 0 {
+                                        state.pending_events.push_back(
+                                            LanguageModelCompletionEvent::Thinking {
+                                                text: state.buffer[..end_idx].to_string(),
+                                                signature: None,
+                                            },
+                                        );
+                                    }
+                                    state.buffer.drain(..end_idx + closing_tag.len());
+                                    state.in_thinking_tag = None;
+                                } else {
+                                    let mut safe_len = state.buffer.len();
+                                    for i in 1..=closing_tag.len() {
+                                        if state.buffer.ends_with(&closing_tag[..i]) {
+                                            safe_len = state.buffer.len() - i;
+                                            break;
+                                        }
+                                    }
+                                    if safe_len > 0 {
+                                        state.pending_events.push_back(
+                                            LanguageModelCompletionEvent::Thinking {
+                                                text: state.buffer[..safe_len].to_string(),
+                                                signature: None,
+                                            },
+                                        );
+                                        state.buffer.drain(..safe_len);
+                                    }
+                                    break;
+                                }
+                            } else {
+                                let mut first_start: Option<usize> = None;
+                                let mut matched_tag: Option<(&'static str, &'static str)> = None;
+
+                                let tags = [
+                                    ("<think>", "</think>"),
+                                    ("<thinking>", "</thinking>"),
+                                    ("<thoughts>", "</thoughts>"),
+                                ];
+
+                                for (open, close) in tags {
+                                    if let Some(idx) = state.buffer.find(open) {
+                                        if first_start.map_or(true, |first| idx < first) {
+                                            first_start = Some(idx);
+                                            matched_tag = Some((open, close));
+                                        }
+                                    }
+                                }
+
+                                if let Some(start_idx) = first_start {
+                                    let (open_tag, close_tag) = matched_tag.unwrap();
+                                    if start_idx > 0 {
+                                        state.pending_events.push_back(
+                                            LanguageModelCompletionEvent::Text(
+                                                state.buffer[..start_idx].to_string(),
+                                            ),
+                                        );
+                                    }
+                                    state.buffer.drain(..start_idx + open_tag.len());
+                                    state.in_thinking_tag = Some(close_tag);
+                                } else {
+                                    let mut safe_len = state.buffer.len();
+                                    for (open, _) in tags {
+                                        for i in 1..=open.len() {
+                                            if state.buffer.ends_with(&open[..i]) {
+                                                if state.buffer.len() - i < safe_len {
+                                                    safe_len = state.buffer.len() - i;
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if safe_len > 0 {
+                                        state.pending_events.push_back(
+                                            LanguageModelCompletionEvent::Text(
+                                                state.buffer[..safe_len].to_string(),
+                                            ),
+                                        );
+                                        state.buffer.drain(..safe_len);
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Some(Ok(other)) => {
+                        state.pending_events.push_back(other);
+                    }
+                    Some(Err(err)) => {
+                        return Some((Err(err), state));
+                    }
+                    None => {
+                        if !state.buffer.is_empty() {
+                            if state.in_thinking_tag.is_some() {
+                                state.pending_events.push_back(
+                                    LanguageModelCompletionEvent::Thinking {
+                                        text: state.buffer.clone(),
+                                        signature: None,
+                                    },
+                                );
+                            } else {
+                                state
+                                    .pending_events
+                                    .push_back(LanguageModelCompletionEvent::Text(
+                                        state.buffer.clone(),
+                                    ));
+                            }
+                            state.buffer.clear();
+                            continue;
+                        }
+                        return None;
+                    }
+                }
+            }
+        },
+    )
+    .boxed()
 }

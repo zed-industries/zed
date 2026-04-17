@@ -403,11 +403,18 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
                 self.model.reasoning_effort,
+                self.model.drop_reasoning_blocks,
             );
             let completions = self.stream_completion(request, cx);
+            let parse_reasoning_tags = self.model.parse_reasoning_tags;
             async move {
                 let mapper = OpenAiEventMapper::new();
-                Ok(mapper.map_stream(completions.await?).boxed())
+                let mapped_stream = mapper.map_stream(completions.await?).boxed();
+                if parse_reasoning_tags {
+                    Ok(language_model::extract_thinking_from_stream(mapped_stream).boxed())
+                } else {
+                    Ok(mapped_stream)
+                }
             }
             .boxed()
         } else {
@@ -418,11 +425,18 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
                 self.model.reasoning_effort,
+                self.model.drop_reasoning_blocks,
             );
             let completions = self.stream_response(request, cx);
+            let parse_reasoning_tags = self.model.parse_reasoning_tags;
             async move {
                 let mapper = OpenAiResponseEventMapper::new();
-                Ok(mapper.map_stream(completions.await?).boxed())
+                let mapped_stream = mapper.map_stream(completions.await?).boxed();
+                if parse_reasoning_tags {
+                    Ok(language_model::extract_thinking_from_stream(mapped_stream).boxed())
+                } else {
+                    Ok(mapped_stream)
+                }
             }
             .boxed()
         }

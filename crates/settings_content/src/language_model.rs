@@ -278,6 +278,10 @@ pub struct OpenAiCompatibleAvailableModel {
     pub reasoning_effort: Option<OpenAiReasoningEffort>,
     #[serde(default)]
     pub capabilities: OpenAiCompatibleModelCapabilities,
+    #[serde(default)]
+    pub parse_reasoning_tags: bool,
+    #[serde(default)]
+    pub drop_reasoning_blocks: bool,
 }
 
 #[with_fallible_options]
