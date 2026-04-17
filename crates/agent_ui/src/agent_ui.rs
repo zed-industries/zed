@@ -35,7 +35,6 @@ pub mod thread_worktree_archive;
 
 pub mod threads_archive_view;
 mod ui;
-mod worktree_names;
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -64,9 +63,7 @@ use std::any::TypeId;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
-pub use crate::agent_panel::{
-    AgentPanel, AgentPanelEvent, MaxIdleRetainedThreads, WorktreeCreationStatus,
-};
+pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, MaxIdleRetainedThreads};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread_metadata_store::ThreadId;

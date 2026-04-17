@@ -41,6 +41,12 @@ impl WorktreePicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        if let Some(ws) = workspace.upgrade() {
+            let focused_dock = ws.read(cx).focused_dock_position(window, cx);
+            cx.set_global(workspace::PrePickerFocusedDock {
+                position: focused_dock,
+            });
+        }
         Self::new_inner(project, workspace, false, window, cx)
     }
 
