@@ -312,7 +312,7 @@ pub(crate) fn render_mermaid_diagram(
         match result {
             Ok(render_image) => container
                 .child(
-                    div().w_full().child(
+                    div().w_full().flex().justify_center().child(
                         img(ImageSource::Render(render_image.clone()))
                             .max_w_full()
                             .with_fallback(|| {
@@ -332,6 +332,8 @@ pub(crate) fn render_mermaid_diagram(
             .child(
                 div()
                     .w_full()
+                    .flex()
+                    .justify_center()
                     .child(
                         img(ImageSource::Render(fallback.clone()))
                             .max_w_full()
@@ -353,15 +355,17 @@ pub(crate) fn render_mermaid_diagram(
     } else {
         container
             .child(
-                Label::new("Rendering mermaid diagram...")
-                    .color(Color::Muted)
-                    .with_animation(
-                        "mermaid-loading-pulse",
-                        Animation::new(Duration::from_secs(2))
-                            .repeat()
-                            .with_easing(pulsating_between(0.4, 0.8)),
-                        |label, delta| label.alpha(delta),
-                    ),
+                div().w_full().flex().justify_center().child(
+                    Label::new("Rendering mermaid diagram...")
+                        .color(Color::Muted)
+                        .with_animation(
+                            "mermaid-loading-pulse",
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.4, 0.8)),
+                            |label, delta| label.alpha(delta),
+                        ),
+                ),
             )
             .into_any_element()
     }
