@@ -114,6 +114,7 @@ impl WorktreePicker {
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
+                .show_scrollbar(true)
                 .modal(false)
                 .max_height(Some(rems(20.).into()))
         });
