@@ -1066,25 +1066,26 @@ impl AgentPanel {
                         .is_some();
 
                     if is_creating {
-                        // Source panel: stash draft text
-                        let draft_text = this.active_thread_view(cx).and_then(|thread_view| {
+                        let draft_prompt = this.active_thread_view(cx).and_then(|thread_view| {
                             let text = thread_view.read(cx).message_editor.read(cx).text(cx);
                             if text.is_empty() { None } else { Some(text) }
                         });
+
                         let multi_workspace = workspace.read(cx).multi_workspace().cloned();
                         if let Some(multi_workspace) = multi_workspace.and_then(|mw| mw.upgrade()) {
                             multi_workspace.update(cx, |mw, _cx| {
-                                mw.pending_worktree_switch_text = draft_text;
+                                mw.pending_worktree_switch_text = draft_prompt;
                             });
                         }
+
                         this.did_stash_worktree_draft = true;
                     } else if !this.did_stash_worktree_draft {
-                        // Destination panel (fresh panel, never stashed): pick up text
                         let multi_workspace = workspace.read(cx).multi_workspace().cloned();
                         let pending_text =
                             multi_workspace.and_then(|mw| mw.upgrade()).and_then(|mw| {
                                 mw.update(cx, |mw, _cx| mw.pending_worktree_switch_text.take())
                             });
+
                         if let Some(text) = pending_text {
                             if let Some(thread_view) = this.active_thread_view(cx) {
                                 thread_view.update(cx, |thread_view, cx| {
@@ -2787,8 +2788,8 @@ impl AgentPanel {
         self.apply_pending_worktree_draft(window, cx);
     }
 
-    /// Tries to insert text stashed in `pending_worktree_draft` into the
-    /// active thread view's message editor.
+    /// Tries to insert any existing draft prompt stashed in `pending_worktree_draft`
+    /// into the active thread view's message editor.
     fn apply_pending_worktree_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.pending_worktree_draft.take() {
             if let Some(thread_view) = self.active_thread_view(cx) {

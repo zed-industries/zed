@@ -89,11 +89,11 @@ impl WorktreePicker {
 
         let all_worktrees_request = repository
             .clone()
-            .map(|repo| repo.update(cx, |repo, _| repo.worktrees()));
+            .map(|repository| repository.update(cx, |repository, _| repository.worktrees()));
 
-        let default_branch_request = repository
-            .clone()
-            .map(|repo| repo.update(cx, |repo, _| repo.default_branch(false)));
+        let default_branch_request = repository.clone().map(|repository| {
+            repository.update(cx, |repository, _| repository.default_branch(false))
+        });
 
         let initial_matches = vec![WorktreeEntry::CreateFromCurrentBranch];
 
@@ -557,7 +557,6 @@ impl PickerDelegate for WorktreePickerDelegate {
 
         match entry {
             WorktreeEntry::Separator => return,
-
             WorktreeEntry::CreateFromCurrentBranch => {
                 window.dispatch_action(
                     Box::new(CreateWorktree {
@@ -567,7 +566,6 @@ impl PickerDelegate for WorktreePickerDelegate {
                     cx,
                 );
             }
-
             WorktreeEntry::CreateFromDefaultBranch {
                 default_branch_name,
             } => {
@@ -581,7 +579,6 @@ impl PickerDelegate for WorktreePickerDelegate {
                     cx,
                 );
             }
-
             WorktreeEntry::Worktree { worktree, .. } => {
                 let is_current = self.project_worktree_paths.contains(&worktree.path);
 
@@ -609,7 +606,6 @@ impl PickerDelegate for WorktreePickerDelegate {
                     }
                 }
             }
-
             WorktreeEntry::CreateNamed {
                 name,
                 from_branch,
@@ -629,7 +625,6 @@ impl PickerDelegate for WorktreePickerDelegate {
                     cx,
                 );
             }
-
             WorktreeEntry::CreateNamed {
                 disabled_reason: Some(_),
                 ..
@@ -656,40 +651,6 @@ impl PickerDelegate for WorktreePickerDelegate {
 
         let no_git_reason: SharedString = "Requires a Git repository in the project".into();
 
-        let create_new_list_item = |id: SharedString,
-                                    label: SharedString,
-                                    disabled_tooltip: Option<SharedString>,
-                                    selected: bool| {
-            let is_disabled = disabled_tooltip.is_some();
-            ListItem::new(id)
-                .inset(true)
-                .spacing(ListItemSpacing::Sparse)
-                .toggle_state(selected)
-                .child(
-                    h_flex()
-                        .w_full()
-                        .gap_2p5()
-                        .child(
-                            Icon::new(IconName::Plus)
-                                .map(|this| {
-                                    if is_disabled {
-                                        this.color(Color::Disabled)
-                                    } else {
-                                        this.color(Color::Muted)
-                                    }
-                                })
-                                .size(IconSize::Small),
-                        )
-                        .child(
-                            Label::new(label).when(is_disabled, |this| this.color(Color::Disabled)),
-                        ),
-                )
-                .when_some(disabled_tooltip, |this, reason| {
-                    this.tooltip(Tooltip::text(reason))
-                })
-                .into_any_element()
-        };
-
         match entry {
             WorktreeEntry::Separator => Some(
                 div()
@@ -697,7 +658,6 @@ impl PickerDelegate for WorktreePickerDelegate {
                     .child(Divider::horizontal())
                     .into_any_element(),
             ),
-
             WorktreeEntry::CreateFromCurrentBranch => {
                 let branch_label = if self.has_multiple_repositories {
                     "current branches".to_string()
@@ -720,7 +680,6 @@ impl PickerDelegate for WorktreePickerDelegate {
 
                 Some(item.into_any_element())
             }
-
             WorktreeEntry::CreateFromDefaultBranch {
                 default_branch_name,
             } => {
@@ -737,7 +696,6 @@ impl PickerDelegate for WorktreePickerDelegate {
 
                 Some(item.into_any_element())
             }
-
             WorktreeEntry::Worktree {
                 worktree,
                 positions,
@@ -883,7 +841,6 @@ impl PickerDelegate for WorktreePickerDelegate {
                         .into_any_element(),
                 )
             }
-
             WorktreeEntry::CreateNamed {
                 name,
                 from_branch,
@@ -1010,6 +967,41 @@ impl PickerDelegate for WorktreePickerDelegate {
             None
         }
     }
+}
+
+fn create_new_list_item(
+    id: SharedString,
+    label: SharedString,
+    disabled_tooltip: Option<SharedString>,
+    selected: bool,
+) -> AnyElement {
+    let is_disabled = disabled_tooltip.is_some();
+
+    ListItem::new(id)
+        .inset(true)
+        .spacing(ListItemSpacing::Sparse)
+        .toggle_state(selected)
+        .child(
+            h_flex()
+                .w_full()
+                .gap_2p5()
+                .child(
+                    Icon::new(IconName::Plus)
+                        .map(|this| {
+                            if is_disabled {
+                                this.color(Color::Disabled)
+                            } else {
+                                this.color(Color::Muted)
+                            }
+                        })
+                        .size(IconSize::Small),
+                )
+                .child(Label::new(label).when(is_disabled, |this| this.color(Color::Disabled))),
+        )
+        .when_some(disabled_tooltip, |this, reason| {
+            this.tooltip(Tooltip::text(reason))
+        })
+        .into_any_element()
 }
 
 pub async fn open_remote_worktree(
