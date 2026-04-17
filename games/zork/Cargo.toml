@@ -1,0 +1,21 @@
+[package]
+name = "zork-zed"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "A Zork-style text adventure set inside the Zed code editor"
+authors = ["Zed Community"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/zed-industries/zed"
+readme = "README.md"
+keywords = ["game", "zork", "text-adventure", "zed", "terminal"]
+categories = ["games", "command-line-interface"]
+
+[[bin]]
+name = "zork-zed"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+anyhow = "1"
