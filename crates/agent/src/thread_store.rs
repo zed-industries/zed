@@ -117,8 +117,25 @@ impl ThreadStore {
     pub fn entry_ids(&self) -> impl Iterator<Item = acp::SessionId> + '_ {
         self.threads.iter().map(|t| t.id.clone())
     }
-}
 
+    /// Returns all persisted subagent thread metadata whose `parent_session_id`
+    /// matches `parent_id`. This includes threads that are currently running as
+    /// well as those that have already completed, enabling the panel to render
+    /// the full subagent tree even after individual agents have finished.
+    ///
+    /// Note: `ThreadStore` only keeps *root* threads in `self.threads` to avoid
+    /// flooding the sidebar. Subagent metadata is loaded on-demand here by
+    /// scanning the full database snapshot stored in `self.all_threads`.
+    pub fn subagent_entries_for(
+        &self,
+        parent_id: &acp::SessionId,
+    ) -> impl Iterator<Item = DbThreadMetadata> + '_ {
+        self.all_threads
+            .iter()
+            .filter(move |t| t.parent_session_id.as_ref() == Some(parent_id))
+            .cloned()
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
