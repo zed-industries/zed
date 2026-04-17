@@ -1963,7 +1963,6 @@ impl Sidebar {
 
                         let project_group_key = project_group_key.clone();
                         let remove_multi_workspace = multi_workspace.clone();
-                        let remove_weak_menu = weak_menu.clone();
                         menu.separator()
                             .entry("Remove Project", None, move |window, cx| {
                                 remove_multi_workspace
@@ -1973,9 +1972,7 @@ impl Sidebar {
                                             .detach_and_log_err(cx);
                                     })
                                     .ok();
-                                remove_weak_menu
-                                    .update(cx, |_, cx| cx.emit(DismissEvent))
-                                    .ok();
+                                weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                             })
                     });
 
