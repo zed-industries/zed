@@ -3033,6 +3033,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
+        let can_supercede_active_menu =
+            self.context_menu.borrow().as_ref().is_none_or(|menu| {
+                !menu.visible() || matches!(menu, CodeContextMenu::Completions(_))
+            });
+
+        if !can_supercede_active_menu {
+            return false;
+        }
+
         let key_context = self.key_context_internal(true, window, cx);
         let actions: [&dyn Action; 3] = [
             &AcceptEditPrediction,
