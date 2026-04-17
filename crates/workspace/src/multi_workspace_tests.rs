@@ -594,8 +594,7 @@ async fn test_remote_project_root_dir_changes_update_groups(cx: &mut TestAppCont
     let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = cx.new(|cx| Workspace::test_new(project_b.clone(), window, cx));
         let key = workspace.read(cx).project_group_key(cx);
-        mw.register_and_retain_workspace(workspace.clone(), key, window, cx);
-        mw.activate(workspace.clone(), window, cx);
+        mw.activate_provisional_workspace(workspace.clone(), key, window, cx);
         workspace
     });
     cx.run_until_parked();
@@ -604,7 +603,7 @@ async fn test_remote_project_root_dir_changes_update_groups(cx: &mut TestAppCont
         assert_eq!(
             mw.workspace().entity_id(),
             workspace_b.entity_id(),
-            "registered and retained workspace should become active"
+            "registered workspace should become active"
         );
     });
 
