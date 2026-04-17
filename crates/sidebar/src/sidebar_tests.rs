@@ -3,7 +3,9 @@ use acp_thread::{AcpThread, PermissionOptions, StubAgentConnection};
 use agent::ThreadStore;
 use agent_ui::{
     ThreadId,
-    test_support::{active_session_id, open_thread_with_connection, send_message},
+    test_support::{
+        active_session_id, active_thread_id, open_thread_with_connection, send_message,
+    },
     thread_metadata_store::{ThreadMetadata, WorktreePaths},
 };
 use chrono::DateTime;
@@ -225,7 +227,7 @@ async fn save_test_thread_metadata(
         Some("Test".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
-            None,
+        None,
         project,
         cx,
     )
@@ -242,7 +244,7 @@ async fn save_named_thread_metadata(
         Some(SharedString::from(title.to_string())),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
-            None,
+        None,
         project,
         cx,
     );
@@ -888,7 +890,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     title: Some("Running thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-interacted_at: None,
+                    interacted_at: None,
                     archived: false,
                     remote_connection: None,
                 },
@@ -913,7 +915,7 @@ interacted_at: None,
                     title: Some("Error thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-interacted_at: None,
+                    interacted_at: None,
                     archived: false,
                     remote_connection: None,
                 },
@@ -939,7 +941,7 @@ interacted_at: None,
                     title: Some("Waiting thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-interacted_at: None,
+                    interacted_at: None,
                     archived: false,
                     remote_connection: None,
                 },
@@ -965,7 +967,7 @@ interacted_at: None,
                     title: Some("Notified thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-interacted_at: None,
+                    interacted_at: None,
                     archived: false,
                     remote_connection: None,
                 },
@@ -1950,7 +1952,7 @@ async fn test_search_finds_threads_inside_collapsed_groups(cx: &mut TestAppConte
         Some("Important thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
-            None,
+        None,
         &project,
         cx,
     );
@@ -2073,7 +2075,7 @@ async fn test_confirm_on_historical_thread_activates_workspace(cx: &mut TestAppC
         Some("Historical Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
         None,
-            None,
+        None,
         &project,
         cx,
     );
@@ -2133,7 +2135,7 @@ async fn test_confirm_on_historical_thread_preserves_historical_timestamp_and_or
         Some("Newer Historical Thread".into()),
         newer_timestamp,
         Some(newer_timestamp),
-            None,
+        None,
         &project,
         cx,
     );
@@ -2145,7 +2147,7 @@ async fn test_confirm_on_historical_thread_preserves_historical_timestamp_and_or
         Some("Older Historical Thread".into()),
         older_timestamp,
         Some(older_timestamp),
-            None,
+        None,
         &project,
         cx,
     );
@@ -2256,7 +2258,7 @@ async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_threa
         Some("Historical Thread in New Group".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
         None,
-            None,
+        None,
         &project_b,
         cx,
     );
@@ -2365,7 +2367,7 @@ async fn test_click_clears_selection_and_focus_in_restores_it(cx: &mut TestAppCo
         Some("Thread A".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
         None,
-            None,
+        None,
         &project,
         cx,
     );
@@ -2375,7 +2377,7 @@ async fn test_click_clears_selection_and_focus_in_restores_it(cx: &mut TestAppCo
         Some("Thread B".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
-            None,
+        None,
         &project,
         cx,
     );
@@ -3169,7 +3171,7 @@ async fn test_two_worktree_workspaces_absorbed_when_main_added(cx: &mut TestAppC
         Some("Thread A".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
-            None,
+        None,
         &project_a,
         cx,
     );
@@ -3178,7 +3180,7 @@ async fn test_two_worktree_workspaces_absorbed_when_main_added(cx: &mut TestAppC
         Some("Thread B".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap(),
         None,
-            None,
+        None,
         &project_b,
         cx,
     );
@@ -5546,6 +5548,16 @@ async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut Test
     );
 }
 
+fn thread_id_for(session_id: &acp::SessionId, cx: &mut TestAppContext) -> ThreadId {
+    cx.read(|cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(session_id)
+            .map(|m| m.thread_id)
+            .expect("thread metadata should exist")
+    })
+}
+
 #[gpui::test]
 async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
@@ -5554,7 +5566,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let switcher_ids =
-        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> Vec<acp::SessionId> {
+        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> Vec<ThreadId> {
             sidebar.read_with(cx, |sidebar, cx| {
                 let switcher = sidebar
                     .thread_switcher
@@ -5564,13 +5576,13 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
                     .read(cx)
                     .entries()
                     .iter()
-                    .map(|e| e.session_id.clone())
+                    .map(|e| e.metadata.thread_id.clone())
                     .collect()
             })
         };
 
     let switcher_selected_id =
-        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> acp::SessionId {
+        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> ThreadId {
             sidebar.read_with(cx, |sidebar, cx| {
                 let switcher = sidebar
                     .thread_switcher
@@ -5579,7 +5591,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
                 let s = switcher.read(cx);
                 s.selected_entry()
                     .expect("should have selection")
-                    .session_id
+                    .metadata
+                    .thread_id
                     .clone()
             })
         };
@@ -5594,6 +5607,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     open_thread_with_connection(&panel, connection_c, cx);
     send_message(&panel, cx);
     let session_id_c = active_session_id(&panel, cx);
+    let thread_id_c = active_thread_id(&panel, cx);
     save_thread_metadata(
         session_id_c.clone(),
         Some("Thread C".into()),
@@ -5611,6 +5625,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     open_thread_with_connection(&panel, connection_b, cx);
     send_message(&panel, cx);
     let session_id_b = active_session_id(&panel, cx);
+    let thread_id_b = active_thread_id(&panel, cx);
     save_thread_metadata(
         session_id_b.clone(),
         Some("Thread B".into()),
@@ -5628,6 +5643,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     open_thread_with_connection(&panel, connection_a, cx);
     send_message(&panel, cx);
     let session_id_a = active_session_id(&panel, cx);
+    let thread_id_a = active_thread_id(&panel, cx);
     save_thread_metadata(
         session_id_a.clone(),
         Some("Thread A".into()),
@@ -5656,13 +5672,13 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     assert_eq!(
         switcher_ids(&sidebar, cx),
         vec![
-            session_id_a.clone(),
-            session_id_b.clone(),
-            session_id_c.clone()
+            thread_id_a.clone(),
+            thread_id_b.clone(),
+            thread_id_c.clone()
         ],
     );
     // First ctrl-tab selects the second entry (B).
-    assert_eq!(switcher_selected_id(&sidebar, cx), session_id_b);
+    assert_eq!(switcher_selected_id(&sidebar, cx), thread_id_b);
 
     // Dismiss the switcher without confirming.
     sidebar.update_in(cx, |sidebar, _window, cx| {
@@ -5689,7 +5705,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
             .update(cx, |s, cx| s.cycle_selection(cx));
     });
     cx.run_until_parked();
-    assert_eq!(switcher_selected_id(&sidebar, cx), session_id_c);
+    assert_eq!(switcher_selected_id(&sidebar, cx), thread_id_c);
 
     assert!(sidebar.update(cx, |sidebar, _cx| sidebar.thread_last_accessed.is_empty()));
 
@@ -5716,7 +5732,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
             .cloned()
             .collect::<Vec<_>>();
         assert_eq!(last_accessed.len(), 1);
-        assert!(last_accessed.contains(&session_id_c));
+        assert!(last_accessed.contains(&thread_id_c));
         assert!(
             is_active_session(&sidebar, &session_id_c),
             "active_entry should be Thread({session_id_c:?})"
@@ -5731,9 +5747,9 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     assert_eq!(
         switcher_ids(&sidebar, cx),
         vec![
-            session_id_c.clone(),
-            session_id_a.clone(),
-            session_id_b.clone()
+            thread_id_c.clone(),
+            thread_id_a.clone(),
+            thread_id_b.clone()
         ],
     );
 
@@ -5752,8 +5768,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
             .cloned()
             .collect::<Vec<_>>();
         assert_eq!(last_accessed.len(), 2);
-        assert!(last_accessed.contains(&session_id_c));
-        assert!(last_accessed.contains(&session_id_a));
+        assert!(last_accessed.contains(&thread_id_c));
+        assert!(last_accessed.contains(&thread_id_a));
         assert!(
             is_active_session(&sidebar, &session_id_a),
             "active_entry should be Thread({session_id_a:?})"
@@ -5768,9 +5784,9 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     assert_eq!(
         switcher_ids(&sidebar, cx),
         vec![
-            session_id_a.clone(),
-            session_id_c.clone(),
-            session_id_b.clone(),
+            thread_id_a.clone(),
+            thread_id_c.clone(),
+            thread_id_b.clone(),
         ],
     );
 
@@ -5795,9 +5811,9 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
             .cloned()
             .collect::<Vec<_>>();
         assert_eq!(last_accessed.len(), 3);
-        assert!(last_accessed.contains(&session_id_c));
-        assert!(last_accessed.contains(&session_id_a));
-        assert!(last_accessed.contains(&session_id_b));
+        assert!(last_accessed.contains(&thread_id_c));
+        assert!(last_accessed.contains(&thread_id_a));
+        assert!(last_accessed.contains(&thread_id_b));
         assert!(
             is_active_session(&sidebar, &session_id_b),
             "active_entry should be Thread({session_id_b:?})"
@@ -5830,15 +5846,16 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     // last_message_sent_or_queued. So for the accessed threads (tier 1) the
     // sort key is last_accessed_at; for Historical Thread (tier 3) it's created_at.
     let session_id_hist = acp::SessionId::new(Arc::from("thread-historical"));
+    let thread_id_hist = thread_id_for(&session_id_hist, cx);
 
     let ids = switcher_ids(&sidebar, cx);
     assert_eq!(
         ids,
         vec![
-            session_id_b.clone(),
-            session_id_a.clone(),
-            session_id_c.clone(),
-            session_id_hist.clone()
+            thread_id_b.clone(),
+            thread_id_a.clone(),
+            thread_id_c.clone(),
+            thread_id_hist.clone()
         ],
     );
 
@@ -5866,15 +5883,16 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     // Both historical threads have no access or message times. They should
     // appear after accessed threads, sorted by created_at (newest first).
     let session_id_old_hist = acp::SessionId::new(Arc::from("thread-old-historical"));
+    let thread_id_old_hist = thread_id_for(&session_id_old_hist, cx);
     let ids = switcher_ids(&sidebar, cx);
     assert_eq!(
         ids,
         vec![
-            session_id_b,
-            session_id_a,
-            session_id_c,
-            session_id_hist,
-            session_id_old_hist,
+            thread_id_b,
+            thread_id_a,
+            thread_id_c,
+            thread_id_hist,
+            thread_id_old_hist,
         ],
     );
 
@@ -9027,7 +9045,15 @@ mod property_test {
                         chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 1, 1, 0, 0, 0)
                             .unwrap()
                             + chrono::Duration::seconds(state.thread_counter as i64);
-                    save_thread_metadata(session_id, Some(title), updated_at, None,None, &project, cx);
+                    save_thread_metadata(
+                        session_id,
+                        Some(title),
+                        updated_at,
+                        None,
+                        None,
+                        &project,
+                        cx,
+                    );
                 }
             }
             Operation::SaveWorktreeThread { worktree_index } => {

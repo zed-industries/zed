@@ -752,6 +752,21 @@ impl ThreadMetadataStore {
         }
     }
 
+    pub fn update_interacted_at(
+        &mut self,
+        thread_id: &ThreadId,
+        time: DateTime<Utc>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.threads.get(thread_id) {
+            self.save_internal(ThreadMetadata {
+                interacted_at: Some(time),
+                ..thread.clone()
+            });
+            cx.notify();
+        };
+    }
+
     pub fn archive(
         &mut self,
         thread_id: ThreadId,
@@ -1153,7 +1168,7 @@ impl ThreadMetadataStore {
         let created_at = existing_thread
             .and_then(|t| t.created_at)
             .unwrap_or_else(|| updated_at);
-        
+
         let interacted_at = existing_thread.and_then(|t| t.interacted_at);
 
         let agent_id = thread_ref.connection().agent_id();
