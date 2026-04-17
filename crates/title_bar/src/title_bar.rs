@@ -893,8 +893,6 @@ impl TitleBar {
             worktree_label.clone()
         };
 
-        let worktree_tooltip_label = worktree_label.clone();
-
         let worktree_button = {
             let project = self.project.clone();
             let workspace_handle = workspace.downgrade();
@@ -919,7 +917,7 @@ impl TitleBar {
                         Tooltip::with_meta(
                             "Worktree Picker",
                             Some(&zed_actions::git::Worktree),
-                            format!("Currently In Use: {}", worktree_tooltip_label),
+                            format!("Currently In Use: {}", worktree_label),
                             cx,
                         )
                     },
