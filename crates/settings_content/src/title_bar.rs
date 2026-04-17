@@ -81,10 +81,6 @@ impl From<String> for WindowButtonLayoutContent {
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct TitleBarSettingsContent {
-    /// Whether to show the branch icon beside branch switcher in the title bar.
-    ///
-    /// Default: false
-    pub show_branch_icon: Option<bool>,
     /// Whether to show onboarding banners in the title bar.
     ///
     /// Default: true

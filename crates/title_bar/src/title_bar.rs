@@ -860,7 +860,6 @@ impl TitleBar {
         };
 
         let branch_name = branch_name?;
-        let settings = TitleBarSettings::get_global(cx);
         let effective_repository = Some(repository);
 
         let worktree_label: SharedString = linked_worktree_name.unwrap_or_else(|| "main".into());
@@ -911,12 +910,8 @@ impl TitleBar {
         };
 
         let branch_tooltip_label = branch_name.clone();
+        let (branch_icon, branch_icon_color) = icon_info;
 
-        // todo dl: remove this setting?!
-        // .when(settings.show_branch_icon, |this| {
-        //     let (icon, icon_color) = icon_info;
-        //     this.child(Icon::new(icon).size(IconSize::XSmall).color(icon_color))
-        // })
         let git_picker_button = PopoverMenu::new("branch-menu")
             .menu(move |window, cx| {
                 Some(git_ui::git_picker::popover(
@@ -934,9 +929,9 @@ impl TitleBar {
                     .label_size(LabelSize::Small)
                     .color(Color::Muted)
                     .start_icon(
-                        Icon::new(IconName::GitBranch)
+                        Icon::new(branch_icon)
                             .size(IconSize::XSmall)
-                            .color(Color::Muted),
+                            .color(branch_icon_color),
                     ),
                 move |_window, cx| {
                     let meta = if is_detached_head {
