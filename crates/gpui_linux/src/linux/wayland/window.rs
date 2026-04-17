@@ -1391,16 +1391,12 @@ impl PlatformWindow for WaylandWindow {
 
     fn completed_frame(&self) {
         let mut state = self.borrow_mut();
-        // When wgpu presented a frame, Mesa's Vulkan WSI commits the wl_surface
-        // asynchronously from its presentation thread (after GPU completion),
-        // picking up any pending frame callbacks. A second commit from us would
-        // race with that, stealing the frame callback before the buffer is
-        // attached and causing wl_callback::Done to fire too early. Only commit
-        // ourselves when wgpu didn't present — to keep the frame callback cadence
-        // alive in cases where there is nothing new to draw.
+
+        // Skip commit when frame was presented. Vulcan WSI will commit from presentation thread
         if !state.renderer_presented {
             state.surface.commit();
         }
+
         state.renderer_presented = false;
     }
 
