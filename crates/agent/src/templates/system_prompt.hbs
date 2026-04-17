@@ -92,6 +92,8 @@ Use these conventions:
 
 If you want to show Mermaid source as code instead of rendering it as a diagram, use a `/dev/null/...` fenced block such as `/dev/null/example.mmd`.
 
+When generating Mermaid diagrams for the thread, prefer vertical layouts that read well in a narrow side panel. For example, prefer `graph TD` or `flowchart TD` unless a horizontal layout is clearly a better fit.
+
 You may encounter bare fenced blocks and language-tagged fenced blocks in Markdown, but for agent responses you should continue to prefer the path-based convention above, with `mermaid` as the explicit rendering carve-out.
 
 <example>
