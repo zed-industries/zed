@@ -1722,13 +1722,13 @@ impl MultiWorkspace {
         let fallback_task = removing_active.then(|| fallback_workspace(self, window, cx));
 
         cx.spawn_in(window, async move |this, cx| {
-            // Prompt each workspace for unsaved changes. If any workspace
-            // has dirty buffers, save_all_internal will emit Activate to
-            // bring it into view before showing the save dialog.
+            // Run the standard workspace close lifecycle for every workspace
+            // being removed from this window. This handles save prompting and
+            // session cleanup consistently with other replace-in-window flows.
             for workspace in &workspaces {
                 let should_continue = workspace
                     .update_in(cx, |workspace, window, cx| {
-                        workspace.save_all_internal(crate::SaveIntent::Close, window, cx)
+                        workspace.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
                     })?
                     .await?;
 
