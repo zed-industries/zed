@@ -1560,8 +1560,8 @@ pub mod test_support {
         fail_next_prompt: Arc<AtomicBool>,
         cx: &mut AsyncApp,
     ) -> Result<FakeAcpConnectionHarness> {
-        let (c2a_reader, c2a_writer) = piper::pipe(4096);
-        let (a2c_reader, a2c_writer) = piper::pipe(4096);
+        let (c2a_writer, c2a_reader) = async_pipe::pipe();
+        let (a2c_writer, a2c_reader) = async_pipe::pipe();
 
         let sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>> =
             Rc::new(RefCell::new(HashMap::default()));
@@ -1871,8 +1871,8 @@ mod tests {
         let load_count = Arc::new(AtomicUsize::new(0));
         let close_count = Arc::new(AtomicUsize::new(0));
 
-        let (c2a_reader, c2a_writer) = piper::pipe(4096);
-        let (a2c_reader, a2c_writer) = piper::pipe(4096);
+        let (c2a_writer, c2a_reader) = async_pipe::pipe();
+        let (a2c_writer, a2c_reader) = async_pipe::pipe();
 
         let sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>> =
             Rc::new(RefCell::new(HashMap::default()));
