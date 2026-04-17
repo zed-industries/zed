@@ -780,6 +780,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     .unwrap();
     cx.executor().run_until_parked();
 
+    let buffer_remote_id = buffer.read_with(cx, |buffer, _cx| buffer.remote_id());
+
     let fake_server = await_or_timeout(
         &executor,
         "awaiting first fake server spawn",
@@ -904,12 +906,10 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         5,
         async {
             while let Some(event) = project_events.next().await {
-                if let project::Event::LanguageServerBufferRegistered {
-                    buffer_abs_path, ..
-                } = event
-                    && buffer_abs_path == buffer_path
-                {
-                    return;
+                if let project::Event::LanguageServerBufferRegistered { buffer_id, .. } = event {
+                    if buffer_id == buffer_remote_id {
+                        return;
+                    }
                 }
             }
 
