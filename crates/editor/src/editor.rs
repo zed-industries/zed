@@ -3033,12 +3033,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
-        let can_supercede_active_menu =
+        let can_supersede_active_menu =
             self.context_menu.borrow().as_ref().is_none_or(|menu| {
                 !menu.visible() || matches!(menu, CodeContextMenu::Completions(_))
             });
 
-        if !can_supercede_active_menu {
+        if !can_supersede_active_menu {
             return false;
         }
 
