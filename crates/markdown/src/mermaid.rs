@@ -1,12 +1,14 @@
 use collections::HashMap;
 use gpui::{
-    Animation, AnimationExt, AnyElement, Context, ImageSource, RenderImage, StyledText, Task, img,
-    pulsating_between,
+    Animation, AnimationExt, AnyElement, App, Context, Hsla, ImageSource, RenderImage, StyledText,
+    Task, img, pulsating_between,
 };
+
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+
 use ui::prelude::*;
 
 use crate::parser::{CodeBlockKind, MarkdownEvent, MarkdownTag};
@@ -99,11 +101,15 @@ impl CachedMermaidDiagram {
         let render_image = Arc::new(OnceLock::<anyhow::Result<Arc<RenderImage>>>::new());
         let render_image_clone = render_image.clone();
         let svg_renderer = cx.svg_renderer();
+        let render_options = mermaid_render_options(cx);
 
         let task = cx.spawn(async move |this, cx| {
             let value = cx
                 .background_spawn(async move {
-                    let svg_string = mermaid_rs_renderer::render(&contents.contents)?;
+                    let svg_string = mermaid_rs_renderer::render_with_options(
+                        &contents.contents,
+                        render_options,
+                    )?;
                     let scale = contents.scale as f32 / 100.0;
                     svg_renderer
                         .render_single_frame(svg_string.as_bytes(), scale)
@@ -156,6 +162,108 @@ fn parse_mermaid_info(info: &str) -> Option<u32> {
     )
 }
 
+fn mermaid_render_options(cx: &App) -> mermaid_rs_renderer::RenderOptions {
+    let colors = cx.theme().colors();
+
+    let mut theme = mermaid_rs_renderer::Theme::modern();
+    theme.primary_color = color_to_hex(colors.element_background);
+    theme.primary_text_color = color_to_hex(colors.text);
+    theme.primary_border_color = color_to_hex(colors.border_variant);
+    theme.line_color = color_to_hex(colors.border);
+    theme.secondary_color = color_to_hex(colors.editor_background);
+    theme.tertiary_color = color_to_hex(colors.panel_background);
+    theme.edge_label_background = color_to_hex(colors.element_background);
+    theme.cluster_background = color_to_hex(colors.editor_background);
+    theme.cluster_border = color_to_hex(colors.border_variant);
+    theme.background = color_to_hex(Hsla {
+        a: 0.0,
+        ..colors.editor_background
+    });
+    theme.sequence_actor_fill = color_to_hex(colors.element_background);
+    theme.sequence_actor_border = color_to_hex(colors.border_variant);
+    theme.sequence_actor_line = color_to_hex(colors.border);
+    theme.sequence_note_fill = color_to_hex(colors.panel_background);
+    theme.sequence_note_border = color_to_hex(colors.border_variant);
+    theme.sequence_activation_fill = color_to_hex(colors.editor_background);
+    theme.sequence_activation_border = color_to_hex(colors.border_variant);
+    theme.text_color = color_to_hex(colors.text);
+    theme.git_commit_label_color = color_to_hex(colors.text);
+    theme.git_commit_label_background = color_to_hex(colors.element_background);
+    theme.git_tag_label_color = color_to_hex(colors.text);
+    theme.git_tag_label_background = color_to_hex(colors.panel_background);
+    theme.git_tag_label_border = color_to_hex(colors.border_variant);
+    theme.pie_title_text_color = color_to_hex(colors.text);
+    theme.pie_section_text_color = color_to_hex(colors.text);
+    theme.pie_legend_text_color = color_to_hex(colors.text_muted);
+    theme.pie_stroke_color = color_to_hex(colors.border_variant);
+    theme.pie_outer_stroke_color = color_to_hex(colors.border);
+
+    let accent = color_to_hex(colors.text_accent);
+    theme.git_colors = [
+        accent.clone(),
+        color_to_hex(colors.text),
+        color_to_hex(colors.element_background),
+        color_to_hex(colors.editor_background),
+        color_to_hex(colors.panel_background),
+        color_to_hex(colors.border),
+        color_to_hex(colors.border_variant),
+        color_to_hex(colors.text_muted),
+    ];
+    theme.git_inv_colors = [
+        color_to_hex(colors.editor_background),
+        color_to_hex(colors.editor_background),
+        color_to_hex(colors.editor_background),
+        color_to_hex(colors.editor_background),
+        color_to_hex(colors.editor_background),
+        color_to_hex(colors.editor_background),
+        color_to_hex(colors.editor_background),
+        color_to_hex(colors.editor_background),
+    ];
+    theme.git_branch_label_colors = [
+        accent.clone(),
+        accent.clone(),
+        accent.clone(),
+        accent.clone(),
+        accent.clone(),
+        accent.clone(),
+        accent.clone(),
+        accent,
+    ];
+    theme.pie_colors = [
+        color_to_hex(colors.text_accent),
+        color_to_hex(colors.border_selected),
+        color_to_hex(colors.border_focused),
+        color_to_hex(colors.icon),
+        color_to_hex(colors.text),
+        color_to_hex(colors.text_muted),
+        color_to_hex(colors.border),
+        color_to_hex(colors.border_variant),
+        color_to_hex(colors.element_background),
+        color_to_hex(colors.editor_background),
+        color_to_hex(colors.panel_background),
+        color_to_hex(colors.background),
+    ];
+
+    mermaid_rs_renderer::RenderOptions {
+        theme,
+        ..Default::default()
+    }
+}
+
+fn color_to_hex(color: Hsla) -> String {
+    let color = color.to_rgb();
+    let red = (color.r * 255.0).round() as u8;
+    let green = (color.g * 255.0).round() as u8;
+    let blue = (color.b * 255.0).round() as u8;
+    let alpha = (color.a * 255.0).round() as u8;
+
+    if alpha == 255 {
+        format!("#{red:02X}{green:02X}{blue:02X}")
+    } else {
+        format!("#{red:02X}{green:02X}{blue:02X}{alpha:02X}")
+    }
+}
+
 pub(crate) fn extract_mermaid_diagrams(
     source: &str,
     events: &[(Range<usize>, MarkdownEvent)],
@@ -195,11 +303,10 @@ pub(crate) fn extract_mermaid_diagrams(
 pub(crate) fn render_mermaid_diagram(
     parsed: &ParsedMarkdownMermaidDiagram,
     mermaid_state: &MermaidState,
-    style: &MarkdownStyle,
+    _style: &MarkdownStyle,
 ) -> AnyElement {
     let cached = mermaid_state.cache.get(&parsed.contents);
-    let mut container = div().w_full();
-    container.style().refine(&style.code_block);
+    let container = div().w_full();
 
     if let Some(result) = cached.and_then(|cached| cached.render_image.get()) {
         match result {
