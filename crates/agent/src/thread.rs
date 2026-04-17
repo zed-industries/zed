@@ -84,7 +84,30 @@ pub struct SubagentContext {
 
     /// Current depth level (0 = root agent, 1 = first-level subagent, etc.)
     pub depth: u8,
+
+    /// Optional wall-clock budget (seconds) the parent grants this subagent.
+    /// When `Some`, the subagent should self-cancel if it exceeds this limit.
+    /// `None` means unbounded (inherits parent's remaining budget minus overhead).
+    #[serde(default)]
+    pub timeout_budget_secs: Option<u64>,
+
+    /// Scheduling priority relative to sibling subagents (0 = lowest, 255 = highest).
+    /// Agents with higher priority are given model tokens first when the system
+    /// is under rate-limit pressure. Defaults to 128 (neutral) for existing data.
+    #[serde(default = "SubagentContext::default_priority")]
+    pub priority: u8,
 }
+
+impl SubagentContext {
+    fn default_priority() -> u8 {
+        128
+    }
+}
+
+/// Maximum recursion depth for the subagent tree.
+/// Agents at this depth will not receive the `SpawnAgentTool`, preventing
+/// unbounded nesting. Increase only after profiling token consumption.
+pub const MAX_SUBAGENT_DEPTH: u8 = 4;
 
 /// The ID of the user prompt that initiated a request.
 ///
