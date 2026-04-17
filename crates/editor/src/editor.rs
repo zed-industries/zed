@@ -27691,22 +27691,33 @@ impl CodeActionProvider for Entity<Project> {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
-        self.update(cx, |project, cx| {
-            let code_lens_actions = project.code_lens_actions(buffer, range.clone(), cx);
-            let code_actions = project.code_actions(buffer, range, None, cx);
-            cx.background_spawn(async move {
+        let project = self.clone();
+        let buffer = buffer.clone();
+        self.update(cx, |p, cx| {
+            let code_lens_actions = p.code_lens_actions(&buffer, range.clone(), cx);
+            let code_actions = p.code_actions(&buffer, range, None, cx);
+            cx.spawn(async move |_, cx| {
                 let (code_lens_actions, code_actions) = join(code_lens_actions, code_actions).await;
-                Ok(code_lens_actions
+                let lens_actions = code_lens_actions
                     .context("code lens fetch")?
-                    .into_iter()
-                    .flatten()
-                    .chain(
-                        code_actions
-                            .context("code action fetch")?
-                            .into_iter()
-                            .flatten(),
-                    )
-                    .collect())
+                    .unwrap_or_default();
+                let other_actions = code_actions
+                    .context("code action fetch")?
+                    .unwrap_or_default();
+
+                // Resolve lazy code lens items so the menu displays real
+                // titles (e.g. rust-analyzer's "N implementations") rather
+                // than "Unknown command".
+                let mut resolved_lens = Vec::with_capacity(lens_actions.len());
+                for action in lens_actions {
+                    let resolve_task = project.update(cx, |project, cx| {
+                        project.resolve_code_action(buffer.clone(), action.clone(), cx)
+                    });
+                    let resolved = resolve_task.await.unwrap_or(action);
+                    resolved_lens.push(resolved);
+                }
+
+                Ok(resolved_lens.into_iter().chain(other_actions).collect())
             })
         })
     }

@@ -28548,6 +28548,134 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
 }
 
 #[gpui::test]
+async fn test_code_lens_resolved_before_reaching_code_action_menu(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.ts": "a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["ts".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+    )));
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                code_lens_provider: Some(lsp::CodeLensOptions {
+                    resolve_provider: Some(true),
+                }),
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec!["the_command".to_string()],
+                    ..lsp::ExecuteCommandOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/dir/a.ts")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let fake_server = fake_language_servers.next().await.unwrap();
+
+    let buffer = editor.update(cx, |editor, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .expect("have opened a single file by path")
+    });
+
+    let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let anchor = buffer_snapshot.anchor_at(0, text::Bias::Left);
+    drop(buffer_snapshot);
+
+    let actions = cx
+        .update_window(*window, |_, window, cx| {
+            project.code_actions(&buffer, anchor..anchor, window, cx)
+        })
+        .unwrap();
+
+    // Server returns a lazy code lens: no `command`, only `data`. A proper
+    // `codeLens/resolve` is required before the menu can display it.
+    fake_server
+        .set_request_handler::<lsp::request::CodeLensRequest, _, _>(|_, _| async move {
+            Ok(Some(vec![lsp::CodeLens {
+                range: lsp::Range::default(),
+                command: None,
+                data: Some(json!({"id": "lens_1"})),
+            }]))
+        })
+        .next()
+        .await;
+
+    fake_server
+        .set_request_handler::<lsp::request::CodeLensResolve, _, _>(|lens, _| async move {
+            Ok(lsp::CodeLens {
+                command: Some(lsp::Command {
+                    title: "Resolved title".to_owned(),
+                    command: "the_command".to_owned(),
+                    arguments: None,
+                }),
+                ..lens
+            })
+        })
+        .next()
+        .await;
+
+    let actions = actions.await.unwrap();
+    assert_eq!(
+        actions.len(),
+        1,
+        "Expected a single lens action, got: {actions:#?}"
+    );
+    let action = &actions[0];
+    assert_eq!(
+        action.lsp_action.title(),
+        "Resolved title",
+        "Lazy lens must be resolved before being surfaced as a code action, \
+         otherwise the menu would display \"Unknown command\" and client-side \
+         dispatch of commands like `rust-analyzer.showReferences` would miss."
+    );
+    assert!(action.resolved, "Action should be marked as resolved");
+}
+
+#[gpui::test]
 async fn test_editor_restore_data_different_in_panes(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

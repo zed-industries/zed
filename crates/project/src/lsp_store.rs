@@ -5501,6 +5501,37 @@ impl LspStore {
         }
     }
 
+    /// Resolves the `command`/`edit` fields of a lazily-returned code action
+    /// or code lens. `apply_code_action` resolves at apply time, but UI paths
+    /// that need to display the action's label before applying (e.g. the code
+    /// action menu) must resolve up front.
+    pub fn resolve_code_action(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        mut action: CodeAction,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<CodeAction>> {
+        if action.resolved || self.upstream_client().is_some() || !self.mode.is_local() {
+            return Task::ready(Ok(action));
+        }
+        let Some((_, lang_server, request_timeout)) = buffer_handle.update(cx, |buffer, cx| {
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
+            self.language_server_for_local_buffer(buffer, action.server_id, cx)
+                .map(|(adapter, server)| (adapter.clone(), server.clone(), request_timeout))
+        }) else {
+            return Task::ready(Ok(action));
+        };
+
+        cx.background_spawn(async move {
+            LocalLspStore::try_resolve_code_action(&lang_server, &mut action, request_timeout)
+                .await
+                .context("resolving a code action")?;
+            Ok(action)
+        })
+    }
+
     pub fn apply_code_action(
         &self,
         buffer_handle: Entity<Buffer>,

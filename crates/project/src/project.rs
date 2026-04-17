@@ -4424,6 +4424,17 @@ impl Project {
         })
     }
 
+    pub fn resolve_code_action(
+        &self,
+        buffer_handle: Entity<Buffer>,
+        action: CodeAction,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<CodeAction>> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.resolve_code_action(buffer_handle, action, cx)
+        })
+    }
+
     pub fn apply_code_action(
         &self,
         buffer_handle: Entity<Buffer>,
