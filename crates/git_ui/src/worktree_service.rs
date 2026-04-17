@@ -444,7 +444,7 @@ pub fn handle_create_worktree(
         .to_string()
         .into();
 
-    workspace.set_active_worktree_creation(Some(display_name), cx);
+    workspace.set_active_worktree_creation(Some(display_name), false, cx);
 
     cx.spawn_in(window, async move |_workspace_entity, mut cx| {
         let result = do_create_worktree(
@@ -464,7 +464,7 @@ pub fn handle_create_worktree(
             log::error!("Failed to create worktree: {err}");
             workspace_handle
                 .update(cx, |workspace, cx| {
-                    workspace.set_active_worktree_creation(None, cx);
+                    workspace.set_active_worktree_creation(None, false, cx);
                     show_error_toast(
                         workspace.weak_handle().upgrade().expect("workspace exists"),
                         "worktree create",
@@ -516,7 +516,7 @@ pub fn handle_switch_worktree(
 
     let display_name: SharedString = action.display_name.clone().into();
 
-    workspace.set_active_worktree_creation(Some(display_name), cx);
+    workspace.set_active_worktree_creation(Some(display_name), true, cx);
 
     let worktree_path = action.path.clone();
 
@@ -537,7 +537,7 @@ pub fn handle_switch_worktree(
             log::error!("Failed to switch worktree: {err}");
             workspace_handle
                 .update(cx, |workspace, cx| {
-                    workspace.set_active_worktree_creation(None, cx);
+                    workspace.set_active_worktree_creation(None, false, cx);
                     show_error_toast(
                         workspace.weak_handle().upgrade().expect("workspace exists"),
                         "worktree switch",
@@ -860,7 +860,7 @@ async fn open_worktree_workspace(
     // stops showing the loading indicator immediately.
     workspace
         .update(cx, |ws, cx| {
-            ws.set_active_worktree_creation(None, cx);
+            ws.set_active_worktree_creation(None, false, cx);
         })
         .ok();
 
@@ -876,7 +876,7 @@ async fn open_worktree_workspace(
         // This must be a separate update so the event is delivered
         // before focus restoration triggers ensure_thread_initialized.
         new_workspace.update(cx, |workspace, cx| {
-            workspace.set_active_worktree_creation(None, cx);
+            workspace.set_active_worktree_creation(None, false, cx);
         });
 
         if let Some(dock_position) = focused_dock {
