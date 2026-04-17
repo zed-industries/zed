@@ -46,6 +46,15 @@ impl JsDebugAdapter {
         })
     }
 
+    async fn find_cached_adapter(&self) -> Option<PathBuf> {
+        let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
+        let file_name_prefix = format!("{}_", self.name());
+        util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+            file_name.starts_with(&file_name_prefix)
+        })
+        .await
+    }
+
     async fn get_installed_binary(
         &self,
         delegate: &Arc<dyn DapDelegate>,
@@ -133,23 +142,17 @@ impl JsDebugAdapter {
         let adapter_path = if let Some(user_installed_path) = user_installed_path {
             user_installed_path
         } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
-
-            let file_name_prefix = format!("{}_", self.name());
-
-            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                file_name.starts_with(&file_name_prefix)
-            })
-            .await
-            .with_context(|| {
-                format!(
-                    "{} debug adapter not found in {}. \
-                     It may need to be downloaded — check your network connection and try again.",
-                    self.name(),
-                    adapter_path.display()
-                )
-            })?
-            .join(Self::ADAPTER_PATH)
+            self.find_cached_adapter()
+                .await
+                .with_context(|| {
+                    format!(
+                        "{} debug adapter not found in {}. \
+                         It may need to be downloaded, check your network connection and try again.",
+                        self.name(),
+                        paths::debug_adapters_dir().join(self.name().as_ref()).display()
+                    )
+                })?
+                .join(Self::ADAPTER_PATH)
         };
 
         let arguments = if let Some(mut args) = user_args {
@@ -528,25 +531,14 @@ impl DebugAdapter for JsDebugAdapter {
                     .await?;
                 }
                 Err(error) => {
-                    let adapter_path =
-                        paths::debug_adapters_dir().join(self.name().as_ref());
-                    let file_name_prefix = format!("{}_", self.name());
-                    let has_cached_adapter =
-                        util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                            file_name.starts_with(&file_name_prefix)
-                        })
-                        .await
-                        .is_some();
-
-                    if has_cached_adapter {
+                    if self.find_cached_adapter().await.is_some() {
                         delegate.output_to_console(format!(
-                            "Failed to fetch latest version, using cached adapter: {error}"
+                            "Failed to fetch latest version, using cached adapter: {error:#}"
                         ));
                     } else {
                         return Err(error).context(format!(
-                            "Failed to download {} debug adapter \
-                             (no cached version available). \
-                             Check your network connection and try again.",
+                            "Failed to download {} debug adapter and no cached version is available. \
+                             Check your network connection, or reinstall the adapter, and try again.",
                             self.name(),
                         ));
                     }
