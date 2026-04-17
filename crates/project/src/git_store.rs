@@ -17,7 +17,7 @@ use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
-use fs::Fs;
+use fs::{Fs, RemoveOptions};
 use futures::{
     FutureExt, StreamExt,
     channel::{
@@ -33,9 +33,10 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, CreateWorktreeTarget,
-        DiffType, FetchOptions, GitRepository, GitRepositoryCheckpoint, GraphCommitData,
-        InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
-        RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree,
+        DiffType, FetchOptions, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
+        GraphCommitData, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
+        RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
+        Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -563,7 +564,9 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
         client.add_entity_request_handler(Self::handle_create_checkpoint);
+        client.add_entity_request_handler(Self::handle_create_archive_checkpoint);
         client.add_entity_request_handler(Self::handle_restore_checkpoint);
+        client.add_entity_request_handler(Self::handle_restore_archive_checkpoint);
         client.add_entity_request_handler(Self::handle_compare_checkpoints);
         client.add_entity_request_handler(Self::handle_diff_checkpoints);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
@@ -589,19 +592,54 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_remove_worktree);
         client.add_entity_request_handler(Self::handle_rename_worktree);
         client.add_entity_request_handler(Self::handle_get_head_sha);
+        client.add_entity_request_handler(Self::handle_edit_ref);
+        client.add_entity_request_handler(Self::handle_repair_worktrees);
     }
 
     pub fn is_local(&self) -> bool {
         matches!(self.state, GitStoreState::Local { .. })
     }
+
+    fn set_active_repo_id(&mut self, repo_id: RepositoryId, cx: &mut Context<Self>) {
+        if self.active_repo_id != Some(repo_id) {
+            self.active_repo_id = Some(repo_id);
+            cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(repo_id)));
+        }
+    }
+
     pub fn set_active_repo_for_path(&mut self, project_path: &ProjectPath, cx: &mut Context<Self>) {
         if let Some((repo, _)) = self.repository_and_path_for_project_path(project_path, cx) {
-            let id = repo.read(cx).id;
-            if self.active_repo_id != Some(id) {
-                self.active_repo_id = Some(id);
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
-            }
+            self.set_active_repo_id(repo.read(cx).id, cx);
         }
+    }
+
+    pub fn set_active_repo_for_worktree(
+        &mut self,
+        worktree_id: WorktreeId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(worktree) = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+        else {
+            return;
+        };
+        let worktree_abs_path = worktree.read(cx).abs_path();
+        let Some(repo_id) = self
+            .repositories
+            .values()
+            .filter(|repo| {
+                let repo_path = &repo.read(cx).work_directory_abs_path;
+                *repo_path == worktree_abs_path || worktree_abs_path.starts_with(repo_path.as_ref())
+            })
+            .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
+            .map(|repo| repo.read(cx).id)
+        else {
+            return;
+        };
+
+        self.set_active_repo_id(repo_id, cx);
     }
 
     pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
@@ -965,7 +1003,9 @@ impl GitStore {
                 diff_state.language_registry = language_registry;
 
                 match kind {
-                    DiffKind::Unstaged => diff_state.unstaged_diff = Some(diff.downgrade()),
+                    DiffKind::Unstaged => {
+                        diff_state.unstaged_diff.get_or_insert(diff.downgrade());
+                    }
                     DiffKind::Uncommitted => {
                         let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
                             diff
@@ -2484,6 +2524,46 @@ impl GitStore {
         Ok(proto::GitGetHeadShaResponse { sha: head_sha })
     }
 
+    async fn handle_edit_ref(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitEditRef>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let ref_name = envelope.payload.ref_name;
+        let commit = match envelope.payload.action {
+            Some(proto::git_edit_ref::Action::UpdateToCommit(sha)) => Some(sha),
+            Some(proto::git_edit_ref::Action::Delete(_)) => None,
+            None => anyhow::bail!("GitEditRef missing action"),
+        };
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.edit_ref(ref_name, commit)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_repair_worktrees(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRepairWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.repair_worktrees()
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
     async fn handle_get_branches(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitGetBranches>,
@@ -2670,6 +2750,26 @@ impl GitStore {
         })
     }
 
+    async fn handle_create_archive_checkpoint(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCreateArchiveCheckpoint>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitCreateArchiveCheckpointResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let (staged_commit_sha, unstaged_commit_sha) = repository_handle
+            .update(&mut cx, |repository, _| {
+                repository.create_archive_checkpoint()
+            })
+            .await??;
+
+        Ok(proto::GitCreateArchiveCheckpointResponse {
+            staged_commit_sha,
+            unstaged_commit_sha,
+        })
+    }
+
     async fn handle_restore_checkpoint(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitRestoreCheckpoint>,
@@ -2685,6 +2785,25 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository, _| {
                 repository.restore_checkpoint(checkpoint)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_restore_archive_checkpoint(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRestoreArchiveCheckpoint>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let staged_commit_sha = envelope.payload.staged_commit_sha;
+        let unstaged_commit_sha = envelope.payload.unstaged_commit_sha;
+
+        repository_handle
+            .update(&mut cx, |repository, _| {
+                repository.restore_archive_checkpoint(staged_commit_sha, unstaged_commit_sha)
             })
             .await??;
 
@@ -3602,7 +3721,7 @@ impl BufferGitState {
                 uncommitted_diff
                     .update(cx, |diff, cx| {
                         if language_changed {
-                            diff.language_changed(language.clone(), language_registry, cx);
+                            diff.language_changed(language.clone(), language_registry.clone(), cx);
                         }
                         diff.set_snapshot_with_secondary(
                             new_uncommitted_diff,
@@ -3631,7 +3750,12 @@ impl BufferGitState {
                     .await;
 
                 oid_diff
-                    .update(cx, |diff, cx| diff.set_snapshot(new_oid_diff, &buffer, cx))
+                    .update(cx, |diff, cx| {
+                        if language_changed {
+                            diff.language_changed(language.clone(), language_registry.clone(), cx);
+                        }
+                        diff.set_snapshot(new_oid_diff, &buffer, cx)
+                    })
                     .await;
 
                 log::debug!(
@@ -6060,6 +6184,32 @@ impl Repository {
         )
     }
 
+    pub fn checkout_branch_in_worktree(
+        &mut self,
+        branch_name: String,
+        worktree_path: PathBuf,
+        create: bool,
+    ) -> oneshot::Receiver<Result<()>> {
+        let description = if create {
+            format!("git checkout -b {branch_name}")
+        } else {
+            format!("git checkout {branch_name}")
+        };
+        self.send_job(Some(description.into()), move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend
+                        .checkout_branch_in_worktree(branch_name, worktree_path, create)
+                        .await
+                }
+                RepositoryState::Remote(_) => {
+                    log::warn!("checkout_branch_in_worktree not supported for remote repositories");
+                    Ok(())
+                }
+            }
+        })
+    }
+
     pub fn head_sha(&mut self) -> oneshot::Receiver<Result<Option<String>>> {
         let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
@@ -6081,59 +6231,86 @@ impl Repository {
         })
     }
 
+    fn edit_ref(
+        &mut self,
+        ref_name: String,
+        commit: Option<String>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => match commit {
+                    Some(commit) => backend.update_ref(ref_name, commit).await,
+                    None => backend.delete_ref(ref_name).await,
+                },
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let action = match commit {
+                        Some(sha) => proto::git_edit_ref::Action::UpdateToCommit(sha),
+                        None => {
+                            proto::git_edit_ref::Action::Delete(proto::git_edit_ref::DeleteRef {})
+                        }
+                    };
+                    client
+                        .request(proto::GitEditRef {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            ref_name,
+                            action: Some(action),
+                        })
+                        .await?;
+                    Ok(())
+                }
+            }
+        })
+    }
+
     pub fn update_ref(
         &mut self,
         ref_name: String,
         commit: String,
     ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.update_ref(ref_name, commit).await
-                }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!("update_ref is not supported for remote repositories")
-                }
-            }
-        })
+        self.edit_ref(ref_name, Some(commit))
     }
 
     pub fn delete_ref(&mut self, ref_name: String) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.delete_ref(ref_name).await
-                }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!("delete_ref is not supported for remote repositories")
-                }
-            }
-        })
+        self.edit_ref(ref_name, None)
     }
 
     pub fn repair_worktrees(&mut self) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.repair_worktrees().await
                 }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!("repair_worktrees is not supported for remote repositories")
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    client
+                        .request(proto::GitRepairWorktrees {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                        })
+                        .await?;
+                    Ok(())
                 }
             }
         })
     }
 
     pub fn create_archive_checkpoint(&mut self) -> oneshot::Receiver<Result<(String, String)>> {
+        let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.create_archive_checkpoint().await
                 }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!(
-                        "create_archive_checkpoint is not supported for remote repositories"
-                    )
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let response = client
+                        .request(proto::GitCreateArchiveCheckpoint {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                        })
+                        .await?;
+                    Ok((response.staged_commit_sha, response.unstaged_commit_sha))
                 }
             }
         })
@@ -6144,6 +6321,7 @@ impl Repository {
         staged_sha: String,
         unstaged_sha: String,
     ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
@@ -6151,10 +6329,16 @@ impl Repository {
                         .restore_archive_checkpoint(staged_sha, unstaged_sha)
                         .await
                 }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!(
-                        "restore_archive_checkpoint is not supported for remote repositories"
-                    )
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    client
+                        .request(proto::GitRestoreArchiveCheckpoint {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            staged_commit_sha: staged_sha,
+                            unstaged_commit_sha: unstaged_sha,
+                        })
+                        .await?;
+                    Ok(())
                 }
             }
         })
@@ -6166,7 +6350,34 @@ impl Repository {
             Some(format!("git worktree remove: {}", path.display()).into()),
             move |repo, _cx| async move {
                 match repo {
-                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    RepositoryState::Local(LocalRepositoryState { backend, fs, .. }) => {
+                        // When forcing, delete the worktree directory ourselves before
+                        // invoking git. `git worktree remove` can remove the admin
+                        // metadata in `.git/worktrees/<name>` but fail to delete the
+                        // working directory (it continues past directory-removal errors),
+                        // leaving an orphaned folder on disk. Deleting first guarantees
+                        // the directory is gone, and `git worktree remove --force`
+                        // tolerates a missing working tree while cleaning up the admin
+                        // entry. We keep this inside the `Local` arm so that for remote
+                        // projects the deletion runs on the remote machine (where the
+                        // `GitRemoveWorktree` RPC is handled against the local repo on
+                        // the headless server) using its own filesystem.
+                        //
+                        // Non-force removals are left untouched: `git worktree remove`
+                        // must see the dirty working tree to refuse the operation.
+                        if force {
+                            fs.remove_dir(
+                                &path,
+                                RemoveOptions {
+                                    recursive: true,
+                                    ignore_if_not_exists: true,
+                                },
+                            )
+                            .await
+                            .with_context(|| {
+                                format!("failed to delete worktree directory '{}'", path.display())
+                            })?;
+                        }
                         backend.remove_worktree(path, force).await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
@@ -6877,6 +7088,19 @@ impl Repository {
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
+    pub fn load_commit_template_text(
+        &mut self,
+    ) -> oneshot::Receiver<Result<Option<GitCommitTemplate>>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.load_commit_template().await
+                }
+                RepositoryState::Remote(_) => Ok(None),
+            }
+        })
+    }
+
     fn load_blob_content(&mut self, oid: Oid, cx: &App) -> Task<Result<String>> {
         let repository_id = self.snapshot.id;
         let rx = self.send_job(None, move |state, _| async move {
@@ -7118,9 +7342,7 @@ pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Opti
         .canonicalize(&gitdir_abs.join(commondir_content.trim()))
         .await
         .ok()?;
-    Some(git::repository::original_repo_path_from_common_dir(
-        &common_dir,
-    ))
+    git::repository::original_repo_path_from_common_dir(&common_dir)
 }
 
 /// Validates that the resolved worktree directory is acceptable:
@@ -7377,15 +7599,21 @@ fn worktree_to_proto(worktree: &git::repository::Worktree) -> proto::Worktree {
             .unwrap_or_default(),
         sha: worktree.sha.to_string(),
         is_main: worktree.is_main,
+        is_bare: worktree.is_bare,
     }
 }
 
 fn proto_to_worktree(proto: &proto::Worktree) -> git::repository::Worktree {
     git::repository::Worktree {
         path: PathBuf::from(proto.path.clone()),
-        ref_name: Some(SharedString::from(&proto.ref_name)),
+        ref_name: if proto.ref_name.is_empty() {
+            None
+        } else {
+            Some(SharedString::from(&proto.ref_name))
+        },
         sha: proto.sha.clone().into(),
         is_main: proto.is_main,
+        is_bare: proto.is_bare,
     }
 }
 

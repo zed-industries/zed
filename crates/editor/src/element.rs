@@ -4,12 +4,12 @@ use crate::{
     ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape,
     CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction,
     Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
-    FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
-    InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
+    FocusedBlock, GutterDimensions, GutterHoverButton, HalfPageDown, HalfPageUp, HandleInput,
+    HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
     MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
-    PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
-    SelectPhase, Selection, SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt, SelectPhase, Selection,
+    SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint,
+    ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -34,7 +34,7 @@ use crate::{
     },
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-use collections::{BTreeMap, HashMap};
+use collections::{BTreeMap, HashMap, HashSet};
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use git::{Oid, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
@@ -62,7 +62,7 @@ use multi_buffer::{
 };
 
 use project::{
-    DisableAiSettings, Entry, ProjectPath,
+    DisableAiSettings, Entry,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
     project_settings::ProjectSettings,
 };
@@ -552,13 +552,15 @@ impl EditorElement {
                 cx.propagate();
             }
         });
-        register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.format_selections(action, window, cx) {
-                editor.detach_and_notify_err(task, window, cx);
-            } else {
-                cx.propagate();
-            }
-        });
+        if editor.read(cx).can_format_selections(cx) {
+            register_action(editor, window, |editor, action, window, cx| {
+                if let Some(task) = editor.format_selections(action, window, cx) {
+                    editor.detach_and_notify_err(task, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            });
+        }
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.organize_imports(action, window, cx) {
                 editor.detach_and_notify_err(task, window, cx);
@@ -650,6 +652,9 @@ impl EditorElement {
         register_action(editor, window, Editor::insert_uuid_v4);
         register_action(editor, window, Editor::insert_uuid_v7);
         register_action(editor, window, Editor::open_selections_in_multibuffer);
+        register_action(editor, window, Editor::toggle_bookmark);
+        register_action(editor, window, Editor::go_to_next_bookmark);
+        register_action(editor, window, Editor::go_to_previous_bookmark);
         register_action(editor, window, Editor::toggle_breakpoint);
         register_action(editor, window, Editor::edit_log_breakpoint);
         register_action(editor, window, Editor::enable_breakpoint);
@@ -888,9 +893,11 @@ impl EditorElement {
             let gutter_right_padding = editor.gutter_dimensions.right_padding;
             let hitbox = &position_map.gutter_hitbox;
 
-            if event.position.x <= hitbox.bounds.right() - gutter_right_padding {
+            if event.position.x <= hitbox.bounds.right() - gutter_right_padding
+                && editor.collaboration_hub.is_none()
+            {
                 let point_for_position = position_map.point_for_position(event.position);
-                editor.set_breakpoint_context_menu(
+                editor.set_gutter_context_menu(
                     point_for_position.previous_valid.row(),
                     None,
                     event.position,
@@ -1394,49 +1401,26 @@ impl EditorElement {
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
 
-            if let Some((buffer_anchor, buffer_snapshot)) = position_map
+            if position_map
                 .snapshot
                 .buffer_snapshot()
                 .anchor_to_buffer_anchor(buffer_anchor)
-                && let Some(file) = buffer_snapshot.file()
+                .is_some()
             {
-                let as_point = text::ToPoint::to_point(&buffer_anchor, buffer_snapshot);
-
                 let is_visible = editor
-                    .gutter_breakpoint_indicator
+                    .gutter_hover_button
                     .0
                     .is_some_and(|indicator| indicator.is_active);
 
-                let has_existing_breakpoint =
-                    editor.breakpoint_store.as_ref().is_some_and(|store| {
-                        let Some(project) = &editor.project else {
-                            return false;
-                        };
-                        let Some(abs_path) = project.read(cx).absolute_path(
-                            &ProjectPath {
-                                path: file.path().clone(),
-                                worktree_id: file.worktree_id(cx),
-                            },
-                            cx,
-                        ) else {
-                            return false;
-                        };
-                        store
-                            .read(cx)
-                            .breakpoint_at_row(&abs_path, as_point.row, cx)
-                            .is_some()
-                    });
-
                 if !is_visible {
-                    editor.gutter_breakpoint_indicator.1.get_or_insert_with(|| {
+                    editor.gutter_hover_button.1.get_or_insert_with(|| {
                         cx.spawn(async move |this, cx| {
                             cx.background_executor()
                                 .timer(Duration::from_millis(200))
                                 .await;
 
                             this.update(cx, |this, cx| {
-                                if let Some(indicator) = this.gutter_breakpoint_indicator.0.as_mut()
-                                {
+                                if let Some(indicator) = this.gutter_hover_button.0.as_mut() {
                                     indicator.is_active = true;
                                     cx.notify();
                                 }
@@ -1446,22 +1430,21 @@ impl EditorElement {
                     });
                 }
 
-                Some(PhantomBreakpointIndicator {
+                Some(GutterHoverButton {
                     display_row: valid_point.row(),
                     is_active: is_visible,
-                    collides_with_existing_breakpoint: has_existing_breakpoint,
                 })
             } else {
-                editor.gutter_breakpoint_indicator.1 = None;
+                editor.gutter_hover_button.1 = None;
                 None
             }
         } else {
-            editor.gutter_breakpoint_indicator.1 = None;
+            editor.gutter_hover_button.1 = None;
             None
         };
 
-        if &breakpoint_indicator != &editor.gutter_breakpoint_indicator.0 {
-            editor.gutter_breakpoint_indicator.0 = breakpoint_indicator;
+        if &breakpoint_indicator != &editor.gutter_hover_button.0 {
+            editor.gutter_hover_button.0 = breakpoint_indicator;
             cx.notify();
         }
 
@@ -3131,16 +3114,62 @@ impl EditorElement {
         (offset_y, length, row_range)
     }
 
+    fn layout_bookmarks(
+        &self,
+        gutter: &Gutter<'_>,
+        bookmarks: &HashSet<DisplayRow>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<AnyElement> {
+        if self.split_side == Some(SplitSide::Left) {
+            return Vec::new();
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            bookmarks
+                .iter()
+                .filter_map(|row| {
+                    gutter.layout_item_skipping_folds(
+                        *row,
+                        |cx, _| editor.render_bookmark(*row, cx).into_any_element(),
+                        window,
+                        cx,
+                    )
+                })
+                .collect_vec()
+        })
+    }
+
+    fn layout_gutter_hover_button(
+        &self,
+        gutter: &Gutter,
+        position: Anchor,
+        row: DisplayRow,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        if self.split_side == Some(SplitSide::Left) {
+            return None;
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            gutter.layout_item_skipping_folds(
+                row,
+                |cx, window| {
+                    editor
+                        .render_gutter_hover_button(position, row, window, cx)
+                        .into_any_element()
+                },
+                window,
+                cx,
+            )
+        })
+    }
+
     fn layout_breakpoints(
         &self,
-        line_height: Pixels,
-        range: Range<DisplayRow>,
-        scroll_position: gpui::Point<ScrollOffset>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        snapshot: &EditorSnapshot,
-        breakpoints: HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
-        row_infos: &[RowInfo],
+        gutter: &Gutter,
+        breakpoints: &HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -3150,43 +3179,18 @@ impl EditorElement {
 
         self.editor.update(cx, |editor, cx| {
             breakpoints
-                .into_iter()
-                .filter_map(|(display_row, (text_anchor, bp, state))| {
-                    if row_infos
-                        .get((display_row.0.saturating_sub(range.start.0)) as usize)
-                        .is_some_and(|row_info| {
-                            row_info.expand_info.is_some()
-                                || row_info
-                                    .diff_status
-                                    .is_some_and(|status| status.is_deleted())
-                        })
-                    {
-                        return None;
-                    }
-
-                    if range.start > display_row || range.end < display_row {
-                        return None;
-                    }
-
-                    let row =
-                        MultiBufferRow(DisplayPoint::new(display_row, 0).to_point(snapshot).row);
-                    if snapshot.is_line_folded(row) {
-                        return None;
-                    }
-
-                    let button = editor.render_breakpoint(text_anchor, display_row, &bp, state, cx);
-
-                    let button = prepaint_gutter_button(
-                        button.into_any_element(),
-                        display_row,
-                        line_height,
-                        gutter_dimensions,
-                        scroll_position,
-                        gutter_hitbox,
+                .iter()
+                .filter_map(|(row, (text_anchor, bp, state))| {
+                    gutter.layout_item_skipping_folds(
+                        *row,
+                        |cx, _| {
+                            editor
+                                .render_breakpoint(*text_anchor, *row, &bp, *state, cx)
+                                .into_any_element()
+                        },
                         window,
                         cx,
-                    );
-                    Some(button)
+                    )
                 })
                 .collect_vec()
         })
@@ -3238,17 +3242,11 @@ impl EditorElement {
         Some((display_row, buffer_row))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_run_indicators(
         &self,
-        line_height: Pixels,
-        range: Range<DisplayRow>,
-        row_infos: &[RowInfo],
-        scroll_position: gpui::Point<ScrollOffset>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        snapshot: &EditorSnapshot,
-        breakpoints: &mut HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
+        gutter: &Gutter,
+        run_indicators: &HashSet<DisplayRow>,
+        breakpoints: &HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -3267,7 +3265,7 @@ impl EditorElement {
                 {
                     actions
                         .tasks()
-                        .map(|tasks| tasks.position.to_display_point(snapshot).row())
+                        .map(|tasks| tasks.position.to_display_point(gutter.snapshot).row())
                         .or_else(|| match deployed_from {
                             Some(CodeActionSource::Indicator(row)) => Some(*row),
                             _ => None,
@@ -3276,77 +3274,25 @@ impl EditorElement {
                     None
                 };
 
-            let offset_range_start =
-                snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left);
-
-            let offset_range_end =
-                snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
-
-            editor
-                .runnables
-                .all_runnables()
-                .filter_map(|tasks| {
-                    let multibuffer_point = tasks.offset.to_point(&snapshot.buffer_snapshot());
-                    if multibuffer_point < offset_range_start
-                        || multibuffer_point > offset_range_end
-                    {
-                        return None;
-                    }
-                    let multibuffer_row = MultiBufferRow(multibuffer_point.row);
-                    let buffer_folded = snapshot
-                        .buffer_snapshot()
-                        .buffer_line_for_row(multibuffer_row)
-                        .map(|(buffer_snapshot, _)| buffer_snapshot.remote_id())
-                        .map(|buffer_id| editor.is_buffer_folded(buffer_id, cx))
-                        .unwrap_or(false);
-                    if buffer_folded {
-                        return None;
-                    }
-
-                    if snapshot.is_line_folded(multibuffer_row) {
-                        // Skip folded indicators, unless it's the starting line of a fold.
-                        if multibuffer_row
-                            .0
-                            .checked_sub(1)
-                            .is_some_and(|previous_row| {
-                                snapshot.is_line_folded(MultiBufferRow(previous_row))
-                            })
-                        {
-                            return None;
-                        }
-                    }
-
-                    let display_row = multibuffer_point.to_display_point(snapshot).row();
-                    if !range.contains(&display_row) {
-                        return None;
-                    }
-                    if row_infos
-                        .get((display_row - range.start).0 as usize)
-                        .is_some_and(|row_info| row_info.expand_info.is_some())
-                    {
-                        return None;
-                    }
-
-                    let removed_breakpoint = breakpoints.remove(&display_row);
-                    let button = editor.render_run_indicator(
-                        &self.style,
-                        Some(display_row) == active_task_indicator_row,
-                        display_row,
-                        removed_breakpoint,
-                        cx,
-                    );
-
-                    let button = prepaint_gutter_button(
-                        button.into_any_element(),
-                        display_row,
-                        line_height,
-                        gutter_dimensions,
-                        scroll_position,
-                        gutter_hitbox,
+            run_indicators
+                .iter()
+                .filter_map(|display_row| {
+                    gutter.layout_item(
+                        *display_row,
+                        |cx, _| {
+                            editor
+                                .render_run_indicator(
+                                    &self.style,
+                                    Some(*display_row) == active_task_indicator_row,
+                                    breakpoints.get(&display_row).map(|(anchor, _, _)| *anchor),
+                                    *display_row,
+                                    cx,
+                                )
+                                .into_any_element()
+                        },
                         window,
                         cx,
-                    );
-                    Some(button)
+                    )
                 })
                 .collect_vec()
         })
@@ -3446,19 +3392,14 @@ impl EditorElement {
 
     fn layout_line_numbers(
         &self,
-        gutter_hitbox: Option<&Hitbox>,
-        gutter_dimensions: GutterDimensions,
-        line_height: Pixels,
-        scroll_position: gpui::Point<ScrollOffset>,
-        rows: Range<DisplayRow>,
-        buffer_rows: &[RowInfo],
+        gutter: &Gutter<'_>,
         active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
         current_selection_head: Option<DisplayRow>,
-        snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
     ) -> Arc<HashMap<MultiBufferRow, LineNumberLayout>> {
-        let include_line_numbers = snapshot
+        let include_line_numbers = gutter
+            .snapshot
             .show_line_numbers
             .unwrap_or_else(|| EditorSettings::get_global(cx).gutter.line_numbers);
         if !include_line_numbers {
@@ -3471,8 +3412,8 @@ impl EditorElement {
         let relative_rows = if relative_line_numbers_enabled
             && let Some(current_selection_head) = current_selection_head
         {
-            snapshot.calculate_relative_line_numbers(
-                &rows,
+            gutter.snapshot.calculate_relative_line_numbers(
+                &gutter.range,
                 current_selection_head,
                 relative.wrapped(),
             )
@@ -3481,72 +3422,79 @@ impl EditorElement {
         };
 
         let mut line_number = String::new();
-        let segments = buffer_rows.iter().enumerate().flat_map(|(ix, row_info)| {
-            let display_row = DisplayRow(rows.start.0 + ix as u32);
-            line_number.clear();
-            let non_relative_number = if relative.wrapped() {
-                row_info.buffer_row.or(row_info.wrapped_buffer_row)? + 1
-            } else {
-                row_info.buffer_row? + 1
-            };
-            let relative_number = relative_rows.get(&display_row);
-            if !(relative_line_numbers_enabled && relative_number.is_some())
-                && !snapshot.number_deleted_lines
-                && row_info
-                    .diff_status
-                    .is_some_and(|status| status.is_deleted())
-            {
-                return None;
-            }
+        let segments = gutter
+            .row_infos
+            .iter()
+            .enumerate()
+            .flat_map(|(ix, row_info)| {
+                let display_row = DisplayRow(gutter.range.start.0 + ix as u32);
+                line_number.clear();
+                let non_relative_number = if relative.wrapped() {
+                    row_info.buffer_row.or(row_info.wrapped_buffer_row)? + 1
+                } else {
+                    row_info.buffer_row? + 1
+                };
+                let relative_number = relative_rows.get(&display_row);
+                if !(relative_line_numbers_enabled && relative_number.is_some())
+                    && !gutter.snapshot.number_deleted_lines
+                    && row_info
+                        .diff_status
+                        .is_some_and(|status| status.is_deleted())
+                {
+                    return None;
+                }
 
-            let number = relative_number.unwrap_or(&non_relative_number);
-            write!(&mut line_number, "{number}").unwrap();
+                let number = relative_number.unwrap_or(&non_relative_number);
+                write!(&mut line_number, "{number}").unwrap();
 
-            let color = active_rows
-                .get(&display_row)
-                .map(|spec| {
-                    if spec.breakpoint {
-                        cx.theme().colors().debugger_accent
-                    } else {
-                        cx.theme().colors().editor_active_line_number
-                    }
-                })
-                .unwrap_or_else(|| cx.theme().colors().editor_line_number);
-            let shaped_line =
-                self.shape_line_number(SharedString::from(&line_number), color, window);
-            let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
-            let line_origin = gutter_hitbox.map(|hitbox| {
-                hitbox.origin
+                let color = active_rows
+                    .get(&display_row)
+                    .map(|spec| {
+                        if spec.breakpoint {
+                            cx.theme().colors().debugger_accent
+                        } else {
+                            cx.theme().colors().editor_active_line_number
+                        }
+                    })
+                    .unwrap_or_else(|| cx.theme().colors().editor_line_number);
+                let shaped_line =
+                    self.shape_line_number(SharedString::from(&line_number), color, window);
+                let scroll_top =
+                    gutter.scroll_position.y * ScrollPixelOffset::from(gutter.line_height);
+                let line_origin = gutter.hitbox.origin
                     + point(
-                        hitbox.size.width - shaped_line.width - gutter_dimensions.right_padding,
-                        ix as f32 * line_height
-                            - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height)),
-                    )
-            });
+                        gutter.hitbox.size.width
+                            - shaped_line.width
+                            - gutter.dimensions.right_padding,
+                        ix as f32 * gutter.line_height
+                            - Pixels::from(
+                                scroll_top % ScrollPixelOffset::from(gutter.line_height),
+                            ),
+                    );
 
-            #[cfg(not(test))]
-            let hitbox = line_origin.map(|line_origin| {
-                window.insert_hitbox(
-                    Bounds::new(line_origin, size(shaped_line.width, line_height)),
+                #[cfg(not(test))]
+                let hitbox = Some(window.insert_hitbox(
+                    Bounds::new(line_origin, size(shaped_line.width, gutter.line_height)),
                     HitboxBehavior::Normal,
-                )
+                ));
+                #[cfg(test)]
+                let hitbox = {
+                    let _ = line_origin;
+                    None
+                };
+
+                let segment = LineNumberSegment {
+                    shaped_line,
+                    hitbox,
+                };
+
+                let buffer_row = DisplayPoint::new(display_row, 0)
+                    .to_point(gutter.snapshot)
+                    .row;
+                let multi_buffer_row = MultiBufferRow(buffer_row);
+
+                Some((multi_buffer_row, segment))
             });
-            #[cfg(test)]
-            let hitbox = {
-                let _ = line_origin;
-                None
-            };
-
-            let segment = LineNumberSegment {
-                shaped_line,
-                hitbox,
-            };
-
-            let buffer_row = DisplayPoint::new(display_row, 0).to_point(snapshot).row;
-            let multi_buffer_row = MultiBufferRow(buffer_row);
-
-            Some((multi_buffer_row, segment))
-        });
 
         let mut line_numbers: HashMap<MultiBufferRow, LineNumberLayout> = HashMap::default();
         for (buffer_row, segment) in segments {
@@ -6425,6 +6373,10 @@ impl EditorElement {
                 }
             });
 
+            for bookmark in layout.bookmarks.iter_mut() {
+                bookmark.paint(window, cx);
+            }
+
             for breakpoint in layout.breakpoints.iter_mut() {
                 breakpoint.paint(window, cx);
             }
@@ -7962,6 +7914,96 @@ impl EditorElement {
     }
 }
 
+struct Gutter<'a> {
+    line_height: Pixels,
+    range: Range<DisplayRow>,
+    scroll_position: gpui::Point<ScrollOffset>,
+    dimensions: &'a GutterDimensions,
+    hitbox: &'a Hitbox,
+    snapshot: &'a EditorSnapshot,
+    row_infos: &'a [RowInfo],
+}
+
+impl Gutter<'_> {
+    fn layout_item_skipping_folds(
+        &self,
+        display_row: DisplayRow,
+        render_item: impl Fn(&mut Context<'_, Editor>, &mut Window) -> AnyElement,
+        window: &mut Window,
+        cx: &mut Context<'_, Editor>,
+    ) -> Option<AnyElement> {
+        let row = MultiBufferRow(
+            DisplayPoint::new(display_row, 0)
+                .to_point(self.snapshot)
+                .row,
+        );
+        if self.snapshot.is_line_folded(row) {
+            return None;
+        }
+
+        self.layout_item(display_row, render_item, window, cx)
+    }
+
+    fn layout_item(
+        &self,
+        display_row: DisplayRow,
+        render_item: impl Fn(&mut Context<'_, Editor>, &mut Window) -> AnyElement,
+        window: &mut Window,
+        cx: &mut Context<'_, Editor>,
+    ) -> Option<AnyElement> {
+        if !self.range.contains(&display_row) {
+            return None;
+        }
+
+        if self
+            .row_infos
+            .get((display_row.0.saturating_sub(self.range.start.0)) as usize)
+            .is_some_and(|row_info| {
+                row_info.expand_info.is_some()
+                    || row_info
+                        .diff_status
+                        .is_some_and(|status| status.is_deleted())
+            })
+        {
+            return None;
+        }
+
+        let button = self.prepaint_button(render_item(cx, window), display_row, window, cx);
+        Some(button)
+    }
+
+    fn prepaint_button(
+        &self,
+        mut button: AnyElement,
+        row: DisplayRow,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let available_space = size(
+            AvailableSpace::MinContent,
+            AvailableSpace::Definite(self.line_height),
+        );
+        let indicator_size = button.layout_as_root(available_space, window, cx);
+        let git_gutter_width = EditorElement::gutter_strip_width(self.line_height)
+            + self.dimensions.git_blame_entries_width.unwrap_or_default();
+
+        let x = git_gutter_width + px(2.);
+
+        let mut y = Pixels::from(
+            (row.as_f64() - self.scroll_position.y) * ScrollPixelOffset::from(self.line_height),
+        );
+        y += (self.line_height - indicator_size.height) / 2.;
+
+        button.prepaint_as_root(
+            self.hitbox.origin + point(x, y),
+            available_space,
+            window,
+            cx,
+        );
+        button
+    }
+}
+
 pub fn render_breadcrumb_text(
     mut segments: Vec<HighlightedText>,
     breadcrumb_font: Option<Font>,
@@ -8639,41 +8681,6 @@ pub(crate) fn render_buffer_header(
         })
 }
 
-fn prepaint_gutter_button(
-    mut button: AnyElement,
-    row: DisplayRow,
-    line_height: Pixels,
-    gutter_dimensions: &GutterDimensions,
-    scroll_position: gpui::Point<ScrollOffset>,
-    gutter_hitbox: &Hitbox,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
-    let available_space = size(
-        AvailableSpace::MinContent,
-        AvailableSpace::Definite(line_height),
-    );
-    let indicator_size = button.layout_as_root(available_space, window, cx);
-    let git_gutter_width = EditorElement::gutter_strip_width(line_height)
-        + gutter_dimensions
-            .git_blame_entries_width
-            .unwrap_or_default();
-
-    let x = git_gutter_width + px(2.);
-
-    let mut y =
-        Pixels::from((row.as_f64() - scroll_position.y) * ScrollPixelOffset::from(line_height));
-    y += (line_height - indicator_size.height) / 2.;
-
-    button.prepaint_as_root(
-        gutter_hitbox.origin + point(x, y),
-        available_space,
-        window,
-        cx,
-    );
-    button
-}
-
 fn render_inline_blame_entry(
     blame_entry: BlameEntry,
     style: &EditorStyle,
@@ -8694,6 +8701,10 @@ fn render_blame_entry_popover(
     window: &mut Window,
     cx: &mut App,
 ) -> Option<AnyElement> {
+    if markdown.read(cx).is_parsing() {
+        return None;
+    }
+
     let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
     let blame = blame.read(cx);
     let repository = blame.repository(cx, buffer)?;
@@ -10116,53 +10127,37 @@ impl Element for EditorElement {
                         })
                     });
 
+                    let run_indicator_rows = self.editor.update(cx, |editor, cx| {
+                        editor.active_run_indicators(start_row..end_row, window, cx)
+                    });
+
                     let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
                         editor.active_breakpoints(start_row..end_row, window, cx)
                     });
+
                     for (display_row, (_, bp, state)) in &breakpoint_rows {
                         if bp.is_enabled() && state.is_none_or(|s| s.verified) {
                             active_rows.entry(*display_row).or_default().breakpoint = true;
                         }
                     }
 
-                    let line_numbers = self.layout_line_numbers(
-                        Some(&gutter_hitbox),
-                        gutter_dimensions,
+                    let gutter = Gutter {
                         line_height,
+                        range: start_row..end_row,
                         scroll_position,
-                        start_row..end_row,
-                        &row_infos,
+                        dimensions: &gutter_dimensions,
+                        hitbox: &gutter_hitbox,
+                        snapshot: &snapshot,
+                        row_infos: &row_infos,
+                    };
+
+                    let line_numbers = self.layout_line_numbers(
+                        &gutter,
                         &active_rows,
                         current_selection_head,
-                        &snapshot,
                         window,
                         cx,
                     );
-
-                    // We add the gutter breakpoint indicator to breakpoint_rows after painting
-                    // line numbers so we don't paint a line number debug accent color if a user
-                    // has their mouse over that line when a breakpoint isn't there
-                    self.editor.update(cx, |editor, _| {
-                        if let Some(phantom_breakpoint) = &mut editor
-                            .gutter_breakpoint_indicator
-                            .0
-                            .filter(|phantom_breakpoint| phantom_breakpoint.is_active)
-                        {
-                            // Is there a non-phantom breakpoint on this line?
-                            phantom_breakpoint.collides_with_existing_breakpoint = true;
-                            breakpoint_rows
-                                .entry(phantom_breakpoint.display_row)
-                                .or_insert_with(|| {
-                                    let position = snapshot.display_point_to_anchor(
-                                        DisplayPoint::new(phantom_breakpoint.display_row, 0),
-                                        Bias::Right,
-                                    );
-                                    let breakpoint = Breakpoint::new_standard();
-                                    phantom_breakpoint.collides_with_existing_breakpoint = false;
-                                    (position, breakpoint, None)
-                                });
-                        }
-                    });
 
                     let mut expand_toggles =
                         window.with_element_namespace("expand_toggles", |window| {
@@ -10746,14 +10741,9 @@ impl Element for EditorElement {
 
                     let test_indicators = if gutter_settings.runnables {
                         self.layout_run_indicators(
-                            line_height,
-                            start_row..end_row,
-                            &row_infos,
-                            scroll_position,
-                            &gutter_dimensions,
-                            &gutter_hitbox,
-                            &snapshot,
-                            &mut breakpoint_rows,
+                            &gutter,
+                            &run_indicator_rows,
+                            &breakpoint_rows,
                             window,
                             cx,
                         )
@@ -10761,25 +10751,53 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
-                    let show_breakpoints = snapshot
-                        .show_breakpoints
-                        .unwrap_or(gutter_settings.breakpoints);
-                    let breakpoints = if show_breakpoints {
-                        self.layout_breakpoints(
-                            line_height,
-                            start_row..end_row,
-                            scroll_position,
-                            &gutter_dimensions,
-                            &gutter_hitbox,
-                            &snapshot,
-                            breakpoint_rows,
-                            &row_infos,
-                            window,
-                            cx,
-                        )
+                    let show_bookmarks =
+                        snapshot.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
+
+                    let bookmark_rows = self.editor.update(cx, |editor, cx| {
+                        let mut rows = editor.active_bookmarks(start_row..end_row, window, cx);
+                        rows.retain(|k| !run_indicator_rows.contains(k));
+                        rows.retain(|k| !breakpoint_rows.contains_key(k));
+                        rows
+                    });
+
+                    let bookmarks = if show_bookmarks {
+                        self.layout_bookmarks(&gutter, &bookmark_rows, window, cx)
                     } else {
                         Vec::new()
                     };
+
+                    let show_breakpoints = snapshot
+                        .show_breakpoints
+                        .unwrap_or(gutter_settings.breakpoints);
+
+                    breakpoint_rows.retain(|k, _| !run_indicator_rows.contains(k));
+                    let mut breakpoints = if show_breakpoints {
+                        self.layout_breakpoints(&gutter, &breakpoint_rows, window, cx)
+                    } else {
+                        Vec::new()
+                    };
+
+                    let gutter_hover_button = self
+                        .editor
+                        .read(cx)
+                        .gutter_hover_button
+                        .0
+                        .filter(|phantom| phantom.is_active)
+                        .map(|phantom| phantom.display_row);
+
+                    if let Some(row) = gutter_hover_button
+                        && !breakpoint_rows.contains_key(&row)
+                        && !run_indicator_rows.contains(&row)
+                        && !bookmark_rows.contains(&row)
+                        && (show_bookmarks || show_breakpoints)
+                    {
+                        let position = snapshot
+                            .display_point_to_anchor(DisplayPoint::new(row, 0), Bias::Right);
+                        breakpoints.extend(
+                            self.layout_gutter_hover_button(&gutter, position, row, window, cx),
+                        );
+                    }
 
                     let git_gutter_width = Self::gutter_strip_width(line_height)
                         + gutter_dimensions
@@ -10824,16 +10842,7 @@ impl Element for EditorElement {
                                     .render_diff_review_button(display_row, button_width, cx)
                                     .into_any_element()
                             });
-                            prepaint_gutter_button(
-                                button,
-                                display_row,
-                                line_height,
-                                &gutter_dimensions,
-                                scroll_position,
-                                &gutter_hitbox,
-                                window,
-                                cx,
-                            )
+                            gutter.prepaint_button(button, display_row, window, cx)
                         });
 
                     self.layout_signature_help(
@@ -11069,6 +11078,7 @@ impl Element for EditorElement {
                         diff_hunk_controls,
                         mouse_context_menu,
                         test_indicators,
+                        bookmarks,
                         breakpoints,
                         diff_review_button,
                         crease_toggles,
@@ -11257,6 +11267,7 @@ pub struct EditorLayout {
     visible_cursors: Vec<CursorLayout>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     test_indicators: Vec<AnyElement>,
+    bookmarks: Vec<AnyElement>,
     breakpoints: Vec<AnyElement>,
     diff_review_button: Option<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
@@ -12466,6 +12477,71 @@ mod tests {
     use std::num::NonZeroU32;
     use util::test::sample_text;
 
+    const fn placeholder_hitbox() -> Hitbox {
+        use gpui::HitboxId;
+        let zero_bounds = Bounds {
+            origin: point(Pixels::ZERO, Pixels::ZERO),
+            size: Size {
+                width: Pixels::ZERO,
+                height: Pixels::ZERO,
+            },
+        };
+
+        Hitbox {
+            id: HitboxId::placeholder(),
+            bounds: zero_bounds,
+            content_mask: ContentMask {
+                bounds: zero_bounds,
+            },
+            behavior: HitboxBehavior::Normal,
+        }
+    }
+
+    fn test_gutter(line_height: Pixels, snapshot: &EditorSnapshot) -> Gutter<'_> {
+        const DIMENSIONS: GutterDimensions = GutterDimensions {
+            left_padding: Pixels::ZERO,
+            right_padding: Pixels::ZERO,
+            width: px(30.0),
+            margin: Pixels::ZERO,
+            git_blame_entries_width: None,
+        };
+        const EMPTY_ROW_INFO: RowInfo = RowInfo {
+            buffer_id: None,
+            buffer_row: None,
+            multibuffer_row: None,
+            diff_status: None,
+            expand_info: None,
+            wrapped_buffer_row: None,
+        };
+
+        const fn row_info(row: u32) -> RowInfo {
+            RowInfo {
+                buffer_row: Some(row),
+                ..EMPTY_ROW_INFO
+            }
+        }
+
+        const ROW_INFOS: [RowInfo; 6] = [
+            row_info(0),
+            row_info(1),
+            row_info(2),
+            row_info(3),
+            row_info(4),
+            row_info(5),
+        ];
+
+        const HITBOX: Hitbox = placeholder_hitbox();
+        Gutter {
+            line_height,
+            range: DisplayRow(0)..DisplayRow(6),
+            scroll_position: gpui::Point::default(),
+            dimensions: &DIMENSIONS,
+            hitbox: &HITBOX,
+            snapshot: snapshot,
+            row_infos: &ROW_INFOS,
+        }
+    }
+
     #[gpui::test]
     async fn test_soft_wrap_editor_width_auto_height_editor(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
@@ -12552,26 +12628,9 @@ mod tests {
         let layouts = cx
             .update_window(*window, |_, window, cx| {
                 element.layout_line_numbers(
-                    None,
-                    GutterDimensions {
-                        left_padding: Pixels::ZERO,
-                        right_padding: Pixels::ZERO,
-                        width: px(30.0),
-                        margin: Pixels::ZERO,
-                        git_blame_entries_width: None,
-                    },
-                    line_height,
-                    gpui::Point::default(),
-                    DisplayRow(0)..DisplayRow(6),
-                    &(0..6)
-                        .map(|row| RowInfo {
-                            buffer_row: Some(row),
-                            ..Default::default()
-                        })
-                        .collect::<Vec<_>>(),
+                    &test_gutter(line_height, &snapshot),
                     &BTreeMap::default(),
                     Some(DisplayRow(0)),
-                    &snapshot,
                     window,
                     cx,
                 )
@@ -12629,35 +12688,28 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(1)], 4);
         assert_eq!(relative_rows[&DisplayRow(2)], 3);
 
+        let gutter = Gutter {
+            row_infos: &(0..6)
+                .map(|row| RowInfo {
+                    buffer_row: Some(row),
+                    diff_status: (row == DELETED_LINE).then(|| {
+                        DiffHunkStatus::deleted(
+                            buffer_diff::DiffHunkSecondaryStatus::NoSecondaryHunk,
+                        )
+                    }),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>(),
+            ..test_gutter(line_height, &snapshot)
+        };
+
         const DELETED_LINE: u32 = 3;
         let layouts = cx
             .update_window(*window, |_, window, cx| {
                 element.layout_line_numbers(
-                    None,
-                    GutterDimensions {
-                        left_padding: Pixels::ZERO,
-                        right_padding: Pixels::ZERO,
-                        width: px(30.0),
-                        margin: Pixels::ZERO,
-                        git_blame_entries_width: None,
-                    },
-                    line_height,
-                    gpui::Point::default(),
-                    DisplayRow(0)..DisplayRow(6),
-                    &(0..6)
-                        .map(|row| RowInfo {
-                            buffer_row: Some(row),
-                            diff_status: (row == DELETED_LINE).then(|| {
-                                DiffHunkStatus::deleted(
-                                    buffer_diff::DiffHunkSecondaryStatus::NoSecondaryHunk,
-                                )
-                            }),
-                            ..Default::default()
-                        })
-                        .collect::<Vec<_>>(),
+                    &gutter,
                     &BTreeMap::default(),
                     Some(DisplayRow(0)),
-                    &snapshot,
                     window,
                     cx,
                 )
@@ -12716,26 +12768,9 @@ mod tests {
         let layouts = cx
             .update_window(*window, |_, window, cx| {
                 element.layout_line_numbers(
-                    None,
-                    GutterDimensions {
-                        left_padding: Pixels::ZERO,
-                        right_padding: Pixels::ZERO,
-                        width: px(30.0),
-                        margin: Pixels::ZERO,
-                        git_blame_entries_width: None,
-                    },
-                    line_height,
-                    gpui::Point::default(),
-                    DisplayRow(0)..DisplayRow(6),
-                    &(0..6)
-                        .map(|row| RowInfo {
-                            buffer_row: Some(row),
-                            ..Default::default()
-                        })
-                        .collect::<Vec<_>>(),
+                    &test_gutter(line_height, &snapshot),
                     &BTreeMap::default(),
                     Some(DisplayRow(3)),
-                    &snapshot,
                     window,
                     cx,
                 )
@@ -12790,26 +12825,9 @@ mod tests {
         let layouts = cx
             .update_window(*window, |_, window, cx| {
                 element.layout_line_numbers(
-                    None,
-                    GutterDimensions {
-                        left_padding: Pixels::ZERO,
-                        right_padding: Pixels::ZERO,
-                        width: px(30.0),
-                        margin: Pixels::ZERO,
-                        git_blame_entries_width: None,
-                    },
-                    line_height,
-                    gpui::Point::default(),
-                    DisplayRow(0)..DisplayRow(6),
-                    &(0..6)
-                        .map(|row| RowInfo {
-                            buffer_row: Some(row),
-                            ..Default::default()
-                        })
-                        .collect::<Vec<_>>(),
+                    &test_gutter(line_height, &snapshot),
                     &BTreeMap::default(),
                     Some(DisplayRow(0)),
-                    &snapshot,
                     window,
                     cx,
                 )
@@ -12839,29 +12857,20 @@ mod tests {
         let layouts = cx
             .update_window(*window, |_, window, cx| {
                 element.layout_line_numbers(
-                    None,
-                    GutterDimensions {
-                        left_padding: Pixels::ZERO,
-                        right_padding: Pixels::ZERO,
-                        width: px(30.0),
-                        margin: Pixels::ZERO,
-                        git_blame_entries_width: None,
+                    &Gutter {
+                        row_infos: &(0..6)
+                            .map(|row| RowInfo {
+                                buffer_row: Some(row),
+                                diff_status: Some(DiffHunkStatus::deleted(
+                                    buffer_diff::DiffHunkSecondaryStatus::NoSecondaryHunk,
+                                )),
+                                ..Default::default()
+                            })
+                            .collect::<Vec<_>>(),
+                        ..test_gutter(line_height, &snapshot)
                     },
-                    line_height,
-                    gpui::Point::default(),
-                    DisplayRow(0)..DisplayRow(6),
-                    &(0..6)
-                        .map(|row| RowInfo {
-                            buffer_row: Some(row),
-                            diff_status: Some(DiffHunkStatus::deleted(
-                                buffer_diff::DiffHunkSecondaryStatus::NoSecondaryHunk,
-                            )),
-                            ..Default::default()
-                        })
-                        .collect::<Vec<_>>(),
                     &BTreeMap::from_iter([(DisplayRow(0), LineHighlightSpec::default())]),
                     Some(DisplayRow(0)),
-                    &snapshot,
                     window,
                     cx,
                 )

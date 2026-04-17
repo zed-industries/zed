@@ -237,7 +237,7 @@
       "shift-alt-j": "agent::ToggleNavigationMenu",
       "shift-alt-i": "agent::ToggleOptionsMenu",
       "ctrl-alt-shift-n": "agent::ToggleNewThreadMenu",
-      "ctrl-shift-t": "agent::CycleStartThreadIn",
+      "ctrl-shift-t": "agent::ToggleWorktreeSelector",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl->": "agent::AddSelectionToThread",
       "ctrl-shift-e": "project_panel::ToggleFocus",
@@ -339,6 +339,24 @@
     },
   },
   {
+    "context": "AcpThread > Editor && start_of_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "pageup": "agent::ScrollOutputPageUp",
+      "ctrl-pageup": "agent::ScrollOutputPageUp",
+      "ctrl-home": "agent::ScrollOutputToTop",
+    },
+  },
+  {
+    "context": "AcpThread > Editor && end_of_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-end": "agent::ScrollOutputToBottom",
+    },
+  },
+  {
     "context": "AcpThread > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
@@ -364,6 +382,12 @@
     "context": "ThreadHistory",
     "bindings": {
       "backspace": "agent::RemoveSelectedThread",
+    },
+  },
+  {
+    "context": "ThreadsArchiveView",
+    "bindings": {
+      "shift-backspace": "agent::ArchiveSelectedThread",
     },
   },
   {
@@ -702,7 +726,7 @@
       "right": "menu::SelectChild",
       "enter": "menu::Confirm",
       "ctrl-f": "agents_sidebar::FocusSidebarFilter",
-      "ctrl-g": "agents_sidebar::ToggleArchive",
+      "ctrl-g": "agents_sidebar::ToggleThreadHistory",
       "shift-backspace": "agent::RemoveSelectedThread",
       "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
       "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],

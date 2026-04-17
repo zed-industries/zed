@@ -6,6 +6,7 @@ use edit_prediction_types::{
     DataCollectionState, EditPredictionDelegate, EditPredictionDiscardReason,
     EditPredictionIconSet, SuggestionDisplayType,
 };
+use feature_flags::FeatureFlagAppExt;
 use gpui::{App, Entity, prelude::*};
 use language::{Buffer, ToPoint as _};
 use project::Project;
@@ -73,6 +74,24 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 self.store
                     .read(cx)
                     .is_file_open_source(&self.project, file, cx);
+
+            if let Some(organization_configuration) = self
+                .store
+                .read(cx)
+                .user_store
+                .read(cx)
+                .current_organization_configuration()
+            {
+                if !organization_configuration
+                    .edit_prediction
+                    .is_feedback_enabled
+                {
+                    return DataCollectionState::Disabled {
+                        is_project_open_source,
+                    };
+                }
+            }
+
             if self.store.read(cx).data_collection_choice.is_enabled(cx) {
                 DataCollectionState::Enabled {
                     is_project_open_source,
@@ -87,6 +106,29 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 is_project_open_source: false,
             };
         }
+    }
+
+    fn can_toggle_data_collection(&self, cx: &App) -> bool {
+        if cx.is_staff() {
+            return false;
+        }
+
+        if let Some(organization_configuration) = self
+            .store
+            .read(cx)
+            .user_store
+            .read(cx)
+            .current_organization_configuration()
+        {
+            if !organization_configuration
+                .edit_prediction
+                .is_feedback_enabled
+            {
+                return false;
+            }
+        }
+
+        true
     }
 
     fn toggle_data_collection(&mut self, cx: &mut App) {

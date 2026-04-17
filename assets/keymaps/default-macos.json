@@ -275,7 +275,7 @@
       "cmd-shift-j": "agent::ToggleNavigationMenu",
       "cmd-alt-m": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
-      "cmd-shift-t": "agent::CycleStartThreadIn",
+      "cmd-shift-t": "agent::ToggleWorktreeSelector",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd->": "agent::AddSelectionToThread",
       "cmd-shift-e": "project_panel::ToggleFocus",
@@ -380,6 +380,24 @@
     },
   },
   {
+    "context": "AcpThread > Editor && start_of_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "pageup": "agent::ScrollOutputPageUp",
+      "ctrl-pageup": "agent::ScrollOutputPageUp",
+      "ctrl-home": "agent::ScrollOutputToTop",
+    },
+  },
+  {
+    "context": "AcpThread > Editor && end_of_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-end": "agent::ScrollOutputToBottom",
+    },
+  },
+  {
     "context": "AcpThread > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
@@ -411,6 +429,12 @@
     "context": "ThreadHistory > Editor",
     "bindings": {
       "shift-backspace": "agent::RemoveSelectedThread",
+    },
+  },
+  {
+    "context": "ThreadsArchiveView",
+    "bindings": {
+      "backspace": "agent::ArchiveSelectedThread",
     },
   },
   {
@@ -459,13 +483,6 @@
     "bindings": {
       "up": "search::PreviousHistoryQuery",
       "down": "search::NextHistoryQuery",
-    },
-  },
-  {
-    "context": "BufferSearchBar || ProjectSearchBar",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-enter": "editor::Newline",
     },
   },
   {
@@ -765,7 +782,7 @@
       "right": "menu::SelectChild",
       "enter": "menu::Confirm",
       "cmd-f": "agents_sidebar::FocusSidebarFilter",
-      "cmd-g": "agents_sidebar::ToggleArchive",
+      "cmd-g": "agents_sidebar::ToggleThreadHistory",
       "shift-backspace": "agent::RemoveSelectedThread",
       "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
       "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],

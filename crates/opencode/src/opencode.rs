@@ -56,6 +56,8 @@ impl OpenCodeSubscription {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     // -- Anthropic protocol models --
+    #[serde(rename = "claude-opus-4-7")]
+    ClaudeOpus4_7,
     #[serde(rename = "claude-opus-4-6")]
     ClaudeOpus4_6,
     #[serde(rename = "claude-opus-4-5")]
@@ -196,6 +198,7 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
+            Self::ClaudeOpus4_7 => "claude-opus-4-7",
             Self::ClaudeOpus4_6 => "claude-opus-4-6",
             Self::ClaudeOpus4_5 => "claude-opus-4-5",
             Self::ClaudeOpus4_1 => "claude-opus-4-1",
@@ -243,6 +246,7 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
+            Self::ClaudeOpus4_7 => "Claude Opus 4.7",
             Self::ClaudeOpus4_6 => "Claude Opus 4.6",
             Self::ClaudeOpus4_5 => "Claude Opus 4.5",
             Self::ClaudeOpus4_1 => "Claude Opus 4.1",
@@ -292,7 +296,8 @@ impl Model {
 
     pub fn protocol(&self) -> ApiProtocol {
         match self {
-            Self::ClaudeOpus4_6
+            Self::ClaudeOpus4_7
+            | Self::ClaudeOpus4_6
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_1
             | Self::ClaudeSonnet4_6
@@ -339,6 +344,7 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         match self {
             // Anthropic models
+            Self::ClaudeOpus4_7 => 1_000_000,
             Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => 1_000_000,
             Self::ClaudeSonnet4_5 => 1_000_000,
             Self::ClaudeOpus4_5 | Self::ClaudeHaiku4_5 => 200_000,
@@ -379,7 +385,7 @@ impl Model {
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             // Anthropic models
-            Self::ClaudeOpus4_6 => Some(128_000),
+            Self::ClaudeOpus4_7 | Self::ClaudeOpus4_6 => Some(128_000),
             Self::ClaudeOpus4_5
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
@@ -431,7 +437,8 @@ impl Model {
     pub fn supports_images(&self) -> bool {
         match self {
             // Anthropic models support images
-            Self::ClaudeOpus4_6
+            Self::ClaudeOpus4_7
+            | Self::ClaudeOpus4_6
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_1
             | Self::ClaudeSonnet4_6

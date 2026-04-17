@@ -21,13 +21,15 @@ use db::{
 };
 use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
+    bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
 };
 
 use language::{LanguageName, Toolchain, ToolchainScope};
 use remote::{
-    DockerConnectionOptions, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
+    DockerConnectionOptions, RemoteConnectionIdentity, RemoteConnectionOptions,
+    SshConnectionOptions, WslConnectionOptions, remote_connection_identity,
 };
 use serde::{Deserialize, Serialize};
 use sqlez::{
@@ -371,6 +373,39 @@ pub async fn write_default_dock_state(
     kvp.write_kvp(DEFAULT_DOCK_STATE_KEY.to_string(), json_str)
         .await?;
     Ok(())
+}
+
+#[derive(Debug)]
+pub struct Bookmark {
+    pub row: u32,
+}
+
+impl sqlez::bindable::StaticColumnCount for Bookmark {
+    fn column_count() -> usize {
+        // row
+        1
+    }
+}
+
+impl sqlez::bindable::Bind for Bookmark {
+    fn bind(
+        &self,
+        statement: &sqlez::statement::Statement,
+        start_index: i32,
+    ) -> anyhow::Result<i32> {
+        statement.bind(&self.row, start_index)
+    }
+}
+
+impl Column for Bookmark {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let row = statement
+            .column_int(start_index)
+            .with_context(|| format!("Failed to read bookmark at index {start_index}"))?
+            as u32;
+
+        Ok((Bookmark { row }, start_index + 1))
+    }
 }
 
 #[derive(Debug)]
@@ -979,6 +1014,16 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE remote_connections ADD COLUMN remote_env TEXT;
         ),
+        sql!(
+            CREATE TABLE bookmarks (
+                workspace_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                row INTEGER NOT NULL,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+            );
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1113,6 +1158,7 @@ impl WorkspaceDb {
             display,
             docks,
             session_id: None,
+            bookmarks: self.bookmarks(workspace_id),
             breakpoints: self.breakpoints(workspace_id),
             window_id,
             user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
@@ -1203,10 +1249,45 @@ impl WorkspaceDb {
             display,
             docks,
             session_id: None,
+            bookmarks: self.bookmarks(workspace_id),
             breakpoints: self.breakpoints(workspace_id),
             window_id,
             user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
         })
+    }
+
+    fn bookmarks(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
+        let bookmarks: Result<Vec<(PathBuf, Bookmark)>> = self
+            .select_bound(sql! {
+                SELECT path, row
+                FROM bookmarks
+                WHERE workspace_id = ?
+                ORDER BY path, row
+            })
+            .and_then(|mut prepared_statement| (prepared_statement)(workspace_id));
+
+        match bookmarks {
+            Ok(bookmarks) => {
+                if bookmarks.is_empty() {
+                    log::debug!("Bookmarks are empty after querying database for them");
+                }
+
+                let mut map: BTreeMap<_, Vec<_>> = BTreeMap::default();
+
+                for (path, bookmark) in bookmarks {
+                    let path: Arc<Path> = path.into();
+                    map.entry(path.clone())
+                        .or_default()
+                        .push(SerializedBookmark(bookmark.row))
+                }
+
+                map
+            }
+            Err(e) => {
+                log::error!("Failed to load bookmarks: {}", e);
+                BTreeMap::default()
+            }
+        }
     }
 
     fn breakpoints(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<SourceBreakpoint>> {
@@ -1349,6 +1430,21 @@ impl WorkspaceDb {
                     DELETE FROM pane_groups WHERE workspace_id = ?1;
                     DELETE FROM panes WHERE workspace_id = ?1;))?(workspace.id)
                     .context("Clearing old panes")?;
+
+                conn.exec_bound(
+                    sql!(
+                        DELETE FROM bookmarks WHERE workspace_id = ?1;
+                    )
+                )?(workspace.id).context("Clearing old bookmarks")?;
+
+                for (path, bookmarks) in workspace.bookmarks {
+                    for bookmark in bookmarks {
+                        conn.exec_bound(sql!(
+                            INSERT INTO bookmarks (workspace_id, path, row)
+                            VALUES (?1, ?2, ?3);
+                        ))?((workspace.id, path.as_ref(), bookmark.0)).context("Inserting bookmark")?;
+                    }
+                }
 
                 conn.exec_bound(
                     sql!(
@@ -1500,6 +1596,7 @@ impl WorkspaceDb {
         this: &Connection,
         options: RemoteConnectionOptions,
     ) -> Result<RemoteConnectionId> {
+        let identity = remote_connection_identity(&options);
         let kind;
         let user: Option<String>;
         let mut host = None;
@@ -1509,33 +1606,49 @@ impl WorkspaceDb {
         let mut container_id = None;
         let mut use_podman = None;
         let mut remote_env = None;
-        match options {
-            RemoteConnectionOptions::Ssh(options) => {
+
+        match identity {
+            RemoteConnectionIdentity::Ssh {
+                host: identity_host,
+                username,
+                port: identity_port,
+            } => {
                 kind = RemoteConnectionKind::Ssh;
-                host = Some(options.host.to_string());
-                port = options.port;
-                user = options.username;
+                host = Some(identity_host);
+                port = identity_port;
+                user = username;
             }
-            RemoteConnectionOptions::Wsl(options) => {
+            RemoteConnectionIdentity::Wsl {
+                distro_name,
+                user: identity_user,
+            } => {
                 kind = RemoteConnectionKind::Wsl;
-                distro = Some(options.distro_name);
-                user = options.user;
+                distro = Some(distro_name);
+                user = identity_user;
             }
-            RemoteConnectionOptions::Docker(options) => {
+            RemoteConnectionIdentity::Docker {
+                container_id: identity_container_id,
+                name: identity_name,
+                remote_user,
+            } => {
                 kind = RemoteConnectionKind::Docker;
-                container_id = Some(options.container_id);
-                name = Some(options.name);
-                use_podman = Some(options.use_podman);
-                user = Some(options.remote_user);
-                remote_env = serde_json::to_string(&options.remote_env).ok();
+                container_id = Some(identity_container_id);
+                name = Some(identity_name);
+                user = Some(remote_user);
             }
             #[cfg(any(test, feature = "test-support"))]
-            RemoteConnectionOptions::Mock(options) => {
+            RemoteConnectionIdentity::Mock { id } => {
                 kind = RemoteConnectionKind::Ssh;
-                host = Some(format!("mock-{}", options.id));
-                user = Some(format!("mock-user-{}", options.id));
+                host = Some(format!("mock-{}", id));
+                user = Some(format!("mock-user-{}", id));
             }
         }
+
+        if let RemoteConnectionOptions::Docker(options) = options {
+            use_podman = Some(options.use_podman);
+            remote_env = serde_json::to_string(&options.remote_env).ok();
+        }
+
         Self::get_or_create_remote_connection_query(
             this,
             kind,
@@ -1804,16 +1917,12 @@ impl WorkspaceDb {
         }
     }
 
-    async fn all_paths_exist_with_a_directory(
-        paths: &[PathBuf],
-        fs: &dyn Fs,
-        timestamp: Option<DateTime<Utc>>,
-    ) -> bool {
+    async fn all_paths_exist_with_a_directory(paths: &[PathBuf], fs: &dyn Fs) -> bool {
         let mut any_dir = false;
         for path in paths {
             match fs.metadata(path).await.ok().flatten() {
                 None => {
-                    return timestamp.is_some_and(|t| Utc::now() - t < chrono::Duration::days(7));
+                    return false;
                 }
                 Some(meta) => {
                     if meta.is_dir {
@@ -1839,9 +1948,9 @@ impl WorkspaceDb {
         )>,
     > {
         let mut result = Vec::new();
-        let mut delete_tasks = Vec::new();
+        let mut workspaces_to_delete = Vec::new();
         let remote_connections = self.remote_connections()?;
-
+        let now = Utc::now();
         for (id, paths, remote_connection_id, timestamp) in self.recent_workspaces()? {
             if let Some(remote_connection_id) = remote_connection_id {
                 if let Some(connection_options) = remote_connections.get(&remote_connection_id) {
@@ -1852,34 +1961,40 @@ impl WorkspaceDb {
                         timestamp,
                     ));
                 } else {
-                    delete_tasks.push(self.delete_workspace_by_id(id));
+                    workspaces_to_delete.push(id);
                 }
                 continue;
             }
 
-            let has_wsl_path = if cfg!(windows) {
-                paths
+            // Delete the workspace if any of the paths are WSL paths. If a
+            // local workspace points to WSL, attempting to read its metadata
+            // will wait for the WSL VM and file server to boot up. This can
+            // block for many seconds. Supported scenarios use remote
+            // workspaces.
+            if cfg!(windows) {
+                let has_wsl_path = paths
                     .paths()
                     .iter()
-                    .any(|path| util::paths::WslPath::from_path(path).is_some())
-            } else {
-                false
-            };
+                    .any(|path| util::paths::WslPath::from_path(path).is_some());
+                if has_wsl_path {
+                    workspaces_to_delete.push(id);
+                    continue;
+                }
+            }
 
-            // Delete the workspace if any of the paths are WSL paths.
-            // If a local workspace points to WSL, this check will cause us to wait for the
-            // WSL VM and file server to boot up. This can block for many seconds.
-            // Supported scenarios use remote workspaces.
-            if !has_wsl_path
-                && Self::all_paths_exist_with_a_directory(paths.paths(), fs, Some(timestamp)).await
-            {
+            if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
                 result.push((id, SerializedWorkspaceLocation::Local, paths, timestamp));
-            } else {
-                delete_tasks.push(self.delete_workspace_by_id(id));
+            } else if now - timestamp >= chrono::Duration::days(7) {
+                workspaces_to_delete.push(id);
             }
         }
 
-        futures::future::join_all(delete_tasks).await;
+        futures::future::join_all(
+            workspaces_to_delete
+                .into_iter()
+                .map(|id| self.delete_workspace_by_id(id)),
+        )
+        .await;
         Ok(result)
     }
 
@@ -1932,7 +2047,7 @@ impl WorkspaceDb {
                     window_id,
                 });
             } else {
-                if Self::all_paths_exist_with_a_directory(paths.paths(), fs, None).await {
+                if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
                     workspaces.push(SessionWorkspace {
                         workspace_id,
                         location: SerializedWorkspaceLocation::Local,
@@ -2493,6 +2608,9 @@ pub fn delete_unloaded_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::OpenMode;
+    use crate::PathList;
+    use crate::ProjectGroupKey;
     use crate::{
         multi_workspace::MultiWorkspace,
         persistence::{
@@ -2503,10 +2621,10 @@ mod tests {
             read_multi_workspace_state,
         },
     };
-    use feature_flags::FeatureFlagAppExt;
+
     use gpui::AppContext as _;
     use pretty_assertions::assert_eq;
-    use project::{Project, ProjectGroupKey};
+    use project::Project;
     use remote::SshConnectionOptions;
     use serde_json::json;
     use std::{thread, time::Duration};
@@ -2522,10 +2640,6 @@ mod tests {
     #[gpui::test]
     async fn test_multi_workspace_serializes_on_add_and_remove(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let project1 = Project::test(fs.clone(), [], cx).await;
@@ -2565,10 +2679,14 @@ mod tests {
              the newly activated workspace's database id"
         );
 
-        // --- Remove the first workspace (index 0, which is not the active one) ---
-        multi_workspace.update_in(cx, |mw, window, cx| {
-            let ws = mw.workspaces().nth(0).unwrap().clone();
-            mw.remove([ws], |_, _, _| unreachable!(), window, cx)
+        // --- Remove the non-active workspace ---
+        multi_workspace.update_in(cx, |mw, _window, cx| {
+            let active = mw.workspace().clone();
+            let ws = mw
+                .workspaces()
+                .find(|ws| *ws != &active)
+                .expect("should have a non-active workspace");
+            mw.remove([ws.clone()], |_, _, _| unreachable!(), _window, cx)
                 .detach_and_log_err(cx);
         });
 
@@ -2642,6 +2760,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            bookmarks: Default::default(),
             breakpoints: {
                 let mut map = collections::BTreeMap::default();
                 map.insert(
@@ -2797,6 +2916,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            bookmarks: Default::default(),
             breakpoints: {
                 let mut map = collections::BTreeMap::default();
                 map.insert(
@@ -2845,6 +2965,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            bookmarks: Default::default(),
             breakpoints: collections::BTreeMap::default(),
             session_id: None,
             window_id: None,
@@ -2943,6 +3064,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             session_id: None,
             window_id: None,
@@ -2958,6 +3080,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             session_id: None,
             window_id: None,
@@ -3062,6 +3185,7 @@ mod tests {
             location: SerializedWorkspaceLocation::Local,
             center_group,
             window_bounds: Default::default(),
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             display: Default::default(),
             docks: Default::default(),
@@ -3096,6 +3220,7 @@ mod tests {
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             display: Default::default(),
             docks: Default::default(),
@@ -3114,6 +3239,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             session_id: None,
             window_id: Some(2),
@@ -3153,6 +3279,7 @@ mod tests {
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             display: Default::default(),
             docks: Default::default(),
@@ -3194,6 +3321,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(10),
@@ -3209,6 +3337,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(20),
@@ -3224,6 +3353,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(30),
@@ -3239,6 +3369,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             session_id: None,
             window_id: None,
@@ -3265,6 +3396,7 @@ mod tests {
             display: Default::default(),
             docks: Default::default(),
             centered_layout: false,
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(50),
@@ -3277,6 +3409,7 @@ mod tests {
             location: SerializedWorkspaceLocation::Local,
             center_group: Default::default(),
             window_bounds: Default::default(),
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             display: Default::default(),
             docks: Default::default(),
@@ -3336,6 +3469,7 @@ mod tests {
             window_bounds: Default::default(),
             display: Default::default(),
             docks: Default::default(),
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             centered_layout: false,
             session_id: None,
@@ -3379,6 +3513,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("one-session".to_owned()),
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             window_id: Some(window_id),
             user_toolchains: Default::default(),
@@ -3491,6 +3626,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some("one-session".to_owned()),
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             window_id: Some(window_id),
             user_toolchains: Default::default(),
@@ -3850,6 +3986,7 @@ mod tests {
             window_bounds: None,
             display: None,
             docks: Default::default(),
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             centered_layout: false,
             session_id: None,
@@ -3928,6 +4065,7 @@ mod tests {
                 docks: Default::default(),
                 centered_layout: false,
                 session_id: Some("test-session".to_owned()),
+                bookmarks: Default::default(),
                 breakpoints: Default::default(),
                 window_id: Some(*window_id),
                 user_toolchains: Default::default(),
@@ -4005,7 +4143,7 @@ mod tests {
             window_10,
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(2)),
-                project_group_keys: vec![],
+                project_groups: vec![],
                 sidebar_open: true,
                 sidebar_state: None,
             },
@@ -4017,7 +4155,7 @@ mod tests {
             window_20,
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(3)),
-                project_group_keys: vec![],
+                project_groups: vec![],
                 sidebar_open: false,
                 sidebar_state: None,
             },
@@ -4080,10 +4218,6 @@ mod tests {
     async fn test_flush_serialization_completes_before_quit(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
 
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
-
         let fs = fs::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
 
@@ -4123,10 +4257,6 @@ mod tests {
     #[gpui::test]
     async fn test_create_workspace_serialization(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
@@ -4180,10 +4310,6 @@ mod tests {
     async fn test_remove_workspace_clears_session_binding(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
 
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
-
         let fs = fs::FakeFs::new(cx.executor());
         let dir = unique_test_dir(&fs, "remove").await;
         let project1 = Project::test(fs.clone(), [], cx).await;
@@ -4225,6 +4351,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some(session_id.clone()),
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             window_id: Some(99),
             user_toolchains: Default::default(),
@@ -4270,10 +4397,6 @@ mod tests {
     #[gpui::test]
     async fn test_remove_workspace_not_restored_as_zombie(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir1 = tempfile::TempDir::with_prefix("zombie_test1").unwrap();
@@ -4324,6 +4447,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some(session_id.to_owned()),
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             window_id: Some(window_id_val),
             user_toolchains: Default::default(),
@@ -4340,6 +4464,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some(session_id.to_owned()),
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             window_id: Some(window_id_val),
             user_toolchains: Default::default(),
@@ -4376,10 +4501,6 @@ mod tests {
     #[gpui::test]
     async fn test_pending_removal_tasks_drained_on_flush(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir = unique_test_dir(&fs, "pending-removal").await;
@@ -4422,6 +4543,7 @@ mod tests {
             docks: Default::default(),
             centered_layout: false,
             session_id: Some(session_id.clone()),
+            bookmarks: Default::default(),
             breakpoints: Default::default(),
             window_id: Some(88),
             user_toolchains: Default::default(),
@@ -4481,10 +4603,6 @@ mod tests {
     async fn test_create_workspace_bounds_observer_uses_fresh_id(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
 
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
-
         let fs = fs::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
 
@@ -4536,10 +4654,6 @@ mod tests {
     #[gpui::test]
     async fn test_flush_serialization_writes_bounds(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir = tempfile::TempDir::with_prefix("flush_bounds_test").unwrap();
@@ -4691,14 +4805,55 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_resolve_worktree_workspaces_bare_repo(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+
+        // Bare repo at /foo/.bare (commondir doesn't end with .git)
+        fs.insert_tree(
+            "/foo/.bare",
+            json!({
+                "worktrees": {
+                    "my-feature": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/my-feature"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        // Linked worktree whose commondir resolves to a bare repo (/foo/.bare)
+        fs.insert_tree(
+            "/foo/my-feature",
+            json!({
+                ".git": "gitdir: /foo/.bare/worktrees/my-feature",
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let t0 = Utc::now();
+
+        let workspaces = vec![(
+            WorkspaceId(1),
+            SerializedWorkspaceLocation::Local,
+            PathList::new(&["/foo/my-feature"]),
+            t0,
+        )];
+
+        let result = resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
+
+        // The worktree path must be preserved unchanged — /foo/.bare is a bare repo
+        // and cannot serve as a working-tree root, so resolution must return None.
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].2.paths(), &[PathBuf::from("/foo/my-feature")]);
+    }
+
+    #[gpui::test]
     async fn test_restore_window_with_linked_worktree_and_multiple_project_groups(
         cx: &mut gpui::TestAppContext,
     ) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
 
@@ -4769,38 +4924,8 @@ mod tests {
             mw.test_add_workspace(project_1_linked_worktree.clone(), window, cx)
         });
 
-        // Assign database IDs and set up session bindings so serialization
-        // writes real rows.
-        multi_workspace.update_in(cx, |mw, _, cx| {
-            for workspace in mw.workspaces() {
-                workspace.update(cx, |ws, _cx| {
-                    ws.set_random_database_id();
-                });
-            }
-        });
-
-        // Flush serialization for each individual workspace (writes to SQLite)
-        // and for the MultiWorkspace (writes to KVP).
-        let tasks = multi_workspace.update_in(cx, |mw, window, cx| {
-            let session_id = mw.workspace().read(cx).session_id();
-            let window_id_u64 = window.window_handle().window_id().as_u64();
-
-            let mut tasks: Vec<Task<()>> = Vec::new();
-            for workspace in mw.workspaces() {
-                tasks.push(workspace.update(cx, |ws, cx| ws.flush_serialization(window, cx)));
-                if let Some(db_id) = workspace.read(cx).database_id() {
-                    let db = WorkspaceDb::global(cx);
-                    let session_id = session_id.clone();
-                    tasks.push(cx.background_spawn(async move {
-                        db.set_session_binding(db_id, session_id, Some(window_id_u64))
-                            .await
-                            .log_err();
-                    }));
-                }
-            }
-            mw.serialize(cx);
-            tasks
-        });
+        let tasks =
+            multi_workspace.update_in(cx, |mw, window, cx| mw.flush_all_serialization(window, cx));
         cx.run_until_parked();
         for task in tasks {
             task.await;
@@ -4841,13 +4966,13 @@ mod tests {
             serialized.active_workspace.workspace_id,
             active_db_id.unwrap(),
         );
-        assert_eq!(serialized.state.project_group_keys.len(), 2,);
+        assert_eq!(serialized.state.project_groups.len(), 2,);
 
         // Verify the serialized project group keys round-trip back to the
         // originals.
         let restored_keys: Vec<ProjectGroupKey> = serialized
             .state
-            .project_group_keys
+            .project_groups
             .iter()
             .cloned()
             .map(Into::into)
@@ -4880,9 +5005,7 @@ mod tests {
 
         // The restored window should have the same project group keys.
         let restored_keys: Vec<ProjectGroupKey> = restored_handle
-            .read_with(cx, |mw: &MultiWorkspace, _cx| {
-                mw.project_group_keys().cloned().collect()
-            })
+            .read_with(cx, |mw: &MultiWorkspace, _cx| mw.project_group_keys())
             .unwrap();
         assert_eq!(
             restored_keys, expected_keys,
@@ -4911,10 +5034,6 @@ mod tests {
     #[gpui::test]
     async fn test_remove_project_group_falls_back_to_neighbor(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-        cx.update(|cx| {
-            cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir_a = unique_test_dir(&fs, "group-a").await;
@@ -4926,7 +5045,7 @@ mod tests {
         let project_c = Project::test(fs.clone(), [dir_c.as_path()], cx).await;
 
         // Create a multi-workspace with project A, then add B and C.
-        // project_group_keys stores newest first: [C, B, A].
+        // project_groups stores newest first: [C, B, A].
         // Sidebar displays in the same order: C (top), B (middle), A (bottom).
         let (multi_workspace, cx) = cx
             .add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
@@ -4974,7 +5093,7 @@ mod tests {
         // Activate workspace A (the bottom) so removing it tests the
         // "fall back upward" path.
         let workspace_a =
-            multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().cloned().unwrap());
+            multi_workspace.read_with(cx, |mw, _cx| mw.workspaces().next().unwrap().clone());
         multi_workspace.update_in(cx, |mw, window, cx| {
             mw.activate(workspace_a.clone(), window, cx);
         });
@@ -5013,5 +5132,84 @@ mod tests {
             active_paths.is_empty(),
             "After removing the only remaining group, should have an empty workspace"
         );
+    }
+
+    /// Regression test for a crash where `find_or_create_local_workspace`
+    /// returned a workspace that was about to be removed, hitting an assert
+    /// in `MultiWorkspace::remove`.
+    ///
+    /// The scenario: two workspaces share the same root paths (e.g. due to
+    /// a provisional key mismatch). When the first is removed and the
+    /// fallback searches for the same paths, `workspace_for_paths` must
+    /// skip the doomed workspace so the assert in `remove` is satisfied.
+    #[gpui::test]
+    async fn test_remove_fallback_skips_excluded_workspaces(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let dir = unique_test_dir(&fs, "shared").await;
+
+        // Two projects that open the same directory — this creates two
+        // workspaces whose root_paths are identical.
+        let project_a = Project::test(fs.clone(), [dir.as_path()], cx).await;
+        let project_b = Project::test(fs.clone(), [dir.as_path()], cx).await;
+
+        let (multi_workspace, cx) = cx
+            .add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+
+        multi_workspace.update(cx, |mw, cx| mw.open_sidebar(cx));
+
+        let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project_b.clone(), window, cx)
+        });
+        cx.run_until_parked();
+
+        // workspace_a is first in the workspaces vec.
+        let workspace_a =
+            multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().cloned().unwrap());
+        assert_ne!(workspace_a, workspace_b);
+
+        // Activate workspace_a so removing it triggers the fallback path.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate(workspace_a.clone(), window, cx);
+        });
+        cx.run_until_parked();
+
+        // Remove workspace_a. The fallback searches for the same paths.
+        // Without the `excluding` parameter, `workspace_for_paths` would
+        // return workspace_a (first match) and the assert in `remove`
+        // would fire. With the fix, workspace_a is skipped and
+        // workspace_b is found instead.
+        let path_list = PathList::new(std::slice::from_ref(&dir));
+        let excluded = vec![workspace_a.clone()];
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.remove(
+                vec![workspace_a.clone()],
+                move |this, window, cx| {
+                    this.find_or_create_local_workspace(
+                        path_list,
+                        None,
+                        &excluded,
+                        None,
+                        OpenMode::Activate,
+                        window,
+                        cx,
+                    )
+                },
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
+        });
+        cx.run_until_parked();
+
+        // workspace_b should now be active — workspace_a was removed.
+        multi_workspace.read_with(cx, |mw, _cx| {
+            assert_eq!(
+                mw.workspace(),
+                &workspace_b,
+                "fallback should have found workspace_b, not the excluded workspace_a"
+            );
+        });
     }
 }

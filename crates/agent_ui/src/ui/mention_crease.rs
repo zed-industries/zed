@@ -284,6 +284,7 @@ fn open_thread(
             None,
             Some(name.into()),
             true,
+            "agent_panel",
             window,
             cx,
         )

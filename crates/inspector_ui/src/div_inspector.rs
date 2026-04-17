@@ -495,6 +495,7 @@ impl DivInspector {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_line_numbers(false, cx);
             editor.set_show_code_actions(false, cx);
+            editor.set_show_bookmarks(false, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_runnables(false, cx);

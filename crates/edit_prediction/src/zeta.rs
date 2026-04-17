@@ -43,6 +43,7 @@ pub fn request_prediction_with_zeta(
         related_files,
         events,
         debug_tx,
+        mode,
         trigger,
         project,
         diagnostic_search_range,
@@ -119,7 +120,6 @@ pub fn request_prediction_with_zeta(
                 diagnostic_search_range,
                 excerpt_path,
                 cursor_offset,
-                preferred_experiment,
                 is_open_source,
                 can_collect_data,
                 repo_url,
@@ -273,11 +273,13 @@ pub fn request_prediction_with_zeta(
                     // Use V3 endpoint - server handles model/version selection and suffix stripping
                     let (response, usage) = EditPredictionStore::send_v3_request(
                         prompt_input.clone(),
+                        preferred_experiment.clone(),
                         client,
                         llm_token,
                         organization_id,
                         app_version,
                         trigger,
+                        mode,
                     )
                     .await?;
 
@@ -533,7 +535,6 @@ pub fn zeta2_prompt_input(
     diagnostic_search_range: Range<Point>,
     excerpt_path: Arc<Path>,
     cursor_offset: usize,
-    preferred_experiment: Option<String>,
     is_open_source: bool,
     can_collect_data: bool,
     repo_url: Option<String>,
@@ -565,7 +566,6 @@ pub fn zeta2_prompt_input(
         active_buffer_diagnostics,
         excerpt_ranges,
         syntax_ranges: Some(syntax_ranges),
-        experiment: preferred_experiment,
         in_open_source_repo: is_open_source,
         can_collect_data,
         repo_url,

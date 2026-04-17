@@ -27,7 +27,6 @@ use extension_host::ExtensionStore;
 use feature_flags::{FeatureFlagAppExt as _, PanicFeatureFlag};
 use fs::Fs;
 use futures::FutureExt as _;
-use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::commit_view::CommitViewToolbar;
 use git_ui::git_panel::GitPanel;
@@ -64,7 +63,7 @@ use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
     BaseKeymap, DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile,
-    KeymapFileLoadResult, MigrationStatus, Settings, SettingsStore, VIM_KEYMAP_PATH,
+    KeymapFileLoadResult, MigrationStatus, Settings, SettingsFile, SettingsStore, VIM_KEYMAP_PATH,
     initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
     update_settings_file,
 };
@@ -325,6 +324,21 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
 
     let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
 
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    static APP_ICON: std::sync::LazyLock<Option<std::sync::Arc<image::RgbaImage>>> =
+        std::sync::LazyLock::new(|| {
+            // this shouldn't fail since decode is checked in build.rs
+            const BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/app_icon.png"));
+            util::maybe!({
+                let image = image::ImageReader::new(std::io::Cursor::new(BYTES))
+                    .with_guessed_format()?
+                    .decode()?
+                    .into();
+                anyhow::Ok(Arc::new(image))
+            })
+            .log_err()
+        });
+
     WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: None,
@@ -339,6 +353,8 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        icon: APP_ICON.as_ref().cloned(),
         window_decorations: Some(window_decorations),
         window_min_size: Some(gpui::Size {
             width: px(360.0),
@@ -749,6 +765,7 @@ async fn initialize_agent_panel(
         if !cfg!(test) {
             workspace
                 .register_action(agent_ui::AgentPanel::toggle_focus)
+                .register_action(agent_ui::AgentPanel::focus)
                 .register_action(agent_ui::AgentPanel::toggle)
                 .register_action(agent_ui::InlineAssistant::inline_assist);
         }
@@ -765,6 +782,22 @@ fn register_actions(
 ) {
     workspace
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &input_latency_ui::DumpInputLatencyHistogram,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                let report =
+                    input_latency_ui::format_input_latency_report(window, cx);
+                let project = workspace.project().clone();
+                let buffer = project.update(cx, |project, cx| {
+                    project.create_local_buffer(&report, None, true, cx)
+                });
+                let editor =
+                    cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+                workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+            },
+        )
         .register_action(|_, _: &Minimize, window, _| {
             window.minimize_window();
         })
@@ -1071,11 +1104,12 @@ fn register_actions(
         })
         .register_action({
             let app_state = app_state.clone();
-            move |_workspace, _: &CloseProject, window, cx| {
+            move |workspace, _: &CloseProject, window, cx| {
                 let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
                     return;
                 };
                 let app_state = app_state.clone();
+                let old_group_key = workspace.project_group_key(cx);
                 cx.spawn_in(window, async move |this, cx| {
                     let should_continue = this
                         .update_in(cx, |workspace, window, cx| {
@@ -1114,7 +1148,11 @@ fn register_actions(
                                 },
                             )
                         })?;
-                        task.await
+                        task.await?;
+                        window_handle.update(cx, |mw, window, cx| {
+                            mw.remove_project_group(&old_group_key, window, cx)
+                        })?.await.log_err();
+                        Ok::<(), anyhow::Error>(())
                     } else {
                         Ok(())
                     }
@@ -1508,7 +1546,7 @@ fn quit(_: &Quit, cx: &mut App) {
         for window in &workspace_windows {
             let window = *window;
             let workspaces = window
-                .update(cx, |multi_workspace, _, _| {
+                .update(cx, |multi_workspace, _, _cx| {
                     multi_workspace.workspaces().cloned().collect::<Vec<_>>()
                 })
                 .log_err();
@@ -1677,6 +1715,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
     let error = match result.parse_status {
         settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
         settings::ParseStatus::Success => None,
+        settings::ParseStatus::Unchanged => return,
     };
     let id = NotificationId::Named(format!("failed-to-parse-settings-{is_user}").into());
 
@@ -1740,67 +1779,25 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
     };
 }
 
-pub fn handle_settings_file_changes(
-    mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
-    user_settings_watcher: gpui::Task<()>,
-    mut global_settings_file_rx: mpsc::UnboundedReceiver<String>,
-    global_settings_watcher: gpui::Task<()>,
-    cx: &mut App,
-) {
+pub fn watch_settings_files(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
 
-    // Initial load of both settings files
-    let global_content = cx
-        .foreground_executor()
-        .block_on(global_settings_file_rx.next())
-        .unwrap();
-    let user_content = cx
-        .foreground_executor()
-        .block_on(user_settings_file_rx.next())
-        .unwrap();
-
-    SettingsStore::update_global(cx, |store, cx| {
-        notify_settings_errors(store.set_user_settings(&user_content, cx), true, cx);
-        notify_settings_errors(store.set_global_settings(&global_content, cx), false, cx);
-    });
-
-    // Watch for changes in both files
-    cx.spawn(async move |cx| {
-        let _user_settings_watcher = user_settings_watcher;
-        let _global_settings_watcher = global_settings_watcher;
-        let mut settings_streams = futures::stream::select(
-            global_settings_file_rx.map(Either::Left),
-            user_settings_file_rx.map(Either::Right),
-        );
-
-        while let Some(content) = settings_streams.next().await {
-            let (content, is_user) = match content {
-                Either::Left(content) => (content, false),
-                Either::Right(content) => (content, true),
-            };
-
-            cx.update_global(|store: &mut SettingsStore, cx| {
-                let result = if is_user {
-                    store.set_user_settings(&content, cx)
-                } else {
-                    store.set_global_settings(&content, cx)
-                };
-                let migrating_in_memory =
-                    matches!(&result.migration_status, MigrationStatus::Succeeded);
-                notify_settings_errors(result, is_user, cx);
-                if let Some(notifier) = MigrationNotification::try_global(cx) {
-                    notifier.update(cx, |_, cx| {
-                        cx.emit(MigrationEvent::ContentChanged {
-                            migration_type: MigrationType::Settings,
-                            migrating_in_memory,
-                        });
+    SettingsStore::update_global(cx, move |store, cx| {
+        store.watch_settings_files(fs, cx, |settings_file, result, cx| {
+            let is_user = matches!(settings_file, SettingsFile::User);
+            let migrating_in_memory =
+                matches!(&result.migration_status, MigrationStatus::Succeeded);
+            notify_settings_errors(result, is_user, cx);
+            if let Some(notifier) = MigrationNotification::try_global(cx) {
+                notifier.update(cx, |_, cx| {
+                    cx.emit(MigrationEvent::ContentChanged {
+                        migration_type: MigrationType::Settings,
+                        migrating_in_memory,
                     });
-                }
-                cx.refresh_windows();
-            });
-        }
-    })
-    .detach();
+                });
+            }
+        });
+    });
 }
 
 pub fn handle_keymap_file_changes(
@@ -2046,7 +2043,7 @@ pub fn open_new_ssh_project_from_project(
             paths,
             app_state,
             workspace::OpenOptions {
-                open_new_workspace: Some(true),
+                workspace_matching: workspace::WorkspaceMatching::None,
                 ..Default::default()
             },
             cx,
@@ -2607,13 +2604,13 @@ mod tests {
             })
             .unwrap();
 
-        // Opening with -n (open_new_workspace: Some(true)) still creates a new window.
+        // Opening with -n (reuse_worktrees: false) still creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/e"))],
                 app_state,
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,
@@ -2654,7 +2651,7 @@ mod tests {
                 &[PathBuf::from(path!("/root/a"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(false),
+                    workspace_matching: workspace::WorkspaceMatching::MatchSubdirectory,
                     ..Default::default()
                 },
                 cx,
@@ -2664,29 +2661,13 @@ mod tests {
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
-        // Opening a file inside the existing worktree with -n reuses the window.
+        // Opening a file inside the existing worktree with -n creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/dir/c"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
-                    ..Default::default()
-                },
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-
-        // Opening a path NOT in any existing worktree with -n creates a new window.
-        cx.update(|cx| {
-            open_paths(
-                &[PathBuf::from(path!("/root/b"))],
-                app_state.clone(),
-                workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,
@@ -2695,6 +2676,22 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+
+        // Opening a path NOT in any existing worktree with -n creates a new window.
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/root/b"))],
+                app_state.clone(),
+                workspace::OpenOptions {
+                    workspace_matching: workspace::WorkspaceMatching::None,
+                    ..Default::default()
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 3);
     }
 
     #[gpui::test]
@@ -2747,29 +2744,13 @@ mod tests {
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
-        // Opening a directory already in a worktree with -n reuses the window.
+        // Opening a directory already in a worktree with -n creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/dir2"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
-                    ..Default::default()
-                },
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-
-        // Opening a directory NOT in any worktree with -n creates a new window.
-        cx.update(|cx| {
-            open_paths(
-                &[PathBuf::from(path!("/root"))],
-                app_state.clone(),
-                workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,
@@ -2778,6 +2759,22 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+
+        // Opening a directory NOT in any worktree with -n creates a new window.
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/root"))],
+                app_state.clone(),
+                workspace::OpenOptions {
+                    workspace_matching: workspace::WorkspaceMatching::None,
+                    ..Default::default()
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 3);
     }
 
     #[gpui::test]
@@ -4324,6 +4321,7 @@ mod tests {
                     editor.save(
                         SaveOptions {
                             format: true,
+                            force_format: false,
                             autosave: false,
                         },
                         project.clone(),
@@ -4804,7 +4802,7 @@ mod tests {
         app_state
             .fs
             .save(
-                "/settings.json".as_ref(),
+                paths::settings_file(),
                 &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
             )
@@ -4822,28 +4820,12 @@ mod tests {
             .unwrap();
         executor.run_until_parked();
         cx.update(|cx| {
-            let (settings_rx, settings_watcher) = watch_config_file(
-                &executor,
-                app_state.fs.clone(),
-                PathBuf::from("/settings.json"),
-            );
             let (keymap_rx, keymap_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
-            let (global_settings_rx, global_settings_watcher) = watch_config_file(
-                &executor,
-                app_state.fs.clone(),
-                PathBuf::from("/global_settings.json"),
-            );
-            handle_settings_file_changes(
-                settings_rx,
-                settings_watcher,
-                global_settings_rx,
-                global_settings_watcher,
-                cx,
-            );
+            watch_settings_files(app_state.fs.clone(), cx);
             handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
         });
         window
@@ -4890,7 +4872,7 @@ mod tests {
         app_state
             .fs
             .save(
-                "/settings.json".as_ref(),
+                paths::settings_file(),
                 &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
             )
@@ -4939,7 +4921,7 @@ mod tests {
         app_state
             .fs
             .save(
-                "/settings.json".as_ref(),
+                paths::settings_file(),
                 &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
             )
@@ -4956,29 +4938,13 @@ mod tests {
             .unwrap();
 
         cx.update(|cx| {
-            let (settings_rx, settings_watcher) = watch_config_file(
-                &executor,
-                app_state.fs.clone(),
-                PathBuf::from("/settings.json"),
-            );
             let (keymap_rx, keymap_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
 
-            let (global_settings_rx, global_settings_watcher) = watch_config_file(
-                &executor,
-                app_state.fs.clone(),
-                PathBuf::from("/global_settings.json"),
-            );
-            handle_settings_file_changes(
-                settings_rx,
-                settings_watcher,
-                global_settings_rx,
-                global_settings_watcher,
-                cx,
-            );
+            watch_settings_files(app_state.fs.clone(), cx);
             handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
         });
 
@@ -5017,7 +4983,7 @@ mod tests {
         app_state
             .fs
             .save(
-                "/settings.json".as_ref(),
+                paths::settings_file(),
                 &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
             )
@@ -6130,10 +6096,9 @@ mod tests {
     #[gpui::test]
     async fn test_multi_workspace_session_restore(cx: &mut TestAppContext) {
         use collections::HashMap;
-        use project::ProjectGroupKey;
         use session::Session;
         use util::path_list::PathList;
-        use workspace::{OpenMode, Workspace, WorkspaceId};
+        use workspace::{OpenMode, ProjectGroupKey, Workspace, WorkspaceId};
 
         let app_state = init_test(cx);
 
@@ -6324,7 +6289,7 @@ mod tests {
         restored_a
             .read_with(cx, |mw, _| {
                 assert_eq!(
-                    mw.project_group_keys().cloned().collect::<Vec<_>>(),
+                    mw.project_group_keys(),
                     vec![
                         ProjectGroupKey::new(None, PathList::new(&[dir2])),
                         ProjectGroupKey::new(None, PathList::new(&[dir1])),
@@ -6338,11 +6303,219 @@ mod tests {
         restored_b
             .read_with(cx, |mw, _| {
                 assert_eq!(
-                    mw.project_group_keys().cloned().collect::<Vec<_>>(),
+                    mw.project_group_keys(),
                     vec![ProjectGroupKey::new(None, PathList::new(&[dir3]))]
                 );
                 assert_eq!(mw.workspaces().count(), 1);
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_restored_project_groups_survive_workspace_key_change(cx: &mut TestAppContext) {
+        use session::Session;
+        use util::path_list::PathList;
+        use workspace::{OpenMode, ProjectGroupKey};
+
+        let app_state = init_test(cx);
+
+        let fs = app_state.fs.clone();
+        let fake_fs = fs.as_fake();
+        fake_fs
+            .insert_tree(path!("/root_a"), json!({ "file.txt": "" }))
+            .await;
+        fake_fs
+            .insert_tree(path!("/root_b"), json!({ "file.txt": "" }))
+            .await;
+        fake_fs
+            .insert_tree(path!("/root_c"), json!({ "file.txt": "" }))
+            .await;
+        fake_fs
+            .insert_tree(path!("/root_d"), json!({ "other.txt": "" }))
+            .await;
+
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+
+        // --- Phase 1: Build a multi-workspace with 3 project groups ---
+
+        let workspace::OpenResult { window, .. } = cx
+            .update(|cx| {
+                workspace::Workspace::new_local(
+                    vec![path!("/root_a").into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .expect("failed to open workspace");
+
+        window.update(cx, |mw, _, cx| mw.open_sidebar(cx)).unwrap();
+
+        window
+            .update(cx, |mw, window, cx| {
+                mw.open_project(vec![path!("/root_b").into()], OpenMode::Add, window, cx)
+            })
+            .unwrap()
+            .await
+            .expect("failed to add root_b");
+
+        window
+            .update(cx, |mw, window, cx| {
+                mw.open_project(vec![path!("/root_c").into()], OpenMode::Add, window, cx)
+            })
+            .unwrap()
+            .await
+            .expect("failed to add root_c");
+        cx.run_until_parked();
+
+        let key_b = ProjectGroupKey::new(None, PathList::new(&[path!("/root_b")]));
+        let key_c = ProjectGroupKey::new(None, PathList::new(&[path!("/root_c")]));
+
+        // Make root_a the active workspace so it's the one eagerly restored.
+        window
+            .update(cx, |mw, window, cx| {
+                let workspace_a = mw
+                    .workspaces()
+                    .find(|ws| {
+                        ws.read(cx)
+                            .root_paths(cx)
+                            .iter()
+                            .any(|p| p.as_ref() == Path::new(path!("/root_a")))
+                    })
+                    .expect("workspace_a should exist")
+                    .clone();
+                mw.activate(workspace_a, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // --- Phase 2: Serialize, close, and restore ---
+
+        flush_workspace_serialization(&window, cx).await;
+        cx.run_until_parked();
+
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session
+                    .replace_session_for_test(Session::test_with_old_session(session_id.clone()));
+            });
+        });
+
+        let mut async_cx = cx.to_async();
+        crate::restore_or_create_workspace(app_state.clone(), &mut async_cx)
+            .await
+            .expect("failed to restore workspace");
+        cx.run_until_parked();
+
+        let restored_windows: Vec<WindowHandle<MultiWorkspace>> = cx.read(|cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|w| w.downcast::<MultiWorkspace>())
+                .collect()
+        });
+        assert_eq!(restored_windows.len(), 1);
+        let restored = &restored_windows[0];
+
+        // Verify the restored window has all 3 project groups.
+        restored
+            .read_with(cx, |mw, _cx| {
+                let keys = mw.project_group_keys();
+                assert_eq!(
+                    keys.len(),
+                    3,
+                    "restored window should have 3 groups; got {keys:?}"
+                );
+                assert!(keys.contains(&key_b), "should contain key_b");
+                assert!(keys.contains(&key_c), "should contain key_c");
+            })
+            .unwrap();
+
+        // --- Phase 3: Trigger a workspace key change and verify survival ---
+
+        let active_project = restored
+            .read_with(cx, |mw, cx| mw.workspace().read(cx).project().clone())
+            .unwrap();
+
+        active_project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/root_d"), true, cx)
+            })
+            .await
+            .expect("adding worktree should succeed");
+        cx.run_until_parked();
+
+        restored
+            .read_with(cx, |mw, _cx| {
+                let keys = mw.project_group_keys();
+                assert!(
+                    keys.contains(&key_b),
+                    "restored group key_b should survive a workspace key change; got {keys:?}"
+                );
+                assert!(
+                    keys.contains(&key_c),
+                    "restored group key_c should survive a workspace key change; got {keys:?}"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_close_project_removes_project_group(cx: &mut TestAppContext) {
+        use util::path_list::PathList;
+        use workspace::{OpenMode, ProjectGroupKey};
+
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/my-project"), json!({}))
+            .await;
+
+        let workspace::OpenResult { window, .. } = cx
+            .update(|cx| {
+                workspace::Workspace::new_local(
+                    vec![path!("/my-project").into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        window.update(cx, |mw, _, cx| mw.open_sidebar(cx)).unwrap();
+        cx.background_executor.run_until_parked();
+
+        let project_key = ProjectGroupKey::new(None, PathList::new(&[path!("/my-project")]));
+        let keys = window
+            .read_with(cx, |mw, _| mw.project_group_keys())
+            .unwrap();
+        assert_eq!(
+            keys,
+            vec![project_key],
+            "project group should exist before CloseProject: {keys:?}"
+        );
+
+        cx.dispatch_action(window.into(), CloseProject);
+
+        let keys = window
+            .read_with(cx, |mw, _| mw.project_group_keys())
+            .unwrap();
+        assert!(
+            keys.is_empty(),
+            "project group should be removed after CloseProject: {keys:?}"
+        );
     }
 }

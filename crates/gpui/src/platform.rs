@@ -1424,6 +1424,9 @@ pub struct WindowOptions {
     /// Note that this may be ignored.
     pub window_decorations: Option<WindowDecorations>,
 
+    /// Icon image (X11 only)
+    pub icon: Option<Arc<image::RgbaImage>>,
+
     /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
     pub tabbing_identifier: Option<String>,
 }
@@ -1469,6 +1472,10 @@ pub struct WindowParams {
 
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub show: bool,
+
+    /// An image to set as the window icon (x11 only)
+    #[cfg_attr(feature = "wayland", allow(dead_code))]
+    pub icon: Option<Arc<image::RgbaImage>>,
 
     #[cfg_attr(feature = "wayland", allow(dead_code))]
     pub display_id: Option<DisplayId>,
@@ -1530,6 +1537,7 @@ impl Default for WindowOptions {
             is_minimizable: true,
             display_id: None,
             window_background: WindowBackgroundAppearance::default(),
+            icon: None,
             app_id: None,
             window_min_size: None,
             window_decorations: None,
@@ -2092,12 +2100,22 @@ impl Image {
                 let mut frames = SmallVec::new();
 
                 for frame in decoder.into_frames() {
-                    let mut frame = frame?;
-                    // Convert from RGBA to BGRA.
-                    for pixel in frame.buffer_mut().chunks_exact_mut(4) {
-                        pixel.swap(0, 2);
+                    match frame {
+                        Ok(mut frame) => {
+                            // Convert from RGBA to BGRA.
+                            for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                                pixel.swap(0, 2);
+                            }
+                            frames.push(frame);
+                        }
+                        Err(err) => {
+                            log::debug!("Skipping GIF frame due to decode error: {err}");
+                        }
                     }
-                    frames.push(frame);
+                }
+
+                if frames.is_empty() {
+                    anyhow::bail!("GIF could not be decoded: all frames failed");
                 }
 
                 frames

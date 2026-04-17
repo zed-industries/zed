@@ -11,7 +11,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::project_settings::ProjectSettings;
 use project::{
-    git_store::Repository,
+    git_store::{Repository, RepositoryEvent},
     trusted_worktrees::{PathTrust, TrustedWorktrees},
 };
 use remote::{RemoteConnectionOptions, remote_client::ConnectionIdentifier};
@@ -25,8 +25,6 @@ use workspace::{
 };
 
 use crate::git_panel::show_error_toast;
-
-const MAIN_WORKTREE_DISPLAY_NAME: &str = "main";
 
 actions!(
     git,
@@ -64,7 +62,7 @@ pub struct WorktreeList {
     width: Rems,
     pub picker: Entity<Picker<WorktreeListDelegate>>,
     picker_focus_handle: FocusHandle,
-    _subscription: Option<Subscription>,
+    _subscriptions: Vec<Subscription>,
     embedded: bool,
 }
 
@@ -77,9 +75,10 @@ impl WorktreeList {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self::new_inner(repository, workspace, width, false, window, cx);
-        this._subscription = Some(cx.subscribe(&this.picker, |_, _, _, cx| {
-            cx.emit(DismissEvent);
-        }));
+        this._subscriptions
+            .push(cx.subscribe(&this.picker, |_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }));
         this
     }
 
@@ -104,7 +103,7 @@ impl WorktreeList {
                 .context("No active repository")?
                 .await??
                 .into_iter()
-                .filter(|worktree| worktree.ref_name.is_some()) // hide worktrees without a branch
+                .filter(|worktree| !worktree.is_bare) // hide bare repositories
                 .collect();
 
             let default_branch = default_branch_request
@@ -128,7 +127,7 @@ impl WorktreeList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = WorktreeListDelegate::new(workspace, repository, window, cx);
+        let delegate = WorktreeListDelegate::new(workspace, repository.clone(), window, cx);
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
                 .show_scrollbar(true)
@@ -139,11 +138,38 @@ impl WorktreeList {
             picker.delegate.focus_handle = picker_focus_handle.clone();
         });
 
+        let mut subscriptions = Vec::new();
+        if let Some(repo) = &repository {
+            let picker_entity = picker.clone();
+            subscriptions.push(cx.subscribe(
+                repo,
+                move |_this, repo, event: &RepositoryEvent, cx| {
+                    if matches!(event, RepositoryEvent::GitWorktreeListChanged) {
+                        let worktrees_request = repo.update(cx, |repo, _| repo.worktrees());
+                        let picker = picker_entity.clone();
+                        cx.spawn(async move |_, cx| {
+                            let all_worktrees: Vec<_> = worktrees_request
+                                .await??
+                                .into_iter()
+                                .filter(|worktree| !worktree.is_bare)
+                                .collect();
+                            picker.update(cx, |picker, cx| {
+                                picker.delegate.all_worktrees = Some(all_worktrees);
+                                picker.delegate.refresh_forbidden_deletion_path(cx);
+                            });
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx);
+                    }
+                },
+            ));
+        }
+
         Self {
             picker,
             picker_focus_handle,
             width,
-            _subscription: None,
+            _subscriptions: subscriptions,
             embedded,
         }
     }
@@ -156,9 +182,10 @@ impl WorktreeList {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self::new_inner(repository, workspace, width, true, window, cx);
-        this._subscription = Some(cx.subscribe(&this.picker, |_, _, _, cx| {
-            cx.emit(DismissEvent);
-        }));
+        this._subscriptions
+            .push(cx.subscribe(&this.picker, |_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }));
         this
     }
 
@@ -695,6 +722,11 @@ impl PickerDelegate for WorktreeListDelegate {
         };
 
         cx.spawn_in(window, async move |picker, cx| {
+            let main_worktree_path = all_worktrees
+                .iter()
+                .find(|wt| wt.is_main)
+                .map(|wt| wt.path.clone());
+
             let mut matches: Vec<WorktreeEntry> = if query.is_empty() {
                 all_worktrees
                     .into_iter()
@@ -709,12 +741,10 @@ impl PickerDelegate for WorktreeListDelegate {
                     .iter()
                     .enumerate()
                     .map(|(ix, worktree)| {
-                        let name = if worktree.is_main {
-                            MAIN_WORKTREE_DISPLAY_NAME
-                        } else {
-                            worktree.display_name()
-                        };
-                        StringMatchCandidate::new(ix, name)
+                        StringMatchCandidate::new(
+                            ix,
+                            &worktree.directory_name(main_worktree_path.as_deref()),
+                        )
                     })
                     .collect::<Vec<StringMatchCandidate>>();
                 fuzzy::match_strings(
@@ -739,12 +769,7 @@ impl PickerDelegate for WorktreeListDelegate {
                 .update(cx, |picker, _| {
                     if !query.is_empty()
                         && !matches.first().is_some_and(|entry| {
-                            let name = if entry.worktree.is_main {
-                                MAIN_WORKTREE_DISPLAY_NAME
-                            } else {
-                                entry.worktree.display_name()
-                            };
-                            name == query
+                            entry.worktree.directory_name(main_worktree_path.as_deref()) == query
                         })
                     {
                         let query = query.replace(' ', "-");
@@ -754,6 +779,7 @@ impl PickerDelegate for WorktreeListDelegate {
                                 ref_name: Some(format!("refs/heads/{query}").into()),
                                 sha: Default::default(),
                                 is_main: false,
+                                is_bare: false,
                             },
                             positions: Vec::new(),
                             is_new: true,
@@ -821,12 +847,13 @@ impl PickerDelegate for WorktreeListDelegate {
                 ),
             )
         } else {
-            let display_name = if entry.worktree.is_main {
-                MAIN_WORKTREE_DISPLAY_NAME
-            } else {
-                entry.worktree.display_name()
-            };
-            let first_line = display_name.lines().next().unwrap_or(display_name);
+            let main_worktree_path = self
+                .all_worktrees
+                .as_ref()
+                .and_then(|wts| wts.iter().find(|wt| wt.is_main))
+                .map(|wt| wt.path.as_path());
+            let display_name = entry.worktree.directory_name(main_worktree_path);
+            let first_line = display_name.lines().next().unwrap_or(&display_name);
             let positions: Vec<_> = entry
                 .positions
                 .iter()
@@ -889,7 +916,7 @@ impl PickerDelegate for WorktreeListDelegate {
                                 })
                                 .size(IconSize::Small),
                         )
-                        .child(v_flex().w_full().child(branch_name).map(|this| {
+                        .child(v_flex().w_full().min_w_0().child(branch_name).map(|this| {
                             if entry.is_new {
                                 this.child(
                                     Label::new(sublabel)
@@ -903,6 +930,22 @@ impl PickerDelegate for WorktreeListDelegate {
                                         .w_full()
                                         .min_w_0()
                                         .gap_1p5()
+                                        .when_some(
+                                            entry.worktree.branch_name().map(|b| b.to_string()),
+                                            |this, branch| {
+                                                this.child(
+                                                    Label::new(branch)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                                .child(
+                                                    Label::new("•")
+                                                        .alpha(0.5)
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::Small),
+                                                )
+                                            },
+                                        )
                                         .child(
                                             Label::new(sha)
                                                 .size(LabelSize::Small)
@@ -926,7 +969,7 @@ impl PickerDelegate for WorktreeListDelegate {
                             }
                         })),
                 )
-                .when(!entry.is_new, |this| {
+                .when(!entry.is_new && !is_current, |this| {
                     let focus_handle = self.focus_handle.clone();
                     let open_in_new_window_button =
                         IconButton::new(("open-new-window", ix), IconName::ArrowUpRight)
@@ -964,6 +1007,13 @@ impl PickerDelegate for WorktreeListDelegate {
         let is_creating = selected_entry.is_some_and(|entry| entry.is_new);
         let can_delete = selected_entry
             .is_some_and(|entry| entry.can_delete(self.forbidden_deletion_path.as_ref()));
+        let is_current = selected_entry.is_some_and(|entry| {
+            !entry.is_new
+                && self
+                    .current_worktree_path
+                    .as_ref()
+                    .is_some_and(|current| *current == entry.worktree.path)
+        });
 
         let footer_container = h_flex()
             .w_full()
@@ -1023,20 +1073,22 @@ impl PickerDelegate for WorktreeListDelegate {
                                 }),
                         )
                     })
-                    .child(
-                        Button::new("open-in-new-window", "Open in New Window")
-                            .key_binding(
-                                KeyBinding::for_action_in(
-                                    &menu::SecondaryConfirm,
-                                    &focus_handle,
-                                    cx,
+                    .when(!is_current, |this| {
+                        this.child(
+                            Button::new("open-in-new-window", "Open in New Window")
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &menu::SecondaryConfirm,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(12.))),
                                 )
-                                .map(|kb| kb.size(rems_from_px(12.))),
-                            )
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
-                            }),
-                    )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                                }),
+                        )
+                    })
                     .child(
                         Button::new("open-in-window", "Open")
                             .key_binding(
