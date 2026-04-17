@@ -3931,12 +3931,14 @@ impl AgentPanel {
             BaseView::AgentThread { conversation_view } => Some(conversation_view.clone()),
             _ => None,
         };
-        let thread_with_messages = match &self.base_view {
-            BaseView::AgentThread { conversation_view } => {
-                conversation_view.read(cx).has_user_submitted_prompt(cx)
-            }
-            _ => false,
-        };
+
+        let can_regenerate_thread_title =
+            conversation_view.as_ref().is_some_and(|conversation_view| {
+                let conversation_view = conversation_view.read(cx);
+                conversation_view.has_user_submitted_prompt(cx)
+                    && conversation_view.as_native_thread(cx).is_some()
+            });
+
         let has_auth_methods = match &self.base_view {
             BaseView::AgentThread { conversation_view } => {
                 conversation_view.read(cx).has_auth_methods()
@@ -3967,7 +3969,7 @@ impl AgentPanel {
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
                         menu = menu.context(focus_handle.clone());
 
-                        if thread_with_messages {
+                        if can_regenerate_thread_title {
                             menu = menu.header("Current Thread");
 
                             if let Some(conversation_view) = conversation_view.as_ref() {
