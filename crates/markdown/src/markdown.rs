@@ -1147,6 +1147,8 @@ impl MarkdownElement {
                 img(source)
                     .id(("markdown-image", range.start))
                     .max_w_full()
+                    .mr_2()
+                    .mb_2()
                     .when_some(height, |this, height| this.h(height))
                     .when_some(width, |this, width| this.w(width)),
             )
@@ -2173,7 +2175,11 @@ impl Element for MarkdownElement {
                     );
                     builder.pop_div()
                 }
-                MarkdownEvent::SoftBreak => builder.push_text(" ", range.clone()),
+                MarkdownEvent::SoftBreak => {
+                    if !paragraph_has_image {
+                        builder.push_text(" ", range.clone());
+                    }
+                }
                 MarkdownEvent::HardBreak => {
                     if paragraph_has_image {
                         // A full-width zero-height child forces a flex-wrap row break.
