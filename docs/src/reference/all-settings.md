@@ -4970,6 +4970,48 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_menus`: Whether to show the menus in the titlebar
 - `button_layout`: The layout of window control buttons in the title bar (Linux only). Can be set to `"platform_default"` to follow the system setting, `"standard"` to use Zed's built-in layout, or a custom format like `"close:minimize,maximize"`
 
+## Window Title Format
+
+- Description: Template for the window title. Use `${separator}` to insert a
+  separator that is omitted when adjacent variables are empty. The collaboration
+  indicator, when present, is appended after the rendered template.
+- Setting: `window_title_format`
+- Default: `"${projectName}${separator}${fileName}"`
+
+Available variables:
+
+| Variable       | Description                                          |
+| -------------- | ---------------------------------------------------- |
+| `projectName`  | Name of the current project                          |
+| `fileName`     | Name of the active file (e.g. `main.rs`)             |
+| `filePath`     | Absolute path of the active file                     |
+| `relativePath` | Path of the active file relative to the active worktree |
+| `fileStem`     | File name without extension (e.g. `main`)            |
+| `remoteName`   | Display name of the remote connection, if any        |
+| `remoteHost`   | Host of the remote connection, if any                |
+| `appName`      | Zed release channel name (e.g. `Zed`, `Zed Nightly`) |
+| `branch`       | Git branch checked out in the active repository      |
+| `separator`    | Separator string, omitted when neighbors are empty   |
+
+```json [settings]
+{
+  "window_title_format": "${projectName}${separator}${fileName}"
+}
+```
+
+## Window Title Separator
+
+- Description: The string substituted for `${separator}` in the window title
+  format. Include any surrounding whitespace in the value.
+- Setting: `window_title_separator`
+- Default: `" — "`
+
+```json [settings]
+{
+  "window_title_separator": " — "
+}
+```
+
 ## Vim
 
 - Description: Whether or not to enable vim mode.

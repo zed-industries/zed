@@ -99,6 +99,14 @@ impl VsCodeSettings {
             .map(|s| s.to_owned())
     }
 
+    fn read_window_title_format(&self) -> Option<String> {
+        self.read_string("window.title")
+            .map(|template| translate_vscode_window_title_format(&template))
+            // If every placeholder is dropped during translation, keep Zed's
+            // default title behavior instead of importing an empty template.
+            .filter(|template| !template.is_empty())
+    }
+
     fn read_bool(&self, setting: &str) -> Option<bool> {
         self.read_value(setting).and_then(|v| v.as_bool())
     }
@@ -1056,6 +1064,8 @@ impl VsCodeSettings {
             use_system_path_prompts: self.read_bool("files.simpleDialog.enable").map(|b| !b),
             use_system_prompts: None,
             use_system_window_tabs: self.read_bool("window.nativeTabs"),
+            window_title_format: self.read_window_title_format(),
+            window_title_separator: self.read_string("window.titleSeparator"),
             when_closing_with_no_tabs: self.read_bool("window.closeWhenEmpty").map(|b| {
                 if b {
                     CloseWindowWhenNoItems::CloseWindow
@@ -1122,6 +1132,46 @@ impl VsCodeSettings {
                 .filter(|r| !r.is_empty()),
         }
     }
+}
+
+fn translate_vscode_window_title_format(template: &str) -> String {
+    let mut translated = String::new();
+    let mut start = 0;
+
+    // Workspace owns the runtime template parser, so the VS Code importer keeps
+    // its own small placeholder scan here instead of depending on that crate.
+    while let Some(offset) = template[start..].find("${") {
+        let variable_start = start + offset;
+        translated.push_str(&template[start..variable_start]);
+
+        let content_start = variable_start + 2;
+        let Some(content_end_offset) = template[content_start..].find('}') else {
+            translated.push_str(&template[variable_start..]);
+            return translated;
+        };
+
+        let content_end = content_start + content_end_offset;
+        let variable = &template[content_start..content_end];
+        match variable {
+            "projectName" | "fileName" | "filePath" | "relativePath" | "fileStem"
+            | "remoteName" | "remoteHost" | "branch" | "separator" => {
+                translated.push_str(&template[variable_start..=content_end]);
+            }
+            // Keep VS Code alias support in the importer so native Zed settings
+            // only expose the documented placeholder names.
+            "appName" => translated.push_str("${appName}"),
+            "rootName" => translated.push_str("${projectName}"),
+            "activeEditorShort" => translated.push_str("${fileName}"),
+            "activeEditorMedium" => translated.push_str("${relativePath}"),
+            "activeEditorLong" => translated.push_str("${filePath}"),
+            _ => {}
+        }
+
+        start = content_end + 1;
+    }
+
+    translated.push_str(&template[start..]);
+    translated
 }
 
 fn skip_default<T: Default + PartialEq>(value: T) -> Option<T> {

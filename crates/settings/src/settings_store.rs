@@ -2616,6 +2616,45 @@ mod tests {
             .unindent(),
             cx,
         );
+
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "window.title": "${activeEditorShort}${separator}${rootName}${separator}${appName}",
+              "window.titleSeparator": " - "
+            }"#
+            .unindent(),
+            r#"{
+              "base_keymap": "VSCode",
+              "window_title_separator": " - ",
+              "window_title_format": "${fileName}${separator}${projectName}${separator}${appName}"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "window.title": "${unsupportedVariable}"
+            }"#
+            .unindent(),
+            r#"{
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
     }
 
     #[track_caller]
