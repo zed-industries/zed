@@ -73,6 +73,7 @@ impl Console {
             editor.disable_scrollbars_and_minimap(window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_show_runnables(false, cx);
+            editor.set_show_bookmarks(false, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_code_actions(false, cx);
             editor.set_show_line_numbers(false, cx);

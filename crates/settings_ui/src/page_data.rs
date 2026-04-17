@@ -1893,7 +1893,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn gutter_section() -> [SettingsPageItem; 8] {
+    fn gutter_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Gutter"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1973,6 +1973,29 @@ fn editor_page() -> SettingsPage {
                             .gutter
                             .get_or_insert_default()
                             .breakpoints = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Bookmarks",
+                description: "Show bookmarks in the gutter.",
+                field: Box::new(SettingField {
+                    json_path: Some("gutter.bookmarks"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .as_ref()
+                            .and_then(|gutter| gutter.bookmarks.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .get_or_insert_default()
+                            .bookmarks = value;
                     },
                 }),
                 metadata: None,
