@@ -3800,15 +3800,14 @@ mod tests {
                 .lines
                 .iter()
                 .map(|line| line.layout.wrapped_text())
-                .collect::<Vec<_>>()
-                .join("\n");
+                .collect();
             assert!(
                 !text.contains(br),
                 "{br} should not appear as literal text; got: {text:?}"
             );
             assert!(
-                text.contains("first") && text.contains("second"),
-                "both sides of {br} should be present; got: {text:?}"
+                text.contains("first\nsecond"),
+                "{br} should produce a newline between 'first' and 'second'; got: {text:?}"
             );
         }
     }

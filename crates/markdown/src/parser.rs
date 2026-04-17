@@ -1380,9 +1380,7 @@ mod tests {
     }
 
     #[test]
-    fn test_non_br_inline_html_emits_inline_html() {
-        // parse_html: false prevents the text-merge loop from absorbing InlineHtml,
-        // so each tag reaches the conversion arm — verifying is_br_tag doesn't match unrelated tags.
+    fn test_unrecognized_inline_html_preserved_as_inline_html() {
         for input in ["a<span>b</span>c", "a<em>b</em>c", "a<strong>b</strong>c"] {
             let parsed = parse_markdown_with_options(input, false, false);
             let has_inline_html = parsed
@@ -1395,11 +1393,11 @@ mod tests {
                 .any(|(_, event)| matches!(event, MarkdownEvent::HardBreak));
             assert!(
                 has_inline_html,
-                "non-<br> tags in \"{input}\" should emit InlineHtml"
+                "unrecognized inline HTML \"{input}\" should emit InlineHtml"
             );
             assert!(
                 !has_hard_break,
-                "non-<br> tags in \"{input}\" should not emit HardBreak"
+                "unrecognized inline HTML \"{input}\" should not emit HardBreak"
             );
         }
     }
