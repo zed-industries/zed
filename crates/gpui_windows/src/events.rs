@@ -111,6 +111,7 @@ impl WindowsWindowInner {
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
             _ => None,
         };
         if let Some(n) = handled {
@@ -758,6 +759,10 @@ impl WindowsWindowInner {
         self.state.scale_factor.set(new_scale_factor);
         self.state.border_offset.update(handle).log_err();
 
+        self.state
+            .direct_manipulation
+            .set_scale_factor(new_scale_factor);
+
         if is_maximized {
             // Get the monitor and its work area at the new DPI
             let monitor = unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONEAREST) };
@@ -1139,14 +1144,32 @@ impl WindowsWindowInner {
         Some(0)
     }
 
+    fn handle_dm_pointer_hit_test(&self, wparam: WPARAM) -> Option<isize> {
+        self.state.direct_manipulation.on_pointer_hit_test(wparam);
+        None
+    }
+
     #[inline]
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
         let mut request_frame = self.state.callbacks.request_frame.take()?;
 
-        // we are instructing gpui to force render a frame, this will
-        // re-populate all the gpu textures for us so we can resume drawing in
-        // case we disabled drawing earlier due to a device loss
-        self.state.renderer.borrow_mut().mark_drawable();
+        self.state.direct_manipulation.update();
+
+        let events = self.state.direct_manipulation.drain_events();
+        if !events.is_empty() {
+            if let Some(mut func) = self.state.callbacks.input.take() {
+                for event in events {
+                    func(event);
+                }
+                self.state.callbacks.input.set(Some(func));
+            }
+        }
+
+        if force_render {
+            // Re-enable drawing after a device loss recovery. The forced render
+            // will rebuild the scene with fresh atlas textures.
+            self.state.renderer.borrow_mut().mark_drawable();
+        }
         request_frame(RequestFrameOptions {
             require_presentation: false,
             force_render,

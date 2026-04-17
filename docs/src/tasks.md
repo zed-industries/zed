@@ -53,9 +53,9 @@ Zed supports ways to spawn (and rerun) commands using its integrated [terminal](
     "show_command": true,
     // Which edited buffers to save before running the task:
     // * `all` — save all edited buffers
-    // * `current` — save current buffer only
+    // * `current` — save currently active buffer only
     // * `none` — don't save any buffers
-    "save": "all"
+    "save": "none"
     // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
     // "tags": []
   }

@@ -738,6 +738,7 @@ impl ActionLog {
                 let task = if let Some(existing_file_content) = existing_file_content {
                     // Capture the agent's content before restoring existing file content
                     let agent_content = buffer.read(cx).text();
+                    let buffer_id = buffer.read(cx).remote_id();
 
                     buffer.update(cx, |buffer, cx| {
                         buffer.start_transaction();
@@ -750,7 +751,10 @@ impl ActionLog {
 
                     undo_info = Some(PerBufferUndo {
                         buffer: buffer.downgrade(),
-                        edits_to_restore: vec![(Anchor::MIN..Anchor::MAX, agent_content)],
+                        edits_to_restore: vec![(
+                            Anchor::min_for_buffer(buffer_id)..Anchor::max_for_buffer(buffer_id),
+                            agent_content,
+                        )],
                         status: UndoBufferStatus::Created {
                             had_existing_content: true,
                         },
@@ -773,7 +777,7 @@ impl ActionLog {
                         initial_version == current_version && current_content == tracked_content;
 
                     if is_ai_only_content {
-                        buffer
+                        let task = buffer
                             .read(cx)
                             .entry_id(cx)
                             .and_then(|entry_id| {
@@ -781,7 +785,12 @@ impl ActionLog {
                                     project.delete_entry(entry_id, false, cx)
                                 })
                             })
-                            .unwrap_or(Task::ready(Ok(())))
+                            .unwrap_or_else(|| Task::ready(Ok(None)));
+
+                        cx.background_spawn(async move {
+                            task.await?;
+                            Ok(())
+                        })
                     } else {
                         // Not sure how to disentangle edits made by the user
                         // from edits made by the AI at this point.
@@ -990,8 +999,8 @@ impl ActionLog {
                 let mut valid_edits = Vec::new();
 
                 for (anchor_range, text_to_restore) in per_buffer_undo.edits_to_restore {
-                    if anchor_range.start.buffer_id == Some(buffer.remote_id())
-                        && anchor_range.end.buffer_id == Some(buffer.remote_id())
+                    if anchor_range.start.buffer_id == buffer.remote_id()
+                        && anchor_range.end.buffer_id == buffer.remote_id()
                     {
                         valid_edits.push((anchor_range, text_to_restore));
                     }

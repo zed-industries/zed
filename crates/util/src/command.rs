@@ -68,6 +68,10 @@ impl Command {
         self
     }
 
+    pub fn get_args(&self) -> impl Iterator<Item = &OsStr> {
+        self.0.get_args()
+    }
+
     pub fn env(&mut self, key: impl AsRef<OsStr>, val: impl AsRef<OsStr>) -> &mut Self {
         self.0.env(key, val);
         self
@@ -128,5 +132,9 @@ impl Command {
 
     pub async fn status(&mut self) -> std::io::Result<std::process::ExitStatus> {
         self.0.status().await
+    }
+
+    pub fn get_program(&self) -> &OsStr {
+        self.0.get_program()
     }
 }

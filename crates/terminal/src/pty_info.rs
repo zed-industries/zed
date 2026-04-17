@@ -36,11 +36,19 @@ impl ProcessIdGetter {
     }
 
     fn pid(&self) -> Option<Pid> {
+        // Negative pid means error.
+        // Zero pid means no foreground process group is set on the PTY yet.
+        // Avoid killing the current process by returning a zero pid.
         let pid = unsafe { libc::tcgetpgrp(self.handle) };
-        if pid < 0 {
+        if pid > 0 {
+            return Some(Pid::from_u32(pid as u32));
+        }
+
+        if self.fallback_pid > 0 {
             return Some(Pid::from_u32(self.fallback_pid));
         }
-        Some(Pid::from_u32(pid as u32))
+
+        None
     }
 }
 

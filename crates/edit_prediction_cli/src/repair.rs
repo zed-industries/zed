@@ -15,7 +15,7 @@ use crate::{
     openai_client::OpenAiClient,
     parse_output::run_parse_output,
     paths::LLM_CACHE_DB,
-    progress::{ExampleProgress, Step},
+    progress::{ExampleProgress, Progress, Step},
     word_diff::unified_to_word_diff,
 };
 use anyhow::{Context as _, Result};
@@ -75,6 +75,9 @@ pub struct RepairArgs {
     /// Which LLM provider to use (anthropic or openai)
     #[clap(long, default_value = "anthropic")]
     pub backend: BatchProvider,
+    /// Wait for all batches to complete before exiting
+    #[clap(long)]
+    pub wait: bool,
 }
 
 fn model_for_backend(backend: BatchProvider) -> &'static str {
@@ -452,6 +455,68 @@ pub async fn sync_batches(args: &RepairArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub async fn reprocess_after_batch_wait(examples: &mut [Example], args: &RepairArgs) -> Result<()> {
+    let mut reprocessed = 0;
+    for example in examples.iter_mut() {
+        if has_successful_repair(example) || !needs_repair(example, args.confidence_threshold) {
+            continue;
+        }
+
+        let example_progress = Progress::global().start_group(&example.spec.name);
+        run_repair(example, args, &example_progress).await?;
+        reprocessed += 1;
+    }
+
+    if reprocessed > 0 {
+        eprintln!("Reprocessed {} example(s) with batch results", reprocessed);
+    }
+
+    Ok(())
+}
+
+pub async fn wait_for_batches(args: &RepairArgs) -> Result<()> {
+    if args.no_batch {
+        return Ok(());
+    }
+
+    let poll_interval = std::time::Duration::from_secs(30);
+
+    loop {
+        let pending = pending_batch_count(args)?;
+        if pending == 0 {
+            break;
+        }
+
+        eprintln!(
+            "Waiting for {} pending repair batch request(s) to complete... (polling every {}s)",
+            pending,
+            poll_interval.as_secs()
+        );
+        std::thread::sleep(poll_interval);
+
+        sync_batches(args).await?;
+    }
+
+    Ok(())
+}
+
+fn pending_batch_count(args: &RepairArgs) -> Result<usize> {
+    match args.backend {
+        BatchProvider::Anthropic => {
+            let client = ANTHROPIC_CLIENT_BATCH.get_or_init(|| {
+                AnthropicClient::batch(&LLM_CACHE_DB).expect("Failed to create Anthropic client")
+            });
+            client.pending_batch_count()
+        }
+        BatchProvider::Openai => {
+            let client = OPENAI_CLIENT_BATCH.get_or_init(|| {
+                OpenAiClient::batch(&LLM_CACHE_DB).expect("Failed to create OpenAI client")
+            });
+            client.pending_batch_count()
+        }
+    }
 }
 
 #[cfg(test)]

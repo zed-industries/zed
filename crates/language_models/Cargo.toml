@@ -21,8 +21,8 @@ aws_http_client.workspace = true
 base64.workspace = true
 bedrock = { workspace = true, features = ["schemars"] }
 client.workspace = true
+cloud_api_client.workspace = true
 cloud_api_types.workspace = true
-cloud_llm_client.workspace = true
 collections.workspace = true
 component.workspace = true
 convert_case.workspace = true
@@ -41,6 +41,7 @@ gpui_tokio.workspace = true
 http_client.workspace = true
 language.workspace = true
 language_model.workspace = true
+language_models_cloud.workspace = true
 lmstudio = { workspace = true, features = ["schemars"] }
 log.workspace = true
 menu.workspace = true
@@ -49,16 +50,13 @@ ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 opencode = { workspace = true, features = ["schemars"] }
 open_router = { workspace = true, features = ["schemars"] }
-partial-json-fixer.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
-semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 strum.workspace = true
-thiserror.workspace = true
 tiktoken-rs.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 ui.workspace = true
@@ -70,4 +68,3 @@ x_ai = { workspace = true, features = ["schemars"] }
 [dev-dependencies]
 language_model = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
-

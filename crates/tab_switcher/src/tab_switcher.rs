@@ -875,7 +875,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                         el.end_slot::<AnyElement>(close_button)
                     } else {
                         el.end_slot::<AnyElement>(indicator)
-                            .end_hover_slot::<AnyElement>(close_button)
+                            .end_slot_on_hover::<AnyElement>(close_button)
                     }
                 }),
         )

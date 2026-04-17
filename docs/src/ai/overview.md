@@ -30,10 +30,6 @@ The [Inline Assistant](./inline-assistant.md) works differently: select code or 
 
 The default provider is Zeta, Zed's open-source model trained on open data. You can also use GitHub Copilot, or Codestral.
 
-## Text threads
-
-[Text Threads](./text-threads.md) are conversations with models inside any buffer. They work like a regular editor with your keybindings, multiple cursors, and standard editing features. Content is organized into message blocks with roles (You, Assistant, System).
-
 ## Getting started
 
 - [Configuration](./configuration.md): Connect to Anthropic, OpenAI, Ollama, Google AI, or other LLM providers.

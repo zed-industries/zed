@@ -1,3 +1,4 @@
+#![expect(clippy::result_large_err)]
 use crate::{
     persistence::DebuggerPaneItem,
     tests::{start_debug_session, start_debug_session_with},

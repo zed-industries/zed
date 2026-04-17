@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::Result;
 use client::{Client, proto};
-use futures::{StreamExt, channel::mpsc};
+use futures::channel::mpsc;
 use gpui::{
     Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task,
@@ -777,8 +777,8 @@ impl<T: Item> ItemHandle for Entity<T> {
                 send_follower_updates = Some(cx.spawn_in(window, {
                     let pending_update = pending_update.clone();
                     async move |workspace, cx| {
-                        while let Some(mut leader_id) = pending_update_rx.next().await {
-                            while let Ok(Some(id)) = pending_update_rx.try_next() {
+                        while let Ok(mut leader_id) = pending_update_rx.recv().await {
+                            while let Ok(id) = pending_update_rx.try_recv() {
                                 leader_id = id;
                             }
 
@@ -1583,7 +1583,7 @@ pub mod test {
 
         fn push_to_nav_history(&mut self, cx: &mut Context<Self>) {
             if let Some(history) = &mut self.nav_history {
-                history.push(Some(Box::new(self.state.clone())), cx);
+                history.push(Some(Box::new(self.state.clone())), None, cx);
             }
         }
     }
