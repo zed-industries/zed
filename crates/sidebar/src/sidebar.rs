@@ -3311,7 +3311,7 @@ impl Sidebar {
     }
 
     fn record_thread_access(&mut self, id: &ThreadId) {
-        self.thread_last_accessed.insert(id.clone(), Utc::now());
+        self.thread_last_accessed.insert(*id, Utc::now());
     }
 
     fn record_thread_message_sent_or_queued(

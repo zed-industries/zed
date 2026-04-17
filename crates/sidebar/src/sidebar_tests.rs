@@ -5576,7 +5576,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
                     .read(cx)
                     .entries()
                     .iter()
-                    .map(|e| e.metadata.thread_id.clone())
+                    .map(|e| e.metadata.thread_id)
                     .collect()
             })
         };
@@ -5593,7 +5593,6 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
                     .expect("should have selection")
                     .metadata
                     .thread_id
-                    .clone()
             })
         };
 
@@ -5671,11 +5670,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     // then B, then C.
     assert_eq!(
         switcher_ids(&sidebar, cx),
-        vec![
-            thread_id_a.clone(),
-            thread_id_b.clone(),
-            thread_id_c.clone()
-        ],
+        vec![thread_id_a, thread_id_b, thread_id_c,],
     );
     // First ctrl-tab selects the second entry (B).
     assert_eq!(switcher_selected_id(&sidebar, cx), thread_id_b);
@@ -5746,11 +5741,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
 
     assert_eq!(
         switcher_ids(&sidebar, cx),
-        vec![
-            thread_id_c.clone(),
-            thread_id_a.clone(),
-            thread_id_b.clone()
-        ],
+        vec![thread_id_c, thread_id_a, thread_id_b],
     );
 
     // Confirm on Thread A.
@@ -5783,11 +5774,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
 
     assert_eq!(
         switcher_ids(&sidebar, cx),
-        vec![
-            thread_id_a.clone(),
-            thread_id_c.clone(),
-            thread_id_b.clone(),
-        ],
+        vec![thread_id_a, thread_id_c, thread_id_b,],
     );
 
     sidebar.update_in(cx, |sidebar, _window, cx| {
@@ -5851,12 +5838,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     let ids = switcher_ids(&sidebar, cx);
     assert_eq!(
         ids,
-        vec![
-            thread_id_b.clone(),
-            thread_id_a.clone(),
-            thread_id_c.clone(),
-            thread_id_hist.clone()
-        ],
+        vec![thread_id_b, thread_id_a, thread_id_c, thread_id_hist],
     );
 
     sidebar.update_in(cx, |sidebar, _window, cx| {
