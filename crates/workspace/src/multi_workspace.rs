@@ -715,6 +715,19 @@ impl MultiWorkspace {
         cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
     }
 
+    pub(crate) fn register_and_retain_workspace(
+        &mut self,
+        workspace: Entity<Workspace>,
+        key: ProjectGroupKey,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if workspace != self.active_workspace {
+            self.register_workspace(&workspace, window, cx);
+        }
+        self.retain_workspace(workspace, key, cx);
+    }
+
     fn register_workspace(
         &mut self,
         workspace: &Entity<Workspace>,
@@ -1220,16 +1233,14 @@ impl MultiWorkspace {
         let old_active_workspace = self.active_workspace.clone();
         let old_active_was_retained = self.active_workspace_is_retained();
         let workspace_was_retained = self.is_workspace_retained(&workspace);
-        let workspace_was_registered =
-            workspace.read(cx).multi_workspace() == Some(&cx.weak_entity());
 
-        if !workspace_was_registered {
+        if !workspace_was_retained {
             self.register_workspace(&workspace, window, cx);
-        }
 
-        if !workspace_was_retained && self.sidebar_open {
-            let key = workspace.read(cx).project_group_key(cx);
-            self.retain_workspace(workspace.clone(), key, cx);
+            if self.sidebar_open {
+                let key = workspace.read(cx).project_group_key(cx);
+                self.retain_workspace(workspace.clone(), key, cx);
+            }
         }
 
         self.active_workspace = workspace;
