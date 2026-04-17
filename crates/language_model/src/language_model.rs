@@ -357,7 +357,15 @@ mod tests {
             vec![
                 LanguageModelCompletionEvent::Text("Hello ".to_string()),
                 LanguageModelCompletionEvent::Thinking {
-                    text: "Wait, I am thinking".to_string(),
+                    text: "Wait, ".to_string(),
+                    signature: None,
+                },
+                LanguageModelCompletionEvent::Thinking {
+                    text: "I am ".to_string(),
+                    signature: None,
+                },
+                LanguageModelCompletionEvent::Thinking {
+                    text: "thinking".to_string(),
                     signature: None,
                 },
                 LanguageModelCompletionEvent::Text("World!".to_string()),
