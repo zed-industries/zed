@@ -390,9 +390,17 @@ impl TitleBar {
             }),
         );
         subscriptions.push(cx.observe(&user_store, |_a, _, cx| cx.notify()));
+        if let Some(workspace_entity) = workspace.weak_handle().upgrade() {
+            subscriptions.push(cx.subscribe(
+                &workspace_entity,
+                |_, _, event: &workspace::Event, cx| {
+                    if matches!(event, workspace::Event::WorktreeCreationChanged) {
+                        cx.notify();
+                    }
+                },
+            ));
+        }
         subscriptions.push(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
-        subscriptions
-            .push(cx.observe_global::<workspace::ActiveWorktreeCreation>(|_, cx| cx.notify()));
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             subscriptions.push(cx.subscribe(&trusted_worktrees, |_, _, _, cx| {
                 cx.notify();
@@ -860,13 +868,15 @@ impl TitleBar {
         };
 
         let branch_name = branch_name?;
+        let settings = TitleBarSettings::get_global(cx);
         let effective_repository = Some(repository);
 
         let worktree_label: SharedString = linked_worktree_name.unwrap_or_else(|| "main".into());
 
-        let creation_in_progress = cx
-            .try_global::<workspace::ActiveWorktreeCreation>()
-            .and_then(|creation| creation.label.clone());
+        let creation_in_progress = self
+            .workspace
+            .upgrade()
+            .and_then(|ws| ws.read(cx).active_worktree_creation().label.clone());
         let is_creating = creation_in_progress.is_some();
 
         let display_label: SharedString = if let Some(ref name) = creation_in_progress {

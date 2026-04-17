@@ -1045,58 +1045,64 @@ impl AgentPanel {
             _draft_editor_observation: None,
         };
 
-        // Observe ActiveWorktreeCreation to handle both stashing and restoring
-        // draft text across worktree switches.
-        //
+        // Subscribe to the workspace to detect worktree creation changes.
         // When creation starts (label becomes Some): this is the SOURCE panel.
-        //   → Stash draft text into PendingWorktreeSwitchContent and set a flag.
+        //   → Stash draft text via the workspace helper and set a flag.
         // When creation ends (label becomes None): this is the DESTINATION panel
         //   (the flag is false on fresh panels) → pick up the stashed text.
-        cx.observe_global_in::<workspace::ActiveWorktreeCreation>(window, |this, window, cx| {
-            let is_creating = cx
-                .try_global::<workspace::ActiveWorktreeCreation>()
-                .and_then(|c| c.label.as_ref())
-                .is_some();
-
-            if is_creating {
-                // Source panel: stash draft text
-                let draft_text = this.active_thread_view(cx).and_then(|thread_view| {
-                    let text = thread_view.read(cx).message_editor.read(cx).text(cx);
-                    if text.is_empty() { None } else { Some(text) }
-                });
-                dbg!("stash side", &draft_text);
-                cx.set_global(workspace::PendingWorktreeSwitchContent { text: draft_text });
-                this.did_stash_worktree_draft = true;
-            } else if !this.did_stash_worktree_draft {
-                // Destination panel (fresh panel, never stashed): pick up text
-                let pending_text = cx
-                    .try_global::<workspace::PendingWorktreeSwitchContent>()
-                    .and_then(|p| p.text.clone());
-                dbg!(
-                    "pickup branch",
-                    &pending_text,
-                    this.active_thread_view(cx).is_some()
-                );
-                if let Some(text) = pending_text {
-                    cx.set_global(workspace::PendingWorktreeSwitchContent { text: None });
-                    if let Some(thread_view) = this.active_thread_view(cx) {
-                        thread_view.update(cx, |thread_view, cx| {
-                            thread_view.message_editor.update(cx, |editor, cx| {
-                                editor.clear(window, cx);
-                                editor.insert_text(&text, window, cx);
-                            });
-                        });
-                    } else {
-                        // Thread view not ready yet (panel just created).
-                        // Store text for application once the thread view
-                        // is initialized via ensure_thread_initialized.
-                        this.pending_worktree_draft = Some(text);
-                        cx.notify();
+        if let Some(workspace_entity) = panel.workspace.upgrade() {
+            cx.subscribe_in(
+                &workspace_entity,
+                window,
+                |this, workspace, event: &workspace::Event, window, cx| {
+                    if !matches!(event, workspace::Event::WorktreeCreationChanged) {
+                        return;
                     }
-                }
-            }
-        })
-        .detach();
+
+                    let is_creating = workspace
+                        .read(cx)
+                        .active_worktree_creation()
+                        .label
+                        .is_some();
+
+                    if is_creating {
+                        // Source panel: stash draft text
+                        let draft_text = this.active_thread_view(cx).and_then(|thread_view| {
+                            let text = thread_view.read(cx).message_editor.read(cx).text(cx);
+                            if text.is_empty() { None } else { Some(text) }
+                        });
+                        let multi_workspace = workspace.read(cx).multi_workspace().cloned();
+                        if let Some(multi_workspace) = multi_workspace.and_then(|mw| mw.upgrade()) {
+                            multi_workspace.update(cx, |mw, _cx| {
+                                mw.pending_worktree_switch_text = draft_text;
+                            });
+                        }
+                        this.did_stash_worktree_draft = true;
+                    } else if !this.did_stash_worktree_draft {
+                        // Destination panel (fresh panel, never stashed): pick up text
+                        let multi_workspace = workspace.read(cx).multi_workspace().cloned();
+                        let pending_text =
+                            multi_workspace.and_then(|mw| mw.upgrade()).and_then(|mw| {
+                                mw.update(cx, |mw, _cx| mw.pending_worktree_switch_text.take())
+                            });
+                        if let Some(text) = pending_text {
+                            if let Some(thread_view) = this.active_thread_view(cx) {
+                                thread_view.update(cx, |thread_view, cx| {
+                                    thread_view.message_editor.update(cx, |editor, cx| {
+                                        editor.clear(window, cx);
+                                        editor.insert_text(&text, window, cx);
+                                    });
+                                });
+                            } else {
+                                this.pending_worktree_draft = Some(text);
+                                cx.notify();
+                            }
+                        }
+                    }
+                },
+            )
+            .detach();
+        }
 
         // Initial sync of agent servers from extensions
         panel.sync_agent_servers_from_extensions(cx);
@@ -2780,7 +2786,6 @@ impl AgentPanel {
         // Apply any draft text stashed during a worktree switch that couldn't
         // be applied earlier because the thread view didn't exist yet.
         if let Some(text) = self.pending_worktree_draft.take() {
-            dbg!("applying pending_worktree_draft", &text);
             if let Some(thread_view) = self.active_thread_view(cx) {
                 thread_view.update(cx, |thread_view, cx| {
                     thread_view.message_editor.update(cx, |editor, cx| {

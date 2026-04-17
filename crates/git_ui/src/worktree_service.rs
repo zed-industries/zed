@@ -11,9 +11,7 @@ use project::project_settings::ProjectSettings;
 use project::trusted_worktrees::{PathTrust, TrustedWorktrees};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
-use workspace::{
-    ActiveWorktreeCreation, MultiWorkspace, OpenMode, PreviousWorkspaceState, Workspace,
-};
+use workspace::{MultiWorkspace, OpenMode, PreviousWorkspaceState, Workspace};
 use zed_actions::NewWorktreeBranchTarget;
 
 use util::ResultExt as _;
@@ -401,11 +399,7 @@ pub fn handle_create_worktree(
     }
 
     // Guard against concurrent creation
-    if cx
-        .try_global::<ActiveWorktreeCreation>()
-        .and_then(|g| g.label.as_ref())
-        .is_some()
-    {
+    if workspace.active_worktree_creation().label.is_some() {
         return;
     }
 
@@ -450,13 +444,7 @@ pub fn handle_create_worktree(
         .to_string()
         .into();
 
-    cx.set_global(ActiveWorktreeCreation {
-        label: Some(display_name),
-    });
-    cx.notify();
-
-    // Stash agent panel draft text before switching
-    stash_agent_draft_text(workspace, cx);
+    workspace.set_active_worktree_creation(Some(display_name), cx);
 
     cx.spawn_in(window, async move |_workspace_entity, mut cx| {
         let result = do_create_worktree(
@@ -474,26 +462,24 @@ pub fn handle_create_worktree(
 
         if let Err(err) = &result {
             log::error!("Failed to create worktree: {err}");
-            if let Some(workspace) = workspace_handle.upgrade() {
-                cx.update(|_window, cx| {
-                    show_error_toast(workspace, "worktree create", anyhow!("{err:#}"), cx);
+            workspace_handle
+                .update(cx, |workspace, cx| {
+                    workspace.set_active_worktree_creation(None, cx);
+                    show_error_toast(
+                        workspace.weak_handle().upgrade().expect("workspace exists"),
+                        "worktree create",
+                        anyhow!("{err:#}"),
+                        cx,
+                    );
                 })
                 .ok();
-            }
         }
-
-        cx.update(|_, cx| {
-            cx.set_global(ActiveWorktreeCreation { label: None });
-        })
-        .ok();
 
         result
     })
     .detach_and_log_err(cx);
 }
 
-/// Handles the `SwitchWorktree` action generically, without any agent panel involvement.
-/// Opens an existing worktree in the current workspace, restoring layout and files.
 pub fn handle_switch_worktree(
     workspace: &mut Workspace,
     action: &zed_actions::SwitchWorktree,
@@ -512,11 +498,7 @@ pub fn handle_switch_worktree(
     }
 
     // Guard against concurrent creation
-    if cx
-        .try_global::<ActiveWorktreeCreation>()
-        .and_then(|g| g.label.as_ref())
-        .is_some()
-    {
+    if workspace.active_worktree_creation().label.is_some() {
         return;
     }
 
@@ -534,13 +516,7 @@ pub fn handle_switch_worktree(
 
     let display_name: SharedString = action.display_name.clone().into();
 
-    cx.set_global(ActiveWorktreeCreation {
-        label: Some(display_name),
-    });
-    cx.notify();
-
-    // Stash agent panel draft text before switching
-    stash_agent_draft_text(workspace, cx);
+    workspace.set_active_worktree_creation(Some(display_name), cx);
 
     let worktree_path = action.path.clone();
 
@@ -559,38 +535,22 @@ pub fn handle_switch_worktree(
 
         if let Err(err) = &result {
             log::error!("Failed to switch worktree: {err}");
-            if let Some(workspace) = workspace_handle.upgrade() {
-                cx.update(|_window, cx| {
-                    show_error_toast(workspace, "worktree switch", anyhow!("{err:#}"), cx);
+            workspace_handle
+                .update(cx, |workspace, cx| {
+                    workspace.set_active_worktree_creation(None, cx);
+                    show_error_toast(
+                        workspace.weak_handle().upgrade().expect("workspace exists"),
+                        "worktree switch",
+                        anyhow!("{err:#}"),
+                        cx,
+                    );
                 })
                 .ok();
-            }
         }
-
-        cx.update(|_, cx| {
-            cx.set_global(ActiveWorktreeCreation { label: None });
-        })
-        .ok();
 
         result
     })
     .detach_and_log_err(cx);
-}
-
-/// Stashes the agent panel's unsent draft text into a global so the destination
-/// workspace's agent panel can pick it up. This is a best-effort operation —
-/// if the agent panel doesn't exist or has no draft, the global stays empty.
-fn stash_agent_draft_text(workspace: &Workspace, cx: &mut gpui::App) {
-    // We use the workspace's `get_unsent_agent_text` method if it exists,
-    // but since we can't depend on agent_ui, we use the global write pattern:
-    // the agent panel observes `ActiveWorktreeCreation` changes and stashes
-    // its own text into `PendingWorktreeSwitchContent` when it sees `Some`.
-    //
-    // At this point, `ActiveWorktreeCreation` was just set above, which will
-    // trigger the agent panel's observer synchronously via `cx.notify()`.
-    // So by the time the async task runs, the text should already be stashed.
-    let _ = workspace;
-    let _ = cx;
 }
 
 async fn do_create_worktree(
@@ -818,8 +778,9 @@ async fn open_worktree_workspace(
     window_handle.update(cx, |_multi_workspace, window, cx| {
         new_workspace.update(cx, |workspace, cx| {
             if has_non_git {
+                struct WorktreeCreationToast;
                 let toast_id =
-                    workspace::notifications::NotificationId::unique::<ActiveWorktreeCreation>();
+                    workspace::notifications::NotificationId::unique::<WorktreeCreationToast>();
                 workspace.show_toast(
                     workspace::Toast::new(
                         toast_id,
@@ -895,19 +856,37 @@ async fn open_worktree_workspace(
         });
     })?;
 
+    // Clear the creation status on the SOURCE workspace so its title bar
+    // stops showing the loading indicator immediately.
+    workspace
+        .update(cx, |ws, cx| {
+            ws.set_active_worktree_creation(None, cx);
+        })
+        .ok();
+
     window_handle.update(cx, |multi_workspace, window, cx| {
         multi_workspace.activate(new_workspace.clone(), window, cx);
 
         new_workspace.update(cx, |workspace, cx| {
             workspace.run_create_worktree_tasks(window, cx);
+        });
 
-            if let Some(dock_position) = focused_dock {
+        // Signal completion on the NEW workspace so its agent panel
+        // subscriber fires and picks up stashed draft text.
+        // This must be a separate update so the event is delivered
+        // before focus restoration triggers ensure_thread_initialized.
+        new_workspace.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_creation(None, cx);
+        });
+
+        if let Some(dock_position) = focused_dock {
+            new_workspace.update(cx, |workspace, cx| {
                 let dock = workspace.dock_at_position(dock_position);
                 if let Some(panel) = dock.read(cx).active_panel() {
                     panel.panel_focus_handle(cx).focus(window, cx);
                 }
-            }
-        })
+            });
+        }
     })?;
 
     anyhow::Ok(())

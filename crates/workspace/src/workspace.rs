@@ -1111,15 +1111,12 @@ struct GlobalAppState(Arc<AppState>);
 
 impl Global for GlobalAppState {}
 
-/// Shared state for displaying worktree creation progress in the title bar.
-/// Written by the agent panel when creating/switching worktrees,
-/// read by the title bar to show a loading indicator on the worktree button.
+/// Tracks worktree creation progress for the workspace.
+/// Read by the title bar to show a loading indicator on the worktree button.
 #[derive(Default)]
 pub struct ActiveWorktreeCreation {
     pub label: Option<SharedString>,
 }
-
-impl Global for ActiveWorktreeCreation {}
 
 /// Captured workspace state used when switching between worktrees.
 /// Stores the layout and open files so they can be restored in the new workspace.
@@ -1129,26 +1126,6 @@ pub struct PreviousWorkspaceState {
     pub active_file_path: Option<PathBuf>,
     pub focused_dock: Option<DockPosition>,
 }
-
-/// Holds unsent agent editor text during a worktree switch.
-/// The agent panel in the source workspace stashes its draft text here,
-/// and the agent panel in the destination workspace picks it up.
-#[derive(Default)]
-pub struct PendingWorktreeSwitchContent {
-    pub text: Option<String>,
-}
-
-impl Global for PendingWorktreeSwitchContent {}
-
-/// Captures which dock was focused before the worktree picker opened.
-/// Written by the picker entry points (modal and title bar), read by the
-/// worktree service when building PreviousWorkspaceState.
-#[derive(Default)]
-pub struct PrePickerFocusedDock {
-    pub position: Option<DockPosition>,
-}
-
-impl Global for PrePickerFocusedDock {}
 
 pub struct WorkspaceStore {
     workspaces: HashSet<(gpui::AnyWindowHandle, WeakEntity<Workspace>)>,
@@ -1310,6 +1287,7 @@ pub enum Event {
     ModalOpened,
     Activate,
     PanelAdded(AnyView),
+    WorktreeCreationChanged,
 }
 
 #[derive(Debug, Clone)]
@@ -1418,6 +1396,8 @@ pub struct Workspace {
     _panels_task: Option<Task<Result<()>>>,
     sidebar_focus_handle: Option<FocusHandle>,
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
+    active_worktree_creation: ActiveWorktreeCreation,
+    pre_picker_focused_dock: Option<DockPosition>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1846,6 +1826,8 @@ impl Workspace {
             removing: false,
             sidebar_focus_handle: None,
             multi_workspace,
+            active_worktree_creation: ActiveWorktreeCreation::default(),
+            pre_picker_focused_dock: None,
             open_in_dev_container: false,
             _dev_container_task: None,
         }
@@ -2234,6 +2216,28 @@ impl Workspace {
         .map(|(position, _)| position)
     }
 
+    pub fn active_worktree_creation(&self) -> &ActiveWorktreeCreation {
+        &self.active_worktree_creation
+    }
+
+    pub fn set_active_worktree_creation(
+        &mut self,
+        label: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_worktree_creation.label = label;
+        cx.emit(Event::WorktreeCreationChanged);
+        cx.notify();
+    }
+
+    pub fn pre_picker_focused_dock(&self) -> Option<DockPosition> {
+        self.pre_picker_focused_dock
+    }
+
+    pub fn set_pre_picker_focused_dock(&mut self, position: Option<DockPosition>) {
+        self.pre_picker_focused_dock = position;
+    }
+
     /// Captures the current workspace state for restoring after a worktree switch.
     /// This includes dock layout, open file paths, and the active file path.
     pub fn capture_state_for_worktree_switch(
@@ -2258,10 +2262,7 @@ impl Workspace {
             dock.read(cx).is_open() && dock.focus_handle(cx).contains_focused(window, cx)
         })
         .map(|(position, _)| position)
-        .or_else(|| {
-            cx.try_global::<PrePickerFocusedDock>()
-                .and_then(|g| g.position)
-        });
+        .or_else(|| self.pre_picker_focused_dock);
 
         PreviousWorkspaceState {
             dock_structure,

@@ -75,9 +75,7 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &zed_actions::git::Worktree, window, cx| {
             let focused_dock = workspace.focused_dock_position(window, cx);
-            cx.set_global(workspace::PrePickerFocusedDock {
-                position: focused_dock,
-            });
+            workspace.set_pre_picker_focused_dock(focused_dock);
 
             let project = workspace.project().clone();
             let workspace_handle = workspace.weak_handle();

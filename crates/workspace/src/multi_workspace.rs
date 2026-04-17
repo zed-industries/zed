@@ -294,6 +294,10 @@ pub struct MultiWorkspace {
     _serialize_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
     previous_focus_handle: Option<FocusHandle>,
+    /// Holds unsent agent editor text during a worktree switch.
+    /// The agent panel in the source workspace stashes its draft text here,
+    /// and the agent panel in the destination workspace picks it up.
+    pub pending_worktree_switch_text: Option<String>,
 }
 
 impl EventEmitter<MultiWorkspaceEvent> for MultiWorkspace {}
@@ -352,6 +356,7 @@ impl MultiWorkspace {
                 settings_subscription,
             ],
             previous_focus_handle: None,
+            pending_worktree_switch_text: None,
         }
     }
 
