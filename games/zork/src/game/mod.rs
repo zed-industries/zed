@@ -384,12 +384,12 @@ impl EstadoJogo {
 }
 
 const BANNER: &str = r#"
- ███████╗███████╗██████╗      ███████╗███████╗██████╗
- ╚══███╔╝██╔════╝██╔══██╗     ╚════██║██╔════╝██╔══██╗
-   ███╔╝ █████╗  ██║  ██║         ██╔╝█████╗  ██║  ██║
-  ███╔╝  ██╔══╝  ██║  ██║        ██╔╝ ██╔══╝  ██║  ██║
- ███████╗███████╗██████╔╝        ██║  ███████╗██████╔╝
- ╚══════╝╚══════╝╚═════╝         ╚═╝  ╚══════╝╚═════╝
+ ███████╗███████╗██████╗
+ ╚══███╔╝██╔════╝██╔══██╗
+   ███╔╝ █████╗  ██║  ██║
+  ███╔╝  ██╔══╝  ██║  ██║
+ ███████╗███████╗██████╔╝
+ ╚══════╝╚══════╝╚═════╝
 
         Uma Aventura de Texto dentro do Editor Zed
         Versão 0.1.0 — "The Unclosed Brace"
@@ -428,5 +428,5 @@ Um portal de luz se abre. Você é ejetado de volta\n\
 ao mundo real, com os dedos ainda no teclado.\n\
 O Zed está rodando perfeitamente. A base de código salva.\n\
 \n\
-PARABÉNS! Você venceu o ZORK-ZED!\n\
+PARABÉNS! Você escapou do ZED!\n\
 ★ ★ ★ ★ ★ ★ ★ ★ ★ ★ ★ ★ ★ ★ ★ ★ ★ ★ ★ ★\n";
