@@ -575,6 +575,47 @@ async fn test_switching_projects_with_sidebar_closed_detaches_old_active_workspa
 }
 
 #[gpui::test]
+async fn test_activate_registers_pre_retained_workspace(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    fs.insert_tree("/root_b", json!({ "file.txt": "" })).await;
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    let project_b = Project::test(fs, ["/root_b".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
+    cx.run_until_parked();
+
+    let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        let workspace = cx.new(|cx| Workspace::test_new(project_b, window, cx));
+        let key = workspace.read(cx).project_group_key(cx);
+        mw.retain_workspace(workspace.clone(), key, cx);
+        mw.activate(workspace.clone(), window, cx);
+        workspace
+    });
+
+    workspace_b.read_with(cx, |workspace, _cx| {
+        assert!(
+            workspace.multi_workspace().is_some(),
+            "activated pre-retained workspace should be registered with multi-workspace"
+        );
+    });
+
+    multi_workspace.read_with(cx, |mw, _cx| {
+        assert_eq!(
+            mw.workspace().entity_id(),
+            workspace_b.entity_id(),
+            "pre-retained workspace should become active"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_remote_worktree_without_git_updates_project_group(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());

@@ -602,6 +602,7 @@ impl MultiWorkspace {
         // The Project already emitted WorktreePathsChanged which the
         // sidebar handles for thread migration.
         self.rekey_project_group(old_key, &new_key, cx);
+        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
         self.serialize(cx);
         cx.notify();
     }
@@ -1219,14 +1220,16 @@ impl MultiWorkspace {
         let old_active_workspace = self.active_workspace.clone();
         let old_active_was_retained = self.active_workspace_is_retained();
         let workspace_was_retained = self.is_workspace_retained(&workspace);
+        let workspace_was_registered =
+            workspace.read(cx).multi_workspace() == Some(&cx.weak_entity());
 
-        if !workspace_was_retained {
+        if !workspace_was_registered {
             self.register_workspace(&workspace, window, cx);
+        }
 
-            if self.sidebar_open {
-                let key = workspace.read(cx).project_group_key(cx);
-                self.retain_workspace(workspace.clone(), key, cx);
-            }
+        if !workspace_was_retained && self.sidebar_open {
+            let key = workspace.read(cx).project_group_key(cx);
+            self.retain_workspace(workspace.clone(), key, cx);
         }
 
         self.active_workspace = workspace;
