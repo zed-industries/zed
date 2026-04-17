@@ -135,12 +135,12 @@ pub(crate) struct ZedCustomization {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ContainerBuild {
     pub(crate) dockerfile: String,
-    context: Option<String>,
+    pub(crate) context: Option<String>,
     pub(crate) args: Option<HashMap<String, String>>,
-    options: Option<Vec<String>>,
+    pub(crate) options: Option<Vec<String>>,
     pub(crate) target: Option<String>,
     #[serde(default, deserialize_with = "deserialize_string_or_array")]
-    cache_from: Option<Vec<String>>,
+    pub(crate) cache_from: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
