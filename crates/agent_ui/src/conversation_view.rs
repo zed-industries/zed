@@ -2973,8 +2973,8 @@ pub(crate) mod tests {
     async fn test_notification_for_error(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::new(SaboteurAgentConnection), cx).await;
+        let server = FakeAcpAgentServer::new();
+        let (conversation_view, cx) = setup_conversation_view(server.clone(), cx).await;
 
         let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
@@ -2982,6 +2982,7 @@ pub(crate) mod tests {
         });
 
         cx.deactivate_window();
+        server.fail_next_prompt();
 
         active_thread(&conversation_view, cx)
             .update_in(cx, |view, window, cx| view.send(window, cx));
@@ -4538,75 +4539,6 @@ pub(crate) mod tests {
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
             unimplemented!()
-        }
-
-        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
-            unimplemented!()
-        }
-
-        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-            self
-        }
-    }
-
-    #[derive(Clone)]
-    struct SaboteurAgentConnection;
-
-    impl AgentConnection for SaboteurAgentConnection {
-        fn agent_id(&self) -> AgentId {
-            AgentId::new("saboteur")
-        }
-
-        fn telemetry_id(&self) -> SharedString {
-            "saboteur".into()
-        }
-
-        fn new_session(
-            self: Rc<Self>,
-            project: Entity<Project>,
-            work_dirs: PathList,
-            cx: &mut gpui::App,
-        ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            Task::ready(Ok(cx.new(|cx| {
-                let action_log = cx.new(|_| ActionLog::new(project.clone()));
-                AcpThread::new(
-                    None,
-                    None,
-                    Some(work_dirs),
-                    self,
-                    project,
-                    action_log,
-                    SessionId::new("test"),
-                    watch::Receiver::constant(
-                        acp::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
-                    ),
-                    cx,
-                )
-            })))
-        }
-
-        fn auth_methods(&self) -> &[acp::AuthMethod] {
-            &[]
-        }
-
-        fn authenticate(
-            &self,
-            _method_id: acp::AuthMethodId,
-            _cx: &mut App,
-        ) -> Task<gpui::Result<()>> {
-            unimplemented!()
-        }
-
-        fn prompt(
-            &self,
-            _id: acp_thread::UserMessageId,
-            _params: acp::PromptRequest,
-            _cx: &mut App,
-        ) -> Task<gpui::Result<acp::PromptResponse>> {
-            Task::ready(Err(anyhow::anyhow!("Error prompting")))
         }
 
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {

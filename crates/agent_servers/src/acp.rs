@@ -1216,7 +1216,7 @@ fn map_acp_error(err: acp::Error) -> anyhow::Error {
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use acp_thread::{
         AgentModelSelector, AgentSessionConfigOptions, AgentSessionModes, AgentSessionRetry,
@@ -1229,6 +1229,7 @@ pub mod test_support {
     pub struct FakeAcpAgentServer {
         load_session_count: Arc<AtomicUsize>,
         close_session_count: Arc<AtomicUsize>,
+        fail_next_prompt: Arc<AtomicBool>,
         exit_status_sender:
             Arc<std::sync::Mutex<Option<smol::channel::Sender<std::process::ExitStatus>>>>,
     }
@@ -1257,6 +1258,10 @@ pub mod test_support {
                 .try_send(std::process::ExitStatus::default())
                 .expect("fake ACP server exit receiver should still be alive");
         }
+
+        pub fn fail_next_prompt(&self) {
+            self.fail_next_prompt.store(true, Ordering::SeqCst);
+        }
     }
 
     impl crate::AgentServer for FakeAcpAgentServer {
@@ -1276,11 +1281,17 @@ pub mod test_support {
         ) -> Task<anyhow::Result<Rc<dyn AgentConnection>>> {
             let load_session_count = self.load_session_count.clone();
             let close_session_count = self.close_session_count.clone();
+            let fail_next_prompt = self.fail_next_prompt.clone();
             let exit_status_sender = self.exit_status_sender.clone();
             cx.spawn(async move |cx| {
-                let harness =
-                    build_fake_acp_connection(project, load_session_count, close_session_count, cx)
-                        .await?;
+                let harness = build_fake_acp_connection(
+                    project,
+                    load_session_count,
+                    close_session_count,
+                    fail_next_prompt,
+                    cx,
+                )
+                .await?;
                 let (exit_tx, exit_rx) = smol::channel::bounded(1);
                 *exit_status_sender
                     .lock()
@@ -1478,6 +1489,7 @@ pub mod test_support {
     struct FakeAcpAgent {
         load_session_count: Arc<AtomicUsize>,
         close_session_count: Arc<AtomicUsize>,
+        fail_next_prompt: Arc<AtomicBool>,
     }
 
     #[async_trait::async_trait(?Send)]
@@ -1513,7 +1525,11 @@ pub mod test_support {
         }
 
         async fn prompt(&self, _: acp::PromptRequest) -> acp::Result<acp::PromptResponse> {
-            Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+            if self.fail_next_prompt.swap(false, Ordering::SeqCst) {
+                Err(acp::ErrorCode::InternalError.into())
+            } else {
+                Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+            }
         }
 
         async fn cancel(&self, _: acp::CancelNotification) -> acp::Result<()> {
@@ -1541,6 +1557,7 @@ pub mod test_support {
         project: Entity<Project>,
         load_session_count: Arc<AtomicUsize>,
         close_session_count: Arc<AtomicUsize>,
+        fail_next_prompt: Arc<AtomicBool>,
         cx: &mut AsyncApp,
     ) -> Result<FakeAcpConnectionHarness> {
         let (c2a_reader, c2a_writer) = piper::pipe(4096);
@@ -1570,6 +1587,7 @@ pub mod test_support {
         let fake_agent = FakeAcpAgent {
             load_session_count: load_session_count.clone(),
             close_session_count: close_session_count.clone(),
+            fail_next_prompt,
         };
 
         let (_, agent_io_task) =
@@ -1629,6 +1647,7 @@ pub mod test_support {
             project,
             Arc::new(AtomicUsize::new(0)),
             Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicBool::new(false)),
             &mut cx.to_async(),
         )
         .await
