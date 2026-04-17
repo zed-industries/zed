@@ -16,8 +16,12 @@ pub enum Case {
 }
 
 impl Case {
-    pub fn from_smart(smart: bool) -> Self {
-        if smart { Self::Smart } else { Self::Ignore }
+    pub fn smart_if_uppercase_in(query: &str) -> Self {
+        if query.chars().any(|c| c.is_uppercase()) {
+            Self::Smart
+        } else {
+            Self::Ignore
+        }
     }
 
     pub fn is_smart(self) -> bool {

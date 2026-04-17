@@ -71,12 +71,8 @@ pub struct StringMatchCandidate {
 }
 
 impl StringMatchCandidate {
-    pub fn new(id: usize, string: &str) -> Self {
-        Self::from_shared(id, SharedString::from(string.to_owned()))
-    }
-
-    pub fn from_string(id: usize, string: String) -> Self {
-        Self::from_shared(id, SharedString::from(string))
+    pub fn new(id: usize, string: impl ToString) -> Self {
+        Self::from_shared(id, SharedString::new(string.to_string()))
     }
 
     pub fn from_shared(id: usize, string: SharedString) -> Self {
@@ -353,6 +349,7 @@ where
     Ok(())
 }
 
+#[inline]
 fn case_penalty(mismatches: u32) -> f64 {
     if mismatches == 0 {
         1.0
@@ -361,6 +358,7 @@ fn case_penalty(mismatches: u32) -> f64 {
     }
 }
 
+#[inline]
 fn length_penalty_for(s: &str, length_penalty: LengthPenalty) -> f64 {
     if length_penalty.is_on() {
         s.len() as f64 * LENGTH_PENALTY

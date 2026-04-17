@@ -121,7 +121,7 @@ impl picker::PickerDelegate for WslPickerDelegate {
                 .collect::<Vec<_>>();
 
             let query = query.trim_start();
-            let case = fuzzy_nucleo::Case::from_smart(query.chars().any(|c| c.is_uppercase()));
+            let case = fuzzy_nucleo::Case::smart_if_uppercase_in(query);
             self.matches = fuzzy_nucleo::match_strings(
                 &candidates,
                 query,
