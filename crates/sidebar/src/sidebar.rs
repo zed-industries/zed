@@ -33,6 +33,7 @@ use ui::utils::platform_title_bar_height;
 
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::path::{Path, PathBuf};
@@ -364,11 +365,7 @@ pub struct Sidebar {
     /// Updated only in response to explicit user actions (clicking a
     /// thread, confirming in the thread switcher, etc.) — never from
     /// background data changes. Used to sort the thread switcher popup.
-    thread_last_accessed: HashMap<acp::SessionId, DateTime<Utc>>,
-    /// Updated when the user presses a key to send or queue a message.
-    /// Used for sorting threads in the sidebar and as a secondary sort
-    /// key in the thread switcher.
-    thread_last_message_sent_or_queued: HashMap<agent_ui::ThreadId, DateTime<Utc>>,
+    thread_last_accessed: HashMap<ThreadId, DateTime<Utc>>,
     thread_switcher: Option<Entity<ThreadSwitcher>>,
     _thread_switcher_subscriptions: Vec<gpui::Subscription>,
     pending_thread_activation: Option<agent_ui::ThreadId>,
@@ -462,7 +459,6 @@ impl Sidebar {
             hovered_thread_index: None,
 
             thread_last_accessed: HashMap::new(),
-            thread_last_message_sent_or_queued: HashMap::new(),
             thread_switcher: None,
             _thread_switcher_subscriptions: Vec::new(),
             pending_thread_activation: None,
@@ -676,7 +672,7 @@ impl Sidebar {
                     this.update_entries(cx);
                 }
                 AgentPanelEvent::MessageSentOrQueued { thread_id } => {
-                    this.record_thread_message_sent(thread_id);
+                    this.record_thread_message_sent_or_queued(thread_id, cx);
                     this.update_entries(cx);
                 }
             },
@@ -1168,8 +1164,8 @@ impl Sidebar {
                 }
 
                 threads.sort_by(|a, b| {
-                    let a_time = self.display_time(&a.metadata);
-                    let b_time = self.display_time(&b.metadata);
+                    let a_time = Self::thread_display_time(&a.metadata);
+                    let b_time = Self::thread_display_time(&b.metadata);
                     b_time.cmp(&a_time)
                 });
             } else {
@@ -1320,8 +1316,6 @@ impl Sidebar {
         notified_threads.retain(|id| current_thread_ids.contains(id));
 
         self.thread_last_accessed
-            .retain(|id, _| current_session_ids.contains(id));
-        self.thread_last_message_sent_or_queued
             .retain(|id, _| current_thread_ids.contains(id));
 
         self.contents = SidebarContents {
@@ -2301,7 +2295,7 @@ impl Sidebar {
             session_id: metadata.session_id.clone(),
             workspace: workspace.clone(),
         });
-        self.record_thread_access(&metadata.session_id);
+        self.record_thread_access(&metadata.thread_id);
 
         if metadata.session_id.is_some() {
             self.pending_thread_activation = Some(metadata.thread_id);
@@ -2370,7 +2364,7 @@ impl Sidebar {
                         session_id: target_session_id.clone(),
                         workspace: workspace_for_entry.clone(),
                     });
-                    sidebar.record_thread_access(&target_session_id);
+                    sidebar.record_thread_access(&metadata_thread_id);
                     sidebar.update_entries(cx);
                 });
             }
@@ -3400,22 +3394,37 @@ impl Sidebar {
         }
     }
 
-    fn record_thread_access(&mut self, session_id: &Option<acp::SessionId>) {
-        if let Some(sid) = session_id {
-            self.thread_last_accessed.insert(sid.clone(), Utc::now());
-        }
+    fn record_thread_access(&mut self, id: &ThreadId) {
+        self.thread_last_accessed.insert(*id, Utc::now());
     }
 
-    fn record_thread_message_sent(&mut self, thread_id: &agent_ui::ThreadId) {
-        self.thread_last_message_sent_or_queued
-            .insert(*thread_id, Utc::now());
+    fn record_thread_message_sent_or_queued(
+        &mut self,
+        thread_id: &agent_ui::ThreadId,
+        cx: &mut App,
+    ) {
+        let store = ThreadMetadataStore::global(cx);
+        store.update(cx, |store, cx| {
+            store.update_interacted_at(thread_id, Utc::now(), cx);
+        })
     }
 
-    fn display_time(&self, metadata: &ThreadMetadata) -> DateTime<Utc> {
-        self.thread_last_message_sent_or_queued
-            .get(&metadata.thread_id)
-            .copied()
-            .unwrap_or(metadata.updated_at)
+    fn thread_display_time(metadata: &ThreadMetadata) -> DateTime<Utc> {
+        metadata.interacted_at.unwrap_or(metadata.updated_at)
+    }
+
+    /// The sort order used by the ctrl-tab switcher
+    fn thread_cmp_for_switcher(&self, left: &ThreadMetadata, right: &ThreadMetadata) -> Ordering {
+        let sort_time = |x: &ThreadMetadata| {
+            self.thread_last_accessed
+                .get(&x.thread_id)
+                .copied()
+                .or(x.interacted_at)
+                .unwrap_or(x.updated_at)
+        };
+
+        // .reverse() = most recent first
+        sort_time(left).cmp(&sort_time(right)).reverse()
     }
 
     fn mru_threads_for_switcher(&self, cx: &App) -> Vec<ThreadSwitcherEntry> {
@@ -3449,7 +3458,8 @@ impl Sidebar {
                     }?;
                     let notified = self.contents.is_thread_notified(&thread.metadata.thread_id);
                     let timestamp: SharedString =
-                        format_history_entry_timestamp(self.display_time(&thread.metadata)).into();
+                        format_history_entry_timestamp(Self::thread_display_time(&thread.metadata))
+                            .into();
                     Some(ThreadSwitcherEntry {
                         session_id,
                         title: thread.metadata.display_title(),
@@ -3478,31 +3488,7 @@ impl Sidebar {
             })
             .collect();
 
-        entries.sort_by(|a, b| {
-            let a_accessed = self.thread_last_accessed.get(&a.session_id);
-            let b_accessed = self.thread_last_accessed.get(&b.session_id);
-
-            match (a_accessed, b_accessed) {
-                (Some(a_time), Some(b_time)) => b_time.cmp(a_time),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => {
-                    let a_sent = self
-                        .thread_last_message_sent_or_queued
-                        .get(&a.metadata.thread_id);
-                    let b_sent = self
-                        .thread_last_message_sent_or_queued
-                        .get(&b.metadata.thread_id);
-
-                    match (a_sent, b_sent) {
-                        (Some(a_time), Some(b_time)) => b_time.cmp(a_time),
-                        (Some(_), None) => std::cmp::Ordering::Less,
-                        (None, Some(_)) => std::cmp::Ordering::Greater,
-                        (None, None) => b.metadata.updated_at.cmp(&a.metadata.updated_at),
-                    }
-                }
-            }
-        });
+        entries.sort_by(|a, b| self.thread_cmp_for_switcher(&a.metadata, &b.metadata));
 
         entries
     }
@@ -3598,7 +3584,7 @@ impl Sidebar {
                             mw.retain_active_workspace(cx);
                         });
                     }
-                    this.record_thread_access(&metadata.session_id);
+                    this.record_thread_access(&metadata.thread_id);
                     this.active_entry = Some(ActiveEntry {
                         thread_id: metadata.thread_id,
                         session_id: metadata.session_id.clone(),
@@ -3716,7 +3702,7 @@ impl Sidebar {
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));
 
-        let timestamp = format_history_entry_timestamp(self.display_time(&thread.metadata));
+        let timestamp = format_history_entry_timestamp(Self::thread_display_time(&thread.metadata));
 
         let is_remote = thread.workspace.is_remote(cx);
 
