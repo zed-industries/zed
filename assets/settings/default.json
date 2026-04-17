@@ -1116,6 +1116,7 @@
         "tools": {
           "copy_path": true,
           "create_directory": true,
+          "create_thread": true,
           "delete_path": true,
           "diagnostics": true,
           "apply_code_action": true,
@@ -1126,6 +1127,7 @@
           "find_references": true,
           "get_code_actions": true,
           "go_to_definition": true,
+          "list_agents_and_models": true,
           "list_directory": true,
           "move_path": true,
           "rename_symbol": true,
@@ -1144,8 +1146,10 @@
         // We don't know which of the context server tools are safe for the "Ask" profile, so we don't enable them by default.
         // "enable_all_context_servers": true,
         "tools": {
+          "create_thread": true,
           "diagnostics": true,
           "fetch": true,
+          "list_agents_and_models": true,
           "list_directory": true,
           "find_path": true,
           "find_references": true,
