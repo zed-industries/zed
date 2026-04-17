@@ -45,7 +45,7 @@ pub fn renderizar(frame: &mut Frame, estado: &EstadoJogo) {
     let titulo_principal = Line::from(vec![
         Span::styled(" ⚡ ", Style::default().fg(Color::Yellow)),
         Span::styled(
-            "ZORK-ZED",
+            "ZED",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
