@@ -166,6 +166,40 @@ enum MentionInsertPosition {
     EndOfBuffer,
 }
 
+/// A mention collected while deserializing `acp::ContentBlock`s in
+/// [`MessageEditor::insert_message_blocks`].
+///
+/// `SerializedResource` mentions may be re-evaluated against the current
+/// project state (see [`MentionUri::restore_behavior`]). Everything else is
+/// already fully resolved at collection time.
+enum PendingRestoredMention {
+    Resolved(Mention),
+    SerializedResource { text: String },
+}
+
+fn build_restored_mention_task(
+    mention_set: &mut MentionSet,
+    mention_uri: &MentionUri,
+    pending: PendingRestoredMention,
+    cx: &mut Context<MentionSet>,
+) -> crate::mention_set::MentionTask {
+    match pending {
+        PendingRestoredMention::Resolved(mention) => Task::ready(Ok(mention)).shared(),
+        PendingRestoredMention::SerializedResource { text } => {
+            if let Some(task) = mention_set.resolve_for_restore(mention_uri, &text, cx) {
+                cx.spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
+                    .shared()
+            } else {
+                Task::ready(Ok(Mention::Text {
+                    content: text,
+                    tracked_buffers: Vec::new(),
+                }))
+                .shared()
+            }
+        }
+    }
+}
+
 fn insert_mention_for_project_path(
     project_path: &ProjectPath,
     position: MentionInsertPosition,
@@ -1595,7 +1629,7 @@ impl MessageEditor {
 
         let path_style = workspace.read(cx).project().read(cx).path_style(cx);
         let mut text = String::new();
-        let mut mentions = Vec::new();
+        let mut mentions: Vec<(Range<usize>, MentionUri, PendingRestoredMention)> = Vec::new();
 
         for chunk in message {
             match chunk {
@@ -1616,9 +1650,8 @@ impl MessageEditor {
                     mentions.push((
                         start..end,
                         mention_uri,
-                        Mention::Text {
-                            content: resource.text,
-                            tracked_buffers: Vec::new(),
+                        PendingRestoredMention::SerializedResource {
+                            text: resource.text,
                         },
                     ));
                 }
@@ -1629,7 +1662,11 @@ impl MessageEditor {
                         let start = text.len();
                         write!(&mut text, "{}", mention_uri.as_link()).ok();
                         let end = text.len();
-                        mentions.push((start..end, mention_uri, Mention::Link));
+                        mentions.push((
+                            start..end,
+                            mention_uri,
+                            PendingRestoredMention::Resolved(Mention::Link),
+                        ));
                     }
                 }
                 acp::ContentBlock::Image(acp::ImageContent {
@@ -1658,10 +1695,10 @@ impl MessageEditor {
                     mentions.push((
                         start..end,
                         mention_uri,
-                        Mention::Image(MentionImage {
+                        PendingRestoredMention::Resolved(Mention::Image(MentionImage {
                             data: data.into(),
                             format,
-                        }),
+                        })),
                     ));
                 }
                 _ => {}
@@ -1690,7 +1727,7 @@ impl MessageEditor {
             })
         };
 
-        for (range, mention_uri, mention) in mentions {
+        for (range, mention_uri, pending) in mentions {
             let adjusted_start = insertion_start + range.start;
             let anchor = snapshot.anchor_before(MultiBufferOffset(adjusted_start));
             let Some((crease_id, tx)) = insert_crease_for_mention(
@@ -1710,12 +1747,12 @@ impl MessageEditor {
             };
             drop(tx);
 
+            let task = self.mention_set.update(cx, |mention_set, cx| {
+                build_restored_mention_task(mention_set, &mention_uri, pending, cx)
+            });
+
             self.mention_set.update(cx, |mention_set, _cx| {
-                mention_set.insert_mention(
-                    crease_id,
-                    mention_uri.clone(),
-                    Task::ready(Ok(mention)).shared(),
-                )
+                mention_set.insert_mention(crease_id, mention_uri.clone(), task)
             });
         }
 
