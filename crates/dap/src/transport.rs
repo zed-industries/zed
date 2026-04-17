@@ -376,17 +376,9 @@ impl TransportDelegate {
                 .clone()
                 .and_then(|body| serde_json::from_value::<ErrorResponse>(body).ok())
                 .and_then(|response| {
-                    response.error.map(|msg| {
-                        let mut result = msg.format;
-                        if let Some(serde_json::Value::Object(variables)) = msg.variables {
-                            for (key, value) in variables {
-                                if let serde_json::Value::String(substitution) = value {
-                                    result = result.replace(&format!("{{{key}}}"), &substitution);
-                                }
-                            }
-                        }
-                        result
-                    })
+                    response
+                        .error
+                        .map(|msg| interpolate_dap_format(&msg.format, &msg.variables))
                 })
                 .or_else(|| response.message.clone())
             {
@@ -1031,6 +1023,30 @@ impl Transport for FakeTransport {
     }
 }
 
+fn interpolate_dap_format(format: &str, variables: &Option<serde_json::Value>) -> String {
+    let Some(serde_json::Value::Object(vars)) = variables else {
+        return format.to_string();
+    };
+
+    let mut result = String::with_capacity(format.len());
+    let mut rest = format;
+    while let Some(start) = rest.find('{') {
+        result.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        if let Some((key, tail)) = after.split_once('}')
+            && let Some(value) = vars.get(key).and_then(serde_json::Value::as_str)
+        {
+            result.push_str(value);
+            rest = tail;
+        } else {
+            result.push('{');
+            rest = after;
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1131,5 +1147,54 @@ mod tests {
         };
 
         assert!(TransportDelegate::process_response(response).is_ok());
+    }
+
+    #[test]
+    fn test_interpolate_does_not_double_substitute() {
+        let format = "{a} and {b}";
+        let variables = Some(json!({
+            "a": "{b}",
+            "b": "oops"
+        }));
+        let result = interpolate_dap_format(format, &variables);
+        assert_eq!(result, "{b} and oops");
+    }
+
+    #[test]
+    fn test_interpolate_no_variables() {
+        let result = interpolate_dap_format("plain message", &None);
+        assert_eq!(result, "plain message");
+    }
+
+    #[test]
+    fn test_interpolate_unknown_placeholder_kept() {
+        let format = "{known} and {unknown}";
+        let variables = Some(json!({ "known": "value" }));
+        let result = interpolate_dap_format(format, &variables);
+        assert_eq!(result, "value and {unknown}");
+    }
+
+    #[test]
+    fn test_interpolate_multibyte_key_does_not_drop_trailing_chars() {
+        let format = "{ñ}x";
+        let variables = Some(json!({ "ñ": "v" }));
+        let result = interpolate_dap_format(format, &variables);
+        assert_eq!(result, "vx");
+    }
+
+    #[test]
+    fn test_interpolate_unclosed_brace_kept_verbatim() {
+        let format = "{foo";
+        let variables = Some(json!({ "foo": "x" }));
+        let result = interpolate_dap_format(format, &variables);
+        assert_eq!(result, "{foo");
+    }
+
+    #[test]
+    fn test_interpolate_non_string_value_kept_verbatim() {
+        let format = "code {n}";
+        let variables = Some(json!({ "n": 42 }));
+        let result = interpolate_dap_format(format, &variables);
+        assert_eq!(result, "code {n}");
     }
 }
