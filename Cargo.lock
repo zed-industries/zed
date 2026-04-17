@@ -16145,6 +16145,7 @@ dependencies = [
  "db",
  "editor",
  "extension",
+ "feature_flags",
  "fs",
  "git",
  "gpui",

@@ -11,8 +11,12 @@ const OVERRIDES_NAMESPACE: &str = "feature-flag-overrides";
 
 pub struct FeatureFlagDescriptor {
     pub name: &'static str,
-    pub is_presence: fn() -> bool,
     pub variants: fn() -> Vec<FeatureFlagVariant>,
+    /// Override key of the "on" variant — what the UI selects when staff /
+    /// server / `enabled_for_all` rules apply. Usually the first variant,
+    /// but [`crate::PresenceFlag`] overrides this so that `on_variant_key`
+    /// refers to `"on"` even though the default (fallback) is `Off`.
+    pub on_variant_key: fn() -> &'static str,
     pub enabled_for_all: fn() -> bool,
     pub enabled_for_staff: fn() -> bool,
     pub type_id: fn() -> TypeId,
@@ -39,7 +43,6 @@ macro_rules! register_feature_flag {
         $crate::__private::inventory::submit! {
             $crate::FeatureFlagDescriptor {
                 name: <$flag as $crate::FeatureFlag>::NAME,
-                is_presence: <<$flag as $crate::FeatureFlag>::Value as $crate::FeatureFlagValue>::is_presence,
                 variants: || {
                     <<$flag as $crate::FeatureFlag>::Value as $crate::FeatureFlagValue>::all_variants()
                         .iter()
@@ -49,6 +52,11 @@ macro_rules! register_feature_flag {
                         })
                         .collect()
                 },
+                on_variant_key: || {
+                    <<$flag as $crate::FeatureFlag>::Value as $crate::FeatureFlagValue>::override_key(
+                        &<<$flag as $crate::FeatureFlag>::Value as $crate::FeatureFlagValue>::on_variant(),
+                    )
+                },
                 enabled_for_all: <$flag as $crate::FeatureFlag>::enabled_for_all,
                 enabled_for_staff: <$flag as $crate::FeatureFlag>::enabled_for_staff,
                 type_id: || std::any::TypeId::of::<$flag>(),
@@ -57,7 +65,7 @@ macro_rules! register_feature_flag {
     };
 }
 
-pub type FlagOverride = Option<String>;
+pub type FlagOverride = String;
 
 #[derive(Default)]
 pub struct FeatureFlagStore {
@@ -80,13 +88,10 @@ impl FeatureFlagStore {
             let scoped = load_kvp.scoped(OVERRIDES_NAMESPACE);
             let mut overrides = HashMap::default();
             for name in known {
-                let Some(raw) = scoped.read(name).log_err().flatten() else {
+                let Some(value) = scoped.read(name).log_err().flatten() else {
                     continue;
                 };
-                let Some(parsed) = decode_override(&raw) else {
-                    continue;
-                };
-                overrides.insert(name.to_owned(), parsed);
+                overrides.insert(name.to_owned(), value);
             }
             overrides
         });
@@ -122,22 +127,24 @@ impl FeatureFlagStore {
         }
     }
 
-    pub fn override_for(&self, flag_name: &str) -> Option<&FlagOverride> {
-        self.overrides.get(flag_name)
+    pub fn override_for(&self, flag_name: &str) -> Option<&str> {
+        self.overrides.get(flag_name).map(String::as_str)
     }
 
-    pub fn set_override(&mut self, flag_name: &str, value: FlagOverride, cx: &mut App) {
-        self.overrides.insert(flag_name.to_owned(), value.clone());
-        self.persist_row(flag_name, Some(value), cx);
+    pub fn set_override(&mut self, flag_name: &str, override_key: String, cx: &mut App) {
+        self.overrides
+            .insert(flag_name.to_owned(), override_key.clone());
+        self.persist_row(flag_name, Some(override_key), cx);
     }
 
+    /// Removes any override for the given flag and persists the change.
     pub fn clear_override(&mut self, flag_name: &str, cx: &mut App) {
         if self.overrides.remove(flag_name).is_some() {
             self.persist_row(flag_name, None, cx);
         }
     }
 
-    fn persist_row(&self, flag_name: &str, value: Option<FlagOverride>, cx: &mut App) {
+    fn persist_row(&self, flag_name: &str, value: Option<String>, cx: &mut App) {
         let Some(kvp) = self.kvp.clone() else {
             return;
         };
@@ -145,35 +152,26 @@ impl FeatureFlagStore {
         db::write_and_log(cx, move || async move {
             let scoped = kvp.scoped(OVERRIDES_NAMESPACE);
             match value {
-                Some(override_value) => {
-                    scoped
-                        .write(flag_name, encode_override(&override_value))
-                        .await
-                }
+                Some(value) => scoped.write(flag_name, value).await,
                 None => scoped.delete(flag_name).await,
             }
         });
     }
 
-    /// The resolved value of the flag for the current user, taking overrides,
-    /// `enabled_for_all`, staff rules, and server flags into account in that
-    /// order of precedence.
-    pub fn flag_value<T: FeatureFlag>(&self) -> Option<T::Value> {
+
+    pub fn try_flag_value<T: FeatureFlag>(&self) -> Option<T::Value> {
         // `enabled_for_all` always wins, including over user overrides.
         if T::enabled_for_all() {
-            return Self::default_on_value::<T>();
+            return Some(T::Value::on_variant());
         }
 
-        if let Some(override_value) = self.overrides.get(T::NAME) {
-            return match override_value {
-                None => None,
-                Some(key) => variant_from_key::<T::Value>(key),
-            };
+        if let Some(override_key) = self.overrides.get(T::NAME) {
+            return variant_from_key::<T::Value>(override_key);
         }
 
-        // Staff default: behave as if the "on" variant were set.
+        // Staff default: resolve to the enabled variant.
         if (cfg!(debug_assertions) || self.staff) && !*ZED_DISABLE_STAFF && T::enabled_for_staff() {
-            return Self::default_on_value::<T>();
+            return Some(T::Value::on_variant());
         }
 
         // Server-delivered flag.
@@ -184,45 +182,43 @@ impl FeatureFlagStore {
         None
     }
 
+    /// Whether the flag resolves to its "on" value. Best for presence-style
+    /// flags. For enum flags with meaningful non-default variants, prefer
+    /// [`FeatureFlagAppExt::flag_value`].
     pub fn has_flag<T: FeatureFlag>(&self) -> bool {
-        self.flag_value::<T>().is_some()
+        self.try_flag_value::<T>()
+            .is_some_and(|v| v == T::Value::on_variant())
     }
 
     /// The override key the UI should show as "selected" for a flag whose
     /// concrete type isn't known (e.g. when rendering a generated list of
     /// descriptors in the configuration UI).
     ///
-    /// Returns `None` if the flag resolves to "off" — either because the user
-    /// explicitly disabled it or because nothing has enabled it.
+    /// Returns `None` only when no rule applies. The UI treats that as "no
+    /// radio selected".
     pub fn resolved_key(&self, descriptor: &FeatureFlagDescriptor) -> Option<&'static str> {
-        let first_variant_key = || {
-            let variants = (descriptor.variants)();
-            variants.first().map(|v| v.override_key)
-        };
+        let on_variant_key = || Some((descriptor.on_variant_key)());
 
         if (descriptor.enabled_for_all)() {
-            return first_variant_key();
+            return on_variant_key();
         }
 
-        if let Some(override_value) = self.overrides.get(descriptor.name) {
-            return match override_value {
-                None => None,
-                Some(requested) => (descriptor.variants)()
-                    .into_iter()
-                    .find(|v| v.override_key == requested.as_str())
-                    .map(|v| v.override_key),
-            };
+        if let Some(requested) = self.overrides.get(descriptor.name) {
+            return (descriptor.variants)()
+                .into_iter()
+                .find(|v| v.override_key == requested.as_str())
+                .map(|v| v.override_key);
         }
 
         if (cfg!(debug_assertions) || self.staff)
             && !*ZED_DISABLE_STAFF
             && (descriptor.enabled_for_staff)()
         {
-            return first_variant_key();
+            return on_variant_key();
         }
 
         if self.server_flags.contains_key(descriptor.name) {
-            return first_variant_key();
+            return on_variant_key();
         }
 
         None
@@ -234,19 +230,13 @@ impl FeatureFlagStore {
         (descriptor.enabled_for_all)()
     }
 
+    /// Fallback used when the store isn't installed as a global yet (e.g. very
+    /// early in startup). Matches the pre-existing default behavior.
     pub fn has_flag_default<T: FeatureFlag>() -> bool {
         if T::enabled_for_all() {
             return true;
         }
         cfg!(debug_assertions) && T::enabled_for_staff() && !*ZED_DISABLE_STAFF
-    }
-
-    fn default_on_value<T: FeatureFlag>() -> Option<T::Value> {
-        // The "on" value is the first variant, by convention. For presence
-        // flags this is PresenceFlag; for enums this is the first declared
-        // variant — typically the one the flag used to gate before it became
-        // multi-valued.
-        T::Value::all_variants().first().cloned()
     }
 }
 
@@ -255,18 +245,6 @@ fn variant_from_key<V: FeatureFlagValue>(key: &str) -> Option<V> {
         .iter()
         .find(|v| v.override_key() == key)
         .cloned()
-}
-
-fn encode_override(value: &FlagOverride) -> String {
-    value.clone().unwrap_or_default()
-}
-
-fn decode_override(raw: &str) -> Option<FlagOverride> {
-    if raw.is_empty() {
-        Some(None)
-    } else {
-        Some(Some(raw.to_owned()))
-    }
 }
 
 #[cfg(test)]
@@ -283,10 +261,6 @@ mod tests {
         }
     }
 
-    /// Example of an enum-valued flag. `Intensity::Low` is the default
-    /// variant — staff / server / `enabled_for_all` all resolve to it, and
-    /// `from_wire` also returns it. Users can override to any other variant
-    /// via the configuration UI.
     #[derive(Clone, Copy, PartialEq, Eq, Debug, EnumFeatureFlag)]
     enum Intensity {
         #[default]
@@ -312,11 +286,15 @@ mod tests {
     }
 
     #[test]
-    fn disabled_override_beats_server_flag() {
+    fn off_override_beats_server_flag() {
         let mut store = FeatureFlagStore::default();
         store.update_server_flags(false, vec!["demo".to_string()]);
         store.overrides.insert(DemoFlag::NAME.to_string(), None);
         assert!(!store.has_flag::<DemoFlag>());
+        assert_eq!(
+            store.try_flag_value::<DemoFlag>(),
+            Some(PresenceFlag::Off)
+        );
     }
 
     #[test]
@@ -324,8 +302,8 @@ mod tests {
         let mut store = FeatureFlagStore::default();
         store
             .overrides
-            .insert(IntensityFlag::NAME.to_string(), None);
-        assert_eq!(store.flag_value::<IntensityFlag>(), Some(Intensity::Low));
+            .insert(IntensityFlag::NAME.to_string(), "high".to_string());
+        assert_eq!(store.try_flag_value::<IntensityFlag>(), Some(Intensity::Low));
     }
 
     #[test]
@@ -335,7 +313,7 @@ mod tests {
         // us to `High` instead.
         store
             .overrides
-            .insert("enum-demo".to_string(), Some("high".to_string()));
+            .insert("enum-demo".to_string(), "high".to_string());
 
         struct EnumDemo;
         impl FeatureFlag for EnumDemo {
@@ -343,7 +321,7 @@ mod tests {
             type Value = Intensity;
         }
 
-        assert_eq!(store.flag_value::<EnumDemo>(), Some(Intensity::High));
+        assert_eq!(store.try_flag_value::<EnumDemo>(), Some(Intensity::High));
     }
 
     #[test]
@@ -351,7 +329,7 @@ mod tests {
         let mut store = FeatureFlagStore::default();
         store
             .overrides
-            .insert("enum-demo".to_string(), Some("nonsense".to_string()));
+            .insert("enum-demo".to_string(), "nonsense".to_string());
 
         struct EnumDemo;
         impl FeatureFlag for EnumDemo {
@@ -359,24 +337,25 @@ mod tests {
             type Value = Intensity;
         }
 
-        assert_eq!(store.flag_value::<EnumDemo>(), None);
+        assert_eq!(store.try_flag_value::<EnumDemo>(), None);
     }
 
     #[test]
-    fn override_enables_without_server_or_staff() {
+    fn on_override_enables_without_server_or_staff() {
         let mut store = FeatureFlagStore::default();
         store
             .overrides
-            .insert(DemoFlag::NAME.to_string(), Some("on".to_string()));
+            .insert(DemoFlag::NAME.to_string(), "on".to_string());
         assert!(store.has_flag::<DemoFlag>());
     }
 
+    /// No rule applies, so the store's `try_flag_value` returns `None`. The
+    /// `FeatureFlagAppExt::flag_value` path (used by most callers) falls
+    /// back to [`Default`], which for `PresenceFlag` is `Off`.
     #[test]
-    fn encode_decode_roundtrip() {
-        assert_eq!(decode_override(&encode_override(&None)), Some(None));
-        assert_eq!(
-            decode_override(&encode_override(&Some("on".to_string()))),
-            Some(Some("on".to_string()))
-        );
+    fn presence_flag_defaults_to_off() {
+        let store = FeatureFlagStore::default();
+        assert_eq!(store.try_flag_value::<DemoFlag>(), None);
+        assert_eq!(PresenceFlag::default(), PresenceFlag::Off);
     }
 }

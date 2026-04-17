@@ -1,4 +1,4 @@
-use crate::{FeatureFlag, PresenceFlag, register_feature_flag};
+use crate::{EnumFeatureFlag, FeatureFlag, PresenceFlag, register_feature_flag};
 
 pub struct NotebookFeatureFlag;
 
@@ -94,3 +94,24 @@ impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {
     }
 }
 register_feature_flag!(ProjectPanelUndoRedoFeatureFlag);
+
+/// Controls how agent thread worktree chips are labeled in the sidebar.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, EnumFeatureFlag)]
+pub enum AgentThreadWorktreeLabel {
+    #[default]
+    Both,
+    Worktree,
+    Branch,
+}
+
+pub struct AgentThreadWorktreeLabelFlag;
+
+impl FeatureFlag for AgentThreadWorktreeLabelFlag {
+    const NAME: &'static str = "agent-thread-worktree-label";
+    type Value = AgentThreadWorktreeLabel;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+register_feature_flag!(AgentThreadWorktreeLabelFlag);

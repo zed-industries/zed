@@ -103,6 +103,12 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let all_variants = variant_idents.iter().map(|v| quote! { #name::#v });
 
     Ok(quote! {
+        impl #impl_generics ::std::default::Default for #name #ty_generics #where_clause {
+            fn default() -> Self {
+                #name::#default_ident
+            }
+        }
+
         impl #impl_generics ::feature_flags::FeatureFlagValue for #name #ty_generics #where_clause {
             fn all_variants() -> &'static [Self] {
                 &[ #( #all_variants ),* ]

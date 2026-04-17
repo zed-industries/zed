@@ -73,9 +73,9 @@ impl FeatureFlagsModal {
         });
     }
 
-    fn set_override(flag_name: &'static str, value: Option<String>, cx: &mut App) {
+    fn set_override(flag_name: &'static str, override_key: String, cx: &mut App) {
         cx.update_global::<FeatureFlagStore, _>(|store, cx| {
-            store.set_override(flag_name, value, cx);
+            store.set_override(flag_name, override_key, cx);
         });
     }
 
@@ -141,23 +141,14 @@ impl FeatureFlagsModal {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let descriptor = row.descriptor;
-        let is_presence = (descriptor.is_presence)();
-        let mut options: Vec<(&'static str, &'static str)> = row
-            .variants
-            .iter()
-            .map(|v| (v.override_key, v.label))
-            .collect();
+        let selected_key = resolved;
 
-        if is_presence {
-            options.push(("__off__", "Off"));
-        }
-
-        let selected_key = resolved.unwrap_or("__off__");
-
-        let row_items = options.into_iter().map({
+        let row_items = row.variants.iter().map({
             let name = descriptor.name;
-            move |(key, label)| {
-                let selected = key == selected_key;
+            move |variant| {
+                let key = variant.override_key;
+                let label = variant.label;
+                let selected = selected_key == Some(key);
                 let state = if selected {
                     ToggleState::Selected
                 } else {
@@ -176,11 +167,7 @@ impl FeatureFlagsModal {
                                 // a "deselect" — there's no valid "nothing selected" state.
                                 return;
                             }
-                            if key == "__off__" {
-                                Self::set_override(name, None, cx);
-                            } else {
-                                Self::set_override(name, Some(key.to_string()), cx);
-                            }
+                            Self::set_override(name, key.to_string(), cx);
                         },
                     ));
                 }

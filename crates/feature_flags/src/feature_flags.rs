@@ -21,7 +21,9 @@ pub static ZED_DISABLE_STAFF: LazyLock<bool> = LazyLock::new(|| {
 
 impl Global for FeatureFlagStore {}
 
-pub trait FeatureFlagValue: Sized + Clone + Eq + std::fmt::Debug + Send + Sync + 'static {
+pub trait FeatureFlagValue:
+    Sized + Clone + Eq + Default + std::fmt::Debug + Send + Sync + 'static
+{
     /// Every possible value for this flag, in the order the UI should display them.
     fn all_variants() -> &'static [Self];
 
@@ -35,40 +37,61 @@ pub trait FeatureFlagValue: Sized + Clone + Eq + std::fmt::Debug + Send + Sync +
         self.override_key()
     }
 
-    /// Whether this value type represents a simple on/off flag.
+    /// The variant that represents "on" — what the store resolves to when
+    /// staff rules, `enabled_for_all`, or a server announcement apply.
     ///
-    /// The default is `false` because most `FeatureFlagValue` impls are enums.
-    /// The [`PresenceFlag`] impl overrides this to `true`, which is what the UI
-    /// uses to decide between a checkbox and a radio group.
-    fn is_presence() -> bool {
-        false
+    /// For enum flags this is usually the same as [`Default::default`] (the
+    /// variant marked `#[default]` in the derive). [`PresenceFlag`] overrides
+    /// this so that `default() == Off` (the "unconfigured" state) but
+    /// `on_variant() == On` (the "enabled" state).
+    fn on_variant() -> Self {
+        Self::default()
     }
 }
 
-/// Value type for simple presence/absence feature flags.
+/// Default value type for simple on/off feature flags.
 ///
-/// A flag whose `type Value = PresenceFlag` behaves identically to the
-/// pre-existing `bool` feature flags: `cx.has_flag::<T>()` returns `true` iff
-/// the server included the flag name in its response (or staff / `enabled_for_all`
-/// rules apply).
+/// The fallback value is [`PresenceFlag::Off`] so that an absent / unknown
+/// flag reads as disabled; the `on_variant` override pins the "enabled"
+/// state to [`PresenceFlag::On`] so staff / server / `enabled_for_all`
+/// resolution still lights the flag up.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct PresenceFlag;
+pub enum PresenceFlag {
+    On,
+    Off,
+}
+
+impl Default for PresenceFlag {
+    fn default() -> Self {
+        PresenceFlag::Off
+    }
+}
 
 impl FeatureFlagValue for PresenceFlag {
     fn all_variants() -> &'static [Self] {
-        &[PresenceFlag]
+        &[PresenceFlag::On, PresenceFlag::Off]
     }
 
     fn override_key(&self) -> &'static str {
-        "on"
+        match self {
+            PresenceFlag::On => "on",
+            PresenceFlag::Off => "off",
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            PresenceFlag::On => "On",
+            PresenceFlag::Off => "Off",
+        }
     }
 
     fn from_wire(_: &str) -> Option<Self> {
-        Some(PresenceFlag)
+        Some(PresenceFlag::On)
     }
 
-    fn is_presence() -> bool {
-        true
+    fn on_variant() -> Self {
+        PresenceFlag::On
     }
 }
 
@@ -173,7 +196,7 @@ pub trait FeatureFlagAppExt {
     fn update_flags(&mut self, staff: bool, flags: Vec<String>);
     fn set_staff(&mut self, staff: bool);
     fn has_flag<T: FeatureFlag>(&self) -> bool;
-    fn flag_value<T: FeatureFlag>(&self) -> Option<T::Value>;
+    fn flag_value<T: FeatureFlag>(&self) -> T::Value;
     fn is_staff(&self) -> bool;
 
     fn on_flags_ready<F>(&mut self, callback: F) -> Subscription
@@ -202,9 +225,10 @@ impl FeatureFlagAppExt for App {
             .unwrap_or_else(|| FeatureFlagStore::has_flag_default::<T>())
     }
 
-    fn flag_value<T: FeatureFlag>(&self) -> Option<T::Value> {
+    fn flag_value<T: FeatureFlag>(&self) -> T::Value {
         self.try_global::<FeatureFlagStore>()
-            .and_then(|store| store.flag_value::<T>())
+            .and_then(|store| store.try_flag_value::<T>())
+            .unwrap_or_default()
     }
 
     fn is_staff(&self) -> bool {

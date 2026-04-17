@@ -22,13 +22,13 @@ pub enum WorktreeKind {
     Linked,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ThreadItemWorktreeInfo {
-    pub name: SharedString,
+    pub worktree_name: Option<SharedString>,
+    pub branch_name: Option<SharedString>,
     pub full_path: SharedString,
     pub highlight_positions: Vec<usize>,
     pub kind: WorktreeKind,
-    pub branch_name: Option<SharedString>,
 }
 
 #[derive(IntoElement, RegisterComponent)]
@@ -371,6 +371,7 @@ impl RenderOnce for ThreadItem {
             .worktrees
             .into_iter()
             .filter(|wt| wt.kind == WorktreeKind::Linked)
+            .filter(|wt| wt.worktree_name.is_some() || wt.branch_name.is_some())
             .collect();
 
         let has_worktree = !linked_worktrees.is_empty();
