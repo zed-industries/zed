@@ -21902,10 +21902,8 @@ name = "x_ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "language_model_core",
  "schemars",
  "serde",
- "serde_json",
  "strum 0.27.2",
 ]
 
