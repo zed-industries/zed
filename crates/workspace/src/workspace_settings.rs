@@ -37,6 +37,8 @@ pub struct WorkspaceSettings {
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
     pub close_panel_on_toggle: bool,
+    pub window_title_format: Option<String>,
+    pub window_title_separator: Option<String>,
     pub use_system_window_tabs: bool,
     pub fullscreen_mode: settings::FullscreenMode,
     pub zoomed_padding: bool,
@@ -126,6 +128,11 @@ impl Settings for WorkspaceSettings {
                 .collect(),
             close_on_file_delete: workspace.close_on_file_delete.unwrap(),
             close_panel_on_toggle: workspace.close_panel_on_toggle.unwrap(),
+            window_title_format: workspace
+                .window_title_format
+                .clone()
+                .filter(|format| !format.is_empty()),
+            window_title_separator: workspace.window_title_separator.clone(),
             use_system_window_tabs: workspace.use_system_window_tabs.unwrap(),
             fullscreen_mode: workspace.fullscreen_mode.unwrap(),
             zoomed_padding: workspace.zoomed_padding.unwrap(),
