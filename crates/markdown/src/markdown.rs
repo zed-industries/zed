@@ -1135,7 +1135,7 @@ impl MarkdownElement {
     ) {
         let align = builder.text_style().text_align;
         builder.modify_current_div(|el| {
-            let mut image_container = el.flex().flex_row().items_center();
+            let mut image_container = el.flex().flex_row().flex_wrap().items_center();
 
             image_container = match align {
                 TextAlign::Left => image_container.justify_start(),
@@ -1670,6 +1670,7 @@ impl Element for MarkdownElement {
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
+        let mut paragraph_has_image = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
@@ -1713,6 +1714,7 @@ impl Element for MarkdownElement {
                         MarkdownTag::Image { dest_url, .. } => {
                             if let Some(image) = images.get(&range.start) {
                                 current_img_block_range = Some(range.clone());
+                                paragraph_has_image = true;
                                 self.push_markdown_image(
                                     &mut builder,
                                     range,
@@ -1726,10 +1728,12 @@ impl Element for MarkdownElement {
                                 .and_then(|resolve| resolve(dest_url.as_ref()))
                             {
                                 current_img_block_range = Some(range.clone());
+                                paragraph_has_image = true;
                                 self.push_markdown_image(&mut builder, range, source, None, None);
                             }
                         }
                         MarkdownTag::Paragraph => {
+                            paragraph_has_image = false;
                             self.push_markdown_paragraph(&mut builder, range, markdown_end, None);
                         }
                         MarkdownTag::Heading { level, .. } => {
@@ -2170,7 +2174,14 @@ impl Element for MarkdownElement {
                     builder.pop_div()
                 }
                 MarkdownEvent::SoftBreak => builder.push_text(" ", range.clone()),
-                MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
+                MarkdownEvent::HardBreak => {
+                    if paragraph_has_image {
+                        // A full-width zero-height child forces a flex-wrap row break.
+                        builder.modify_current_div(|el| el.child(div().w_full().h_0()));
+                    } else {
+                        builder.push_text("\n", range.clone());
+                    }
+                }
                 MarkdownEvent::TaskListMarker(_) => {
                     // handled inside the `MarkdownTag::Item` case
                 }
@@ -3767,6 +3778,58 @@ mod tests {
 
             assert_eq!(precomputed, output.len(), "length mismatch for {:?}", input);
         }
+    }
+
+    #[gpui::test]
+    fn test_inline_br_renders_as_line_break(cx: &mut TestAppContext) {
+        let options = MarkdownOptions {
+            parse_html: true,
+            ..Default::default()
+        };
+
+        for br in ["<br>", "<br/>", "<br />"] {
+            let md = format!("first{br}second");
+            let rendered = render_markdown_with_options(&md, None, options, cx);
+            let text: String = rendered
+                .lines
+                .iter()
+                .map(|line| line.layout.wrapped_text())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                !text.contains(br),
+                "{br} should not appear as literal text; got: {text:?}"
+            );
+            assert!(
+                text.contains("first") && text.contains("second"),
+                "both sides of {br} should be present; got: {text:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_hard_break_in_text_paragraph_after_paragraph(cx: &mut TestAppContext) {
+        // paragraph_has_image must reset between paragraphs — otherwise a <br>
+        // in a text paragraph following any other paragraph would be suppressed.
+        let options = MarkdownOptions {
+            parse_html: true,
+            ..Default::default()
+        };
+        let rendered = render_markdown_with_options("para one\n\nfirst<br>second", None, options, cx);
+        let all_text: String = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            all_text.contains("first") && all_text.contains("second"),
+            "both sides of <br> should be present; got: {all_text:?}"
+        );
+        assert!(
+            !all_text.contains("<br>"),
+            "<br> should not appear as literal text; got: {all_text:?}"
+        );
     }
 
     #[test]

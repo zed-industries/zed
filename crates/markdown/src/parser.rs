@@ -149,6 +149,13 @@ fn build_heading_slugs(
     slugs
 }
 
+fn is_br_tag(html: &str) -> bool {
+    let tag = html.trim();
+    tag.eq_ignore_ascii_case("<br>")
+        || tag.eq_ignore_ascii_case("<br/>")
+        || tag.eq_ignore_ascii_case("<br />")
+}
+
 pub(crate) fn parse_markdown_with_options(
     text: &str,
     parse_html: bool,
@@ -374,6 +381,10 @@ pub(crate) fn parse_markdown_with_options(
                         && matches!(
                             parser.peek(),
                             Some((pulldown_cmark::Event::InlineHtml(_), _))
+                        )
+                        && !matches!(
+                            parser.peek(),
+                            Some((pulldown_cmark::Event::InlineHtml(html), _)) if is_br_tag(html)
                         ))
                 {
                     let Some((next_event, next_range)) = parser.next() else {
@@ -497,8 +508,12 @@ pub(crate) fn parse_markdown_with_options(
                 state.push_event(content_range, MarkdownEvent::Code)
             }
             pulldown_cmark::Event::Html(_) => state.push_event(range, MarkdownEvent::Html),
-            pulldown_cmark::Event::InlineHtml(_) => {
-                state.push_event(range, MarkdownEvent::InlineHtml)
+            pulldown_cmark::Event::InlineHtml(html) => {
+                if is_br_tag(&html) {
+                    state.push_event(range, MarkdownEvent::HardBreak)
+                } else {
+                    state.push_event(range, MarkdownEvent::InlineHtml)
+                }
             }
             pulldown_cmark::Event::FootnoteReference(label) => state.push_event(
                 range,
@@ -1328,5 +1343,64 @@ mod tests {
                 None,
             ]
         );
+    }
+
+    #[test]
+    fn test_br_tag_emits_hard_break() {
+        for input in ["hello<br>world", "hello<br/>world", "hello<br />world"] {
+            let parsed = parse_markdown_with_options(input, true, false);
+            let has_hard_break = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::HardBreak));
+            let has_empty_substituted_text = parsed.events.iter().any(|(_, event)| {
+                matches!(event, MarkdownEvent::SubstitutedText(text) if text.is_empty())
+            });
+            assert!(has_hard_break, "<br> in \"{input}\" should emit HardBreak");
+            assert!(
+                !has_empty_substituted_text,
+                "<br> in \"{input}\" should not produce empty SubstitutedText"
+            );
+        }
+    }
+
+    #[test]
+    fn test_br_tag_emits_hard_break_without_parse_html() {
+        for input in ["hello<br>world", "hello<br/>world", "hello<br />world"] {
+            let parsed = parse_markdown_with_options(input, false, false);
+            let has_hard_break = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::HardBreak));
+            assert!(
+                has_hard_break,
+                "<br> in \"{input}\" should emit HardBreak regardless of parse_html"
+            );
+        }
+    }
+
+    #[test]
+    fn test_non_br_inline_html_emits_inline_html() {
+        // parse_html: false prevents the text-merge loop from absorbing InlineHtml,
+        // so each tag reaches the conversion arm — verifying is_br_tag doesn't match unrelated tags.
+        for input in ["a<span>b</span>c", "a<em>b</em>c", "a<strong>b</strong>c"] {
+            let parsed = parse_markdown_with_options(input, false, false);
+            let has_inline_html = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::InlineHtml));
+            let has_hard_break = parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, MarkdownEvent::HardBreak));
+            assert!(
+                has_inline_html,
+                "non-<br> tags in \"{input}\" should emit InlineHtml"
+            );
+            assert!(
+                !has_hard_break,
+                "non-<br> tags in \"{input}\" should not emit HardBreak"
+            );
+        }
     }
 }
