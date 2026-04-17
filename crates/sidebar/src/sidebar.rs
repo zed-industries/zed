@@ -407,12 +407,10 @@ fn apply_worktree_label_mode(
         }
         AgentThreadWorktreeLabel::Branch => {
             for wt in &mut worktrees {
-                if let Some(branch) = wt.branch_name.take() {
-                    wt.name = branch;
-                    // Highlight positions were computed against the worktree
-                    // name, so they no longer line up once we swap in the
-                    // branch name. Drop them rather than mis-highlighting.
-                    wt.highlight_positions.clear();
+                // Fall back to showing the worktree name when no branch is
+                // known; an empty chip would be worse than a mismatched icon.
+                if wt.branch_name.is_some() {
+                    wt.worktree_name = None;
                 }
             }
         }
@@ -1277,7 +1275,10 @@ impl Sidebar {
                     }
                     let mut worktree_matched = false;
                     for worktree in &mut thread.worktrees {
-                        if let Some(positions) = fuzzy_match_positions(&query, &worktree.name) {
+                        let Some(name) = worktree.worktree_name.as_ref() else {
+                            continue;
+                        };
+                        if let Some(positions) = fuzzy_match_positions(&query, name) {
                             worktree.highlight_positions = positions;
                             worktree_matched = true;
                         }

@@ -136,7 +136,7 @@ impl FeatureFlagsModal {
     fn render_options(
         &self,
         row: &FlagRow,
-        resolved: Option<&'static str>,
+        resolved: &'static str,
         forced_on: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -148,7 +148,7 @@ impl FeatureFlagsModal {
             move |variant| {
                 let key = variant.override_key;
                 let label = variant.label;
-                let selected = selected_key == Some(key);
+                let selected = selected_key == key;
                 let state = if selected {
                     ToggleState::Selected
                 } else {
@@ -233,9 +233,6 @@ impl Render for FeatureFlagsModal {
                     .header(
                         ModalHeader::new()
                             .headline("Feature Flags")
-                            .description(SharedString::from(
-                                "Local overrides applied to feature flags. These persist across restarts.",
-                            ))
                             .show_dismiss_button(true),
                     )
                     .child(self.render_body(window, cx)),

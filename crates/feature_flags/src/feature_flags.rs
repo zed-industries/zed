@@ -55,16 +55,11 @@ pub trait FeatureFlagValue:
 /// flag reads as disabled; the `on_variant` override pins the "enabled"
 /// state to [`PresenceFlag::On`] so staff / server / `enabled_for_all`
 /// resolution still lights the flag up.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub enum PresenceFlag {
     On,
+    #[default]
     Off,
-}
-
-impl Default for PresenceFlag {
-    fn default() -> Self {
-        PresenceFlag::Off
-    }
 }
 
 impl FeatureFlagValue for PresenceFlag {

@@ -12,11 +12,8 @@ const OVERRIDES_NAMESPACE: &str = "feature-flag-overrides";
 pub struct FeatureFlagDescriptor {
     pub name: &'static str,
     pub variants: fn() -> Vec<FeatureFlagVariant>,
-    /// Override key of the "on" variant — what the UI selects when staff /
-    /// server / `enabled_for_all` rules apply. Usually the first variant,
-    /// but [`crate::PresenceFlag`] overrides this so that `on_variant_key`
-    /// refers to `"on"` even though the default (fallback) is `Off`.
     pub on_variant_key: fn() -> &'static str,
+    pub default_variant_key: fn() -> &'static str,
     pub enabled_for_all: fn() -> bool,
     pub enabled_for_staff: fn() -> bool,
     pub type_id: fn() -> TypeId,
@@ -55,6 +52,11 @@ macro_rules! register_feature_flag {
                 on_variant_key: || {
                     <<$flag as $crate::FeatureFlag>::Value as $crate::FeatureFlagValue>::override_key(
                         &<<$flag as $crate::FeatureFlag>::Value as $crate::FeatureFlagValue>::on_variant(),
+                    )
+                },
+                default_variant_key: || {
+                    <<$flag as $crate::FeatureFlag>::Value as $crate::FeatureFlagValue>::override_key(
+                        &<<$flag as $crate::FeatureFlag>::Value as ::std::default::Default>::default(),
                     )
                 },
                 enabled_for_all: <$flag as $crate::FeatureFlag>::enabled_for_all,
@@ -190,38 +192,38 @@ impl FeatureFlagStore {
             .is_some_and(|v| v == T::Value::on_variant())
     }
 
-    /// The override key the UI should show as "selected" for a flag whose
-    /// concrete type isn't known (e.g. when rendering a generated list of
-    /// descriptors in the configuration UI).
-    ///
-    /// Returns `None` only when no rule applies. The UI treats that as "no
-    /// radio selected".
-    pub fn resolved_key(&self, descriptor: &FeatureFlagDescriptor) -> Option<&'static str> {
-        let on_variant_key = || Some((descriptor.on_variant_key)());
+    /// Mirrors the resolution order of [`Self::try_flag_value`], but falls
+    /// back to the [`Default`] variant when no rule applies so the UI always
+    /// shows *something* selected — matching what
+    /// [`crate::FeatureFlagAppExt::flag_value`] would return.
+    pub fn resolved_key(&self, descriptor: &FeatureFlagDescriptor) -> &'static str {
+        let on_variant_key = (descriptor.on_variant_key)();
 
         if (descriptor.enabled_for_all)() {
-            return on_variant_key();
+            return on_variant_key;
         }
 
         if let Some(requested) = self.overrides.get(descriptor.name) {
-            return (descriptor.variants)()
+            if let Some(variant) = (descriptor.variants)()
                 .into_iter()
                 .find(|v| v.override_key == requested.as_str())
-                .map(|v| v.override_key);
+            {
+                return variant.override_key;
+            }
         }
 
         if (cfg!(debug_assertions) || self.staff)
             && !*ZED_DISABLE_STAFF
             && (descriptor.enabled_for_staff)()
         {
-            return on_variant_key();
+            return on_variant_key;
         }
 
         if self.server_flags.contains_key(descriptor.name) {
-            return on_variant_key();
+            return on_variant_key;
         }
 
-        None
+        (descriptor.default_variant_key)()
     }
 
     /// Whether this flag is forced on by `enabled_for_all` and therefore not
@@ -289,7 +291,9 @@ mod tests {
     fn off_override_beats_server_flag() {
         let mut store = FeatureFlagStore::default();
         store.update_server_flags(false, vec!["demo".to_string()]);
-        store.overrides.insert(DemoFlag::NAME.to_string(), None);
+        store
+            .overrides
+            .insert(DemoFlag::NAME.to_string(), "off".to_string());
         assert!(!store.has_flag::<DemoFlag>());
         assert_eq!(
             store.try_flag_value::<DemoFlag>(),
