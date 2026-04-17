@@ -3330,7 +3330,7 @@ impl Sidebar {
     }
 
     /// The sort order used by the ctrl-tab switcher
-    fn thread_cmp_for_switcher(&self, a: &ThreadMetadata, b: &ThreadMetadata) -> Ordering {
+    fn thread_cmp_for_switcher(&self, left: &ThreadMetadata, right: &ThreadMetadata) -> Ordering {
         let sort_time = |x: &ThreadMetadata| {
             self.thread_last_accessed
                 .get(&x.thread_id)
@@ -3339,7 +3339,8 @@ impl Sidebar {
                 .unwrap_or(x.updated_at)
         };
 
-        sort_time(a).cmp(&sort_time(b)).reverse()
+        // .reverse() = most recent first
+        sort_time(left).cmp(&sort_time(right)).reverse()
     }
 
     fn mru_threads_for_switcher(&self, cx: &App) -> Vec<ThreadSwitcherEntry> {

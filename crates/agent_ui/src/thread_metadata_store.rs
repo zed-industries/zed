@@ -295,6 +295,8 @@ pub struct ThreadMetadata {
     pub title: Option<SharedString>,
     pub updated_at: DateTime<Utc>,
     pub created_at: Option<DateTime<Utc>>,
+    /// When a user last interacted to send a message (including queueing).
+    /// Doesn't include the time when a queued message is fired.
     pub interacted_at: Option<DateTime<Utc>>,
     pub worktree_paths: WorktreePaths,
     pub remote_connection: Option<RemoteConnectionOptions>,
