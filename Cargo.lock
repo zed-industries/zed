@@ -9599,7 +9599,6 @@ dependencies = [
  "serde_json",
  "smol",
  "thiserror 2.0.17",
- "x_ai",
 ]
 
 [[package]]
