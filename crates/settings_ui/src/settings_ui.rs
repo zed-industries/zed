@@ -13,6 +13,7 @@ use gpui::{
     WindowBounds, WindowHandle, WindowOptions, actions, div, list, point, prelude::*, px,
     uniform_list,
 };
+use i18n;
 
 use language::Buffer;
 use platform_title_bar::PlatformTitleBar;
@@ -432,12 +433,12 @@ fn init_renderers(cx: &mut App) {
                     settings_window,
                     item,
                     settings_file,
-                    Button::new("open-in-settings-file", "Edit in settings.json")
+                    Button::new("open-in-settings-file", i18n::t("Edit in settings.json", cx))
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
                         .tab_index(0_isize)
                         .tooltip(Tooltip::for_action_title_in(
-                            "Edit in settings.json",
+                            i18n::t("Edit in settings.json", cx),
                             &OpenCurrentFile,
                             &settings_window.focus_handle,
                         ))
@@ -549,6 +550,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ShellDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::EditPredictionsMode>(render_dropdown)
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
+        .add_basic_renderer::<settings::LocaleContent>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
         .add_basic_renderer::<settings::WindowButtonLayoutContentDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
@@ -663,7 +665,7 @@ pub fn open_settings_editor(
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Zed — Settings".into()),
+                    title: Some(i18n::t("Zed — Settings", cx)),
                     appears_transparent: true,
                     traffic_light_position: Some(point(px(12.0), px(12.0))),
                 }),
@@ -946,7 +948,7 @@ impl SettingsPageItem {
 
         match self {
             SettingsPageItem::SectionHeader(header) => {
-                SettingsSectionHeader::new(SharedString::new_static(header)).into_any_element()
+                SettingsSectionHeader::new(i18n::t(header, cx)).into_any_element()
             }
             SettingsPageItem::SettingItem(setting_item) => {
                 let (field_with_padding, _) =
@@ -989,7 +991,7 @@ impl SettingsPageItem {
                         .child(
                             Button::new(
                                 ("sub-page".into(), sub_page_link.title.clone()),
-                                "Configure",
+                                i18n::t("Configure", cx),
                             )
                             .tab_index(0_isize)
                             .end_icon(
@@ -1172,7 +1174,7 @@ fn render_settings_item(
                     h_flex()
                         .w_full()
                         .gap_1()
-                        .child(Label::new(SharedString::new_static(setting_item.title)))
+                        .child(Label::new(i18n::t(setting_item.title, cx)))
                         .when_some(
                             if sub_field {
                                 None
@@ -1186,7 +1188,7 @@ fn render_settings_item(
                                     IconButton::new("reset-to-default-btn", IconName::Undo)
                                         .icon_color(Color::Muted)
                                         .icon_size(IconSize::Small)
-                                        .tooltip(Tooltip::text("Reset to Default"))
+                                        .tooltip(Tooltip::text(i18n::t("Reset to Default", cx)))
                                         .on_click({
                                             move |_, window, cx| {
                                                 reset_to_default(window, cx);
@@ -1200,7 +1202,8 @@ fn render_settings_item(
                             |this, file_set_in| {
                                 this.child(
                                     Label::new(format!(
-                                        "—  Modified in {}",
+                                        "—  {} {}",
+                                        i18n::t("Modified in", cx),
                                         settings_window
                                             .display_name(&file_set_in)
                                             .expect("File name should exist")
@@ -1212,7 +1215,7 @@ fn render_settings_item(
                         ),
                 )
                 .child(
-                    Label::new(SharedString::new_static(setting_item.description))
+                    Label::new(i18n::t(setting_item.description, cx))
                         .size(LabelSize::Small)
                         .color(Color::Muted)
                         .render_code_spans(),
@@ -1265,7 +1268,7 @@ fn render_settings_item_link(
                 .icon_color(link_icon_color)
                 .icon_size(IconSize::Small)
                 .shape(IconButtonShape::Square)
-                .tooltip(Tooltip::text("Copy Link"))
+                .tooltip(Tooltip::text(i18n::t("Copy Link", cx)))
                 .when_some(json_path, |this, path| {
                     this.on_click(cx.listener(move |_, _, _, cx| {
                         let link = format!("zed://settings/{}", path);
@@ -1485,7 +1488,7 @@ impl SettingsWindow {
         let current_file = SettingsUiFile::User;
         let search_bar = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search settings…", window, cx);
+            editor.set_placeholder_text(&i18n::t("Search settings…", cx), window, cx);
             editor
         });
         cx.subscribe(&search_bar, |this, _, event: &EditorEvent, cx| {
@@ -2460,11 +2463,11 @@ impl SettingsWindow {
                     }),
             )
             .child(
-                Button::new(edit_in_json_id, "Edit in settings.json")
+                Button::new(edit_in_json_id, i18n::t("Edit in settings.json", cx))
                     .tab_index(0_isize)
                     .style(ButtonStyle::OutlinedGhost)
                     .tooltip(Tooltip::for_action_title_in(
-                        "Edit in settings.json",
+                        i18n::t("Edit in settings.json", cx),
                         &OpenCurrentFile,
                         &self.focus_handle,
                     ))
@@ -2707,7 +2710,7 @@ impl SettingsWindow {
                                     .map(|(entry_index, entry)| {
                                         TreeViewItem::new(
                                             ("settings-ui-navbar-entry", entry_index),
-                                            entry.title,
+                                            i18n::t(entry.title, cx),
                                         )
                                         .track_focus(&entry.focus_handle)
                                         .root_item(entry.is_root)
@@ -3185,17 +3188,22 @@ impl SettingsWindow {
                 .when(current_sub_page.link.in_json, |this| {
                     this.child(
                         div().flex_shrink_0().child(
-                            Button::new("open-in-settings-file", "Edit in settings.json")
-                                .tab_index(0_isize)
-                                .style(ButtonStyle::OutlinedGhost)
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Edit in settings.json",
-                                    &OpenCurrentFile,
-                                    &self.focus_handle,
-                                ))
-                                .on_click(cx.listener(|this, _, window, cx| {
+                            Button::new(
+                                "open-in-settings-file",
+                                i18n::t("Edit in settings.json", cx),
+                            )
+                            .tab_index(0_isize)
+                            .style(ButtonStyle::OutlinedGhost)
+                            .tooltip(Tooltip::for_action_title_in(
+                                i18n::t("Edit in settings.json", cx),
+                                &OpenCurrentFile,
+                                &self.focus_handle,
+                            ))
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
                                     this.open_current_settings_file(window, cx);
-                                })),
+                                },
+                            )),
                         ),
                     )
                 })

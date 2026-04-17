@@ -85,6 +85,19 @@ fn general_page(cx: &App) -> SettingsPage {
         let mut items = vec![
             SettingsPageItem::SectionHeader("General Settings"),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Language",
+                description: "The locale to use for Zed's UI text.",
+                field: Box::new(SettingField {
+                    json_path: Some("locale"),
+                    pick: |settings_content| settings_content.locale.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.locale = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 files: PROJECT,
                 title: "Project Name",
                 description: "The displayed name of this project. If left empty, the root directory name will be displayed.",

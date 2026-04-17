@@ -211,6 +211,11 @@ pub struct SettingsContent {
     ///
     /// Default: 5
     pub modeline_lines: Option<usize>,
+
+    /// The locale to use for Zed's UI text.
+    ///
+    /// Default: en
+    pub locale: Option<LocaleContent>,
 }
 
 impl SettingsContent {
@@ -463,6 +468,30 @@ pub struct DebuggerSettingsContent {
     ///
     /// Default: Bottom
     pub dock: Option<DockPosition>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    Default,
+    strum::VariantArray,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LocaleContent {
+    #[default]
+    En,
+    ZhCn,
+}
+
+impl strum::VariantNames for LocaleContent {
+    const VARIANTS: &'static [&'static str] = &["English", "中文（简体）"];
 }
 
 /// The granularity of one 'step' in the stepping requests `next`, `stepIn`, `stepOut`, and `stepBack`.

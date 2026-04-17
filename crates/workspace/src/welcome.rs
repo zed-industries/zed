@@ -12,6 +12,7 @@ use gpui::{
     ParentElement, Render, Styled, Task, Window, actions,
 };
 use gpui::{WeakEntity, linear_color_stop, linear_gradient};
+use i18n;
 use menu::{SelectNext, SelectPrevious};
 
 use schemars::JsonSchema;
@@ -148,10 +149,15 @@ struct SectionEntry {
 }
 
 impl SectionEntry {
-    fn render(&self, button_index: usize, focus: &FocusHandle) -> Option<impl IntoElement> {
+    fn render(
+        &self,
+        button_index: usize,
+        focus: &FocusHandle,
+        cx: &App,
+    ) -> Option<impl IntoElement> {
         self.visibility_guard.is_visible().then(|| {
             SectionButton::new(
-                self.title,
+                i18n::t(self.title, cx),
                 self.icon,
                 self.action,
                 button_index,
@@ -225,15 +231,15 @@ struct Section<const COLS: usize> {
 }
 
 impl<const COLS: usize> Section<COLS> {
-    fn render(self, index_offset: usize, focus: &FocusHandle) -> impl IntoElement {
+    fn render(self, index_offset: usize, focus: &FocusHandle, cx: &App) -> impl IntoElement {
         v_flex()
             .min_w_full()
-            .child(SectionHeader::new(self.title))
+            .child(SectionHeader::new(i18n::t(self.title, cx)))
             .children(
                 self.entries
                     .iter()
                     .enumerate()
-                    .filter_map(|(index, entry)| entry.render(index_offset + index, focus)),
+                    .filter_map(|(index, entry)| entry.render(index_offset + index, focus, cx)),
             )
     }
 }
@@ -385,10 +391,11 @@ impl WelcomePage {
     fn render_recent_project_section(
         &self,
         recent_projects: Vec<impl IntoElement>,
+        cx: &App,
     ) -> impl IntoElement {
         v_flex()
             .w_full()
-            .child(SectionHeader::new("Recent Projects"))
+            .child(SectionHeader::new(i18n::t("Recent Projects", cx)))
             .children(recent_projects)
     }
 
@@ -441,18 +448,18 @@ impl Render for WelcomePage {
         let showing_recent_projects =
             self.fallback_to_recent_projects && !recent_projects.is_empty();
         let second_section = if showing_recent_projects {
-            self.render_recent_project_section(recent_projects)
+            self.render_recent_project_section(recent_projects, cx)
                 .into_any_element()
         } else {
             second_section
-                .render(first_section_entries, &self.focus_handle)
+                .render(first_section_entries, &self.focus_handle, cx)
                 .into_any_element()
         };
 
         let welcome_label = if self.fallback_to_recent_projects {
-            "Welcome back to Zed"
+            i18n::t("Welcome back to Zed", cx)
         } else {
-            "Welcome to Zed"
+            i18n::t("Welcome to Zed", cx)
         };
 
         h_flex()
@@ -482,14 +489,14 @@ impl Render for WelcomePage {
                             .child(Vector::square(VectorName::ZedLogo, rems_from_px(45.)))
                             .child(
                                 v_flex().child(Headline::new(welcome_label)).child(
-                                    Label::new("The editor for what's next")
+                                    Label::new(i18n::t("The editor for what's next", cx))
                                         .size(LabelSize::Small)
                                         .color(Color::Muted)
                                         .italic(),
                                 ),
                             ),
                     )
-                    .child(first_section.render(Default::default(), &self.focus_handle))
+                    .child(first_section.render(Default::default(), &self.focus_handle, cx))
                     .child(second_section)
                     .when(ai_enabled && !showing_recent_projects, |this| {
                         let agent_tab_index = next_tab_index;
@@ -499,7 +506,7 @@ impl Render for WelcomePage {
                     .when(!self.fallback_to_recent_projects, |this| {
                         this.child(
                             v_flex().gap_4().child(Divider::horizontal()).child(
-                                Button::new("welcome-exit", "Return to Onboarding")
+                                Button::new("welcome-exit", i18n::t("Return to Onboarding", cx))
                                     .tab_index(next_tab_index as isize)
                                     .full_width()
                                     .label_size(LabelSize::XSmall)
@@ -524,8 +531,8 @@ impl Focusable for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        "Welcome".into()
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        i18n::t("Welcome", cx)
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

@@ -1,8 +1,44 @@
 use collab_ui::collab_panel;
-use gpui::{App, Menu, MenuItem, OsAction};
+use gpui::{App, Menu, MenuItem, OsAction, OsMenu};
 use release_channel::ReleaseChannel;
 use terminal_view::terminal_panel;
 use zed_actions::{debug_panel, dev};
+
+fn translate_menu(menu: Menu, cx: &App) -> Menu {
+    Menu {
+        name: i18n::t(menu.name.as_ref(), cx),
+        items: menu
+            .items
+            .into_iter()
+            .map(|item| translate_menu_item(item, cx))
+            .collect(),
+        disabled: menu.disabled,
+    }
+}
+
+fn translate_menu_item(item: MenuItem, cx: &App) -> MenuItem {
+    match item {
+        MenuItem::Separator => MenuItem::Separator,
+        MenuItem::Submenu(menu) => MenuItem::Submenu(translate_menu(menu, cx)),
+        MenuItem::SystemMenu(os_menu) => MenuItem::SystemMenu(OsMenu {
+            name: i18n::t(os_menu.name.as_ref(), cx),
+            menu_type: os_menu.menu_type,
+        }),
+        MenuItem::Action {
+            name,
+            action,
+            os_action,
+            checked,
+            disabled,
+        } => MenuItem::Action {
+            name: i18n::t(name.as_ref(), cx),
+            action,
+            os_action,
+            checked,
+            disabled,
+        },
+    }
+}
 
 pub fn app_menus(cx: &mut App) -> Vec<Menu> {
     use zed_actions::Quit;
@@ -58,7 +94,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
         view_items.push(MenuItem::separator());
     }
 
-    vec![
+    let menus = vec![
         Menu {
             name: "Zed".into(),
             disabled: false,
@@ -329,5 +365,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 ),
             ],
         },
-    ]
+    ];
+
+    menus
+        .into_iter()
+        .map(|menu| translate_menu(menu, cx))
+        .collect()
 }

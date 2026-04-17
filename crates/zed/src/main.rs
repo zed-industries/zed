@@ -33,6 +33,7 @@ use remote::RemoteConnectionOptions;
 use reqwest_client::ReqwestClient;
 
 use assets::Assets;
+use i18n;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::{project_settings::ProjectSettings, trusted_worktrees};
@@ -462,6 +463,7 @@ fn main() {
         }
         settings::init(cx);
         zlog_settings::init(cx);
+        i18n::init(cx);
         zed::watch_settings_files(fs.clone(), cx);
         handle_keymap_file_changes(user_keymap_file_rx, user_keymap_watcher, cx);
 
@@ -775,6 +777,13 @@ fn main() {
                         client.reconnect(&cx.to_async());
                     }
                 }
+            }
+        })
+        .detach();
+        cx.observe_global::<SettingsStore>({
+            move |cx| {
+                let locale = i18n::I18nSettings::get_global(cx).locale;
+                i18n::set_locale(locale, cx);
             }
         })
         .detach();

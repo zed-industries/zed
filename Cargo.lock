@@ -8513,6 +8513,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "i18n"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "gpui",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "settings",
+]
+
+[[package]]
 name = "iana-time-zone"
 version = "0.1.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15979,6 +15991,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "heck 0.5.0",
+ "i18n",
  "itertools 0.14.0",
  "language",
  "log",
@@ -17627,6 +17640,7 @@ dependencies = [
  "editor",
  "futures 0.3.32",
  "gpui",
+ "i18n",
  "itertools 0.14.0",
  "language",
  "log",
@@ -21741,6 +21755,7 @@ dependencies = [
  "git",
  "gpui",
  "http_client",
+ "i18n",
  "itertools 0.14.0",
  "language",
  "log",
@@ -22263,6 +22278,7 @@ dependencies = [
  "gpui_platform",
  "gpui_tokio",
  "http_client",
+ "i18n",
  "image",
  "image_viewer",
  "input_latency_ui",

@@ -15,6 +15,7 @@ use gpui::{
     FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render, Styled, Task, WeakEntity,
     Window, actions,
 };
+use i18n;
 use itertools::Itertools;
 use project::{Fs, Project};
 
@@ -1305,11 +1306,14 @@ impl Render for FailedToSpawnTerminal {
                     .icon_size(IconSize::XSmall),
             )
             .menu(move |window, cx| {
-                Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                Some(ContextMenu::build(window, cx, |context_menu, _, app| {
                     context_menu
-                        .action("Open Settings", zed_actions::OpenSettings.boxed_clone())
                         .action(
-                            "Edit settings.json",
+                            i18n::t("Open Settings", app),
+                            zed_actions::OpenSettings.boxed_clone(),
+                        )
+                        .action(
+                            i18n::t("Edit settings.json", app),
                             zed_actions::OpenSettingsFile.boxed_clone(),
                         )
                 }))
@@ -1333,7 +1337,7 @@ impl Render for FailedToSpawnTerminal {
                     .items_center()
                     .justify_center()
                     .text_center()
-                    .child(Label::new("Failed to spawn terminal"))
+                    .child(Label::new(i18n::t("Failed to spawn terminal", cx)))
                     .child(
                         Label::new(self.error.to_string())
                             .size(LabelSize::Small)
@@ -1342,7 +1346,7 @@ impl Render for FailedToSpawnTerminal {
                     )
                     .child(SplitButton::new(
                         ButtonLike::new("open-settings-ui")
-                            .child(Label::new("Edit Settings").size(LabelSize::Small))
+                            .child(Label::new(i18n::t("Edit Settings", cx)).size(LabelSize::Small))
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
                             }),

@@ -41,6 +41,7 @@ futures.workspace = true
 git.workspace = true
 gpui.workspace = true
 http_client.workspace = true
+i18n.workspace = true
 itertools.workspace = true
 language.workspace = true
 log.workspace = true

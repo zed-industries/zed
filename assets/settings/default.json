@@ -26,6 +26,11 @@
   // 5. "SublimeText"
   // 6. "TextMate"
   "base_keymap": "VSCode",
+  // The locale to use for Zed's UI text.
+  // Available locales:
+  // - "en": English (default)
+  // - "zh_cn": Chinese (Simplified)
+  "locale": "en",
   // The name of a font to use for rendering text in the editor
   // ".ZedMono" currently aliases to Lilex
   // but this may change in the future.

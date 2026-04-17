@@ -34,10 +34,11 @@ use git_ui::project_diff::{BranchDiffToolbar, ProjectDiffToolbar};
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
     Element, Entity, FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement,
-    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TitlebarOptions,
-    UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
-    actions, image_cache, img, point, px, retain_all,
+    PathPromptOptions, PromptButton, PromptLevel, ReadGlobal, SharedString, Size, Task,
+    TitlebarOptions, UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowKind,
+    WindowOptions, actions, image_cache, img, point, px, retain_all,
 };
+use i18n;
 use image_viewer::ImageInfo;
 use language::Capability;
 use language_onboarding::BasedPyrightBanner;
@@ -1374,14 +1375,14 @@ fn open_about_window(cx: &mut App) {
                             .child(Headline::new(self.message.clone()))
                             .when_some(self.commit.clone(), |this, commit| {
                                 this.child(
-                                    Label::new("Commit")
+                                    Label::new(i18n::t("Commit", cx))
                                         .color(Color::Muted)
                                         .size(LabelSize::XSmall),
                                 )
                                 .child(Label::new(commit).size(LabelSize::Small))
                             })
                             .child(
-                                Label::new("Version")
+                                Label::new(i18n::t("Version", cx))
                                     .color(Color::Muted)
                                     .size(LabelSize::XSmall),
                             )
@@ -1399,7 +1400,7 @@ fn open_about_window(cx: &mut App) {
                                         window.remove_window();
                                     }))
                                     .child(
-                                        Button::new("ok", "Ok")
+                                        Button::new("ok", i18n::t("Ok", cx))
                                             .full_width()
                                             .style(ButtonStyle::OutlinedGhost)
                                             .toggle_state(ok_is_focused)
@@ -1419,7 +1420,7 @@ fn open_about_window(cx: &mut App) {
                                         },
                                     ))
                                     .child(
-                                        Button::new("copy", "Copy")
+                                        Button::new("copy", i18n::t("Copy", cx))
                                             .full_width()
                                             .style(ButtonStyle::Tinted(TintColor::Accent))
                                             .toggle_state(copy_is_focused)
@@ -1466,7 +1467,7 @@ fn open_about_window(cx: &mut App) {
     cx.open_window(
         WindowOptions {
             titlebar: Some(TitlebarOptions {
-                title: Some("About Zed".into()),
+                title: Some(i18n::t("About Zed", cx)),
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(12.), px(12.))),
             }),
@@ -1524,9 +1525,12 @@ fn quit(_: &Quit, cx: &mut App) {
                 .update(cx, |_, window, cx| {
                     window.prompt(
                         PromptLevel::Info,
-                        "Are you sure you want to quit?",
+                        &i18n::t("Are you sure you want to quit?", cx),
                         None,
-                        &["Quit", "Cancel"],
+                        &[
+                            PromptButton::new(i18n::t("Quit", cx)),
+                            PromptButton::cancel(i18n::t("Cancel", cx)),
+                        ],
                         cx,
                     )
                 })
