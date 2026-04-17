@@ -651,8 +651,22 @@ pub fn compute_prediction_reversal_ratio_from_history(
 mod tests {
     use super::*;
     use indoc::indoc;
-    use zeta_prompt::ExcerptRanges;
     use zeta_prompt::udiff::apply_diff_to_string;
+    use zeta_prompt::{ExcerptRanges, ZetaPromptInput};
+
+    fn compute_prediction_reversal_ratio(
+        prompt_inputs: &ZetaPromptInput,
+        predicted_content: &str,
+        cursor_path: &Path,
+    ) -> f32 {
+        compute_prediction_reversal_ratio_from_history(
+            prompt_inputs.cursor_excerpt.as_ref(),
+            &prompt_inputs.events,
+            prompt_inputs.excerpt_start_row,
+            predicted_content,
+            cursor_path,
+        )
+    }
 
     fn make_test_prompt_inputs(
         content: &str,
