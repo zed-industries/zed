@@ -920,7 +920,11 @@ impl TitleBar {
         };
 
         let branch_tooltip_label = branch_name.clone();
-        let (branch_icon, branch_icon_color) = icon_info;
+        let (branch_icon, branch_icon_color) = if settings.show_branch_status_icon {
+            icon_info
+        } else {
+            (IconName::GitBranch, Color::Muted)
+        };
 
         let git_picker_button = PopoverMenu::new("branch-menu")
             .menu(move |window, cx| {
