@@ -1839,7 +1839,7 @@ impl Sidebar {
                         let menu = if open_workspaces.is_empty() {
                             menu
                         } else {
-                            let mut menu = menu.separator().header("Workspaces");
+                            let mut menu = menu.separator().header("Open Workspaces");
 
                             for (
                                 workspace_index,
