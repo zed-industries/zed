@@ -2285,13 +2285,14 @@ impl ThreadView {
 
         h_flex()
             .w_full()
+            .px_2()
             .justify_center()
             .child(
                 v_flex()
                     .flex_basis(max_content_width)
                     .flex_shrink()
                     .flex_grow_0()
-                    .mx_2()
+                    .max_w_full()
                     .bg(self.activity_bar_bg(cx))
                     .border_1()
                     .border_b_0()
@@ -2844,7 +2845,7 @@ impl ThreadView {
                 IconButton::new("dismiss-plan", IconName::Close)
                     .icon_size(IconSize::XSmall)
                     .shape(ui::IconButtonShape::Square)
-                    .tooltip(Tooltip::text("Clear plan"))
+                    .tooltip(Tooltip::text("Clear Plan"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.thread.update(cx, |thread, cx| thread.clear_plan(cx));
                         cx.stop_propagation();
@@ -2868,51 +2869,64 @@ impl ThreadView {
             .max_h_40()
             .overflow_y_scroll()
             .children(plan.entries.iter().enumerate().flat_map(|(index, entry)| {
-                let element = h_flex()
-                    .py_1()
-                    .px_2()
-                    .gap_2()
-                    .justify_between()
-                    .bg(cx.theme().colors().editor_background)
-                    .when(index < plan.entries.len() - 1, |parent| {
-                        parent.border_color(cx.theme().colors().border).border_b_1()
-                    })
-                    .child(
-                        h_flex()
-                            .id(("plan_entry", index))
-                            .gap_1p5()
-                            .max_w_full()
-                            .overflow_x_scroll()
-                            .text_xs()
-                            .text_color(cx.theme().colors().text_muted)
-                            .child(match entry.status {
-                                acp::PlanEntryStatus::InProgress => {
-                                    Icon::new(IconName::TodoProgress)
-                                        .size(IconSize::Small)
-                                        .color(Color::Accent)
-                                        .with_rotate_animation(2)
-                                        .into_any_element()
-                                }
-                                acp::PlanEntryStatus::Completed => {
-                                    Icon::new(IconName::TodoComplete)
-                                        .size(IconSize::Small)
-                                        .color(Color::Success)
-                                        .into_any_element()
-                                }
-                                acp::PlanEntryStatus::Pending | _ => {
-                                    Icon::new(IconName::TodoPending)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted)
-                                        .into_any_element()
-                                }
-                            })
-                            .child(MarkdownElement::new(
-                                entry.content.clone(),
-                                plan_label_markdown_style(&entry.status, window, cx),
-                            )),
-                    );
+                let entry_bg = cx.theme().colors().editor_background;
+                let tooltip_text: SharedString = entry.content.read(cx).source().to_string().into();
 
-                Some(element)
+                Some(
+                    h_flex()
+                        .id(("plan_entry_row", index))
+                        .py_1()
+                        .px_2()
+                        .gap_2()
+                        .justify_between()
+                        .relative()
+                        .bg(entry_bg)
+                        .when(index < plan.entries.len() - 1, |parent| {
+                            parent.border_color(cx.theme().colors().border).border_b_1()
+                        })
+                        .overflow_hidden()
+                        .child(
+                            h_flex()
+                                .id(("plan_entry", index))
+                                .gap_1p5()
+                                .min_w_0()
+                                .text_xs()
+                                .text_color(cx.theme().colors().text_muted)
+                                .child(match entry.status {
+                                    acp::PlanEntryStatus::InProgress => {
+                                        Icon::new(IconName::TodoProgress)
+                                            .size(IconSize::Small)
+                                            .color(Color::Accent)
+                                            .with_rotate_animation(2)
+                                            .into_any_element()
+                                    }
+                                    acp::PlanEntryStatus::Completed => {
+                                        Icon::new(IconName::TodoComplete)
+                                            .size(IconSize::Small)
+                                            .color(Color::Success)
+                                            .into_any_element()
+                                    }
+                                    acp::PlanEntryStatus::Pending | _ => {
+                                        Icon::new(IconName::TodoPending)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted)
+                                            .into_any_element()
+                                    }
+                                })
+                                .child(MarkdownElement::new(
+                                    entry.content.clone(),
+                                    plan_label_markdown_style(&entry.status, window, cx),
+                                )),
+                        )
+                        .child(div().absolute().top_0().right_0().h_full().w_8().bg(
+                            linear_gradient(
+                                90.,
+                                linear_color_stop(entry_bg, 1.),
+                                linear_color_stop(entry_bg.opacity(0.), 0.),
+                            ),
+                        ))
+                        .tooltip(Tooltip::text(tooltip_text)),
+                )
             }))
             .into_any_element()
     }
