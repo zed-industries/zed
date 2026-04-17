@@ -1350,6 +1350,8 @@ impl MarkdownElement {
                 .min_w_0()
                 .max_w_full()
                 .rounded_md()
+                .mr_2()
+                .mb_2()
                 .when_some(height, |this, height| this.h(height))
                 .when_some(width, |this, width| this.w(width))
                 .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
@@ -2652,10 +2654,12 @@ impl Element for MarkdownElement {
                     builder.pop_div()
                 }
                 MarkdownEvent::SoftBreak => {
-                    if self.style.soft_break_as_hard_break {
-                        builder.push_text("\n", range.clone())
-                    } else {
-                        builder.push_text(" ", range.clone())
+                    if !paragraph_has_image {
+                        if self.style.soft_break_as_hard_break {
+                            builder.push_text("\n", range.clone())
+                        } else {
+                            builder.push_text(" ", range.clone())
+                        }
                     }
                 }
                 MarkdownEvent::HardBreak => {
