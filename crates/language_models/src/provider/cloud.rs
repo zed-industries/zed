@@ -6,7 +6,6 @@ use cloud_api_types::OrganizationId;
 use cloud_api_types::Plan;
 use futures::StreamExt;
 use futures::future::BoxFuture;
-use gpui::AsyncApp;
 use gpui::{AnyElement, AnyView, App, Context, Entity, Subscription, Task};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelProviderId,
@@ -34,7 +33,7 @@ struct ClientTokenProvider {
 impl CloudLlmTokenProvider for ClientTokenProvider {
     type AuthContext = Option<OrganizationId>;
 
-    fn auth_context(&self, cx: &AsyncApp) -> Self::AuthContext {
+    fn auth_context(&self, cx: &impl gpui::AppContext) -> Self::AuthContext {
         self.user_store.read_with(cx, |user_store, _| {
             user_store
                 .current_organization()
