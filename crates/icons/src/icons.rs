@@ -48,7 +48,6 @@ pub enum IconName {
     BellRing,
     Binary,
     Blocks,
-    Bookmark,
     BoltFilled,
     BoltOutlined,
     Book,

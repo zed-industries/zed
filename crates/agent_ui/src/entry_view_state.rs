@@ -458,7 +458,6 @@ fn create_editor_diff(
         editor.set_show_indent_guides(false, cx);
         editor.set_read_only(true);
         editor.set_delegate_open_excerpts(true);
-        editor.set_show_bookmarks(false, cx);
         editor.set_show_breakpoints(false, cx);
         editor.set_show_code_actions(false, cx);
         editor.set_show_git_diff_gutter(false, cx);

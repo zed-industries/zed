@@ -1148,11 +1148,11 @@ fn run_breakpoint_hover_visual_tests(
     //
     // The breakpoint hover requires multiple steps:
     // 1. Draw to register mouse listeners
-    // 2. Mouse move to trigger gutter_hovered and create GutterHoverButton
+    // 2. Mouse move to trigger gutter_hovered and create PhantomBreakpointIndicator
     // 3. Wait 200ms for is_active to become true
     // 4. Draw again to render the indicator
     //
-    // The gutter_position should be in the gutter area to trigger the gutter hover button.
+    // The gutter_position should be in the gutter area to trigger the phantom breakpoint.
     // The button_position should be directly over the breakpoint icon button for tooltip hover.
     // Based on debug output: button is at origin=(3.12, 66.5) with size=(14, 16)
     let gutter_position = point(px(30.0), px(85.0));
