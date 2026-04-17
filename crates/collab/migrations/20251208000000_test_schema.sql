@@ -484,7 +484,8 @@ CREATE TABLE public.worktrees (
     visible boolean NOT NULL,
     scan_id bigint NOT NULL,
     is_complete boolean DEFAULT false NOT NULL,
-    completed_scan_id bigint
+    completed_scan_id bigint,
+    root_repo_common_dir character varying
 );
 
 ALTER TABLE ONLY public.breakpoints ALTER COLUMN id SET DEFAULT nextval('public.breakpoints_id_seq'::regclass);

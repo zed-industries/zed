@@ -275,7 +275,7 @@
       "cmd-shift-j": "agent::ToggleNavigationMenu",
       "cmd-alt-m": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
-      "cmd-shift-t": "agent::CycleStartThreadIn",
+      "cmd-shift-t": "agent::ToggleWorktreeSelector",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd->": "agent::AddSelectionToThread",
       "cmd-shift-e": "project_panel::ToggleFocus",
@@ -327,12 +327,36 @@
     "context": "AcpThread",
     "bindings": {
       "ctrl--": "pane::GoBack",
+      "pageup": "agent::ScrollOutputPageUp",
+      "pagedown": "agent::ScrollOutputPageDown",
+      "home": "agent::ScrollOutputToTop",
+      "end": "agent::ScrollOutputToBottom",
+      "up": "agent::ScrollOutputLineUp",
+      "down": "agent::ScrollOutputLineDown",
+      "shift-pageup": "agent::ScrollOutputToPreviousMessage",
+      "shift-pagedown": "agent::ScrollOutputToNextMessage",
+      "ctrl-pageup": "agent::ScrollOutputPageUp",
+      "ctrl-pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-home": "agent::ScrollOutputToTop",
+      "ctrl-end": "agent::ScrollOutputToBottom",
+      "ctrl-alt-up": "agent::ScrollOutputLineUp",
+      "ctrl-alt-down": "agent::ScrollOutputLineDown",
+      "ctrl-alt-pageup": "agent::ScrollOutputToPreviousMessage",
+      "ctrl-alt-pagedown": "agent::ScrollOutputToNextMessage",
     },
   },
   {
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-pageup": "agent::ScrollOutputPageUp",
+      "ctrl-pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-home": "agent::ScrollOutputToTop",
+      "ctrl-end": "agent::ScrollOutputToBottom",
+      "ctrl-alt-up": "agent::ScrollOutputLineUp",
+      "ctrl-alt-down": "agent::ScrollOutputLineDown",
+      "ctrl-alt-pageup": "agent::ScrollOutputToPreviousMessage",
+      "ctrl-alt-pagedown": "agent::ScrollOutputToNextMessage",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "shift-ctrl-d": "git::Diff",
       "shift-alt-y": "agent::KeepAll",
@@ -353,6 +377,24 @@
       "cmd-alt-'": "agent::ToggleThinkingEffortMenu",
       "ctrl-'": "agent::CycleThinkingEffort",
       "cmd-alt-.": "agent::ToggleFastMode",
+    },
+  },
+  {
+    "context": "AcpThread > Editor && start_of_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "pageup": "agent::ScrollOutputPageUp",
+      "ctrl-pageup": "agent::ScrollOutputPageUp",
+      "ctrl-home": "agent::ScrollOutputToTop",
+    },
+  },
+  {
+    "context": "AcpThread > Editor && end_of_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-end": "agent::ScrollOutputToBottom",
     },
   },
   {
@@ -387,6 +429,12 @@
     "context": "ThreadHistory > Editor",
     "bindings": {
       "shift-backspace": "agent::RemoveSelectedThread",
+    },
+  },
+  {
+    "context": "ThreadsArchiveView",
+    "bindings": {
+      "backspace": "agent::ArchiveSelectedThread",
     },
   },
   {
@@ -435,13 +483,6 @@
     "bindings": {
       "up": "search::PreviousHistoryQuery",
       "down": "search::NextHistoryQuery",
-    },
-  },
-  {
-    "context": "BufferSearchBar || ProjectSearchBar",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-enter": "editor::Newline",
     },
   },
   {
@@ -555,6 +596,8 @@
       "cmd-k cmd-i": "editor::Hover",
       "cmd-k cmd-b": "editor::BlameHover",
       "cmd-/": ["editor::ToggleComments", { "advance_downwards": false }],
+      "cmd-k cmd-/": "editor::ToggleBlockComments",
+      "shift-alt-a": "editor::ToggleBlockComments",
       "f8": ["editor::GoToDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
       "shift-f8": ["editor::GoToPreviousDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
       "f2": "editor::Rename",
@@ -644,6 +687,7 @@
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
       "alt-cmd-o": ["projects::OpenRecent", { "create_new_window": false }],
+      "ctrl-r": ["projects::OpenRecent", { "create_new_window": false }],
       "ctrl-cmd-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true, "create_new_window": false }],
       "cmd-ctrl-b": "branches::OpenRecent",
@@ -738,7 +782,7 @@
       "right": "menu::SelectChild",
       "enter": "menu::Confirm",
       "cmd-f": "agents_sidebar::FocusSidebarFilter",
-      "cmd-g": "agents_sidebar::ToggleArchive",
+      "cmd-g": "agents_sidebar::ToggleThreadHistory",
       "shift-backspace": "agent::RemoveSelectedThread",
       "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
       "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
@@ -964,6 +1008,7 @@
       "cmd-alt-c": "workspace::CopyPath",
       "alt-cmd-shift-c": "workspace::CopyRelativePath",
       "cmd-z": "project_panel::Undo",
+      "cmd-shift-z": "project_panel::Redo",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
@@ -1188,6 +1233,8 @@
     "bindings": {
       "cmd-k": "recent_projects::ToggleActionsMenu",
       "cmd-shift-a": "workspace::AddFolderToProject",
+      "shift-backspace": "recent_projects::RemoveSelected",
+      "cmd-shift-enter": "recent_projects::AddToWorkspace",
     },
   },
   {
@@ -1242,6 +1289,7 @@
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+      "ctrl-r": ["terminal::SendKeystroke", "ctrl-r"],
       "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
       "shift-pageup": "terminal::ScrollPageUp",
       "cmd-up": "terminal::ScrollPageUp",
@@ -1349,6 +1397,7 @@
       "alt-down": "markdown::ScrollDownByItem",
       "cmd-up": "markdown::ScrollToTop",
       "cmd-down": "markdown::ScrollToBottom",
+      "cmd-f": "buffer_search::Deploy",
     },
   },
   {
@@ -1543,7 +1592,7 @@
   {
     "context": "NotebookEditor",
     "bindings": {
-      "shift-enter": "notebook::Run",
+      "shift-enter": "notebook::RunAndAdvance",
       "cmd-enter": "notebook::Run",
       "cmd-shift-enter": "notebook::RunAll",
       "alt-up": "notebook::MoveCellUp",
@@ -1555,10 +1604,18 @@
     },
   },
   {
+    "context": "NotebookEditor && notebook_mode == command",
+    "bindings": {
+      "enter": "notebook::EnterEditMode",
+      "down": "menu::SelectNext",
+      "up": "menu::SelectPrevious",
+    },
+  },
+  {
     "context": "NotebookEditor > Editor",
     "bindings": {
       "enter": "editor::Newline",
-      "shift-enter": "notebook::Run",
+      "shift-enter": "notebook::RunAndAdvance",
       "cmd-enter": "notebook::Run",
       "cmd-shift-enter": "notebook::RunAll",
       "alt-up": "notebook::MoveCellUp",
@@ -1567,6 +1624,7 @@
       "cmd-shift-m": "notebook::AddMarkdownBlock",
       "cmd-shift-r": "notebook::RestartKernel",
       "cmd-c": "notebook::InterruptKernel",
+      "escape": "notebook::EnterCommandMode",
     },
   },
 ]

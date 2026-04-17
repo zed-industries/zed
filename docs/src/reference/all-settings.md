@@ -2465,6 +2465,26 @@ Example:
 
 `integer` values representing milliseconds
 
+## Hover Popover Sticky
+
+- Description: Whether the hover popover sticks when the mouse moves toward it, allowing interaction with its contents before it disappears.
+- Setting: `hover_popover_sticky`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Hover Popover Hiding Delay
+
+- Description: Time to wait in milliseconds before hiding the hover popover after the mouse moves away from the hover target. Only applies when `hover_popover_sticky` is enabled.
+- Setting: `hover_popover_hiding_delay`
+- Default: `300`
+
+**Options**
+
+`integer` values representing milliseconds
+
 ## Icon Theme
 
 - Description: The icon theme setting can be specified in two forms - either as the name of an icon theme or as an object containing the `mode`, `dark`, and `light` icon themes for files/folders inside Zed.
@@ -3002,21 +3022,36 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 
 ## Profiles
 
-- Description: Configuration profiles that can be applied on top of existing settings
+- Description: Configuration profiles that can be temporarily applied on top of existing settings or Zed's defaults.
 - Setting: `profiles`
 - Default: `{}`
 
 **Options**
 
-Configuration object for defining settings profiles. Example:
+Each profile is an object with the following optional fields:
+
+- `base`: What settings to start from before applying the profile's overrides.
+  - `"user"` (default): Apply on top of your current user settings.
+  - `"default"`: Apply on top of Zed's default settings, ignoring user customizations.
+- `settings`: The settings overrides for this profile.
+
+Examples:
 
 ```json [settings]
 {
   "profiles": {
-    "presentation": {
-      "buffer_font_size": 20,
-      "ui_font_size": 18,
-      "theme": "One Light"
+    "Presentation": {
+      "settings": {
+        "buffer_font_size": 20,
+        "ui_font_size": 18,
+        "theme": "One Light"
+      }
+    },
+    "Clean Slate": {
+      "base": "default",
+      "settings": {
+        "theme": "Ayu Dark"
+      }
     }
   }
 }
@@ -3380,6 +3415,16 @@ List of strings containing any combination of:
 **Options**
 
 Positive `float` values
+
+### Mouse Wheel Zoom
+
+- Description: Whether to zoom the editor font size with the mouse wheel while holding the primary modifier key (Cmd on macOS, Ctrl on other platforms).
+- Setting: `mouse_wheel_zoom`
+- Default: `false`
+
+**Options**
+
+`boolean` values
 
 ### Fast Scroll Sensitivity
 
@@ -5006,6 +5051,54 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 }
 ```
 
+### Sort Order
+
+- Description: Whether to sort file and folder names case-sensitively in the project panel. This setting works in combination with `sort_mode`. `sort_mode` controls how files and directories are grouped (e.g., directories first), while this setting controls how names are compared within those groups.
+- Setting: `sort_order`
+- Default: `default`
+
+**Options**
+
+1. Case-insensitive natural sort with lowercase preferred in ties. Numbers in file names are compared by their numeric value (e.g., `file2` sorts before `file10`). Names that differ only in casing are sorted with lowercase first (e.g., `apple` before `Apple`).
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "default"
+  }
+}
+```
+
+2. Uppercase names are grouped before lowercase names, with case-insensitive natural sort within each group. Dot-prefixed names (e.g., `.gitignore`) sort before both groups. Accented uppercase letters like `É` are treated as uppercase.
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "upper"
+  }
+}
+```
+
+3. Lowercase names are grouped before uppercase names, with case-insensitive natural sort within each group. Dot-prefixed names sort before both groups.
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "lower"
+  }
+}
+```
+
+4. Pure Unicode codepoint comparison. No case folding and no natural number sorting. Uppercase ASCII letters (`A`–`Z`) sort before lowercase (`a`–`z`) as a natural consequence of their codepoint values. Accented characters like `É` (U+00C9) sort after all ASCII letters. Numbers are compared lexicographically (`file10` sorts before `file2`).
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "unicode"
+  }
+}
+```
+
 ### Auto Open
 
 - Description: Control whether files are opened automatically after different creation flows in the project panel.
@@ -5332,12 +5425,12 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 ## Settings Profiles
 
-- Description: Configure any number of settings profiles that are temporarily applied on top of your existing user settings when selected from `settings profile selector: toggle`.
+- Description: Configure any number of settings profiles that are temporarily applied when selected from `settings profile selector: toggle`.
 - Setting: `profiles`
 - Default: `{}`
 
 In your `settings.json` file, add the `profiles` object.
-Each key within this object is the name of a settings profile, and each value is an object that can include any of Zed's settings.
+Each key within this object is the name of a settings profile. Each profile has an optional `base` field (`"user"` or `"default"`) and a `settings` object containing any of Zed's settings.
 
 Example:
 
@@ -5345,24 +5438,30 @@ Example:
 {
   "profiles": {
     "Presenting (Dark)": {
-      "agent_buffer_font_size": 18.0,
-      "buffer_font_size": 18.0,
-      "theme": "One Dark",
-      "ui_font_size": 18.0
+      "settings": {
+        "agent_buffer_font_size": 18.0,
+        "buffer_font_size": 18.0,
+        "theme": "One Dark",
+        "ui_font_size": 18.0
+      }
     },
     "Presenting (Light)": {
-      "agent_buffer_font_size": 18.0,
-      "buffer_font_size": 18.0,
-      "theme": "One Light",
-      "ui_font_size": 18.0
+      "settings": {
+        "agent_buffer_font_size": 18.0,
+        "buffer_font_size": 18.0,
+        "theme": "One Light",
+        "ui_font_size": 18.0
+      }
     },
     "Writing": {
-      "agent_buffer_font_size": 15.0,
-      "buffer_font_size": 15.0,
-      "theme": "Catppuccin Frappé - No Italics",
-      "ui_font_size": 15.0,
-      "tab_bar": { "show": false },
-      "toolbar": { "breadcrumbs": false }
+      "settings": {
+        "agent_buffer_font_size": 15.0,
+        "buffer_font_size": 15.0,
+        "theme": "Catppuccin Frappé - No Italics",
+        "ui_font_size": 15.0,
+        "tab_bar": { "show": false },
+        "toolbar": { "breadcrumbs": false }
+      }
     }
   }
 }

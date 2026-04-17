@@ -225,6 +225,7 @@ message UpdateWorktree {
   uint64 scan_id = 8;
   bool is_last_update = 9;
   string abs_path = 10;
+  optional string root_repo_common_dir = 11;
 }
 
 // deprecated

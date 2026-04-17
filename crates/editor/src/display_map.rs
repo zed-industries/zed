@@ -98,7 +98,7 @@ use gpui::{
     WeakEntity,
 };
 use language::{
-    Point, Subscription as BufferSubscription,
+    LanguageAwareStyling, Point, Subscription as BufferSubscription,
     language_settings::{AllLanguageSettings, LanguageSettings},
 };
 
@@ -400,10 +400,13 @@ impl DisplayMap {
         diagnostics_max_severity: DiagnosticSeverity,
         cx: &mut Context<Self>,
     ) -> Self {
-        let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
-
         let tab_size = Self::tab_size(&buffer, cx);
+        // Important: obtain the snapshot BEFORE creating the subscription.
+        // snapshot() may call sync() which publishes edits. If we subscribe first,
+        // those edits would be captured but the InlayMap would already be at the
+        // post-edit state, causing a desync.
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let crease_map = CreaseMap::new(&buffer_snapshot);
         let (inlay_map, snapshot) = InlayMap::new(buffer_snapshot);
         let (fold_map, snapshot) = FoldMap::new(snapshot);
@@ -1766,7 +1769,10 @@ impl DisplaySnapshot {
         self.block_snapshot
             .chunks(
                 BlockRow(display_row.0)..BlockRow(self.max_point().row().next_row().0),
-                false,
+                LanguageAwareStyling {
+                    tree_sitter: false,
+                    diagnostics: false,
+                },
                 self.masked,
                 Highlights::default(),
             )
@@ -1780,7 +1786,10 @@ impl DisplaySnapshot {
             self.block_snapshot
                 .chunks(
                     BlockRow(row)..BlockRow(row + 1),
-                    false,
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: false,
+                    },
                     self.masked,
                     Highlights::default(),
                 )
@@ -1795,7 +1804,7 @@ impl DisplaySnapshot {
     pub fn chunks(
         &self,
         display_rows: Range<DisplayRow>,
-        language_aware: bool,
+        language_aware: LanguageAwareStyling,
         highlight_styles: HighlightStyles,
     ) -> DisplayChunks<'_> {
         self.block_snapshot.chunks(
@@ -1815,7 +1824,7 @@ impl DisplaySnapshot {
     pub fn highlighted_chunks<'a>(
         &'a self,
         display_rows: Range<DisplayRow>,
-        language_aware: bool,
+        language_aware: LanguageAwareStyling,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
         self.chunks(
@@ -1907,7 +1916,10 @@ impl DisplaySnapshot {
 
         let chunks = custom_highlights::CustomHighlightsChunks::new(
             multibuffer_range,
-            true,
+            LanguageAwareStyling {
+                tree_sitter: true,
+                diagnostics: true,
+            },
             None,
             Some(&self.semantic_token_highlights),
             multibuffer,
@@ -1958,7 +1970,14 @@ impl DisplaySnapshot {
         let mut line = String::new();
 
         let range = display_row..display_row.next_row();
-        for chunk in self.highlighted_chunks(range, false, editor_style) {
+        for chunk in self.highlighted_chunks(
+            range,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
+            editor_style,
+        ) {
             line.push_str(chunk.text);
 
             let text_style = if let Some(style) = chunk.style {
@@ -3385,7 +3404,14 @@ pub mod tests {
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks = Vec::<(String, Option<lsp::DiagnosticSeverity>, Rgba)>::new();
-        for chunk in snapshot.chunks(DisplayRow(0)..DisplayRow(5), true, Default::default()) {
+        for chunk in snapshot.chunks(
+            DisplayRow(0)..DisplayRow(5),
+            LanguageAwareStyling {
+                tree_sitter: true,
+                diagnostics: true,
+            },
+            Default::default(),
+        ) {
             let color = chunk
                 .highlight_style
                 .and_then(|style| style.color)
@@ -3937,7 +3963,14 @@ pub mod tests {
     ) -> Vec<(String, Option<Hsla>, Option<Hsla>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<Hsla>, Option<Hsla>)> = Vec::new();
-        for chunk in snapshot.chunks(rows, true, HighlightStyles::default()) {
+        for chunk in snapshot.chunks(
+            rows,
+            LanguageAwareStyling {
+                tree_sitter: true,
+                diagnostics: true,
+            },
+            HighlightStyles::default(),
+        ) {
             let syntax_color = chunk
                 .syntax_highlight_id
                 .and_then(|id| theme.get(id)?.color);
@@ -4078,5 +4111,65 @@ pub mod tests {
             "compound emoji should not be split into multiple chunks, got: {:?}",
             chunks,
         );
+    }
+
+    /// Regression test: Creating a DisplayMap when the MultiBuffer has pending
+    /// unsynced changes should not cause a desync between the subscription edits
+    /// and the InlayMap's buffer state.
+    ///
+    /// The bug occurred because:
+    /// 1. DisplayMap::new created a subscription first
+    /// 2. Then called snapshot() which synced and published edits
+    /// 3. InlayMap was created with the post-sync snapshot
+    /// 4. But the subscription captured the sync edits, leading to double-application
+    #[gpui::test]
+    fn test_display_map_subscription_ordering(cx: &mut gpui::App) {
+        init_test(cx, &|_| {});
+
+        // Create a buffer with some initial text
+        let buffer = cx.new(|cx| Buffer::local("initial", cx));
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
+        // Edit the buffer. This sets buffer_changed_since_sync = true.
+        // Importantly, do NOT call multibuffer.snapshot() yet.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "prefix ")], None, cx);
+        });
+
+        // Create the DisplayMap. In the buggy code, this would:
+        // 1. Create subscription (empty)
+        // 2. Call snapshot() which syncs and publishes edits E1
+        // 3. Create InlayMap with post-E1 snapshot
+        // 4. Subscription now has E1, but InlayMap is already at post-E1 state
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                multibuffer.clone(),
+                font("Helvetica"),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+
+        // Verify initial state is correct
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        assert_eq!(snapshot.text(), "prefix initial");
+
+        // Make another edit
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(7..7, "more ")], None, cx);
+        });
+
+        // This would crash in the buggy code because:
+        // - InlayMap expects edits from V1 to V2
+        // - But subscription has E1 ∘ E2 (from V0 to V2)
+        // - The calculation `buffer_edit.new.end + (cursor.end().0 - buffer_edit.old.end)`
+        //   would produce an offset exceeding the buffer length
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        assert_eq!(snapshot.text(), "prefix more initial");
     }
 }

@@ -38,7 +38,7 @@
   "#ifndef"
   "#include"
   (preproc_directive)
-] @preproc
+] @keyword.preproc @preproc
 
 [
   "="

@@ -624,6 +624,7 @@ impl ProjectDiagnosticsEditor {
                         });
                     })
                 }
+                let buffer_snapshot = buffer.read(cx).snapshot();
                 let excerpt_ranges: Vec<_> = excerpt_ranges
                     .into_iter()
                     .map(|range| ExcerptRange {
@@ -988,6 +989,7 @@ async fn context_range_for_entry(
         cx,
     )
     .await
+    .filter(|rows| rows.start() != rows.end())
     {
         Range {
             start: Point::new(*rows.start(), 0),
