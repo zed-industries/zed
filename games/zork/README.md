@@ -1,6 +1,6 @@
-# Zork-Zed
+# Zed
 
-> A Zork-style text adventure set inside the Zed code editor. Fix the Unclosed Brace. Escape the editor.
+> A text adventure set inside the Zed code editor. Fix the Unclosed Brace. Escape the editor.
 
 ## What is it?
 
@@ -20,8 +20,8 @@
 ## Quick Start
 
 ```bash
-cargo install zork-zed
-zork-zed
+cargo install zed
+zed
 ```
 
 Or run from source:
