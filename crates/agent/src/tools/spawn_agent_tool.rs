@@ -44,6 +44,11 @@ pub struct SpawnAgentToolInput {
     /// Session ID of an existing agent session to continue instead of creating a new one.
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
+    /// Optional cap on output tokens this subagent may consume in a single turn.
+    /// When omitted, the runtime default (DEFAULT_SUBAGENT_TOKEN_BUDGET) applies.
+    /// Set explicitly to override for tasks that are known to be cheap or expensive.
+    #[serde(default)]
+    pub token_budget: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
