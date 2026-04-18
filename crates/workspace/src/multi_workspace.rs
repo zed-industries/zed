@@ -870,20 +870,51 @@ impl MultiWorkspace {
                     return Task::ready(Ok(workspace));
                 }
 
-                let neighboring_group_key = this
+                let current_group_index = this
                     .project_groups
                     .iter()
-                    .position(|group| group.key == group_key)
-                    .and_then(|index| {
-                        this.project_groups
-                            .get(index + 1)
-                            .or_else(|| {
-                                index
-                                    .checked_sub(1)
-                                    .and_then(|previous| this.project_groups.get(previous))
-                            })
-                            .map(|group| group.key.clone())
-                    });
+                    .position(|group| group.key == group_key);
+
+                if let Some(current_group_index) = current_group_index {
+                    for distance in 1..this.project_groups.len() {
+                        for neighboring_index in [
+                            current_group_index.checked_add(distance),
+                            current_group_index.checked_sub(distance),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        {
+                            let Some(neighboring_group) =
+                                this.project_groups.get(neighboring_index)
+                            else {
+                                continue;
+                            };
+
+                            if let Some(workspace) = this
+                                .last_active_workspace_for_group(&neighboring_group.key, cx)
+                                .or_else(|| {
+                                    this.workspaces_for_project_group(&neighboring_group.key, cx)
+                                        .unwrap_or_default()
+                                        .into_iter()
+                                        .find(|candidate| candidate != &excluded_workspace)
+                                })
+                            {
+                                return Task::ready(Ok(workspace));
+                            }
+                        }
+                    }
+                }
+
+                let neighboring_group_key = current_group_index.and_then(|index| {
+                    this.project_groups
+                        .get(index + 1)
+                        .or_else(|| {
+                            index
+                                .checked_sub(1)
+                                .and_then(|previous| this.project_groups.get(previous))
+                        })
+                        .map(|group| group.key.clone())
+                });
 
                 if let Some(neighboring_group_key) = neighboring_group_key {
                     return this.find_or_create_local_workspace(
