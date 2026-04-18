@@ -1,13 +1,12 @@
 use std::any::TypeId;
+use std::sync::Arc;
 
 use collections::HashMap;
-use db::kvp::KeyValueStore;
-use gpui::{App, AppContext as _, BorrowAppContext};
-use util::ResultExt as _;
+use fs::Fs;
+use gpui::{App, BorrowAppContext, Subscription};
+use settings::{Settings, SettingsStore, update_settings_file};
 
-use crate::{FeatureFlag, FeatureFlagValue, ZED_DISABLE_STAFF};
-
-const OVERRIDES_NAMESPACE: &str = "feature-flag-overrides";
+use crate::{FeatureFlag, FeatureFlagValue, FeatureFlagsSettings, ZED_DISABLE_STAFF};
 
 pub struct FeatureFlagDescriptor {
     pub name: &'static str,
@@ -67,45 +66,24 @@ macro_rules! register_feature_flag {
     };
 }
 
-pub type FlagOverride = String;
-
 #[derive(Default)]
 pub struct FeatureFlagStore {
     staff: bool,
     server_flags: HashMap<String, String>,
-    overrides: HashMap<String, FlagOverride>,
-    kvp: Option<KeyValueStore>,
+
+    _settings_subscription: Option<Subscription>,
 }
 
 impl FeatureFlagStore {
     pub fn init(cx: &mut App) {
-        let kvp = KeyValueStore::global(cx);
-        cx.update_default_global::<FeatureFlagStore, _>(|store, _| {
-            store.kvp = Some(kvp.clone());
+        let subscription = cx.observe_global::<SettingsStore>(|cx| {
+            // Touch the global so anything observing `FeatureFlagStore` re-runs
+            cx.update_default_global::<FeatureFlagStore, _>(|_, _| {});
         });
 
-        let known: Vec<&'static str> = Self::known_flags().map(|d| d.name).collect();
-        let load_kvp = kvp.clone();
-        let loader = cx.background_spawn(async move {
-            let scoped = load_kvp.scoped(OVERRIDES_NAMESPACE);
-            let mut overrides = HashMap::default();
-            for name in known {
-                let Some(value) = scoped.read(name).log_err().flatten() else {
-                    continue;
-                };
-                overrides.insert(name.to_owned(), value);
-            }
-            overrides
+        cx.update_default_global::<FeatureFlagStore, _>(|store, _| {
+            store._settings_subscription = Some(subscription);
         });
-        cx.spawn(async move |cx| {
-            let overrides = loader.await;
-            cx.update(|cx| {
-                cx.update_default_global::<FeatureFlagStore, _>(|store, _| {
-                    store.overrides = overrides;
-                });
-            });
-        })
-        .detach();
     }
 
     pub fn known_flags() -> impl Iterator<Item = &'static FeatureFlagDescriptor> {
@@ -129,45 +107,52 @@ impl FeatureFlagStore {
         }
     }
 
-    pub fn override_for(&self, flag_name: &str) -> Option<&str> {
-        self.overrides.get(flag_name).map(String::as_str)
+    /// The user's override key for this flag, read directly from
+    /// [`FeatureFlagsSettings`].
+    pub fn override_for<'a>(flag_name: &str, cx: &'a App) -> Option<&'a str> {
+        FeatureFlagsSettings::get_global(cx)
+            .overrides
+            .get(flag_name)
+            .map(String::as_str)
     }
 
-    pub fn set_override(&mut self, flag_name: &str, override_key: String, cx: &mut App) {
-        self.overrides
-            .insert(flag_name.to_owned(), override_key.clone());
-        self.persist_row(flag_name, Some(override_key), cx);
-    }
-
-    /// Removes any override for the given flag and persists the change.
-    pub fn clear_override(&mut self, flag_name: &str, cx: &mut App) {
-        if self.overrides.remove(flag_name).is_some() {
-            self.persist_row(flag_name, None, cx);
-        }
-    }
-
-    fn persist_row(&self, flag_name: &str, value: Option<String>, cx: &mut App) {
-        let Some(kvp) = self.kvp.clone() else {
-            return;
-        };
+    /// Applies an override by writing to `settings.json`. The store's own
+    /// `overrides` field will be updated when the settings-store observer
+    /// fires. Pass the [`FeatureFlagValue::override_key`] of the variant
+    /// you want forced.
+    pub fn set_override(flag_name: &str, override_key: String, fs: Arc<dyn Fs>, cx: &App) {
         let flag_name = flag_name.to_owned();
-        db::write_and_log(cx, move || async move {
-            let scoped = kvp.scoped(OVERRIDES_NAMESPACE);
-            match value {
-                Some(value) => scoped.write(flag_name, value).await,
-                None => scoped.delete(flag_name).await,
+        update_settings_file(fs, cx, move |content, _| {
+            content
+                .feature_flags
+                .get_or_insert_default()
+                .insert(flag_name, override_key);
+        });
+    }
+
+    /// Removes any override for the given flag from `settings.json`. Leaves
+    /// an empty `"feature_flags"` object rather than removing the key
+    /// entirely so the user can see it's still a meaningful settings surface.
+    pub fn clear_override(flag_name: &str, fs: Arc<dyn Fs>, cx: &App) {
+        let flag_name = flag_name.to_owned();
+        update_settings_file(fs, cx, move |content, _| {
+            if let Some(map) = content.feature_flags.as_mut() {
+                map.remove(&flag_name);
             }
         });
     }
 
-
-    pub fn try_flag_value<T: FeatureFlag>(&self) -> Option<T::Value> {
+    /// The resolved value of the flag for the current user, taking overrides,
+    /// `enabled_for_all`, staff rules, and server flags into account in that
+    /// order of precedence. Overrides are read directly from
+    /// [`FeatureFlagsSettings`].
+    pub fn try_flag_value<T: FeatureFlag>(&self, cx: &App) -> Option<T::Value> {
         // `enabled_for_all` always wins, including over user overrides.
         if T::enabled_for_all() {
             return Some(T::Value::on_variant());
         }
 
-        if let Some(override_key) = self.overrides.get(T::NAME) {
+        if let Some(override_key) = FeatureFlagsSettings::get_global(cx).overrides.get(T::NAME) {
             return variant_from_key::<T::Value>(override_key);
         }
 
@@ -186,9 +171,9 @@ impl FeatureFlagStore {
 
     /// Whether the flag resolves to its "on" value. Best for presence-style
     /// flags. For enum flags with meaningful non-default variants, prefer
-    /// [`FeatureFlagAppExt::flag_value`].
-    pub fn has_flag<T: FeatureFlag>(&self) -> bool {
-        self.try_flag_value::<T>()
+    /// [`crate::FeatureFlagAppExt::flag_value`].
+    pub fn has_flag<T: FeatureFlag>(&self, cx: &App) -> bool {
+        self.try_flag_value::<T>(cx)
             .is_some_and(|v| v == T::Value::on_variant())
     }
 
@@ -196,14 +181,20 @@ impl FeatureFlagStore {
     /// back to the [`Default`] variant when no rule applies so the UI always
     /// shows *something* selected — matching what
     /// [`crate::FeatureFlagAppExt::flag_value`] would return.
-    pub fn resolved_key(&self, descriptor: &FeatureFlagDescriptor) -> &'static str {
+    pub fn resolved_key(
+        &self,
+        descriptor: &FeatureFlagDescriptor,
+        cx: &App,
+    ) -> &'static str {
         let on_variant_key = (descriptor.on_variant_key)();
 
         if (descriptor.enabled_for_all)() {
             return on_variant_key;
         }
 
-        if let Some(requested) = self.overrides.get(descriptor.name) {
+        if let Some(requested) =
+            FeatureFlagsSettings::get_global(cx).overrides.get(descriptor.name)
+        {
             if let Some(variant) = (descriptor.variants)()
                 .into_iter()
                 .find(|v| v.override_key == requested.as_str())
@@ -253,6 +244,8 @@ fn variant_from_key<V: FeatureFlagValue>(key: &str) -> Option<V> {
 mod tests {
     use super::*;
     use crate::{EnumFeatureFlag, FeatureFlag, PresenceFlag};
+    use gpui::UpdateGlobal;
+    use settings::SettingsStore;
 
     struct DemoFlag;
     impl FeatureFlag for DemoFlag {
@@ -279,45 +272,65 @@ mod tests {
         }
     }
 
-    #[test]
-    fn server_flag_enables_presence() {
-        let mut store = FeatureFlagStore::default();
-        assert!(!store.has_flag::<DemoFlag>());
-        store.update_server_flags(false, vec!["demo".to_string()]);
-        assert!(store.has_flag::<DemoFlag>());
+    fn init_settings_store(cx: &mut App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        SettingsStore::update_global(cx, |store, _| {
+            store.register_setting::<FeatureFlagsSettings>();
+        });
     }
 
-    #[test]
-    fn off_override_beats_server_flag() {
+    fn set_override(name: &str, value: &str, cx: &mut App) {
+        SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |content| {
+                content
+                    .feature_flags
+                    .get_or_insert_default()
+                    .insert(name.to_string(), value.to_string());
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn server_flag_enables_presence(cx: &mut App) {
+        init_settings_store(cx);
+        let mut store = FeatureFlagStore::default();
+        assert!(!store.has_flag::<DemoFlag>(cx));
+        store.update_server_flags(false, vec!["demo".to_string()]);
+        assert!(store.has_flag::<DemoFlag>(cx));
+    }
+
+    #[gpui::test]
+    fn off_override_beats_server_flag(cx: &mut App) {
+        init_settings_store(cx);
         let mut store = FeatureFlagStore::default();
         store.update_server_flags(false, vec!["demo".to_string()]);
-        store
-            .overrides
-            .insert(DemoFlag::NAME.to_string(), "off".to_string());
-        assert!(!store.has_flag::<DemoFlag>());
+        set_override(DemoFlag::NAME, "off", cx);
+        assert!(!store.has_flag::<DemoFlag>(cx));
         assert_eq!(
-            store.try_flag_value::<DemoFlag>(),
+            store.try_flag_value::<DemoFlag>(cx),
             Some(PresenceFlag::Off)
         );
     }
 
-    #[test]
-    fn enabled_for_all_wins_over_override() {
-        let mut store = FeatureFlagStore::default();
-        store
-            .overrides
-            .insert(IntensityFlag::NAME.to_string(), "high".to_string());
-        assert_eq!(store.try_flag_value::<IntensityFlag>(), Some(Intensity::Low));
+    #[gpui::test]
+    fn enabled_for_all_wins_over_override(cx: &mut App) {
+        init_settings_store(cx);
+        let store = FeatureFlagStore::default();
+        set_override(IntensityFlag::NAME, "high", cx);
+        assert_eq!(
+            store.try_flag_value::<IntensityFlag>(cx),
+            Some(Intensity::Low)
+        );
     }
 
-    #[test]
-    fn enum_override_selects_specific_variant() {
-        let mut store = FeatureFlagStore::default();
+    #[gpui::test]
+    fn enum_override_selects_specific_variant(cx: &mut App) {
+        init_settings_store(cx);
+        let store = FeatureFlagStore::default();
         // Staff path would normally resolve to `Low`; the override pushes
         // us to `High` instead.
-        store
-            .overrides
-            .insert("enum-demo".to_string(), "high".to_string());
+        set_override("enum-demo", "high", cx);
 
         struct EnumDemo;
         impl FeatureFlag for EnumDemo {
@@ -325,15 +338,17 @@ mod tests {
             type Value = Intensity;
         }
 
-        assert_eq!(store.try_flag_value::<EnumDemo>(), Some(Intensity::High));
+        assert_eq!(
+            store.try_flag_value::<EnumDemo>(cx),
+            Some(Intensity::High)
+        );
     }
 
-    #[test]
-    fn unknown_variant_key_resolves_to_none() {
-        let mut store = FeatureFlagStore::default();
-        store
-            .overrides
-            .insert("enum-demo".to_string(), "nonsense".to_string());
+    #[gpui::test]
+    fn unknown_variant_key_resolves_to_none(cx: &mut App) {
+        init_settings_store(cx);
+        let store = FeatureFlagStore::default();
+        set_override("enum-demo", "nonsense", cx);
 
         struct EnumDemo;
         impl FeatureFlag for EnumDemo {
@@ -341,25 +356,25 @@ mod tests {
             type Value = Intensity;
         }
 
-        assert_eq!(store.try_flag_value::<EnumDemo>(), None);
+        assert_eq!(store.try_flag_value::<EnumDemo>(cx), None);
     }
 
-    #[test]
-    fn on_override_enables_without_server_or_staff() {
-        let mut store = FeatureFlagStore::default();
-        store
-            .overrides
-            .insert(DemoFlag::NAME.to_string(), "on".to_string());
-        assert!(store.has_flag::<DemoFlag>());
+    #[gpui::test]
+    fn on_override_enables_without_server_or_staff(cx: &mut App) {
+        init_settings_store(cx);
+        let store = FeatureFlagStore::default();
+        set_override(DemoFlag::NAME, "on", cx);
+        assert!(store.has_flag::<DemoFlag>(cx));
     }
 
     /// No rule applies, so the store's `try_flag_value` returns `None`. The
     /// `FeatureFlagAppExt::flag_value` path (used by most callers) falls
     /// back to [`Default`], which for `PresenceFlag` is `Off`.
-    #[test]
-    fn presence_flag_defaults_to_off() {
+    #[gpui::test]
+    fn presence_flag_defaults_to_off(cx: &mut App) {
+        init_settings_store(cx);
         let store = FeatureFlagStore::default();
-        assert_eq!(store.try_flag_value::<DemoFlag>(), None);
+        assert_eq!(store.try_flag_value::<DemoFlag>(cx), None);
         assert_eq!(PresenceFlag::default(), PresenceFlag::Off);
     }
 }

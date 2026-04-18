@@ -3,6 +3,7 @@
 extern crate self as feature_flags;
 
 mod flags;
+mod settings;
 mod store;
 
 use std::cell::RefCell;
@@ -13,6 +14,7 @@ use gpui::{App, Context, Global, Subscription, Window};
 
 pub use feature_flags_macros::EnumFeatureFlag;
 pub use flags::*;
+pub use settings::{FeatureFlagsSettings, generate_feature_flags_schema};
 pub use store::*;
 
 pub static ZED_DISABLE_STAFF: LazyLock<bool> = LazyLock::new(|| {
@@ -60,6 +62,12 @@ pub enum PresenceFlag {
     On,
     #[default]
     Off,
+}
+
+impl PresenceFlag {
+    pub fn is_enabled(self) -> bool {
+        matches!(self, PresenceFlag::On)
+    }
 }
 
 impl FeatureFlagValue for PresenceFlag {
@@ -128,9 +136,10 @@ pub trait FeatureFlag {
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {
+    /// Fires the callback whenever the resolved [`T::Value`] transitions.
     fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where
-        F: Fn(bool, &mut V, &mut Window, &mut Context<V>) + Send + Sync + 'static;
+        F: Fn(T::Value, &mut V, &mut Window, &mut Context<V>) + Send + Sync + 'static;
 
     fn when_flag_enabled<T: FeatureFlag>(
         &mut self,
@@ -145,11 +154,16 @@ where
 {
     fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where
-        F: Fn(bool, &mut V, &mut Window, &mut Context<V>) + 'static,
+        F: Fn(T::Value, &mut V, &mut Window, &mut Context<V>) + 'static,
     {
+        let mut last_value: Option<T::Value> = None;
         self.observe_global_in::<FeatureFlagStore>(window, move |v, window, cx| {
-            let store = cx.global::<FeatureFlagStore>();
-            callback(store.has_flag::<T>(), v, window, cx);
+            let value = cx.flag_value::<T>();
+            if last_value.as_ref() == Some(&value) {
+                return;
+            }
+            last_value = Some(value.clone());
+            callback(value, v, window, cx);
         })
     }
 
@@ -160,7 +174,7 @@ where
     ) {
         if self
             .try_global::<FeatureFlagStore>()
-            .is_some_and(|f| f.has_flag::<T>())
+            .is_some_and(|f| f.has_flag::<T>(self))
         {
             self.defer_in(window, move |view, window, cx| {
                 callback(view, window, cx);
@@ -171,8 +185,8 @@ where
         let inner = self.observe_global_in::<FeatureFlagStore>(window, {
             let subscription = subscription.clone();
             move |v, window, cx| {
-                let store = cx.global::<FeatureFlagStore>();
-                if store.has_flag::<T>() {
+                let has_flag = cx.global::<FeatureFlagStore>().has_flag::<T>(cx);
+                if has_flag {
                     callback(v, window, cx);
                     subscription.take();
                 }
@@ -200,7 +214,7 @@ pub trait FeatureFlagAppExt {
 
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
-        F: FnMut(bool, &mut App) + 'static;
+        F: FnMut(T::Value, &mut App) + 'static;
 }
 
 impl FeatureFlagAppExt for App {
@@ -216,13 +230,13 @@ impl FeatureFlagAppExt for App {
 
     fn has_flag<T: FeatureFlag>(&self) -> bool {
         self.try_global::<FeatureFlagStore>()
-            .map(|store| store.has_flag::<T>())
+            .map(|store| store.has_flag::<T>(self))
             .unwrap_or_else(|| FeatureFlagStore::has_flag_default::<T>())
     }
 
     fn flag_value<T: FeatureFlag>(&self) -> T::Value {
         self.try_global::<FeatureFlagStore>()
-            .and_then(|store| store.try_flag_value::<T>())
+            .and_then(|store| store.try_flag_value::<T>(self))
             .unwrap_or_default()
     }
 
@@ -249,11 +263,16 @@ impl FeatureFlagAppExt for App {
 
     fn observe_flag<T: FeatureFlag, F>(&mut self, mut callback: F) -> Subscription
     where
-        F: FnMut(bool, &mut App) + 'static,
+        F: FnMut(T::Value, &mut App) + 'static,
     {
+        let mut last_value: Option<T::Value> = None;
         self.observe_global::<FeatureFlagStore>(move |cx| {
-            let store = cx.global::<FeatureFlagStore>();
-            callback(store.has_flag::<T>(), cx);
+            let value = cx.flag_value::<T>();
+            if last_value.as_ref() == Some(&value) {
+                return;
+            }
+            last_value = Some(value.clone());
+            callback(value, cx);
         })
     }
 }

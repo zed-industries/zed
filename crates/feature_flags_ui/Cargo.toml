@@ -13,6 +13,7 @@ path = "src/feature_flags_ui.rs"
 
 [dependencies]
 feature_flags.workspace = true
+fs.workspace = true
 gpui.workspace = true
 menu.workspace = true
 ui.workspace = true

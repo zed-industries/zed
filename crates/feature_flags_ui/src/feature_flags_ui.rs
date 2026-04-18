@@ -5,9 +5,10 @@
 //! command palette in debug builds).
 
 use feature_flags::{FeatureFlagDescriptor, FeatureFlagStore, FeatureFlagVariant};
+use fs::Fs;
 use gpui::{
-    App, BorrowAppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, ScrollHandle,
-    Subscription, Window, actions, prelude::*,
+    App, DismissEvent, EventEmitter, FocusHandle, Focusable, ScrollHandle, Subscription, Window,
+    actions, prelude::*,
 };
 use ui::{Checkbox, Modal, ModalHeader, ToggleState, WithScrollbar, prelude::*};
 use workspace::{ModalView, Workspace};
@@ -67,24 +68,19 @@ impl FeatureFlagsModal {
         cx.emit(DismissEvent);
     }
 
-    fn reset_flag(flag_name: &'static str, cx: &mut App) {
-        cx.update_global::<FeatureFlagStore, _>(|store, cx| {
-            store.clear_override(flag_name, cx);
-        });
+    fn reset_flag(flag_name: &'static str, cx: &App) {
+        FeatureFlagStore::clear_override(flag_name, <dyn Fs>::global(cx), cx);
     }
 
-    fn set_override(flag_name: &'static str, override_key: String, cx: &mut App) {
-        cx.update_global::<FeatureFlagStore, _>(|store, cx| {
-            store.set_override(flag_name, override_key, cx);
-        });
+    fn set_override(flag_name: &'static str, override_key: String, cx: &App) {
+        FeatureFlagStore::set_override(flag_name, override_key, <dyn Fs>::global(cx), cx);
     }
 
     fn render_row(&self, row: &FlagRow, cx: &mut Context<Self>) -> impl IntoElement {
         let descriptor = row.descriptor;
         let forced_on = FeatureFlagStore::is_forced_on(descriptor);
-        let store = cx.global::<FeatureFlagStore>();
-        let resolved = store.resolved_key(descriptor);
-        let has_override = store.override_for(descriptor.name).is_some();
+        let resolved = cx.global::<FeatureFlagStore>().resolved_key(descriptor, cx);
+        let has_override = FeatureFlagStore::override_for(descriptor.name, cx).is_some();
 
         let header = h_flex()
             .justify_between()

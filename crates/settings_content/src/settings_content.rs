@@ -211,6 +211,31 @@ pub struct SettingsContent {
     ///
     /// Default: 5
     pub modeline_lines: Option<usize>,
+
+    /// Local overrides for feature flags, keyed by flag name. The value is the
+    /// variant's override key (e.g. `"on"`, `"off"`, or an enum variant key).
+    /// Intended for staff / debug builds; the configuration UI is gated behind
+    /// the `dev::OpenFeatureFlags` action.
+    ///
+    /// Example: `{"feature_flags": {"agent-thread-worktree-label": "branch"}}`.
+    pub feature_flags: Option<FeatureFlagsMap>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(transparent)]
+pub struct FeatureFlagsMap(pub HashMap<String, String>);
+
+impl std::ops::Deref for FeatureFlagsMap {
+    type Target = HashMap<String, String>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for FeatureFlagsMap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl SettingsContent {

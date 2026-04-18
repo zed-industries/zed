@@ -6181,11 +6181,13 @@ name = "feature_flags"
 version = "0.1.0"
 dependencies = [
  "collections",
- "db",
  "feature_flags_macros",
+ "fs",
  "gpui",
  "inventory",
- "util",
+ "schemars",
+ "serde_json",
+ "settings",
 ]
 
 [[package]]
@@ -6202,6 +6204,7 @@ name = "feature_flags_ui"
 version = "0.1.0"
 dependencies = [
  "feature_flags",
+ "fs",
  "gpui",
  "menu",
  "ui",
@@ -9191,6 +9194,7 @@ dependencies = [
  "collections",
  "dap",
  "extension",
+ "feature_flags",
  "gpui",
  "language",
  "parking_lot",

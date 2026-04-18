@@ -13,8 +13,14 @@ path = "src/feature_flags.rs"
 
 [dependencies]
 collections.workspace = true
-db.workspace = true
 feature_flags_macros.workspace = true
+fs.workspace = true
 gpui.workspace = true
 inventory.workspace = true
-util.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
