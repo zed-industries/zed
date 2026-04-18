@@ -932,6 +932,27 @@ impl TitleBar {
             (IconName::GitBranch, Color::Muted)
         };
 
+        let trigger = if is_detached_head {
+            Button::new("project_branch_trigger", "Create Branch")
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .label_size(LabelSize::Small)
+                .start_icon(
+                    Icon::new(IconName::GitBranchPlus)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                )
+        } else {
+            Button::new("project_branch_trigger", branch_name)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .start_icon(
+                    Icon::new(branch_icon)
+                        .size(IconSize::XSmall)
+                        .color(branch_icon_color),
+                )
+        };
+
         let git_picker_button = PopoverMenu::new("branch-menu")
             .menu(move |window, cx| {
                 Some(git_ui::git_picker::popover(
@@ -943,25 +964,14 @@ impl TitleBar {
                     cx,
                 ))
             })
-            .trigger_with_tooltip(
-                Button::new("project_branch_trigger", branch_name)
-                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                    .label_size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .start_icon(
-                        Icon::new(branch_icon)
-                            .size(IconSize::XSmall)
-                            .color(branch_icon_color),
-                    ),
-                move |_window, cx| {
-                    let meta = if is_detached_head {
-                        "In Detached HEAD State".to_string()
-                    } else {
-                        format!("Currently Checked Out: {}", branch_tooltip_label)
-                    };
-                    Tooltip::with_meta("Branch & Stash", Some(&zed_actions::git::Branch), meta, cx)
-                },
-            )
+            .trigger_with_tooltip(trigger, move |_window, cx| {
+                let meta = if is_detached_head {
+                    format!("Detached HEAD: {}", branch_tooltip_label)
+                } else {
+                    format!("Currently Checked Out: {}", branch_tooltip_label)
+                };
+                Tooltip::with_meta("Branch & Stash", Some(&zed_actions::git::Branch), meta, cx)
+            })
             .anchor(gpui::Corner::TopLeft);
 
         Some(

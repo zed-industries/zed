@@ -6725,4 +6725,272 @@ mod tests {
             );
         });
     }
+
+    #[gpui::test]
+    async fn test_worktree_switch_preserves_draft_text(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project_a", json!({ "file.txt": "" }))
+            .await;
+        let project_a = Project::test(fs.clone(), [Path::new("/project_a")], cx).await;
+        let project_b = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+
+        let workspace_a = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let workspace_b = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project_b.clone(), window, cx)
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        // Set up panel_a with an active thread and type draft text into it.
+        let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+        });
+
+        panel_a.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        panel_a.update_in(cx, |panel, window, cx| {
+            let thread_view = panel
+                .active_thread_view(cx)
+                .expect("panel_a should have an active thread view");
+            thread_view.update(cx, |thread_view, cx| {
+                thread_view.message_editor.update(cx, |editor, cx| {
+                    editor.insert_text("Hello from worktree A", window, cx);
+                });
+            });
+        });
+
+        // Simulate source workspace starting worktree creation.
+        workspace_a.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_creation(Some("test-worktree".into()), false, cx);
+        });
+        cx.run_until_parked();
+
+        // The draft text should now be stashed on the MultiWorkspace.
+        multi_workspace
+            .read_with(cx, |mw, _cx| {
+                assert_eq!(
+                    mw.pending_worktree_switch_text.as_deref(),
+                    Some("Hello from worktree A"),
+                    "draft text should be stashed on multi_workspace"
+                );
+            })
+            .unwrap();
+
+        // Set up panel_b with an active thread so it can receive the draft.
+        let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+        });
+
+        panel_b.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Simulate destination workspace finishing worktree creation.
+        workspace_b.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_creation(None, false, cx);
+        });
+        cx.run_until_parked();
+
+        // panel_b's message editor should now contain the draft text from panel_a.
+        panel_b.read_with(cx, |panel, cx| {
+            let thread_view = panel
+                .active_thread_view(cx)
+                .expect("panel_b should have an active thread view");
+            let text = thread_view.read(cx).message_editor.read(cx).text(cx);
+            assert_eq!(
+                text, "Hello from worktree A",
+                "draft text should have been transferred to panel_b"
+            );
+        });
+
+        // The stash on multi_workspace should have been consumed.
+        multi_workspace
+            .read_with(cx, |mw, _cx| {
+                assert!(
+                    mw.pending_worktree_switch_text.is_none(),
+                    "pending_worktree_switch_text should be consumed after transfer"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_worktree_switch_does_not_preserve_empty_draft(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project_a = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+
+        let workspace_a = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        // Set up panel_a with an active thread but leave the editor empty.
+        let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+        });
+
+        panel_a.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Verify editor is empty before the switch.
+        panel_a.read_with(cx, |panel, cx| {
+            let thread_view = panel
+                .active_thread_view(cx)
+                .expect("panel_a should have an active thread view");
+            let text = thread_view.read(cx).message_editor.read(cx).text(cx);
+            assert!(text.is_empty(), "editor should start empty");
+        });
+
+        // Simulate worktree creation with an empty editor.
+        workspace_a.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_creation(Some("test".into()), false, cx);
+        });
+        cx.run_until_parked();
+
+        // Nothing should be stashed because the draft was empty.
+        multi_workspace
+            .read_with(cx, |mw, _cx| {
+                assert!(
+                    mw.pending_worktree_switch_text.is_none(),
+                    "empty draft should not be stashed on multi_workspace"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_worktree_switch_stores_draft_when_no_thread_view(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project_a", json!({ "file.txt": "" }))
+            .await;
+        let project_a = Project::test(fs.clone(), [Path::new("/project_a")], cx).await;
+        let project_b = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+
+        let workspace_a = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let workspace_b = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project_b.clone(), window, cx)
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        // Set up panel_a with an active thread and type draft text.
+        let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+        });
+
+        panel_a.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        panel_a.update_in(cx, |panel, window, cx| {
+            let thread_view = panel
+                .active_thread_view(cx)
+                .expect("panel_a should have an active thread view");
+            thread_view.update(cx, |thread_view, cx| {
+                thread_view.message_editor.update(cx, |editor, cx| {
+                    editor.insert_text("Pending draft", window, cx);
+                });
+            });
+        });
+
+        // Stash the draft on the source side.
+        workspace_a.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_creation(Some("test".into()), false, cx);
+        });
+        cx.run_until_parked();
+
+        // Create panel_b but do NOT open a thread — leave it uninitialized.
+        let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+        });
+
+        // Signal worktree creation completion on the destination workspace.
+        // panel_b has no active thread view, but the subscriber calls
+        // ensure_thread_initialized which synchronously creates a draft
+        // thread and then apply_pending_worktree_draft applies the text
+        // immediately.
+        workspace_b.update(cx, |workspace, cx| {
+            workspace.set_active_worktree_creation(None, false, cx);
+        });
+        cx.run_until_parked();
+
+        // The pending draft should have been consumed: ensure_thread_initialized
+        // created a draft thread and apply_pending_worktree_draft inserted the
+        // text into the editor in one synchronous pass.
+        panel_b.read_with(cx, |panel, cx| {
+            assert!(
+                panel.pending_worktree_draft.is_none(),
+                "pending_worktree_draft should be consumed after ensure_thread_initialized"
+            );
+            let thread_view = panel
+                .active_thread_view(cx)
+                .expect("panel_b should have a draft thread view after ensure_thread_initialized");
+            let text = thread_view.read(cx).message_editor.read(cx).text(cx);
+            assert_eq!(
+                text, "Pending draft",
+                "draft text should appear in the editor after thread initialization"
+            );
+        });
+    }
 }

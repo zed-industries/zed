@@ -20,8 +20,7 @@ use ui::{
 use util::ResultExt as _;
 use util::paths::PathExt;
 use workspace::{
-    ModalView, MultiWorkspace, Workspace, dock::DockPosition,
-    notifications::DetachAndPromptErr,
+    ModalView, MultiWorkspace, Workspace, dock::DockPosition, notifications::DetachAndPromptErr,
 };
 
 use crate::git_panel::show_error_toast;
@@ -83,11 +82,7 @@ impl WorktreePicker {
                 .map(|branch| branch.name().to_string())
         });
 
-        let repository = if has_multiple_repositories {
-            None
-        } else {
-            project.read(cx).active_repository(cx)
-        };
+        let repository = project.read(cx).active_repository(cx);
 
         let all_worktrees_request = repository
             .clone()
@@ -290,10 +285,17 @@ impl WorktreePickerDelegate {
     }
 
     fn all_repo_worktrees(&self) -> &[GitWorktree] {
-        if self.has_multiple_repositories {
-            &[]
+        &self.all_worktrees
+    }
+
+    fn creation_blocked_reason(&self, cx: &App) -> Option<SharedString> {
+        let project = self.project.read(cx);
+        if project.is_via_collab() {
+            Some("Worktree creation is not supported in collaborative projects".into())
+        } else if project.repositories(cx).is_empty() {
+            Some("Requires a Git repository in the project".into())
         } else {
-            &self.all_worktrees
+            None
         }
     }
 
@@ -562,6 +564,9 @@ impl PickerDelegate for WorktreePickerDelegate {
         match entry {
             WorktreeEntry::Separator => return,
             WorktreeEntry::CreateFromCurrentBranch => {
+                if self.creation_blocked_reason(cx).is_some() {
+                    return;
+                }
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
                         crate::worktree_service::handle_create_worktree(
@@ -580,6 +585,9 @@ impl PickerDelegate for WorktreePickerDelegate {
             WorktreeEntry::CreateFromDefaultBranch {
                 default_branch_name,
             } => {
+                if self.creation_blocked_reason(cx).is_some() {
+                    return;
+                }
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
                         crate::worktree_service::handle_create_worktree(
@@ -678,10 +686,6 @@ impl PickerDelegate for WorktreePickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry = self.matches.get(ix)?;
-        let project = self.project.read(cx);
-        let is_create_disabled = project.repositories(cx).is_empty() || project.is_via_collab();
-
-        let no_git_reason: SharedString = "Requires a Git repository in the project".into();
 
         match entry {
             WorktreeEntry::Separator => Some(
@@ -701,12 +705,10 @@ impl PickerDelegate for WorktreePickerDelegate {
 
                 let label = format!("Create new worktree based on {branch_label}");
 
-                let disabled_tooltip = is_create_disabled.then(|| no_git_reason.clone());
-
                 let item = create_new_list_item(
                     "create-from-current".to_string().into(),
                     label.into(),
-                    disabled_tooltip,
+                    self.creation_blocked_reason(cx),
                     selected,
                 );
 
@@ -717,12 +719,10 @@ impl PickerDelegate for WorktreePickerDelegate {
             } => {
                 let label = format!("Create new worktree based on {default_branch_name}");
 
-                let disabled_tooltip = is_create_disabled.then(|| no_git_reason.clone());
-
                 let item = create_new_list_item(
                     "create-from-main".to_string().into(),
                     label.into(),
-                    disabled_tooltip,
+                    self.creation_blocked_reason(cx),
                     selected,
                 );
 

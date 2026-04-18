@@ -5177,6 +5177,7 @@ mod tests {
                 "vim",
                 "window",
                 "workspace",
+                "worktree_picker",
                 "zed",
                 "zed_actions",
                 "zed_predict_onboarding",
