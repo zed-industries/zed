@@ -117,6 +117,15 @@ impl ThreadStore {
     pub fn entry_ids(&self) -> impl Iterator<Item = acp::SessionId> + '_ {
         self.threads.iter().map(|t| t.id.clone())
     }
+
+    /// Returns the persisted subagent depth for the thread with the given session ID,
+    /// or `None` if no such thread exists in the current loaded set.
+    pub fn subagent_depth(&self, id: &acp::SessionId) -> Option<u8> {
+        self.threads
+            .iter()
+            .find(|t| &t.id == id)
+            .map(|t| t.depth)
+    }
 }
 
 #[cfg(test)]
