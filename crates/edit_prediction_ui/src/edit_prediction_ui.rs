@@ -117,7 +117,7 @@ fn feature_gate_predict_edits_actions(cx: &mut App) {
 
     cx.observe_flag::<PredictEditsRatePredictionsFeatureFlag, _>(move |value, cx| {
         if !DisableAiSettings::get_global(cx).disable_ai {
-            if value.is_enabled() {
+            if *value {
                 CommandPaletteFilter::update_global(cx, |filter, _cx| {
                     filter.show_action_types(&rate_completion_action_types);
                 });

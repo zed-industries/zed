@@ -64,9 +64,16 @@ pub enum PresenceFlag {
     Off,
 }
 
-impl PresenceFlag {
-    pub fn is_enabled(self) -> bool {
-        matches!(self, PresenceFlag::On)
+/// Presence flags deref to a `bool` so call sites can use `if *flag` without
+/// spelling out the enum variant — or pass them anywhere a `&bool` is wanted.
+impl std::ops::Deref for PresenceFlag {
+    type Target = bool;
+
+    fn deref(&self) -> &bool {
+        match self {
+            PresenceFlag::On => &true,
+            PresenceFlag::Off => &false,
+        }
     }
 }
 

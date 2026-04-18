@@ -519,16 +519,19 @@ pub fn all_schema_file_associations(
     file_associations
 }
 
-/// Swaps the placeholder `FeatureFlagsMap` subschema produced by schemars for
-/// an enriched one that lists each known flag's variants. The placeholder is
-/// registered in the `settings_content` crate so the `settings` crate doesn't
-/// need a reverse dependency on `feature_flags`.
+/// Swaps the placeholder [`settings::FeatureFlagsMap`] subschema produced by
+/// schemars for an enriched one that lists each known flag's variants. The
+/// placeholder is registered in the `settings_content` crate so the
+/// `settings` crate doesn't need a reverse dependency on `feature_flags`.
 fn inject_feature_flags_schema(schema: &mut serde_json::Value) {
+    use schemars::JsonSchema;
+
     let Some(defs) = schema.get_mut("$defs").and_then(|d| d.as_object_mut()) else {
         return;
     };
+    let schema_name = settings::FeatureFlagsMap::schema_name();
     let enriched = feature_flags::generate_feature_flags_schema().to_value();
-    defs.insert("FeatureFlagsMap".to_string(), enriched);
+    defs.insert(schema_name.into_owned(), enriched);
 }
 
 fn generate_jsonc_schema() -> serde_json::Value {
