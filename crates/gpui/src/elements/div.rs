@@ -2292,9 +2292,10 @@ impl Interactivity {
             });
             let current_view = window.current_view();
 
-            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
-                let hovered =
-                    event.pressed_button.is_none() && hitbox.is_hovered(window);
+            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
+                let hovered = !window.any_mouse_button_pressed()
+                    && !cx.has_active_drag()
+                    && hitbox.is_hovered(window);
                 let was_hovered = hover_state
                     .as_ref()
                     .is_some_and(|state| state.borrow().element);
@@ -2315,9 +2316,10 @@ impl Interactivity {
                     .cloned();
                 let current_view = window.current_view();
 
-                window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
-                    let group_hovered =
-                        event.pressed_button.is_none() && group_hitbox_id.is_hovered(window);
+                window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
+                    let group_hovered = !window.any_mouse_button_pressed()
+                        && !cx.has_active_drag()
+                        && group_hitbox_id.is_hovered(window);
                     let was_group_hovered = hover_state
                         .as_ref()
                         .is_some_and(|state| state.borrow().group);
@@ -2528,12 +2530,12 @@ impl Interactivity {
                     .get_or_insert_with(Default::default)
                     .clone();
 
-                window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
                     if phase != DispatchPhase::Bubble {
                         return;
                     }
                     let is_hovered = has_mouse_down.borrow().is_none()
-                        && event.pressed_button.is_none()
+                        && !window.any_mouse_button_pressed()
                         && !cx.has_active_drag()
                         && hitbox.is_hovered(window);
                     let mut was_hovered = was_hovered.borrow_mut();
