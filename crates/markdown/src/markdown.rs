@@ -872,6 +872,10 @@ impl Selection {
     fn tail(&self) -> usize {
         if self.reversed { self.end } else { self.start }
     }
+
+    fn contains(&self, source_index: usize) -> bool {
+        self.start <= self.end && (self.start..self.end).contains(&source_index)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1335,6 +1339,14 @@ impl MarkdownElement {
                                     cx.notify();
                                     return;
                                 }
+                            }
+                            // If the location of a single-click event falls within the existing selection from the previous frame,
+                            // the selection should not be reset.
+                            if event.click_count == 1 && markdown.selection.contains(source_index) {
+                                window.focus(&markdown.focus_handle, cx);
+                                window.prevent_default();
+                                cx.notify();
+                                return;
                             }
                             let (range, mode) = match event.click_count {
                                 1 => {
