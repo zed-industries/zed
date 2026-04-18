@@ -325,6 +325,72 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
     PathList::new(&workspace.read(cx).root_paths(cx))
 }
 
+#[derive(Clone)]
+struct WorkspaceMenuWorktreeLabel {
+    icon: Option<IconName>,
+    primary_name: SharedString,
+    secondary_name: Option<SharedString>,
+}
+
+fn workspace_menu_worktree_labels(
+    workspace: &Entity<Workspace>,
+    cx: &App,
+) -> Vec<WorkspaceMenuWorktreeLabel> {
+    let root_paths = workspace.read(cx).root_paths(cx);
+    let show_folder_name = root_paths.len() > 1;
+    let project = workspace.read(cx).project().clone();
+    let repository_snapshots: Vec<_> = project
+        .read(cx)
+        .repositories(cx)
+        .values()
+        .map(|repo| repo.read(cx).snapshot())
+        .collect();
+
+    root_paths
+        .into_iter()
+        .map(|root_path| {
+            let root_path = root_path.as_ref();
+            let folder_name = root_path
+                .file_name()
+                .map(|name| SharedString::from(name.to_string_lossy().to_string()))
+                .unwrap_or_default();
+            let repository_snapshot = repository_snapshots
+                .iter()
+                .find(|snapshot| snapshot.work_directory_abs_path.as_ref() == root_path);
+
+            if let Some(snapshot) = repository_snapshot
+                && snapshot.is_linked_worktree()
+            {
+                let worktree_name = project::linked_worktree_short_name(
+                    snapshot.original_repo_abs_path.as_ref(),
+                    root_path,
+                )
+                .unwrap_or_else(|| folder_name.clone());
+
+                if show_folder_name {
+                    WorkspaceMenuWorktreeLabel {
+                        icon: Some(IconName::GitWorktree),
+                        primary_name: folder_name,
+                        secondary_name: Some(worktree_name),
+                    }
+                } else {
+                    WorkspaceMenuWorktreeLabel {
+                        icon: Some(IconName::GitWorktree),
+                        primary_name: worktree_name,
+                        secondary_name: None,
+                    }
+                }
+            } else {
+                WorkspaceMenuWorktreeLabel {
+                    icon: None,
+                    primary_name: folder_name,
+                    secondary_name: None,
+                }
+            }
+        })
+        .collect()
+}
+
 /// Shows a [`RemoteConnectionModal`] on the given workspace and establishes
 /// an SSH connection. Suitable for passing to
 /// [`MultiWorkspace::find_or_create_workspace`] as the `connect_remote`
@@ -1658,8 +1724,31 @@ impl Sidebar {
                 let project_group_key = project_group_key.clone();
                 let this_for_menu = this.clone();
 
+                let open_workspaces = multi_workspace
+                    .read_with(cx, |multi_workspace, cx| {
+                        multi_workspace
+                            .workspaces_for_project_group(&project_group_key, cx)
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+
+                let active_workspace = multi_workspace
+                    .read_with(cx, |multi_workspace, _cx| {
+                        multi_workspace.workspace().clone()
+                    })
+                    .ok();
+                let workspace_labels: Vec<_> = open_workspaces
+                    .iter()
+                    .map(|workspace| workspace_menu_worktree_labels(workspace, cx))
+                    .collect();
+                let workspace_is_active: Vec<_> = open_workspaces
+                    .iter()
+                    .map(|workspace| active_workspace.as_ref() == Some(workspace))
+                    .collect();
+
                 let menu =
                     ContextMenu::build_persistent(window, cx, move |menu, _window, menu_cx| {
+                        let menu = menu.end_slot_action(Box::new(menu::SecondaryConfirm));
                         let weak_menu = menu_cx.weak_entity();
 
                         let menu = menu.when(show_multi_project_entries, |this| {
@@ -1747,25 +1836,144 @@ impl Sidebar {
                             )
                             .selectable(!is_active);
 
-                        menu.when(show_multi_project_entries, |menu| {
-                            let project_group_key = project_group_key.clone();
-                            let multi_workspace = multi_workspace.clone();
-                            menu.separator()
-                                .entry("Remove Project", None, move |window, cx| {
-                                    multi_workspace
-                                        .update(cx, |multi_workspace, cx| {
-                                            multi_workspace
-                                                .remove_project_group(
-                                                    &project_group_key,
+                        let menu = if open_workspaces.is_empty() {
+                            menu
+                        } else {
+                            let mut menu = menu.separator().header("Open Workspaces");
+
+                            for (
+                                workspace_index,
+                                ((workspace, workspace_label), is_active_workspace),
+                            ) in open_workspaces
+                                .iter()
+                                .cloned()
+                                .zip(workspace_labels.iter().cloned())
+                                .zip(workspace_is_active.iter().copied())
+                                .enumerate()
+                            {
+                                let activate_multi_workspace = multi_workspace.clone();
+                                let close_multi_workspace = multi_workspace.clone();
+                                let activate_weak_menu = weak_menu.clone();
+                                let close_weak_menu = weak_menu.clone();
+                                let activate_workspace = workspace.clone();
+                                let close_workspace = workspace.clone();
+
+                                menu = menu.custom_entry(
+                                    move |_window, _cx| {
+                                        let close_multi_workspace = close_multi_workspace.clone();
+                                        let close_weak_menu = close_weak_menu.clone();
+                                        let close_workspace = close_workspace.clone();
+                                        let label_color = if is_active_workspace {
+                                            Color::Accent
+                                        } else {
+                                            Color::Muted
+                                        };
+                                        let row_group_name = SharedString::from(format!(
+                                            "workspace-menu-row-{workspace_index}"
+                                        ));
+
+                                        h_flex()
+                                            .w_full()
+                                            .group(&row_group_name)
+                                            .justify_between()
+                                            .gap_2()
+                                            .child(h_flex().min_w_0().gap_3().children(
+                                                workspace_label.iter().map(|label| {
+                                                    h_flex()
+                                                        .min_w_0()
+                                                        .gap_0p5()
+                                                        .when_some(label.icon, |this, icon| {
+                                                            this.child(
+                                                                Icon::new(icon)
+                                                                    .size(IconSize::XSmall)
+                                                                    .color(label_color),
+                                                            )
+                                                        })
+                                                        .child(
+                                                            Label::new(label.primary_name.clone())
+                                                                .color(label_color)
+                                                                .truncate(),
+                                                        )
+                                                        .when_some(
+                                                            label.secondary_name.clone(),
+                                                            |this, secondary_name| {
+                                                                this.child(
+                                                                    Label::new(":")
+                                                                        .color(label_color),
+                                                                )
+                                                                .child(
+                                                                    Label::new(secondary_name)
+                                                                        .color(label_color)
+                                                                        .truncate(),
+                                                                )
+                                                            },
+                                                        )
+                                                        .into_any_element()
+                                                }),
+                                            ))
+                                            .child(
+                                                IconButton::new(
+                                                    ("close-workspace", workspace_index),
+                                                    IconName::Close,
+                                                )
+                                                .shape(ui::IconButtonShape::Square)
+                                                .style(ButtonStyle::Subtle)
+                                                .visible_on_hover(&row_group_name)
+                                                .tooltip(Tooltip::text("Close Workspace"))
+                                                .on_click(move |_, window, cx| {
+                                                    cx.stop_propagation();
+                                                    window.prevent_default();
+                                                    close_multi_workspace
+                                                        .update(cx, |multi_workspace, cx| {
+                                                            multi_workspace
+                                                                .close_workspace(
+                                                                    &close_workspace,
+                                                                    window,
+                                                                    cx,
+                                                                )
+                                                                .detach_and_log_err(cx);
+                                                        })
+                                                        .ok();
+                                                    close_weak_menu
+                                                        .update(cx, |_, cx| cx.emit(DismissEvent))
+                                                        .ok();
+                                                }),
+                                            )
+                                            .into_any_element()
+                                    },
+                                    move |window, cx| {
+                                        activate_multi_workspace
+                                            .update(cx, |multi_workspace, cx| {
+                                                multi_workspace.activate(
+                                                    activate_workspace.clone(),
                                                     window,
                                                     cx,
-                                                )
-                                                .detach_and_log_err(cx);
-                                        })
-                                        .ok();
-                                    weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-                                })
-                        })
+                                                );
+                                            })
+                                            .ok();
+                                        activate_weak_menu
+                                            .update(cx, |_, cx| cx.emit(DismissEvent))
+                                            .ok();
+                                    },
+                                );
+                            }
+
+                            menu
+                        };
+
+                        let project_group_key = project_group_key.clone();
+                        let remove_multi_workspace = multi_workspace.clone();
+                        menu.separator()
+                            .entry("Remove Project", None, move |window, cx| {
+                                remove_multi_workspace
+                                    .update(cx, |multi_workspace, cx| {
+                                        multi_workspace
+                                            .remove_project_group(&project_group_key, window, cx)
+                                            .detach_and_log_err(cx);
+                                    })
+                                    .ok();
+                                weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                            })
                     });
 
                 let this = this.clone();
