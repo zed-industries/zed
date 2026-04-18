@@ -82,7 +82,12 @@ pub struct SubagentContext {
     /// ID of the parent thread
     pub parent_thread_id: acp::SessionId,
 
-    /// Current depth level (0 = root agent, 1 = first-level subagent, etc.)
+    /// Current depth level (0 = root agent, 1 = first-level subagent, etc.).
+    ///
+    /// Depth is enforced by [`MAX_SUBAGENT_DEPTH`]: threads at or beyond that
+    /// depth will not have [`crate::tools::SpawnAgentTool`] registered, so the
+    /// model cannot recurse further. Depth is stored in [`crate::db::DbThreadMetadata`]
+    /// so the thread list can render hierarchy without loading full thread payloads.
     pub depth: u8,
 }
 
