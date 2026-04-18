@@ -764,8 +764,24 @@ pub enum ToolChoice {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Thinking {
-    Enabled { budget_tokens: Option<u32> },
-    Adaptive,
+    Enabled {
+        budget_tokens: Option<u32>,
+    },
+    Adaptive {
+        /// Controls visibility of thinking content in the response.
+        /// Starting with Claude Opus 4.7, thinking content is omitted by
+        /// default; setting this to `Summarized` restores visible summaries
+        /// that downstream UI can stream to users.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display: Option<AdaptiveThinkingDisplay>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AdaptiveThinkingDisplay {
+    Omitted,
+    Summarized,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, EnumString)]
