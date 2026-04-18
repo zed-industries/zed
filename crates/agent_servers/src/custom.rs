@@ -388,7 +388,7 @@ impl AgentServer for CustomAgentServer {
 
 fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
     let env_var = EnvVar::new("GEMINI_API_KEY".into()).or(EnvVar::new("GOOGLE_AI_API_KEY".into()));
-    if let Some(key) = env_var.value {
+    if let Some(key) = env_var.value() {
         return Task::ready(Ok(key));
     }
     let credentials_provider = zed_credentials_provider::global(cx);

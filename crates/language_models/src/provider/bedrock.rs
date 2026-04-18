@@ -291,29 +291,28 @@ impl State {
         let credentials_provider = self.credentials_provider.clone();
         cx.spawn(async move |this, cx| {
             // Try environment variables first
-            let (auth, from_env) = if let Some(bearer_token) = &ZED_BEDROCK_BEARER_TOKEN_VAR.value {
+            let (auth, from_env) = if let Some(bearer_token) = ZED_BEDROCK_BEARER_TOKEN_VAR.value()
+            {
                 if !bearer_token.is_empty() {
                     (
                         Some(BedrockAuth::ApiKey {
-                            api_key: bearer_token.to_string(),
+                            api_key: bearer_token,
                         }),
                         true,
                     )
                 } else {
                     (None, false)
                 }
-            } else if let Some(access_key_id) = &ZED_BEDROCK_ACCESS_KEY_ID_VAR.value {
-                if let Some(secret_access_key) = &ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.value {
+            } else if let Some(access_key_id) = ZED_BEDROCK_ACCESS_KEY_ID_VAR.value() {
+                if let Some(secret_access_key) = ZED_BEDROCK_SECRET_ACCESS_KEY_VAR.value() {
                     if !access_key_id.is_empty() && !secret_access_key.is_empty() {
                         let session_token = ZED_BEDROCK_SESSION_TOKEN_VAR
-                            .value
-                            .as_deref()
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string());
+                            .value()
+                            .filter(|s| !s.is_empty());
                         (
                             Some(BedrockAuth::IamCredentials {
-                                access_key_id: access_key_id.to_string(),
-                                secret_access_key: secret_access_key.to_string(),
+                                access_key_id,
+                                secret_access_key,
                                 session_token,
                             }),
                             true,
@@ -367,9 +366,9 @@ impl State {
     /// Get the resolved region. Checks env var, then settings, then defaults to us-east-1.
     fn get_region(&self) -> String {
         // Priority: env var > settings > default
-        if let Some(region) = ZED_BEDROCK_REGION_VAR.value.as_deref() {
+        if let Some(region) = ZED_BEDROCK_REGION_VAR.value() {
             if !region.is_empty() {
-                return region.to_string();
+                return region;
             }
         }
 

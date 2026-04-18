@@ -170,10 +170,10 @@ impl ApiKeyState {
             return Task::ready(Ok(()));
         }
 
-        if let Some(key) = &self.env_var.value
+        if let Some(key) = self.env_var.value()
             && !key.is_empty()
         {
-            let api_key = ApiKey::from_env(self.env_var.name.clone(), key);
+            let api_key = ApiKey::from_env(self.env_var.name.clone(), &key);
             self.url = url;
             self.load_status = LoadStatus::Loaded(api_key);
             self.load_task = None;
