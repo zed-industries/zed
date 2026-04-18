@@ -1000,7 +1000,15 @@ impl VsCodeSettings {
             }),
             zoomed_padding: None,
             focus_follows_mouse: None,
-            auto_preview: None,
+            auto_preview: self
+                .read_bool("markdown.extension.preview.autoShowPreviewToSide")
+                .map(|enabled| {
+                    if enabled {
+                        AutoPreviewSetting::PreviewToSide
+                    } else {
+                        AutoPreviewSetting::Disabled
+                    }
+                }),
         }
     }
 
