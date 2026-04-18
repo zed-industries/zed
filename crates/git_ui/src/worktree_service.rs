@@ -11,9 +11,7 @@ use project::project_settings::ProjectSettings;
 use project::trusted_worktrees::{PathTrust, TrustedWorktrees};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
-use workspace::{
-    MultiWorkspace, OpenMode, PreviousWorkspaceState, Workspace, dock::DockPosition,
-};
+use workspace::{MultiWorkspace, OpenMode, PreviousWorkspaceState, Workspace, dock::DockPosition};
 use zed_actions::NewWorktreeBranchTarget;
 
 use util::ResultExt as _;
@@ -71,9 +69,7 @@ pub fn resolve_worktree_branch_target(
 ) -> (Option<String>, Option<String>) {
     match branch_target {
         NewWorktreeBranchTarget::CurrentBranch => (None, None),
-        NewWorktreeBranchTarget::ExistingBranch { name } => {
-            (Some(name.clone()), Some(name.clone()))
-        }
+        NewWorktreeBranchTarget::ExistingBranch { name } => (None, Some(name.clone())),
         NewWorktreeBranchTarget::CreateBranch { name, from_ref } => {
             (Some(name.clone()), from_ref.clone())
         }
@@ -872,21 +868,19 @@ async fn open_worktree_workspace(
         .ok();
 
     window_handle.update(cx, |multi_workspace, window, cx| {
-        multi_workspace.activate(
-            new_workspace.clone(),
-            Some(workspace.clone()),
-            window,
-            cx,
-        );
+        multi_workspace.activate(new_workspace.clone(), Some(workspace.clone()), window, cx);
 
         new_workspace.update(cx, |workspace, cx| {
             workspace.run_create_worktree_tasks(window, cx);
         });
 
+        dbg!(&focused_dock);
         if let Some(dock_position) = focused_dock {
             new_workspace.update(cx, |workspace, cx| {
                 let dock = workspace.dock_at_position(dock_position);
-                if let Some(panel) = dock.read(cx).active_panel() {
+                let active_panel = dock.read(cx).active_panel();
+                dbg!(active_panel.as_ref().map(|p| p.persistent_name()));
+                if let Some(panel) = active_panel {
                     panel.panel_focus_handle(cx).focus(window, cx);
                 }
             });
