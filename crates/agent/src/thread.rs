@@ -995,7 +995,13 @@ impl Thread {
             .embedded_context(true)
     }
 
-    pub fn new_subagent(parent_thread: &Entity<Thread>, cx: &mut Context<Self>) -> Self {
+    pub fn new_subagent(parent_thread: &Entity<Thread>, cx: &mut Context<Self>) -> Result<Self> {
+        let parent_depth = parent_thread.read(cx).depth();
+        if parent_depth >= MAX_SUBAGENT_DEPTH {
+            return Err(anyhow::anyhow!(
+                "Subagent depth limit ({MAX_SUBAGENT_DEPTH}) reached; cannot spawn further subagents"
+            ));
+        }
         let project = parent_thread.read(cx).project.clone();
         let project_context = parent_thread.read(cx).project_context.clone();
         let context_server_registry = parent_thread.read(cx).context_server_registry.clone();
@@ -1015,10 +1021,10 @@ impl Thread {
         );
         thread.subagent_context = Some(SubagentContext {
             parent_thread_id: parent_thread.read(cx).id().clone(),
-            depth: parent_thread.read(cx).depth() + 1,
+            depth: parent_depth + 1,
         });
         thread.inherit_parent_settings(parent_thread, cx);
-        thread
+        Ok(thread)
     }
 
     pub fn new(
