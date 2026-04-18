@@ -103,7 +103,7 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
         node_options_tx.send(Some(options)).log_err();
     })
     .detach();
-    let node_runtime = NodeRuntime::new(client.http_client(), None, node_options_rx);
+    let node_runtime = NodeRuntime::new(client.http_client(), node_options_rx);
 
     let extension_host_proxy = ExtensionHostProxy::global(cx);
     debug_adapter_extension::init(extension_host_proxy.clone(), cx);

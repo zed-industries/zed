@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
+use futures::AsyncReadExt;
 use http_client::{Host, HttpClient, Url};
 use log::Level;
 use semver::Version;
@@ -55,13 +55,11 @@ struct NodeRuntimeState {
     instance: Option<Box<dyn NodeRuntimeTrait>>,
     last_options: Option<NodeBinaryOptions>,
     options: watch::Receiver<Option<NodeBinaryOptions>>,
-    shell_env_loaded: Shared<oneshot::Receiver<()>>,
 }
 
 impl NodeRuntime {
     pub fn new(
         http: Arc<dyn HttpClient>,
-        shell_env_loaded: Option<oneshot::Receiver<()>>,
         options: watch::Receiver<Option<NodeBinaryOptions>>,
     ) -> Self {
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
@@ -69,7 +67,6 @@ impl NodeRuntime {
             instance: None,
             last_options: None,
             options,
-            shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
         })))
     }
 
@@ -79,7 +76,6 @@ impl NodeRuntime {
             instance: None,
             last_options: None,
             options: watch::channel(Some(NodeBinaryOptions::default())).1,
-            shell_env_loaded: oneshot::channel().1.shared(),
         })))
     }
 
@@ -132,7 +128,6 @@ impl NodeRuntime {
         }
 
         let system_node_error = if options.allow_path_lookup {
-            state.shell_env_loaded.clone().await.ok();
             match SystemNodeRuntime::detect().await {
                 Ok(instance) => {
                     log::info!("using Node.js found on PATH: {:?}", instance);

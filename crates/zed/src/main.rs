@@ -18,7 +18,7 @@ use db::kvp::{GlobalKeyValueStore, KeyValueStore};
 use editor::Editor;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
-use futures::{StreamExt, channel::oneshot, future};
+use futures::{StreamExt, future};
 use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, UpdateGlobal as _};
@@ -406,17 +406,32 @@ fn main() {
         paths::keymap_file().clone(),
     );
 
-    let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
     if !stdout_is_a_pty() {
-        app.background_executor()
-            .spawn(async {
-                #[cfg(unix)]
-                util::load_login_shell_environment().await.log_err();
-                shell_env_loaded_tx.send(()).ok();
-            })
-            .detach()
-    } else {
-        drop(shell_env_loaded_tx)
+        #[cfg(unix)]
+        {
+            use std::time::Duration;
+
+            // Load the login shell environment synchronously before app initialization.
+            //
+            // On macOS, apps launched from the Dock/Spotlight are started by launchd,
+            // and on Linux, apps launched from .desktop files are started by the
+            // desktop environment -- neither inherits shell environment variables.
+            // Zed compensates by spawning the user's login shell to capture its
+            // environment. This must complete before app.run() because environment
+            // variables are read via LazyLock statics (env_var! macro) that capture
+            // values on first access and never re-read. If loaded asynchronously,
+            // those statics race with initialization and permanently miss env vars
+            // like API keys.
+            let shell_env_timeout = Duration::from_secs(3);
+            if !util::load_login_shell_environment_sync(shell_env_timeout) {
+                log::error!(
+                    "loading login shell environment timed out after {:?}; \
+                     environment variables from shell config may be missing. \
+                     Check your shell startup files for issues that could cause hangs.",
+                    shell_env_timeout,
+                );
+            }
+        }
     }
 
     app.on_open_urls({
@@ -522,7 +537,7 @@ fn main() {
         .detach();
         ui::on_new_scrollbars::<SettingsStore>(cx);
 
-        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
+        let node_runtime = NodeRuntime::new(client.http_client(), rx);
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);

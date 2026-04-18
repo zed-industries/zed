@@ -382,6 +382,30 @@ pub async fn load_login_shell_environment() -> Result<()> {
     Ok(())
 }
 
+/// Load the login shell environment synchronously, with a timeout.
+///
+/// Returns `true` if the environment was loaded successfully within the timeout,
+/// `false` if it timed out or failed.
+#[cfg(unix)]
+pub fn load_login_shell_environment_sync(timeout: std::time::Duration) -> bool {
+    use std::sync::mpsc;
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = smol::block_on(load_login_shell_environment());
+        tx.send(result).ok();
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(result) => {
+            result.log_err();
+            true
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => false,
+        Err(mpsc::RecvTimeoutError::Disconnected) => false,
+    }
+}
+
 /// Configures the process to start a new session, to prevent interactive shells from taking control
 /// of the terminal.
 ///

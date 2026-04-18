@@ -15,9 +15,7 @@ use collections::HashMap;
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{
-    AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt,
-    channel::{mpsc, oneshot},
-    select, select_biased,
+    AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, channel::mpsc, select, select_biased,
 };
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Context, Entity, UpdateGlobal as _};
@@ -497,18 +495,19 @@ pub fn execute_run(
         .unwrap();
 
     #[cfg(unix)]
-    let shell_env_loaded_rx = {
-        let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
-        app.background_executor()
-            .spawn(async {
-                util::load_login_shell_environment().await.log_err();
-                shell_env_loaded_tx.send(()).ok();
-            })
-            .detach();
-        Some(shell_env_loaded_rx)
-    };
-    #[cfg(windows)]
-    let shell_env_loaded_rx: Option<oneshot::Receiver<()>> = None;
+    {
+        use std::time::Duration;
+
+        let shell_env_timeout = Duration::from_secs(3);
+        if !util::load_login_shell_environment_sync(shell_env_timeout) {
+            log::error!(
+                "loading login shell environment timed out after {:?}; \
+                 environment variables from shell config may be missing. \
+                 Check your shell startup files for issues that could cause hangs.",
+                shell_env_timeout,
+            );
+        }
+    }
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     let run = move |cx: &mut _| {
@@ -566,8 +565,7 @@ pub fn execute_run(
                 )
             };
 
-            let node_runtime =
-                NodeRuntime::new(http_client.clone(), shell_env_loaded_rx, node_settings_rx);
+            let node_runtime = NodeRuntime::new(http_client.clone(), node_settings_rx);
 
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());
