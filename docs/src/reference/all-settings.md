@@ -186,6 +186,38 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Auto Preview
+
+- Description: Whether to automatically open a preview when opening a previewable file (e.g., Markdown, SVG).
+- Setting: `auto_preview`
+- Default: `"disabled"`
+
+**Options**
+
+1. Do not automatically open a preview:
+
+```json [settings]
+{
+  "auto_preview": "disabled"
+}
+```
+
+2. Open the preview in the same pane, replacing the editor tab:
+
+```json [settings]
+{
+  "auto_preview": "preview"
+}
+```
+
+3. Open the preview in an adjacent pane to the right:
+
+```json [settings]
+{
+  "auto_preview": "preview_to_side"
+}
+```
+
 ## Autosave
 
 - Description: When to automatically save edited buffers.
