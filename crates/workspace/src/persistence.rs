@@ -66,6 +66,14 @@ fn parse_timestamp(text: &str) -> DateTime<Utc> {
         .unwrap_or_else(|_| Utc::now())
 }
 
+fn contains_wsl_path(paths: &PathList) -> bool {
+    cfg!(windows)
+        && paths
+            .paths()
+            .iter()
+            .any(|path| util::paths::WslPath::from_path(path).is_some())
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
 impl sqlez::bindable::StaticColumnCount for SerializedAxis {}
@@ -1917,13 +1925,17 @@ impl WorkspaceDb {
         }
     }
 
+    query! {
+        pub fn workspace_has_items(workspace_id: WorkspaceId) -> Result<bool> {
+            SELECT EXISTS(SELECT item_id FROM items WHERE workspace_id = ?)
+        }
+    }
+
     async fn all_paths_exist_with_a_directory(paths: &[PathBuf], fs: &dyn Fs) -> bool {
         let mut any_dir = false;
         for path in paths {
             match fs.metadata(path).await.ok().flatten() {
-                None => {
-                    return false;
-                }
+                None => return false,
                 Some(meta) => {
                     if meta.is_dir {
                         any_dir = true;
@@ -1934,9 +1946,23 @@ impl WorkspaceDb {
         any_dir
     }
 
-    // Returns the recent locations which are still valid on disk and deletes ones which no longer
-    // exist.
-    pub async fn recent_workspaces_on_disk(
+    // A workspace is stale when it no longer has usable paths on disk and owns no items to
+    // restore. Scratch workspaces (empty paths) are kept as long as they still own items —
+    // this is what keeps unsaved buffers alive across restarts.
+    async fn is_stale(&self, workspace_id: WorkspaceId, paths: &PathList, fs: &dyn Fs) -> bool {
+        if paths.paths().is_empty() {
+            return !self
+                .workspace_has_items(workspace_id)
+                .log_err()
+                .unwrap_or(true);
+        }
+        !Self::all_paths_exist_with_a_directory(paths.paths(), fs).await
+    }
+
+    // Returns the recent workspaces suitable for showing in the recent-projects UI.
+    // Scratch workspaces (no paths) are filtered out - they aren't really "projects" and
+    // are restored separately by `last_session_workspace_locations`.
+    pub async fn recent_workspaces_for_ui(
         &self,
         fs: &dyn Fs,
     ) -> Result<
@@ -1947,10 +1973,8 @@ impl WorkspaceDb {
             DateTime<Utc>,
         )>,
     > {
-        let mut result = Vec::new();
-        let mut workspaces_to_delete = Vec::new();
         let remote_connections = self.remote_connections()?;
-        let now = Utc::now();
+        let mut result = Vec::new();
         for (id, paths, remote_connection_id, timestamp) in self.recent_workspaces()? {
             if let Some(remote_connection_id) = remote_connection_id {
                 if let Some(connection_options) = remote_connections.get(&remote_connection_id) {
@@ -1960,7 +1984,32 @@ impl WorkspaceDb {
                         paths,
                         timestamp,
                     ));
-                } else {
+                }
+                continue;
+            }
+
+            if paths.paths().is_empty() || contains_wsl_path(&paths) {
+                continue;
+            }
+
+            if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
+                result.push((id, SerializedWorkspaceLocation::Local, paths, timestamp));
+            }
+        }
+        Ok(result)
+    }
+
+    // Deletes workspace rows that can no longer be restored from. Remote workspaces whose
+    // connection was removed, and (on Windows) workspaces pointing at WSL paths, are cleaned
+    // up immediately. Local workspaces are kept for seven days after going stale. Workspaces
+    // that still own editor items are never deleted.
+    pub async fn garbage_collect_workspaces(&self, fs: &dyn Fs) -> Result<()> {
+        let remote_connections = self.remote_connections()?;
+        let now = Utc::now();
+        let mut workspaces_to_delete = Vec::new();
+        for (id, paths, remote_connection_id, timestamp) in self.recent_workspaces()? {
+            if let Some(remote_connection_id) = remote_connection_id {
+                if !remote_connections.contains_key(&remote_connection_id) {
                     workspaces_to_delete.push(id);
                 }
                 continue;
@@ -1971,20 +2020,12 @@ impl WorkspaceDb {
             // will wait for the WSL VM and file server to boot up. This can
             // block for many seconds. Supported scenarios use remote
             // workspaces.
-            if cfg!(windows) {
-                let has_wsl_path = paths
-                    .paths()
-                    .iter()
-                    .any(|path| util::paths::WslPath::from_path(path).is_some());
-                if has_wsl_path {
-                    workspaces_to_delete.push(id);
-                    continue;
-                }
+            if contains_wsl_path(&paths) {
+                workspaces_to_delete.push(id);
+                continue;
             }
 
-            if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
-                result.push((id, SerializedWorkspaceLocation::Local, paths, timestamp));
-            } else if now - timestamp >= chrono::Duration::days(7) {
+            if self.is_stale(id, &paths, fs).await && now - timestamp >= chrono::Duration::days(7) {
                 workspaces_to_delete.push(id);
             }
         }
@@ -1995,7 +2036,7 @@ impl WorkspaceDb {
                 .map(|id| self.delete_workspace_by_id(id)),
         )
         .await;
-        Ok(result)
+        Ok(())
     }
 
     pub async fn last_workspace(
@@ -2009,7 +2050,7 @@ impl WorkspaceDb {
             DateTime<Utc>,
         )>,
     > {
-        Ok(self.recent_workspaces_on_disk(fs).await?.into_iter().next())
+        Ok(self.recent_workspaces_for_ui(fs).await?.into_iter().next())
     }
 
     // Returns the locations of the workspaces that were still opened when the last
@@ -2038,23 +2079,16 @@ impl WorkspaceDb {
                     paths,
                     window_id,
                 });
-            } else if paths.is_empty() {
-                // Empty workspace with items (drafts, files) - include for restoration
+                continue;
+            }
+
+            if !self.is_stale(workspace_id, &paths, fs).await {
                 workspaces.push(SessionWorkspace {
                     workspace_id,
                     location: SerializedWorkspaceLocation::Local,
                     paths,
                     window_id,
                 });
-            } else {
-                if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
-                    workspaces.push(SessionWorkspace {
-                        workspace_id,
-                        location: SerializedWorkspaceLocation::Local,
-                        paths,
-                        window_id,
-                    });
-                }
             }
         }
 
@@ -2265,6 +2299,15 @@ impl WorkspaceDb {
             UPDATE workspaces
             SET timestamp = CURRENT_TIMESTAMP
             WHERE workspace_id = ?
+        }
+    }
+
+    #[cfg(test)]
+    query! {
+        pub(crate) async fn set_timestamp_for_tests(workspace_id: WorkspaceId, timestamp: String) -> Result<()> {
+            UPDATE workspaces
+            SET timestamp = ?2
+            WHERE workspace_id = ?1
         }
     }
 
@@ -3577,6 +3620,161 @@ mod tests {
                     window_id: Some(WindowId::from(4u64)),
                 },
             ]
+        );
+    }
+
+    fn pane_with_items(item_ids: &[ItemId]) -> SerializedPaneGroup {
+        SerializedPaneGroup::Pane(SerializedPane::new(
+            item_ids
+                .iter()
+                .map(|id| SerializedItem::new("Terminal", *id, true, false))
+                .collect(),
+            true,
+            0,
+        ))
+    }
+
+    fn empty_pane_group() -> SerializedPaneGroup {
+        SerializedPaneGroup::Pane(SerializedPane::default())
+    }
+
+    fn workspace_with(
+        id: u64,
+        paths: &[&Path],
+        center_group: SerializedPaneGroup,
+        session_id: Option<&str>,
+    ) -> SerializedWorkspace {
+        SerializedWorkspace {
+            id: WorkspaceId(id as i64),
+            paths: PathList::new(paths),
+            location: SerializedWorkspaceLocation::Local,
+            center_group,
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            bookmarks: Default::default(),
+            breakpoints: Default::default(),
+            centered_layout: false,
+            session_id: session_id.map(|s| s.to_owned()),
+            window_id: Some(id),
+            user_toolchains: Default::default(),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_scratch_only_workspace_survives_restart(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db("test_scratch_only_workspace_survives_restart").await;
+
+        db.save_workspace(workspace_with(1, &[], pane_with_items(&[100]), Some("s1")))
+            .await;
+
+        let sessions = db
+            .last_session_workspace_locations("s1", None, fs.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].workspace_id, WorkspaceId(1));
+        assert!(sessions[0].paths.is_empty());
+
+        let recents = db.recent_workspaces_for_ui(fs.as_ref()).await.unwrap();
+        assert!(
+            recents.iter().all(|(id, ..)| *id != WorkspaceId(1)),
+            "scratch-only workspace must not appear in the recent-projects UI"
+        );
+
+        assert!(db.workspace_has_items(WorkspaceId(1)).unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_gc_preserves_scratch_inside_window(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db("test_gc_preserves_scratch_inside_window").await;
+
+        db.save_workspace(workspace_with(1, &[], empty_pane_group(), None))
+            .await;
+
+        db.garbage_collect_workspaces(fs.as_ref()).await.unwrap();
+        assert!(
+            db.workspace_for_id(WorkspaceId(1)).is_some(),
+            "fresh stale workspace must not be deleted before the 7-day window"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_gc_deletes_stale_outside_window(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db("test_gc_deletes_stale_outside_window").await;
+
+        db.save_workspace(workspace_with(1, &[], empty_pane_group(), None))
+            .await;
+        db.set_timestamp_for_tests(WorkspaceId(1), "2000-01-01 00:00:00".to_owned())
+            .await
+            .unwrap();
+
+        db.garbage_collect_workspaces(fs.as_ref()).await.unwrap();
+        assert!(
+            db.workspace_for_id(WorkspaceId(1)).is_none(),
+            "stale empty workspace older than the retention window must be deleted"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_gc_preserves_directory_workspace_with_missing_path(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db =
+            WorkspaceDb::open_test_db("test_gc_preserves_directory_workspace_with_missing_path")
+                .await;
+
+        let missing_dir = PathBuf::from("/missing-project-dir");
+        db.save_workspace(workspace_with(
+            1,
+            &[missing_dir.as_path()],
+            empty_pane_group(),
+            None,
+        ))
+        .await;
+
+        db.garbage_collect_workspaces(fs.as_ref()).await.unwrap();
+        assert!(
+            db.workspace_for_id(WorkspaceId(1)).is_some(),
+            "a stale workspace within the retention window must be kept"
+        );
+
+        db.set_timestamp_for_tests(WorkspaceId(1), "2000-01-01 00:00:00".to_owned())
+            .await
+            .unwrap();
+        db.garbage_collect_workspaces(fs.as_ref()).await.unwrap();
+        assert!(
+            db.workspace_for_id(WorkspaceId(1)).is_none(),
+            "a stale workspace past the retention window must be deleted"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_last_session_drops_stale_workspace_without_items(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db("test_last_session_drops_stale_workspace_without_items")
+            .await;
+
+        let missing = PathBuf::from("/gone/file.rs");
+        db.save_workspace(workspace_with(
+            1,
+            &[missing.as_path()],
+            empty_pane_group(),
+            Some("s"),
+        ))
+        .await;
+
+        let sessions = db
+            .last_session_workspace_locations("s", None, fs.as_ref())
+            .await
+            .unwrap();
+        assert!(
+            sessions.is_empty(),
+            "stale workspace with no items must not restore"
         );
     }
 

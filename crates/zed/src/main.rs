@@ -817,6 +817,13 @@ fn main() {
         })
         .detach_and_log_err(cx);
 
+        cx.background_spawn({
+            let db = workspace::WorkspaceDb::global(cx);
+            let fs = app_state.fs.clone();
+            async move { db.garbage_collect_workspaces(fs.as_ref()).await }
+        })
+        .detach_and_log_err(cx);
+
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
