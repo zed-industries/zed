@@ -6,6 +6,7 @@ use edit_prediction::{EditPredictionModel, ZedEditPredictionDelegate};
 use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
+use language_model::ShellEnvLoaded;
 
 use settings::{EditPredictionPromptFormat, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -100,6 +101,23 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                     cx,
                 );
             }
+        }
+    })
+    .detach();
+
+    // After the login shell environment has been loaded, re-trigger API key
+    // loading for providers that use environment variables. On macOS, apps
+    // launched from Dock/Spotlight don't inherit shell env vars, so the
+    // initial key load at startup may have found nothing.
+    cx.observe_global::<ShellEnvLoaded>(move |cx| {
+        let provider_config = edit_prediction_provider_config_for_settings(cx);
+        if provider_config == Some(EditPredictionProviderConfig::Codestral) {
+            load_codestral_api_key(cx).detach();
+        }
+        if let Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Mercury)) =
+            provider_config
+        {
+            edit_prediction::mercury::load_mercury_api_token(cx).detach();
         }
     })
     .detach();

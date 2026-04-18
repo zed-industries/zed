@@ -6,7 +6,8 @@ use collections::HashSet;
 use credentials_provider::CredentialsProvider;
 use gpui::{App, Context, Entity};
 use language_model::{
-    ConfiguredModel, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
+    ConfiguredModel, LanguageModelProviderId, LanguageModelRegistry, ShellEnvLoaded,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use provider::deepseek::DeepSeekLanguageModelProvider;
 
@@ -154,6 +155,24 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
                 );
             });
             openai_compatible_providers = openai_compatible_providers_new;
+        }
+    })
+    .detach();
+
+    // After the login shell environment has been loaded, re-authenticate all
+    // providers. On macOS, apps launched from Dock/Spotlight don't inherit
+    // shell env vars (including API keys), so the initial authentication
+    // attempt at startup may have found nothing.
+    let registry = LanguageModelRegistry::global(cx).downgrade();
+    cx.observe_global::<ShellEnvLoaded>(move |cx| {
+        let Some(registry) = registry.upgrade() else {
+            return;
+        };
+        let providers = registry.read(cx).providers();
+        for provider in providers {
+            if !provider.is_authenticated(cx) {
+                provider.authenticate(cx).detach();
+            }
         }
     })
     .detach();

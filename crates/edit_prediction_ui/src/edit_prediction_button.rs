@@ -552,6 +552,14 @@ impl EditPredictionButton {
 
         CodestralEditPredictionDelegate::ensure_api_key_loaded(cx);
 
+        let codestral_api_key_state = codestral::codestral_api_key_state(cx);
+        cx.observe(&codestral_api_key_state, |_, _, cx| cx.notify())
+            .detach();
+
+        let mercury_api_token = edit_prediction::mercury::mercury_api_token(cx);
+        cx.observe(&mercury_api_token, |_, _, cx| cx.notify())
+            .detach();
+
         Self {
             editor_subscription: None,
             editor_enabled: None,

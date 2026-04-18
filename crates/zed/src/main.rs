@@ -407,16 +407,19 @@ fn main() {
     );
 
     let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
+    let (shell_env_global_tx, shell_env_global_rx) = oneshot::channel::<()>();
     if !stdout_is_a_pty() {
         app.background_executor()
             .spawn(async {
                 #[cfg(unix)]
                 util::load_login_shell_environment().await.log_err();
                 shell_env_loaded_tx.send(()).ok();
+                shell_env_global_tx.send(()).ok();
             })
-            .detach()
+            .detach();
     } else {
-        drop(shell_env_loaded_tx)
+        drop(shell_env_loaded_tx);
+        drop(shell_env_global_tx);
     }
 
     app.on_open_urls({
@@ -662,6 +665,17 @@ fn main() {
         web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         snippet_provider::init(cx);
         edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+
+        // After the login shell environment has been loaded, set a global so
+        // subsystems can re-check environment-variable-based API keys.
+        cx.spawn(async move |cx| {
+            shell_env_global_rx.await.ok();
+            cx.update(|cx| {
+                cx.set_global(language_model::ShellEnvLoaded);
+            });
+        })
+        .detach();
+
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
         project::AgentRegistryStore::init_global(
             cx,

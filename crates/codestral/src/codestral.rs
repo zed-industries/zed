@@ -226,6 +226,10 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
     ) {
         log::debug!("Codestral: Refresh called (debounce: {})", debounce);
 
+        // Re-trigger key loading in case the env var became available after
+        // the initial (possibly too-early) attempt at startup.
+        load_codestral_api_key(cx).detach();
+
         let Some(api_key) = codestral_api_key(cx) else {
             log::warn!("Codestral: No API key configured, skipping refresh");
             return;

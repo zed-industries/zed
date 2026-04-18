@@ -11,7 +11,7 @@ pub use language_model_core::*;
 use anyhow::Result;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Task, Window};
+use gpui::{AnyView, App, AsyncApp, Global, Task, Window};
 use icons::IconName;
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -21,6 +21,17 @@ pub use crate::model::*;
 pub use crate::registry::*;
 pub use crate::request::{LanguageModelImageExt, gpui_size_to_image_size, image_size_to_gpui};
 pub use env_var::{EnvVar, env_var};
+
+/// Marker global set after the login shell environment has been loaded.
+///
+/// On macOS, apps launched from Dock/Spotlight don't inherit shell environment
+/// variables (including API keys). Zed loads them asynchronously via a login
+/// shell. Subsystems that depend on environment variables (LLM providers, edit
+/// prediction providers) can `cx.observe_global::<ShellEnvLoaded>()` to retry
+/// authentication once the environment is available.
+pub struct ShellEnvLoaded;
+
+impl Global for ShellEnvLoaded {}
 
 pub fn init(cx: &mut App) {
     registry::init(cx);
