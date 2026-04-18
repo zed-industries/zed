@@ -44,6 +44,10 @@ pub struct SpawnAgentToolInput {
     /// Session ID of an existing agent session to continue instead of creating a new one.
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
+    /// Depth of the calling agent (0 = root). Populated automatically; do not set manually.
+    /// Subagents beyond MAX_SUBAGENT_DEPTH will be rejected at creation time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caller_depth: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +65,10 @@ pub enum SpawnAgentToolOutput {
         session_id: Option<acp::SessionId>,
         error: String,
         session_info: Option<SubagentSessionInfo>,
+        /// Set to true when the error is a depth-limit rejection, so callers
+        /// can distinguish quota exhaustion from configuration errors.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        depth_limit_reached: bool,
     },
 }
 
