@@ -1,6 +1,6 @@
 use crate::LanguageName;
 use collections::{HashMap, HashSet, IndexSet};
-use gpui::SharedString;
+use gpui_shared_string::SharedString;
 use lsp::LanguageServerName;
 use regex::Regex;
 use schemars::{JsonSchema, SchemaGenerator, json_schema};
@@ -19,9 +19,8 @@ pub enum SoftWrap {
     PreferLine,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
-    /// Soft wrap lines at the preferred line length.
-    PreferredLineLength,
     /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
+    #[serde(alias = "preferred_line_length")]
     Bounded,
 }
 

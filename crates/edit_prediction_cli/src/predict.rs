@@ -195,7 +195,7 @@ pub async fn run_prediction(
                             if matches!(provider, PredictionProvider::Zeta2(_)) {
                                 updated_example.prompt.get_or_insert(ExamplePrompt {
                                     input: prompt,
-                                    expected_output: String::new(),
+                                    expected_output: None,
                                     rejected_output: None,
                                     provider,
                                     prefill: None,

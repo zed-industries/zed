@@ -74,6 +74,8 @@ pub use util::serde::default_true;
 pub enum ParseStatus {
     /// Settings were parsed successfully
     Success,
+    /// Settings file was not changed, so no parsing was performed
+    Unchanged,
     /// Settings failed to parse
     Failed { error: String },
 }
@@ -174,9 +176,6 @@ pub struct SettingsContent {
     /// Configuration for Node-related features
     pub node: Option<NodeBinarySettings>,
 
-    /// Configuration for the Notification Panel
-    pub notification_panel: Option<NotificationPanelSettingsContent>,
-
     pub proxy: Option<String>,
 
     /// The URL of the Zed server to connect to.
@@ -212,6 +211,45 @@ pub struct SettingsContent {
     ///
     /// Default: 5
     pub modeline_lines: Option<usize>,
+
+    /// Local overrides for feature flags, keyed by flag name.
+    pub feature_flags: Option<FeatureFlagsMap>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, MergeFrom)]
+#[serde(transparent)]
+pub struct FeatureFlagsMap(pub HashMap<String, String>);
+
+// A manual `JsonSchema` impl keeps this type's schema registered under a
+// unique name. The derived impl on a `#[serde(transparent)]` newtype around
+// `HashMap<String, String>` would inline to the map's own schema name (`Map_of_string`),
+// which is shared with every other `HashMap<String, String>` setting field in
+// `SettingsContent`. A named placeholder lets `json_schema_store` find and
+// replace just this field's schema at runtime without clobbering the others.
+impl JsonSchema for FeatureFlagsMap {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "FeatureFlagsMap".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+        })
+    }
+}
+
+impl std::ops::Deref for FeatureFlagsMap {
+    type Target = HashMap<String, String>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for FeatureFlagsMap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl SettingsContent {
@@ -633,28 +671,6 @@ pub struct ScrollbarSettings {
 
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct NotificationPanelSettingsContent {
-    /// Whether to show the panel button in the status bar.
-    ///
-    /// Default: true
-    pub button: Option<bool>,
-    /// Where to dock the panel.
-    ///
-    /// Default: right
-    pub dock: Option<DockPosition>,
-    /// Default width of the panel in pixels.
-    ///
-    /// Default: 300
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
-    /// Whether to show a badge on the notification panel icon with the count of unread notifications.
-    ///
-    /// Default: false
-    pub show_count_badge: Option<bool>,
-}
-
-#[with_fallible_options]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct PanelSettingsContent {
     /// Whether to show the panel button in the status bar.
     ///
@@ -763,6 +779,7 @@ pub struct VimSettingsContent {
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_smartcase_find: Option<bool>,
+    pub use_regex_search: Option<bool>,
     /// When enabled, the `:substitute` command replaces all matches in a line
     /// by default. The 'g' flag then toggles this behavior.,
     pub gdefault: Option<bool>,
