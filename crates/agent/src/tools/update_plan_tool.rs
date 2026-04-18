@@ -15,6 +15,8 @@ pub enum PlanEntryStatus {
     InProgress,
     /// The task has been successfully completed.
     Completed,
+    /// The task was attempted but could not be completed (e.g., subagent error or token budget exceeded).
+    Failed,
 }
 
 impl From<PlanEntryStatus> for acp::PlanEntryStatus {
@@ -23,6 +25,7 @@ impl From<PlanEntryStatus> for acp::PlanEntryStatus {
             PlanEntryStatus::Pending => acp::PlanEntryStatus::Pending,
             PlanEntryStatus::InProgress => acp::PlanEntryStatus::InProgress,
             PlanEntryStatus::Completed => acp::PlanEntryStatus::Completed,
+            PlanEntryStatus::Failed => acp::PlanEntryStatus::Failed,
         }
     }
 }
