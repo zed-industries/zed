@@ -819,7 +819,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             return;
         };
         let task = workspace.update(cx, |workspace, cx| {
-            workspace.send_keystrokes_impl(keystrokes, window, cx)
+            workspace.send_keystrokes_impl(keystrokes, false, window, cx)
         });
         let had_range = action.range.is_some();
         let had_override = action.override_rows.is_some();

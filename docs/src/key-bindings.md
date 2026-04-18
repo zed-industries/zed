@@ -285,6 +285,24 @@ The argument to `SendKeystrokes` is a space-separated list of keystrokes (using 
 
 If the argument to `SendKeystrokes` contains the binding used to trigger it, it will use the next-highest-precedence definition of that binding. This allows you to extend the default behavior of a key binding.
 
+If you need Vim-style `noremap` behavior, pass an object instead of a string:
+
+```json [keymap]
+[
+  {
+    "context": "VimControl",
+    "bindings": {
+      "y": [
+        "workspace::SendKeystrokes",
+        { "keystrokes": "2 x", "noremap": true }
+      ]
+    }
+  }
+]
+```
+
+`noremap` defaults to `false`, which preserves the current behavior.
+
 ### Forward keys to terminal
 
 If you're on Linux or Windows, you might find yourself wanting to forward key combinations to the built-in terminal instead of them being handled by Zed.

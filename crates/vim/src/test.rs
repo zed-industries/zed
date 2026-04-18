@@ -1287,7 +1287,7 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
             "g z",
-            workspace::SendKeystrokes("l l l l".to_string()),
+            workspace::SendKeystrokes::new("l l l l"),
             None,
         )])
     });
@@ -1299,7 +1299,7 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
             "g y",
-            workspace::SendKeystrokes("i f o o escape l".to_string()),
+            workspace::SendKeystrokes::new("i f o o escape l"),
             None,
         )])
     });
@@ -1311,7 +1311,7 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
             "g x",
-            workspace::SendKeystrokes("g z g y".to_string()),
+            workspace::SendKeystrokes::new("g z g y"),
             None,
         )])
     });
@@ -1323,7 +1323,7 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
             "g w",
-            workspace::SendKeystrokes(": j enter".to_string()),
+            workspace::SendKeystrokes::new(": j enter"),
             None,
         )])
     });
@@ -1335,7 +1335,7 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
             "g u",
-            workspace::SendKeystrokes("g w g z".to_string()),
+            workspace::SendKeystrokes::new("g w g z"),
             None,
         )])
     });
@@ -1347,7 +1347,7 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
             "g t",
-            workspace::SendKeystrokes("i space escape".to_string()),
+            workspace::SendKeystrokes::new("i space escape"),
             None,
         )])
     });
@@ -1944,12 +1944,12 @@ async fn test_remap_adjacent_dog_cat(cx: &mut gpui::TestAppContext) {
         cx.bind_keys([
             KeyBinding::new(
                 "d o g",
-                workspace::SendKeystrokes("🐶".to_string()),
+                workspace::SendKeystrokes::new("🐶"),
                 Some("vim_mode == insert"),
             ),
             KeyBinding::new(
                 "c a t",
-                workspace::SendKeystrokes("🐱".to_string()),
+                workspace::SendKeystrokes::new("🐱"),
                 Some("vim_mode == insert"),
             ),
         ])
@@ -1978,17 +1978,17 @@ async fn test_remap_nested_pineapple(cx: &mut gpui::TestAppContext) {
         cx.bind_keys([
             KeyBinding::new(
                 "p i n",
-                workspace::SendKeystrokes("📌".to_string()),
+                workspace::SendKeystrokes::new("📌"),
                 Some("vim_mode == insert"),
             ),
             KeyBinding::new(
                 "p i n e",
-                workspace::SendKeystrokes("🌲".to_string()),
+                workspace::SendKeystrokes::new("🌲"),
                 Some("vim_mode == insert"),
             ),
             KeyBinding::new(
                 "p i n e a p p l e",
-                workspace::SendKeystrokes("🍍".to_string()),
+                workspace::SendKeystrokes::new("🍍"),
                 Some("vim_mode == insert"),
             ),
         ])
@@ -2021,12 +2021,12 @@ async fn test_remap_recursion(cx: &mut gpui::TestAppContext) {
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
             "x",
-            workspace::SendKeystrokes("\" _ x".to_string()),
+            workspace::SendKeystrokes::new("\" _ x"),
             Some("VimControl"),
         )]);
         cx.bind_keys([KeyBinding::new(
             "y",
-            workspace::SendKeystrokes("2 x".to_string()),
+            workspace::SendKeystrokes::new("2 x"),
             Some("VimControl"),
         )])
     });
@@ -2039,6 +2039,72 @@ async fn test_remap_recursion(cx: &mut gpui::TestAppContext) {
     cx.simulate_shared_keystrokes("y").await;
     cx.shared_clipboard().await.assert_eq("h");
     cx.shared_state().await.assert_eq("ˇlo");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_send_keystrokes_noremap(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "x",
+            workspace::SendKeystrokes::new("\" _ x"),
+            Some("VimControl"),
+        )]);
+        cx.bind_keys([KeyBinding::new(
+            "y",
+            workspace::SendKeystrokes::Options(workspace::SendKeystrokesOptions {
+                keystrokes: "2 x".to_string(),
+                noremap: true,
+            }),
+            Some("VimControl"),
+        )])
+    });
+
+    cx.set_state("ˇhello", Mode::Normal);
+    cx.simulate_keystrokes("d l");
+    cx.shared_clipboard().assert_eq("h");
+    cx.simulate_keystrokes("y");
+    cx.run_until_parked();
+    cx.shared_clipboard().assert_eq("el");
+    cx.assert_state("ˇlo", Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
+async fn test_send_keystrokes_noremap_preserved_when_queued(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "x",
+            workspace::SendKeystrokes::new("\" _ x"),
+            Some("VimControl"),
+        )]);
+        cx.bind_keys([KeyBinding::new(
+            "y",
+            workspace::SendKeystrokes::Options(workspace::SendKeystrokesOptions {
+                keystrokes: "2 x".to_string(),
+                noremap: true,
+            }),
+            Some("VimControl"),
+        )]);
+        cx.bind_keys([KeyBinding::new(
+            "z",
+            workspace::SendKeystrokes::new("escape"),
+            Some("VimControl"),
+        )])
+    });
+
+    cx.set_state("ˇhello", Mode::Normal);
+    cx.simulate_keystrokes("d l");
+    cx.shared_clipboard().assert_eq("h");
+
+    cx.simulate_keystrokes("z");
+    cx.simulate_keystrokes("y");
+    cx.run_until_parked();
+
+    cx.shared_clipboard().assert_eq("el");
+    cx.assert_state("ˇlo", Mode::Normal);
 }
 
 #[perf]
@@ -2804,7 +2870,7 @@ async fn test_send_keystrokes_underscore_is_literal_46509(cx: &mut gpui::TestApp
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
             "g x",
-            workspace::SendKeystrokes("\" _ x".to_string()),
+            workspace::SendKeystrokes::new("\" _ x"),
             Some("VimControl"),
         )])
     });
@@ -2878,7 +2944,7 @@ async fn test_send_keystrokes_no_key_equivalent_mapping_46509(cx: &mut gpui::Tes
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
             "g p",
-            workspace::SendKeystrokes("{".to_string()),
+            workspace::SendKeystrokes::new("{"),
             Some("vim_mode == normal"),
         )])
     });

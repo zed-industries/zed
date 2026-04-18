@@ -451,7 +451,41 @@ pub struct CloseItemInAllPanes {
 /// Sends a sequence of keystrokes to the active element.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
-pub struct SendKeystrokes(pub String);
+#[serde(untagged)]
+pub enum SendKeystrokes {
+    Keystrokes(String),
+    Options(SendKeystrokesOptions),
+}
+
+impl SendKeystrokes {
+    pub fn new(keystrokes: impl Into<String>) -> Self {
+        Self::Keystrokes(keystrokes.into())
+    }
+
+    fn keystrokes(&self) -> &str {
+        match self {
+            Self::Keystrokes(keystrokes) => keystrokes,
+            Self::Options(options) => &options.keystrokes,
+        }
+    }
+
+    fn noremap(&self) -> bool {
+        match self {
+            Self::Keystrokes(_) => false,
+            Self::Options(options) => options.noremap,
+        }
+    }
+}
+
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SendKeystrokesOptions {
+    /// The space-separated keystrokes to dispatch.
+    pub keystrokes: String,
+    /// If true, dispatch the keystrokes without expanding other `SendKeystrokes` remaps.
+    #[serde(default)]
+    pub noremap: bool,
+}
 
 actions!(
     project_symbols,
@@ -1311,9 +1345,15 @@ type PromptForOpenPath = Box<
 
 #[derive(Default)]
 struct DispatchingKeystrokes {
-    dispatched: HashSet<Vec<Keystroke>>,
-    queue: VecDeque<Keystroke>,
+    dispatched: HashSet<Vec<QueuedKeystroke>>,
+    queue: VecDeque<QueuedKeystroke>,
     task: Option<Shared<Task<()>>>,
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct QueuedKeystroke {
+    keystroke: Keystroke,
+    noremap: bool,
 }
 
 /// Collects everything project-related for a certain window opened.
@@ -3243,7 +3283,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let keystrokes: Vec<Keystroke> = action
-            .0
+            .keystrokes()
             .split(' ')
             .flat_map(|k| Keystroke::parse(k).log_err())
             .map(|k| {
@@ -3253,22 +3293,27 @@ impl Workspace {
                     .clone()
             })
             .collect();
-        let _ = self.send_keystrokes_impl(keystrokes, window, cx);
+        let _ = self.send_keystrokes_impl(keystrokes, action.noremap(), window, cx);
     }
 
     pub fn send_keystrokes_impl(
         &mut self,
         keystrokes: Vec<Keystroke>,
+        noremap: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Shared<Task<()>> {
+        let queued_keystrokes = keystrokes
+            .into_iter()
+            .map(|keystroke| QueuedKeystroke { keystroke, noremap })
+            .collect::<Vec<_>>();
         let mut state = self.dispatching_keystrokes.borrow_mut();
-        if !state.dispatched.insert(keystrokes.clone()) {
+        if !state.dispatched.insert(queued_keystrokes.clone()) {
             cx.propagate();
             return state.task.clone().unwrap();
         }
 
-        state.queue.extend(keystrokes);
+        state.queue.extend(queued_keystrokes);
 
         let keystrokes = self.dispatching_keystrokes.clone();
         if state.task.is_none() {
@@ -3277,18 +3322,26 @@ impl Workspace {
                     .spawn(cx, async move |cx| {
                         // limit to 100 keystrokes to avoid infinite recursion.
                         for _ in 0..100 {
-                            let keystroke = {
+                            let queued_keystroke = {
                                 let mut state = keystrokes.borrow_mut();
-                                let Some(keystroke) = state.queue.pop_front() else {
+                                let Some(queued_keystroke) = state.queue.pop_front() else {
                                     state.dispatched.clear();
                                     state.task.take();
                                     return;
                                 };
-                                keystroke
+                                queued_keystroke
                             };
                             cx.update(|window, cx| {
                                 let focused = window.focused(cx);
-                                window.dispatch_keystroke(keystroke.clone(), cx);
+                                if queued_keystroke.noremap {
+                                    window.dispatch_keystroke_no_remap(
+                                        queued_keystroke.keystroke.clone(),
+                                        cx,
+                                    );
+                                } else {
+                                    window
+                                        .dispatch_keystroke(queued_keystroke.keystroke.clone(), cx);
+                                }
                                 if window.focused(cx) != focused {
                                     // dispatch_keystroke may cause the focus to change.
                                     // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle

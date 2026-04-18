@@ -449,16 +449,20 @@ impl DispatchTree {
         &self,
         input: &[Keystroke],
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+        skip_send_keystrokes_remap: bool,
     ) -> (SmallVec<[KeyBinding; 1]>, bool, Vec<KeyContext>) {
         let context_stack: Vec<KeyContext> = dispatch_path
             .iter()
             .filter_map(|node_id| self.node(*node_id).context.clone())
             .collect();
 
-        let (bindings, partial) = self
-            .keymap
-            .borrow()
-            .bindings_for_input(input, &context_stack);
+        let (bindings, partial) =
+            self.keymap
+                .borrow()
+                .bindings_for_input_filtered(input, &context_stack, |binding| {
+                    skip_send_keystrokes_remap
+                        && binding.action().name() == "workspace::SendKeystrokes"
+                });
         (bindings, partial, context_stack)
     }
 
@@ -485,9 +489,11 @@ impl DispatchTree {
         mut input: SmallVec<[Keystroke; 1]>,
         keystroke: Keystroke,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+        skip_send_keystrokes_remap: bool,
     ) -> DispatchResult {
         input.push(keystroke.clone());
-        let (bindings, pending, context_stack) = self.bindings_for_input(&input, dispatch_path);
+        let (bindings, pending, context_stack) =
+            self.bindings_for_input(&input, dispatch_path, skip_send_keystrokes_remap);
 
         if pending {
             return DispatchResult {
@@ -510,9 +516,11 @@ impl DispatchTree {
         }
         input.pop();
 
-        let (suffix, mut to_replay) = self.replay_prefix(input, dispatch_path);
+        let (suffix, mut to_replay) =
+            self.replay_prefix(input, dispatch_path, skip_send_keystrokes_remap);
 
-        let mut result = self.dispatch_key(suffix, keystroke, dispatch_path);
+        let mut result =
+            self.dispatch_key(suffix, keystroke, dispatch_path, skip_send_keystrokes_remap);
         to_replay.extend(result.to_replay);
         result.to_replay = to_replay;
         result
@@ -524,11 +532,13 @@ impl DispatchTree {
         &mut self,
         input: SmallVec<[Keystroke; 1]>,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+        skip_send_keystrokes_remap: bool,
     ) -> SmallVec<[Replay; 1]> {
-        let (suffix, mut to_replay) = self.replay_prefix(input, dispatch_path);
+        let (suffix, mut to_replay) =
+            self.replay_prefix(input, dispatch_path, skip_send_keystrokes_remap);
 
         if !suffix.is_empty() {
-            to_replay.extend(self.flush_dispatch(suffix, dispatch_path))
+            to_replay.extend(self.flush_dispatch(suffix, dispatch_path, skip_send_keystrokes_remap))
         }
 
         to_replay
@@ -539,10 +549,15 @@ impl DispatchTree {
         &self,
         mut input: SmallVec<[Keystroke; 1]>,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+        skip_send_keystrokes_remap: bool,
     ) -> (SmallVec<[Keystroke; 1]>, SmallVec<[Replay; 1]>) {
         let mut to_replay: SmallVec<[Replay; 1]> = Default::default();
         for last in (0..input.len()).rev() {
-            let (bindings, _, _) = self.bindings_for_input(&input[0..=last], dispatch_path);
+            let (bindings, _, _) = self.bindings_for_input(
+                &input[0..=last],
+                dispatch_path,
+                skip_send_keystrokes_remap,
+            );
             if !bindings.is_empty() {
                 to_replay.push(Replay {
                     keystroke: input.drain(0..=last).next_back().unwrap(),
@@ -740,7 +755,7 @@ mod tests {
             key: &str,
             path: &DispatchPath,
         ) -> DispatchResult {
-            tree.dispatch_key(pending, Keystroke::parse(key).unwrap(), path)
+            tree.dispatch_key(pending, Keystroke::parse(key).unwrap(), path, false)
         }
 
         let dispatch_path: DispatchPath = SmallVec::new();
