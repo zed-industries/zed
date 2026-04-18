@@ -714,6 +714,26 @@ impl MultiWorkspace {
         cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
     }
 
+    pub(crate) fn activate_provisional_workspace(
+        &mut self,
+        workspace: Entity<Workspace>,
+        provisional_key: ProjectGroupKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if workspace != self.active_workspace {
+            self.register_workspace(&workspace, window, cx);
+        }
+
+        self.ensure_project_group_state(provisional_key);
+        if !self.is_workspace_retained(&workspace) {
+            self.retained_workspaces.push(workspace.clone());
+        }
+
+        self.activate(workspace.clone(), window, cx);
+        cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
+    }
+
     fn register_workspace(
         &mut self,
         workspace: &Entity<Workspace>,
