@@ -4,8 +4,8 @@ use crate::DockPosition;
 use collections::HashMap;
 use serde::Deserialize;
 pub use settings::{
-    AutoPreviewMode, AutoPreviewSetting, AutosaveSetting, BottomDockLayout, EncodingDisplayOptions,
-    InactiveOpacity, PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
+    AutoPreviewSetting, AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
+    PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
     RestoreOnStartupBehavior, Settings,
 };
 
@@ -36,14 +36,7 @@ pub struct WorkspaceSettings {
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
     pub focus_follows_mouse: FocusFollowsMouse,
-    pub auto_preview: AutoPreview,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum AutoPreview {
-    Off,
-    Preview,
-    PreviewToSide,
+    pub auto_preview: AutoPreviewSetting,
 }
 
 #[derive(Copy, Clone, Deserialize)]
@@ -142,16 +135,7 @@ impl Settings for WorkspaceSettings {
                         .unwrap_or(250),
                 ),
             },
-            auto_preview: match workspace.auto_preview {
-                Some(AutoPreviewSetting::Simple(true)) => AutoPreview::Preview,
-                Some(AutoPreviewSetting::Config {
-                    mode: AutoPreviewMode::Preview,
-                }) => AutoPreview::Preview,
-                Some(AutoPreviewSetting::Config {
-                    mode: AutoPreviewMode::PreviewToSide,
-                }) => AutoPreview::PreviewToSide,
-                _ => AutoPreview::Off,
-            },
+            auto_preview: workspace.auto_preview.unwrap_or_default(),
         }
     }
 }

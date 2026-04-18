@@ -148,8 +148,8 @@ use util::{
 };
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutoPreview, AutosaveSetting, BottomDockLayout, FocusFollowsMouse, RestoreOnStartupBehavior,
-    StatusBarSettings, TabBarSettings, WorkspaceSettings,
+    AutoPreviewSetting, AutosaveSetting, BottomDockLayout, FocusFollowsMouse,
+    RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 

@@ -125,33 +125,37 @@ pub struct WorkspaceSettingsContent {
     /// Whether the focused panel follows the mouse location
     /// Default: false
     pub focus_follows_mouse: Option<FocusFollowsMouse>,
-    /// Whether to automatically open a preview when opening previewable files
+    /// Whether to automatically open a preview when opening a previewable file
     /// (e.g., Markdown, SVG).
     ///
-    /// Accepts:
-    /// - `true` — open preview in the same pane (default when enabled)
-    /// - `false` — disabled (default)
-    /// - `{"mode": "preview_to_side"}` — open preview in an adjacent pane
-    ///
-    /// Default: false
+    /// Default: disabled
     pub auto_preview: Option<AutoPreviewSetting>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
-#[serde(untagged)]
-pub enum AutoPreviewSetting {
-    /// Simple boolean: `true` for same-pane preview, `false` to disable.
-    Simple(bool),
-    /// Object form with mode selection.
-    Config { mode: AutoPreviewMode },
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+/// Whether to automatically open a preview when opening a previewable file
+/// (e.g., Markdown, SVG).
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
 #[serde(rename_all = "snake_case")]
-pub enum AutoPreviewMode {
-    /// Open preview in the same pane, replacing the editor tab.
+pub enum AutoPreviewSetting {
+    /// Do not automatically open a preview.
+    #[default]
+    Disabled,
+    /// Open the preview in the same pane, replacing the editor tab.
     Preview,
-    /// Open preview in an adjacent pane to the right.
+    /// Open the preview in an adjacent pane to the right, keeping the editor focused.
     PreviewToSide,
 }
 

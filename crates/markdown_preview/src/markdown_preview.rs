@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{App, actions};
 use settings::Settings;
-use workspace::{AutoPreview, Workspace, WorkspaceSettings};
+use workspace::{AutoPreviewSetting, Workspace, WorkspaceSettings};
 
 pub mod markdown_preview_view;
 
@@ -47,20 +47,20 @@ pub fn init(cx: &mut App) {
             |_workspace, _, event: &workspace::Event, window, cx| {
                 if let workspace::Event::ItemAdded { item } = event {
                     let auto_preview = WorkspaceSettings::get_global(cx).auto_preview;
-                    if auto_preview == AutoPreview::Off {
+                    if auto_preview == AutoPreviewSetting::Disabled {
                         return;
                     }
                     if let Some(editor) = item.act_as::<Editor>(cx) {
                         if markdown_preview_view::MarkdownPreviewView::is_markdown_file(&editor, cx)
                         {
                             match auto_preview {
-                                AutoPreview::Preview => {
+                                AutoPreviewSetting::Preview => {
                                     window.dispatch_action(Box::new(OpenPreview), cx);
                                 }
-                                AutoPreview::PreviewToSide => {
+                                AutoPreviewSetting::PreviewToSide => {
                                     window.dispatch_action(Box::new(OpenPreviewToTheSide), cx);
                                 }
-                                AutoPreview::Off => {}
+                                AutoPreviewSetting::Disabled => {}
                             }
                         }
                     }

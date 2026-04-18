@@ -230,16 +230,13 @@
     "enabled": false,
     "debounce_ms": 250,
   },
-  // Whether to automatically open a preview when opening previewable
-  // files (e.g., Markdown, SVG).
+  // Whether to automatically open a preview when opening a previewable
+  // file (e.g., Markdown, SVG).
   //
-  // Accepts a boolean or an object:
-  //   false - disabled (default)
-  //   true - open preview in the same pane
-  //   {"mode": "preview_to_side"} - open preview in an adjacent pane
-  //
-  // Default: false
-  "auto_preview": false,
+  //   "disabled" - no automatic preview (default)
+  //   "preview" - open the preview in the same pane
+  //   "preview_to_side" - open the preview in an adjacent pane
+  "auto_preview": "disabled",
   // Determines how snippets are sorted relative to other completion items.
   //
   // 1. Place snippets at the top of the completion list:
