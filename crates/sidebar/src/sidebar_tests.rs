@@ -7780,7 +7780,9 @@ async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
     );
 
     // Switch to A — B survives. (Switching from one internal workspace, to another)
-    multi_workspace.update_in(cx, |mw, window, cx| mw.activate(workspace_a, None, window, cx));
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.activate(workspace_a, None, window, cx)
+    });
     cx.run_until_parked();
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
