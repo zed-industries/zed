@@ -2722,33 +2722,40 @@ impl AgentPanel {
     }
 
     fn destination_has_meaningful_state(&self, cx: &App) -> bool {
-        if !matches!(self.base_view, BaseView::Uninitialized) {
-            return true;
-        }
-
         if self.overlay_view.is_some() || !self.retained_threads.is_empty() {
             return true;
         }
 
-        self.draft_thread.as_ref().is_some_and(|conversation_view| {
-            conversation_view
-                .read(cx)
-                .root_thread_view()
-                .is_some_and(|thread_view| {
-                    let thread_view = thread_view.read(cx);
-                    thread_view
-                        .thread
-                        .read(cx)
-                        .draft_prompt()
-                        .is_some_and(|draft| !draft.is_empty())
-                        || !thread_view
-                            .message_editor
+        match &self.base_view {
+            BaseView::Uninitialized => false,
+            BaseView::AgentThread { conversation_view } => {
+                let has_entries = conversation_view
+                    .read(cx)
+                    .root_thread_view()
+                    .is_some_and(|tv| !tv.read(cx).thread.read(cx).entries().is_empty());
+                if has_entries {
+                    return true;
+                }
+
+                conversation_view
+                    .read(cx)
+                    .root_thread_view()
+                    .is_some_and(|thread_view| {
+                        let thread_view = thread_view.read(cx);
+                        thread_view
+                            .thread
                             .read(cx)
-                            .text(cx)
-                            .trim()
-                            .is_empty()
-                })
-        })
+                            .draft_prompt()
+                            .is_some_and(|draft| !draft.is_empty())
+                            || !thread_view
+                                .message_editor
+                                .read(cx)
+                                .text(cx)
+                                .trim()
+                                .is_empty()
+                    })
+            }
+        }
     }
 
     fn active_initial_content(&self, cx: &App) -> Option<AgentInitialContent> {
@@ -5303,10 +5310,7 @@ mod tests {
                 name: "feature".to_string(),
             },
         );
-        assert_eq!(
-            resolved,
-            (Some("feature".to_string()), Some("feature".to_string()))
-        );
+        assert_eq!(resolved, (None, Some("feature".to_string())));
 
         let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
             &NewWorktreeBranchTarget::CurrentBranch,

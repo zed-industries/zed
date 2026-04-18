@@ -838,6 +838,7 @@ async fn open_worktree_workspace(
             }
 
             if !paths_to_open.is_empty() {
+                let should_focus_center = focused_dock.is_none();
                 let open_task = workspace.open_paths(
                     paths_to_open,
                     workspace::OpenOptions {
@@ -848,11 +849,16 @@ async fn open_worktree_workspace(
                     window,
                     cx,
                 );
-                cx.spawn(async move |_, _| -> anyhow::Result<()> {
+                cx.spawn_in(window, async move |workspace, cx| {
                     for item in open_task.await.into_iter().flatten() {
                         item.log_err();
                     }
-                    Ok(())
+                    if should_focus_center {
+                        workspace.update_in(cx, |workspace, window, cx| {
+                            workspace.focus_center_pane(window, cx);
+                        })?;
+                    }
+                    anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
             }
@@ -873,19 +879,18 @@ async fn open_worktree_workspace(
         new_workspace.update(cx, |workspace, cx| {
             workspace.run_create_worktree_tasks(window, cx);
         });
+    })?;
 
-        dbg!(&focused_dock);
-        if let Some(dock_position) = focused_dock {
+    if let Some(dock_position) = focused_dock {
+        window_handle.update(cx, |_multi_workspace, window, cx| {
             new_workspace.update(cx, |workspace, cx| {
                 let dock = workspace.dock_at_position(dock_position);
-                let active_panel = dock.read(cx).active_panel();
-                dbg!(active_panel.as_ref().map(|p| p.persistent_name()));
-                if let Some(panel) = active_panel {
+                if let Some(panel) = dock.read(cx).active_panel() {
                     panel.panel_focus_handle(cx).focus(window, cx);
                 }
             });
-        }
-    })?;
+        })?;
+    }
 
     anyhow::Ok(())
 }
