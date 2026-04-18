@@ -49,9 +49,13 @@ impl VsCodeSettings {
             VsCodeSettingsSource::Cursor => cursor_settings_file_paths(),
         };
         let mut path = None;
+        let mut size = 0;
         for candidate_path in candidate_paths.iter() {
-            if fs.is_file(candidate_path).await {
-                path = Some(candidate_path.clone());
+            if let Some(meta) = fs.metadata(candidate_path).await.unwrap_or_default() {
+                if meta.len > size {
+                    path = Some(candidate_path.clone());
+                    size = meta.len;
+                }
             }
         }
         let Some(path) = path else {
