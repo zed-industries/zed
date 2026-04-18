@@ -70,17 +70,25 @@ pub fn init(cx: &mut App) {
         repository_selector::register(workspace);
         git_picker::register(workspace);
 
-        workspace.register_action(worktree_service::handle_create_worktree);
-        workspace.register_action(worktree_service::handle_switch_worktree);
+        workspace.register_action(|workspace, action: &zed_actions::CreateWorktree, window, cx| {
+            worktree_service::handle_create_worktree(workspace, action, window, None, cx);
+        });
+        workspace.register_action(|workspace, action: &zed_actions::SwitchWorktree, window, cx| {
+            worktree_service::handle_switch_worktree(workspace, action, window, None, cx);
+        });
 
         workspace.register_action(|workspace, _: &zed_actions::git::Worktree, window, cx| {
             let focused_dock = workspace.focused_dock_position(window, cx);
-            workspace.set_pre_picker_focused_dock(focused_dock);
-
             let project = workspace.project().clone();
             let workspace_handle = workspace.weak_handle();
             workspace.toggle_modal(window, cx, |window, cx| {
-                worktree_picker::WorktreePicker::new_modal(project, workspace_handle, window, cx)
+                worktree_picker::WorktreePicker::new_modal(
+                    project,
+                    workspace_handle,
+                    focused_dock,
+                    window,
+                    cx,
+                )
             });
         });
 

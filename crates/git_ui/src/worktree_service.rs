@@ -11,7 +11,9 @@ use project::project_settings::ProjectSettings;
 use project::trusted_worktrees::{PathTrust, TrustedWorktrees};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
-use workspace::{MultiWorkspace, OpenMode, PreviousWorkspaceState, Workspace};
+use workspace::{
+    MultiWorkspace, OpenMode, PreviousWorkspaceState, Workspace, dock::DockPosition,
+};
 use zed_actions::NewWorktreeBranchTarget;
 
 use util::ResultExt as _;
@@ -385,6 +387,7 @@ pub fn handle_create_worktree(
     workspace: &mut Workspace,
     action: &zed_actions::CreateWorktree,
     window: &mut gpui::Window,
+    fallback_focused_dock: Option<DockPosition>,
     cx: &mut gpui::Context<Workspace>,
 ) {
     let project = workspace.project().clone();
@@ -403,7 +406,8 @@ pub fn handle_create_worktree(
         return;
     }
 
-    let previous_state = workspace.capture_state_for_worktree_switch(window, cx);
+    let previous_state =
+        workspace.capture_state_for_worktree_switch(window, fallback_focused_dock, cx);
     let workspace_handle = workspace.weak_handle();
     let window_handle = window.window_handle().downcast::<MultiWorkspace>();
     let remote_connection_options = project.read(cx).remote_connection_options(cx);
@@ -484,6 +488,7 @@ pub fn handle_switch_worktree(
     workspace: &mut Workspace,
     action: &zed_actions::SwitchWorktree,
     window: &mut gpui::Window,
+    fallback_focused_dock: Option<DockPosition>,
     cx: &mut gpui::Context<Workspace>,
 ) {
     let project = workspace.project().clone();
@@ -502,7 +507,8 @@ pub fn handle_switch_worktree(
         return;
     }
 
-    let previous_state = workspace.capture_state_for_worktree_switch(window, cx);
+    let previous_state =
+        workspace.capture_state_for_worktree_switch(window, fallback_focused_dock, cx);
     let workspace_handle = workspace.weak_handle();
     let window_handle = window.window_handle().downcast::<MultiWorkspace>();
     let remote_connection_options = project.read(cx).remote_connection_options(cx);
@@ -719,7 +725,7 @@ async fn open_worktree_workspace(
                 },
             );
 
-            let task = multi_workspace.find_or_create_workspace(
+            let task = multi_workspace.find_or_create_workspace_with_source_workspace(
                 path_list,
                 remote_connection_options,
                 None,
@@ -734,6 +740,7 @@ async fn open_worktree_workspace(
                 &[],
                 Some(init),
                 OpenMode::Add,
+                Some(workspace.clone()),
                 window,
                 cx,
             );
@@ -865,18 +872,15 @@ async fn open_worktree_workspace(
         .ok();
 
     window_handle.update(cx, |multi_workspace, window, cx| {
-        multi_workspace.activate(new_workspace.clone(), window, cx);
+        multi_workspace.activate(
+            new_workspace.clone(),
+            Some(workspace.clone()),
+            window,
+            cx,
+        );
 
         new_workspace.update(cx, |workspace, cx| {
             workspace.run_create_worktree_tasks(window, cx);
-        });
-
-        // Signal completion on the NEW workspace so its agent panel
-        // subscriber fires and picks up stashed draft text.
-        // This must be a separate update so the event is delivered
-        // before focus restoration triggers ensure_thread_initialized.
-        new_workspace.update(cx, |workspace, cx| {
-            workspace.set_active_worktree_creation(None, false, cx);
         });
 
         if let Some(dock_position) = focused_dock {

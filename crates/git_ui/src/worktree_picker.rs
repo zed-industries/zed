@@ -19,7 +19,10 @@ use ui::{
 };
 use util::ResultExt as _;
 use util::paths::PathExt;
-use workspace::{ModalView, MultiWorkspace, Workspace, notifications::DetachAndPromptErr};
+use workspace::{
+    ModalView, MultiWorkspace, Workspace, dock::DockPosition,
+    notifications::DetachAndPromptErr,
+};
 
 use crate::git_panel::show_error_toast;
 use zed_actions::{
@@ -41,27 +44,26 @@ impl WorktreePicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        if let Some(workspace) = workspace.upgrade() {
-            let focused_dock = workspace.read(cx).focused_dock_position(window, cx);
-            workspace.update(cx, |workspace, _cx| {
-                workspace.set_pre_picker_focused_dock(focused_dock);
-            });
-        }
-        Self::new_inner(project, workspace, false, window, cx)
+        let focused_dock = workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).focused_dock_position(window, cx));
+        Self::new_inner(project, workspace, focused_dock, false, window, cx)
     }
 
     pub fn new_modal(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
+        focused_dock: Option<DockPosition>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new_inner(project, workspace, true, window, cx)
+        Self::new_inner(project, workspace, focused_dock, true, window, cx)
     }
 
     fn new_inner(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
+        focused_dock: Option<DockPosition>,
         show_footer: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -104,6 +106,7 @@ impl WorktreePicker {
             selected_index: 0,
             project,
             workspace,
+            focused_dock,
             current_branch_name,
             default_branch_name: None,
             has_multiple_repositories,
@@ -255,6 +258,7 @@ pub struct WorktreePickerDelegate {
     selected_index: usize,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
+    focused_dock: Option<DockPosition>,
     current_branch_name: Option<String>,
     default_branch_name: Option<String>,
     has_multiple_repositories: bool,
@@ -558,26 +562,40 @@ impl PickerDelegate for WorktreePickerDelegate {
         match entry {
             WorktreeEntry::Separator => return,
             WorktreeEntry::CreateFromCurrentBranch => {
-                window.dispatch_action(
-                    Box::new(CreateWorktree {
-                        worktree_name: None,
-                        branch_target: NewWorktreeBranchTarget::CurrentBranch,
-                    }),
-                    cx,
-                );
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        crate::worktree_service::handle_create_worktree(
+                            workspace,
+                            &CreateWorktree {
+                                worktree_name: None,
+                                branch_target: NewWorktreeBranchTarget::CurrentBranch,
+                            },
+                            window,
+                            self.focused_dock,
+                            cx,
+                        );
+                    });
+                }
             }
             WorktreeEntry::CreateFromDefaultBranch {
                 default_branch_name,
             } => {
-                window.dispatch_action(
-                    Box::new(CreateWorktree {
-                        worktree_name: None,
-                        branch_target: NewWorktreeBranchTarget::ExistingBranch {
-                            name: default_branch_name.clone(),
-                        },
-                    }),
-                    cx,
-                );
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        crate::worktree_service::handle_create_worktree(
+                            workspace,
+                            &CreateWorktree {
+                                worktree_name: None,
+                                branch_target: NewWorktreeBranchTarget::ExistingBranch {
+                                    name: default_branch_name.clone(),
+                                },
+                            },
+                            window,
+                            self.focused_dock,
+                            cx,
+                        );
+                    });
+                }
             }
             WorktreeEntry::Worktree { worktree, .. } => {
                 let is_current = self.project_worktree_paths.contains(&worktree.path);
@@ -596,13 +614,20 @@ impl PickerDelegate for WorktreePickerDelegate {
                             .iter()
                             .find(|wt| wt.is_main)
                             .map(|wt| wt.path.as_path());
-                        window.dispatch_action(
-                            Box::new(SwitchWorktree {
-                                path: worktree.path.clone(),
-                                display_name: worktree.directory_name(main_worktree_path),
-                            }),
-                            cx,
-                        );
+                        if let Some(workspace) = self.workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                crate::worktree_service::handle_switch_worktree(
+                                    workspace,
+                                    &SwitchWorktree {
+                                        path: worktree.path.clone(),
+                                        display_name: worktree.directory_name(main_worktree_path),
+                                    },
+                                    window,
+                                    self.focused_dock,
+                                    cx,
+                                );
+                            });
+                        }
                     }
                 }
             }
@@ -617,13 +642,20 @@ impl PickerDelegate for WorktreePickerDelegate {
                     },
                     None => NewWorktreeBranchTarget::CurrentBranch,
                 };
-                window.dispatch_action(
-                    Box::new(CreateWorktree {
-                        worktree_name: Some(name.clone()),
-                        branch_target,
-                    }),
-                    cx,
-                );
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        crate::worktree_service::handle_create_worktree(
+                            workspace,
+                            &CreateWorktree {
+                                worktree_name: Some(name.clone()),
+                                branch_target,
+                            },
+                            window,
+                            self.focused_dock,
+                            cx,
+                        );
+                    });
+                }
             }
             WorktreeEntry::CreateNamed {
                 disabled_reason: Some(_),
@@ -1094,6 +1126,7 @@ pub async fn open_remote_worktree(
         paths,
         app_state,
         new_window,
+        None,
         None,
         cx,
     )

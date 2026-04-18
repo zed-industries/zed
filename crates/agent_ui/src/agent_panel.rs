@@ -59,8 +59,8 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem, Corner,
-    DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
-    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext,
+    Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
@@ -672,8 +672,6 @@ pub struct AgentPanel {
     _thread_view_subscription: Option<Subscription>,
     _active_thread_focus_subscription: Option<Subscription>,
     show_trust_workspace_message: bool,
-    did_stash_worktree_draft: bool,
-    pending_worktree_draft: Option<String>,
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
 }
@@ -1038,72 +1036,10 @@ impl AgentPanel {
             _thread_view_subscription: None,
             _active_thread_focus_subscription: None,
             show_trust_workspace_message: false,
-            did_stash_worktree_draft: false,
-            pending_worktree_draft: None,
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
             _base_view_observation: None,
             _draft_editor_observation: None,
         };
-
-        // Subscribe to the workspace to detect worktree creation changes.
-        // When creation starts (label becomes Some): this is the SOURCE panel.
-        //   → Stash draft text via the workspace helper and set a flag.
-        // When creation ends (label becomes None): this is the DESTINATION panel
-        //   (the flag is false on fresh panels) → pick up the stashed text.
-        if let Some(workspace_entity) = panel.workspace.upgrade() {
-            cx.subscribe_in(
-                &workspace_entity,
-                window,
-                |this, workspace, event: &workspace::Event, window, cx| {
-                    if !matches!(event, workspace::Event::WorktreeCreationChanged) {
-                        return;
-                    }
-
-                    let is_creating = workspace
-                        .read(cx)
-                        .active_worktree_creation()
-                        .label
-                        .is_some();
-
-                    if is_creating {
-                        let draft_prompt = this.active_thread_view(cx).and_then(|thread_view| {
-                            let text = thread_view.read(cx).message_editor.read(cx).text(cx);
-                            if text.is_empty() { None } else { Some(text) }
-                        });
-
-                        let multi_workspace = workspace.read(cx).multi_workspace().cloned();
-                        if let Some(multi_workspace) = multi_workspace.and_then(|mw| mw.upgrade()) {
-                            multi_workspace.update(cx, |mw, _cx| {
-                                mw.pending_worktree_switch_text = draft_prompt;
-                            });
-                        }
-
-                        this.did_stash_worktree_draft = true;
-                    } else if !this.did_stash_worktree_draft {
-                        let multi_workspace = workspace.read(cx).multi_workspace().cloned();
-                        let pending_text =
-                            multi_workspace.and_then(|mw| mw.upgrade()).and_then(|mw| {
-                                mw.update(cx, |mw, _cx| mw.pending_worktree_switch_text.take())
-                            });
-
-                        if let Some(text) = pending_text {
-                            if let Some(thread_view) = this.active_thread_view(cx) {
-                                thread_view.update(cx, |thread_view, cx| {
-                                    thread_view.message_editor.update(cx, |editor, cx| {
-                                        editor.clear(window, cx);
-                                        editor.insert_text(&text, window, cx);
-                                    });
-                                });
-                            } else {
-                                this.pending_worktree_draft = Some(text);
-                                this.ensure_thread_initialized(window, cx);
-                            }
-                        }
-                    }
-                },
-            )
-            .detach();
-        }
 
         // Initial sync of agent servers from extensions
         panel.sync_agent_servers_from_extensions(cx);
@@ -2241,7 +2177,6 @@ impl AgentPanel {
                     |this, server_view, window, cx| {
                         this._thread_view_subscription =
                             Self::subscribe_to_active_thread_view(&server_view, window, cx);
-                        this.apply_pending_worktree_draft(window, cx);
                         cx.emit(AgentPanelEvent::ActiveViewChanged);
                         this.serialize(cx);
                         cx.notify();
@@ -2784,25 +2719,104 @@ impl AgentPanel {
         if matches!(self.base_view, BaseView::Uninitialized) {
             self.activate_draft(false, window, cx);
         }
-
-        self.apply_pending_worktree_draft(window, cx);
     }
 
-    /// Tries to insert any existing draft prompt stashed in `pending_worktree_draft`
-    /// into the active thread view's message editor.
-    fn apply_pending_worktree_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = self.pending_worktree_draft.take() {
-            if let Some(thread_view) = self.active_thread_view(cx) {
-                thread_view.update(cx, |thread_view, cx| {
-                    thread_view.message_editor.update(cx, |editor, cx| {
-                        editor.clear(window, cx);
-                        editor.insert_text(&text, window, cx);
-                    });
-                });
-            } else {
-                self.pending_worktree_draft = Some(text);
-            }
+    fn destination_has_meaningful_state(&self, cx: &App) -> bool {
+        if !matches!(self.base_view, BaseView::Uninitialized) {
+            return true;
         }
+
+        if self.overlay_view.is_some() || !self.retained_threads.is_empty() {
+            return true;
+        }
+
+        self.draft_thread.as_ref().is_some_and(|conversation_view| {
+            conversation_view.read(cx).root_thread_view().is_some_and(|thread_view| {
+                let thread_view = thread_view.read(cx);
+                thread_view
+                    .thread
+                    .read(cx)
+                    .draft_prompt()
+                    .is_some_and(|draft| !draft.is_empty())
+                    || !thread_view.message_editor.read(cx).text(cx).trim().is_empty()
+            })
+        })
+    }
+
+    fn active_initial_content(&self, cx: &App) -> Option<AgentInitialContent> {
+        self.active_thread_view(cx).and_then(|thread_view| {
+            thread_view.read(cx).thread.read(cx).draft_prompt().map(|draft| {
+                AgentInitialContent::ContentBlock {
+                    blocks: draft.to_vec(),
+                    auto_submit: false,
+                }
+            }).filter(|initial_content| match initial_content {
+                AgentInitialContent::ContentBlock { blocks, .. } => !blocks.is_empty(),
+                _ => true,
+            }).or_else(|| {
+                let text = thread_view.read(cx).message_editor.read(cx).text(cx);
+                if text.trim().is_empty() {
+                    None
+                } else {
+                    Some(AgentInitialContent::ContentBlock {
+                        blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(text))],
+                        auto_submit: false,
+                    })
+                }
+            })
+        })
+    }
+
+    fn source_panel_initialization(
+        source_workspace: &WeakEntity<Workspace>,
+        cx: &App,
+    ) -> Option<(Agent, AgentInitialContent)> {
+        let source_workspace = source_workspace.upgrade()?;
+        let source_panel = source_workspace.read(cx).panel::<AgentPanel>(cx)?;
+        let source_panel = source_panel.read(cx);
+        let initial_content = source_panel.active_initial_content(cx)?;
+        let agent = if source_panel.project.read(cx).is_via_collab() {
+            Agent::NativeAgent
+        } else {
+            source_panel.selected_agent.clone()
+        };
+        Some((agent, initial_content))
+    }
+
+    pub fn initialize_from_source_workspace_if_needed(
+        &mut self,
+        source_workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.destination_has_meaningful_state(cx) {
+            return false;
+        }
+
+        let Some((agent, initial_content)) = Self::source_panel_initialization(&source_workspace, cx)
+        else {
+            return false;
+        };
+
+        let agent = if self.project.read(cx).is_via_collab() {
+            Agent::NativeAgent
+        } else {
+            agent
+        };
+        let thread = self.create_agent_thread(
+            agent,
+            None,
+            None,
+            None,
+            Some(initial_content),
+            "agent_panel",
+            window,
+            cx,
+        );
+        self.draft_thread = Some(thread.conversation_view.clone());
+        self.observe_draft_editor(&thread.conversation_view, cx);
+        self.set_base_view(thread.into(), false, window, cx);
+        true
     }
 
     fn render_title_view(&self, _window: &mut Window, cx: &Context<Self>) -> AnyElement {
