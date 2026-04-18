@@ -35,6 +35,9 @@ pub struct DbThreadMetadata {
     /// The workspace folder paths this thread was created against, sorted
     /// lexicographically. Used for grouping threads by project in the sidebar.
     pub folder_paths: PathList,
+    /// Depth of this thread in the subagent hierarchy (0 = root).
+    /// Persisted so the thread list can render hierarchy without loading full DbThread payloads.
+    pub depth: u8,
 }
 
 impl From<&DbThreadMetadata> for acp_thread::AgentSessionInfo {
