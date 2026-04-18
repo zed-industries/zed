@@ -1579,7 +1579,7 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Entity<Workspace> {
         let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
-        self.activate(workspace.clone(), window, cx);
+        self.activate(workspace.clone(), None, window, cx);
         workspace
     }
 
@@ -1610,7 +1610,7 @@ impl MultiWorkspace {
             cx,
         );
         let new_workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-        self.activate(new_workspace.clone(), window, cx);
+        self.activate(new_workspace.clone(), None, window, cx);
 
         let weak_workspace = new_workspace.downgrade();
         let db = crate::persistence::WorkspaceDb::global(cx);

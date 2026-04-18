@@ -14941,7 +14941,7 @@ mod tests {
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
                 let workspace = mw.workspaces().next().unwrap().clone();
-                mw.activate(workspace, window, cx);
+                mw.activate(workspace, None, window, cx);
             })
             .unwrap();
 
@@ -14987,7 +14987,7 @@ mod tests {
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
                 let workspace = mw.workspaces().nth(1).unwrap().clone();
-                mw.activate(workspace, window, cx);
+                mw.activate(workspace, None, window, cx);
             })
             .unwrap();
         cx.run_until_parked();
@@ -14996,7 +14996,7 @@ mod tests {
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
                 let workspace = mw.workspaces().next().unwrap().clone();
-                mw.activate(workspace, window, cx);
+                mw.activate(workspace, None, window, cx);
             })
             .unwrap();
         cx.run_until_parked();
