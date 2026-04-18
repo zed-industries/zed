@@ -3,7 +3,7 @@ use std::{cmp::Reverse, rc::Rc, sync::Arc};
 use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelList, AgentModelSelector};
 use agent_client_protocol::ModelId;
 use agent_servers::AgentServer;
-use agent_settings::AgentSettings;
+
 use anyhow::Result;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
@@ -16,12 +16,15 @@ use gpui::{
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use settings::{Settings, SettingsStore};
-use ui::{DocumentationAside, DocumentationSide, IntoElement, prelude::*};
+use settings::SettingsStore;
+use ui::{DocumentationAside, IntoElement, prelude::*};
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
-use crate::ui::{HoldForDefault, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
+use crate::ui::{
+    HoldForDefault, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem,
+    documentation_aside_side,
+};
 
 pub type ModelSelector = Picker<ModelPickerDelegate>;
 
@@ -385,13 +388,7 @@ impl PickerDelegate for ModelPickerDelegate {
                 let description = description.clone();
                 let is_default = *is_default;
 
-                let settings = AgentSettings::get_global(cx);
-                let side = match settings.dock {
-                    settings::DockPosition::Left => DocumentationSide::Right,
-                    settings::DockPosition::Bottom | settings::DockPosition::Right => {
-                        DocumentationSide::Left
-                    }
-                };
+                let side = documentation_aside_side(cx);
 
                 DocumentationAside::new(
                     side,

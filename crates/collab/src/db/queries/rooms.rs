@@ -629,6 +629,7 @@ impl Database {
                 settings_files: Default::default(),
                 scan_id: db_worktree.scan_id as u64,
                 completed_scan_id: db_worktree.completed_scan_id as u64,
+                root_repo_common_dir: db_worktree.root_repo_common_dir,
             };
 
             let rejoined_worktree = rejoined_project

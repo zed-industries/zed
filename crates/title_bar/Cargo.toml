@@ -14,7 +14,7 @@ doctest = false
 
 [features]
 default = []
-stories = ["dep:story"]
+
 test-support = [
     "call/test-support",
     "client/test-support",
@@ -40,17 +40,19 @@ cloud_api_types.workspace = true
 db.workspace = true
 git_ui.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
+icons.workspace = true
+livekit_client.workspace = true
 notifications.workspace = true
 project.workspace = true
 recent_projects.workspace = true
 remote.workspace = true
+remote_connection.workspace = true
 rpc.workspace = true
 semver.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
-story = { workspace = true, optional = true }
 telemetry.workspace = true
 theme.workspace = true
 ui.workspace = true

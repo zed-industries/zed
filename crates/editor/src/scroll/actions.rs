@@ -78,7 +78,7 @@ impl Editor {
         let selection_head = self.selections.newest_display(&display_snapshot).head();
 
         let sticky_headers_len = if EditorSettings::get_global(cx).sticky_scroll.enabled
-            && let Some((_, _, buffer_snapshot)) = display_snapshot.buffer_snapshot().as_singleton()
+            && let Some(buffer_snapshot) = display_snapshot.buffer_snapshot().as_singleton()
         {
             let select_head_point =
                 rope::Point::new(selection_head.to_point(&display_snapshot).row, 0);

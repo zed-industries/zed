@@ -12,7 +12,7 @@ use gpui::{
 use project::agent_server_store::{AllAgentServersSettings, CustomAgentServerSettings};
 use project::{AgentRegistryStore, RegistryAgent};
 use settings::{Settings, SettingsStore, update_settings_file};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ButtonStyle, ScrollableHandle, ToggleButtonGroup, ToggleButtonGroupSize,
     ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar, prelude::*,
@@ -382,7 +382,7 @@ impl AgentRegistryPage {
             self.install_button(agent, install_status, supports_current_platform, cx);
 
         let repository_button = agent.repository().map(|repository| {
-            let repository_for_tooltip: SharedString = repository.to_string().into();
+            let repository_for_tooltip = repository.clone();
             let repository_for_click = repository.to_string();
 
             IconButton::new(
@@ -400,6 +400,22 @@ impl AgentRegistryPage {
             })
             .on_click(move |_, _, cx| {
                 cx.open_url(&repository_for_click);
+            })
+        });
+
+        let website_button = agent.website().map(|website| {
+            let website = website.clone();
+            let website_for_click = website.clone();
+            IconButton::new(
+                SharedString::from(format!("agent-website-{}", agent.id())),
+                IconName::Link,
+            )
+            .icon_size(IconSize::Small)
+            .tooltip(move |_, cx| {
+                Tooltip::with_meta("Visit Agent Website", None, website.clone(), cx)
+            })
+            .on_click(move |_, _, cx| {
+                cx.open_url(&website_for_click);
             })
         });
 
@@ -441,7 +457,8 @@ impl AgentRegistryPage {
                                     .color(Color::Muted)
                                     .truncate(),
                             )
-                            .when_some(repository_button, |this, button| this.child(button)),
+                            .when_some(repository_button, |this, button| this.child(button))
+                            .when_some(website_button, |this, button| this.child(button)),
                     ),
             )
     }

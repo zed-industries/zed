@@ -1,9 +1,8 @@
 use scheduler::Instant;
 use std::{
     cell::LazyCell,
-    collections::HashMap,
-    hash::Hasher,
-    hash::{DefaultHasher, Hash},
+    collections::{HashMap, VecDeque},
+    hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
     thread::ThreadId,
 };
@@ -45,7 +44,6 @@ impl ThreadTaskTimings {
                 let timings = &timings.timings;
 
                 let mut vec = Vec::with_capacity(timings.len());
-
                 let (s1, s2) = timings.as_slices();
                 vec.extend_from_slice(s1);
                 vec.extend_from_slice(s2);
@@ -169,7 +167,7 @@ pub struct ThreadTimingsDelta {
 #[doc(hidden)]
 pub struct ProfilingCollector {
     startup_time: Instant,
-    cursors: HashMap<u64, u64>,
+    cursors: HashMap<ThreadId, u64>,
 }
 
 impl ProfilingCollector {
@@ -195,7 +193,7 @@ impl ProfilingCollector {
             thread.thread_id.hash(&mut hasher);
             let hashed_id = hasher.finish();
 
-            let prev_cursor = self.cursors.get(&hashed_id).copied().unwrap_or(0);
+            let prev_cursor = self.cursors.get(&thread.thread_id).copied().unwrap_or(0);
             let buffer_len = thread.timings.len() as u64;
             let buffer_start = thread.total_pushed.saturating_sub(buffer_len);
 
@@ -205,7 +203,7 @@ impl ProfilingCollector {
                 thread.timings.as_slice()
             } else {
                 let skip = (prev_cursor - buffer_start) as usize;
-                &thread.timings[skip..]
+                &thread.timings[skip.min(thread.timings.len())..]
             };
 
             // Don't emit the last entry if it's still in-progress (end: None).
@@ -215,12 +213,12 @@ impl ProfilingCollector {
             }
 
             let cursor_advance = if incomplete_at_end {
-                thread.total_pushed - 1
+                thread.total_pushed.saturating_sub(1)
             } else {
                 thread.total_pushed
             };
 
-            self.cursors.insert(hashed_id, cursor_advance);
+            self.cursors.insert(thread.thread_id, cursor_advance);
 
             if slice.is_empty() {
                 continue;
@@ -243,11 +241,14 @@ impl ProfilingCollector {
     }
 }
 
-// Allow 20mb of task timing entries
-const MAX_TASK_TIMINGS: usize = (20 * 1024 * 1024) / core::mem::size_of::<TaskTiming>();
+// Allow 16MiB of task timing entries.
+// VecDeque grows by doubling its capacity when full, so keep this a power of 2 to avoid wasting
+// memory.
+const MAX_TASK_TIMINGS: usize = (16 * 1024 * 1024) / core::mem::size_of::<TaskTiming>();
 
 #[doc(hidden)]
-pub type TaskTimings = circular_buffer::CircularBuffer<MAX_TASK_TIMINGS, TaskTiming>;
+pub(crate) type TaskTimings = VecDeque<TaskTiming>;
+
 #[doc(hidden)]
 pub type GuardedTaskTimings = spin::Mutex<ThreadTimings>;
 
@@ -287,7 +288,7 @@ thread_local! {
 pub struct ThreadTimings {
     pub thread_name: Option<String>,
     pub thread_id: ThreadId,
-    pub timings: Box<TaskTimings>,
+    pub timings: TaskTimings,
     pub total_pushed: u64,
 }
 
@@ -296,8 +297,36 @@ impl ThreadTimings {
         ThreadTimings {
             thread_name,
             thread_id,
-            timings: TaskTimings::boxed(),
+            timings: TaskTimings::new(),
             total_pushed: 0,
+        }
+    }
+
+    /// If this task is the same as the last task, update the end time of the last task.
+    ///
+    /// Otherwise, add the new task timing to the list.
+    pub fn add_task_timing(&mut self, timing: TaskTiming) {
+        if let Some(last_timing) = self.timings.back_mut()
+            && last_timing.location == timing.location
+            && last_timing.start == timing.start
+        {
+            last_timing.end = timing.end;
+        } else {
+            while self.timings.len() + 1 > MAX_TASK_TIMINGS {
+                // This should only ever pop one element because it matches the insertion below.
+                self.timings.pop_front();
+            }
+            self.timings.push_back(timing);
+            self.total_pushed += 1;
+        }
+    }
+
+    pub fn get_thread_task_timings(&self) -> ThreadTaskTimings {
+        ThreadTaskTimings {
+            thread_name: self.thread_name.clone(),
+            thread_id: self.thread_id,
+            timings: self.timings.iter().cloned().collect(),
+            total_pushed: self.total_pushed,
         }
     }
 }
@@ -318,19 +347,13 @@ impl Drop for ThreadTimings {
 }
 
 #[doc(hidden)]
-#[allow(dead_code)] // Used by Linux and Windows dispatchers, not macOS
 pub fn add_task_timing(timing: TaskTiming) {
     THREAD_TIMINGS.with(|timings| {
-        let mut timings = timings.lock();
-
-        if let Some(last_timing) = timings.timings.back_mut() {
-            if last_timing.location == timing.location && last_timing.start == timing.start {
-                last_timing.end = timing.end;
-                return;
-            }
-        }
-
-        timings.timings.push_back(timing);
-        timings.total_pushed += 1;
+        timings.lock().add_task_timing(timing);
     });
+}
+
+#[doc(hidden)]
+pub fn get_current_thread_task_timings() -> ThreadTaskTimings {
+    THREAD_TIMINGS.with(|timings| timings.lock().get_thread_task_timings())
 }

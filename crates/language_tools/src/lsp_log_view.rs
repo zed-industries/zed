@@ -880,6 +880,7 @@ impl SearchableItem for LspLogView {
             // LSP log is read-only.
             replacement: false,
             selection: false,
+            select_all: true,
         }
     }
     fn active_match_index(
@@ -1293,6 +1294,7 @@ fn initialize_new_editor(
         editor.set_text(content, window, cx);
         editor.set_show_git_diff_gutter(false, cx);
         editor.set_show_runnables(false, cx);
+        editor.set_show_bookmarks(false, cx);
         editor.set_show_breakpoints(false, cx);
         editor.set_read_only(true);
         editor.set_show_edit_predictions(Some(false), window, cx);
@@ -1355,6 +1357,7 @@ impl ServerInfo {
             status: LanguageServerStatus {
                 name: server.name(),
                 server_version: server.version(),
+                server_readable_version: server.readable_version(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
