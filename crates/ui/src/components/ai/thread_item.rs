@@ -479,11 +479,14 @@ impl RenderOnce for ThreadItem {
                                                     .truncate()
                                                     .into_any_element()
                                             } else {
-                                                HighlightedLabel::new(name, wt.highlight_positions.clone())
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted)
-                                                    .truncate()
-                                                    .into_any_element()
+                                                HighlightedLabel::new(
+                                                    name,
+                                                    wt.highlight_positions.clone(),
+                                                )
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted)
+                                                .truncate()
+                                                .into_any_element()
                                             }
                                         });
 
@@ -756,7 +759,9 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-5f", "Thread with a very long worktree name")
                             .icon(IconName::AiClaude)
                             .worktrees(vec![ThreadItemWorktreeInfo {
-                                worktree_name: Some("very-long-worktree-name-that-should-truncate".into()),
+                                worktree_name: Some(
+                                    "very-long-worktree-name-that-should-truncate".into(),
+                                ),
                                 full_path: "/worktrees/very-long-worktree-name/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,

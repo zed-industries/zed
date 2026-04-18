@@ -181,19 +181,16 @@ impl FeatureFlagStore {
     /// back to the [`Default`] variant when no rule applies so the UI always
     /// shows *something* selected — matching what
     /// [`crate::FeatureFlagAppExt::flag_value`] would return.
-    pub fn resolved_key(
-        &self,
-        descriptor: &FeatureFlagDescriptor,
-        cx: &App,
-    ) -> &'static str {
+    pub fn resolved_key(&self, descriptor: &FeatureFlagDescriptor, cx: &App) -> &'static str {
         let on_variant_key = (descriptor.on_variant_key)();
 
         if (descriptor.enabled_for_all)() {
             return on_variant_key;
         }
 
-        if let Some(requested) =
-            FeatureFlagsSettings::get_global(cx).overrides.get(descriptor.name)
+        if let Some(requested) = FeatureFlagsSettings::get_global(cx)
+            .overrides
+            .get(descriptor.name)
         {
             if let Some(variant) = (descriptor.variants)()
                 .into_iter()
@@ -338,10 +335,7 @@ mod tests {
             type Value = Intensity;
         }
 
-        assert_eq!(
-            store.try_flag_value::<EnumDemo>(cx),
-            Some(Intensity::High)
-        );
+        assert_eq!(store.try_flag_value::<EnumDemo>(cx), Some(Intensity::High));
     }
 
     #[gpui::test]

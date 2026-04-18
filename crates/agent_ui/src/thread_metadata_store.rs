@@ -371,7 +371,9 @@ pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
     // linked worktree chip with its main project name so the user knows
     // which project it belongs to.
     let all_same_name = infos.len() > 1
-        && infos.iter().all(|i| i.worktree_name == infos[0].worktree_name);
+        && infos
+            .iter()
+            .all(|i| i.worktree_name == infos[0].worktree_name);
 
     if unique_main_count.len() > 1 && !all_same_name {
         for (info, (_short_name, project_name)) in infos
@@ -380,8 +382,7 @@ pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
             .zip(linked_short_names.iter())
         {
             if let Some(name) = &info.worktree_name {
-                info.worktree_name =
-                    Some(SharedString::from(format!("{}:{}", project_name, name)));
+                info.worktree_name = Some(SharedString::from(format!("{}:{}", project_name, name)));
             }
         }
     }
