@@ -62,7 +62,7 @@ macro_rules! concat_sections {
 }
 
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
-    vec![
+    let mut pages = vec![
         general_page(cx),
         appearance_page(),
         keymap_page(),
@@ -77,7 +77,32 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         collaboration_page(),
         ai_page(cx),
         network_page(),
-    ]
+    ];
+
+    use feature_flags::FeatureFlagAppExt as _;
+    if cx.is_staff() || cfg!(debug_assertions) {
+        pages.push(developer_page());
+    }
+
+    pages
+}
+
+fn developer_page() -> SettingsPage {
+    SettingsPage {
+        title: "Developer",
+        items: Box::new([
+            SettingsPageItem::SectionHeader("Feature Flags"),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Feature Flags".into(),
+                r#type: Default::default(),
+                description: None,
+                json_path: Some("feature_flags"),
+                in_json: true,
+                files: USER,
+                render: crate::pages::render_feature_flags_page,
+            }),
+        ]),
+    }
 }
 
 fn general_page(cx: &App) -> SettingsPage {

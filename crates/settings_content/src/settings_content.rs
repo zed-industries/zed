@@ -212,12 +212,7 @@ pub struct SettingsContent {
     /// Default: 5
     pub modeline_lines: Option<usize>,
 
-    /// Local overrides for feature flags, keyed by flag name. The value is the
-    /// variant's override key (e.g. `"on"`, `"off"`, or an enum variant key).
-    /// Intended for staff / debug builds; the configuration UI is gated behind
-    /// the `dev::OpenFeatureFlags` action.
-    ///
-    /// Example: `{"feature_flags": {"agent-thread-worktree-label": "branch"}}`.
+    /// Local overrides for feature flags, keyed by flag name.
     pub feature_flags: Option<FeatureFlagsMap>,
 }
 
