@@ -3537,6 +3537,11 @@ impl Workspace {
                         OpenOptions {
                             requesting_window,
                             open_mode,
+                            workspace_matching: if open_mode == OpenMode::NewWindow {
+                                WorkspaceMatching::None
+                            } else {
+                                WorkspaceMatching::default()
+                            },
                             ..Default::default()
                         },
                         cx,
