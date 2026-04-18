@@ -426,23 +426,18 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         cx.subscribe_in(
             &multi_workspace_handle,
             window,
-            |_, multi_workspace, event: &workspace::MultiWorkspaceEvent, window, cx| {
+            |this, _multi_workspace, event: &workspace::MultiWorkspaceEvent, window, cx| {
                 let workspace::MultiWorkspaceEvent::ActiveWorkspaceChanged { source_workspace } =
                     event
                 else {
                     return;
                 };
 
-                let active_workspace = multi_workspace.read(cx).workspace().clone();
+                let active_workspace = this.workspace().clone();
                 let source_workspace = source_workspace.clone();
                 active_workspace.update(cx, |workspace, cx| {
-                    ensure_agent_panel_for_workspace(
-                        workspace,
-                        source_workspace,
-                        window,
-                        cx,
-                    )
-                    .detach_and_log_err(cx);
+                    ensure_agent_panel_for_workspace(workspace, source_workspace, window, cx)
+                        .detach_and_log_err(cx);
                 });
             },
         )
@@ -777,11 +772,7 @@ fn ensure_agent_panel_for_workspace(
                 && let Some(panel) = workspace.panel::<agent_ui::AgentPanel>(cx)
             {
                 panel.update(cx, |panel, cx| {
-                    panel.initialize_from_source_workspace_if_needed(
-                        source_workspace,
-                        window,
-                        cx,
-                    );
+                    panel.initialize_from_source_workspace_if_needed(source_workspace, window, cx);
                 });
             }
         })
