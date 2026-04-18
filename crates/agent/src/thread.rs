@@ -62,11 +62,17 @@ use uuid::Uuid;
 
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
-pub const MAX_SUBAGENT_DEPTH: u8 = 1;
+pub const MAX_SUBAGENT_DEPTH: u8 = 2;
+
+/// The maximum number of output tokens a subagent turn may consume before
+/// being halted and returning a budget-exceeded error to the parent agent.
+pub const DEFAULT_SUBAGENT_TOKEN_BUDGET: u32 = 8_000;
 
 /// Returned when a turn is attempted but no language model has been selected.
 #[derive(Debug)]
 pub struct NoModelConfiguredError;
+
+impl std::fmt::Display for NoModelConfiguredError {
 
 impl std::fmt::Display for NoModelConfiguredError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
