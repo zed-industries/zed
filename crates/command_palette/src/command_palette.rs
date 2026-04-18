@@ -600,7 +600,6 @@ impl PickerDelegate for CommandPaletteDelegate {
         })
         .detach_and_log_err(cx);
         let action = command.action;
-        window.focus(&self.previous_focus_handle, cx);
         self.dismissed(window, cx);
         window.dispatch_action(action, cx);
     }
