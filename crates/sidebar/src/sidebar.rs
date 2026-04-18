@@ -18,6 +18,9 @@ use agent_ui::{
 };
 use chrono::{DateTime, Utc};
 use editor::Editor;
+use feature_flags::{
+    AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
+};
 use gpui::{
     Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
     Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, WeakEntity,
@@ -391,6 +394,30 @@ fn workspace_menu_worktree_labels(
         .collect()
 }
 
+fn apply_worktree_label_mode(
+    mut worktrees: Vec<ThreadItemWorktreeInfo>,
+    mode: AgentThreadWorktreeLabel,
+) -> Vec<ThreadItemWorktreeInfo> {
+    match mode {
+        AgentThreadWorktreeLabel::Both => {}
+        AgentThreadWorktreeLabel::Worktree => {
+            for wt in &mut worktrees {
+                wt.branch_name = None;
+            }
+        }
+        AgentThreadWorktreeLabel::Branch => {
+            for wt in &mut worktrees {
+                // Fall back to showing the worktree name when no branch is
+                // known; an empty chip would be worse than a mismatched icon.
+                if wt.branch_name.is_some() {
+                    wt.worktree_name = None;
+                }
+            }
+        }
+    }
+    worktrees
+}
+
 /// Shows a [`RemoteConnectionModal`] on the given workspace and establishes
 /// an SSH connection. Suitable for passing to
 /// [`MultiWorkspace::find_or_create_workspace`] as the `connect_remote`
@@ -453,6 +480,8 @@ impl Sidebar {
         let focus_handle = cx.focus_handle();
         cx.on_focus_in(&focus_handle, window, Self::focus_in)
             .detach();
+
+        AgentThreadWorktreeLabelFlag::watch(cx);
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -1246,7 +1275,10 @@ impl Sidebar {
                     }
                     let mut worktree_matched = false;
                     for worktree in &mut thread.worktrees {
-                        if let Some(positions) = fuzzy_match_positions(&query, &worktree.name) {
+                        let Some(name) = worktree.worktree_name.as_ref() else {
+                            continue;
+                        };
+                        if let Some(positions) = fuzzy_match_positions(&query, name) {
                             worktree.highlight_positions = positions;
                             worktree_matched = true;
                         }
@@ -3835,6 +3867,11 @@ impl Sidebar {
 
         let is_remote = thread.workspace.is_remote(cx);
 
+        let worktrees = apply_worktree_label_mode(
+            thread.worktrees.clone(),
+            cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
+        );
+
         ThreadItem::new(id, title)
             .base_bg(sidebar_bg)
             .icon(thread.icon)
@@ -3843,7 +3880,7 @@ impl Sidebar {
             .when_some(thread.icon_from_external_svg.clone(), |this, svg| {
                 this.custom_icon_from_external_svg(svg)
             })
-            .worktrees(thread.worktrees.clone())
+            .worktrees(worktrees)
             .timestamp(timestamp)
             .highlight_positions(thread.highlight_positions.to_vec())
             .title_generating(thread.is_title_generating)

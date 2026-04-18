@@ -2914,7 +2914,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .icon(IconName::AiClaude)
                         .timestamp("5m")
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "jade-glen".into(),
+                            worktree_name: Some("jade-glen".into()),
                             full_path: "/worktrees/jade-glen/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
@@ -2931,7 +2931,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .icon(IconName::AiClaude)
                         .timestamp("1h")
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "focal-arrow".into(),
+                            worktree_name: Some("focal-arrow".into()),
                             full_path: "/worktrees/focal-arrow/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
@@ -2946,7 +2946,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .icon(IconName::ZedAgent)
                         .timestamp("2d")
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "zed".into(),
+                            worktree_name: Some("zed".into()),
                             full_path: "/projects/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Main,
@@ -2963,7 +2963,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .icon(IconName::ZedAgent)
                         .timestamp("3d")
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "zed".into(),
+                            worktree_name: Some("zed".into()),
                             full_path: "/projects/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Main,
@@ -2978,7 +2978,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .icon(IconName::AiClaude)
                         .timestamp("6d")
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "stoic-reed".into(),
+                            worktree_name: Some("stoic-reed".into()),
                             full_path: "/worktrees/stoic-reed/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
@@ -2995,7 +2995,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .icon(IconName::ZedAgent)
                         .timestamp("40m")
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "focal-arrow".into(),
+                            worktree_name: Some("focal-arrow".into()),
                             full_path: "/worktrees/focal-arrow/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
@@ -3014,7 +3014,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .added(42)
                         .removed(17)
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "jade-glen".into(),
+                            worktree_name: Some("jade-glen".into()),
                             full_path: "/worktrees/jade-glen/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
@@ -3031,7 +3031,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .added(108)
                         .removed(53)
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "my-project".into(),
+                            worktree_name: Some("my-project".into()),
                             full_path: "/worktrees/my-project/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
@@ -3052,7 +3052,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .added(23)
                         .removed(8)
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "zed".into(),
+                            worktree_name: Some("zed".into()),
                             full_path: "/projects/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Main,

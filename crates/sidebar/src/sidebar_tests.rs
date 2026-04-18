@@ -449,9 +449,12 @@ fn format_linked_worktree_chips(worktrees: &[ThreadItemWorktreeInfo]) -> String 
         if wt.kind == ui::WorktreeKind::Main {
             continue;
         }
-        if !seen.contains(&wt.name) {
-            seen.push(wt.name.clone());
-            chips.push(format!("{{{}}}", wt.name));
+        let Some(name) = wt.worktree_name.as_ref() else {
+            continue;
+        };
+        if !seen.contains(name) {
+            seen.push(name.clone());
+            chips.push(format!("{{{}}}", name));
         }
     }
     if chips.is_empty() {
@@ -3837,7 +3840,10 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                 }
                 ListEntry::Thread(thread)
                     if thread.metadata.title.as_ref().map(|t| t.as_ref()) == Some("WT Thread")
-                        && thread.worktrees.first().map(|wt| wt.name.as_ref())
+                        && thread
+                            .worktrees
+                            .first()
+                            .and_then(|wt| wt.worktree_name.as_ref().map(|n| n.as_ref()))
                             == Some("wt-feature-a") =>
                 {
                     saw_expected_thread = true;
@@ -3847,7 +3853,7 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                     let worktree_name = thread
                         .worktrees
                         .first()
-                        .map(|wt| wt.name.as_ref())
+                        .and_then(|wt| wt.worktree_name.as_ref().map(|n| n.as_ref()))
                         .unwrap_or("<none>");
                     panic!(
                         "unexpected sidebar thread while opening linked worktree thread: title=`{}`, worktree=`{}`",
@@ -10426,7 +10432,7 @@ fn test_worktree_info_branch_names_for_main_worktrees() {
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].kind, ui::WorktreeKind::Main);
     assert_eq!(infos[0].branch_name, Some(SharedString::from("feature-x")));
-    assert_eq!(infos[0].name, SharedString::from("myapp"));
+    assert_eq!(infos[0].worktree_name, Some(SharedString::from("myapp")));
 }
 
 #[test]
@@ -10463,7 +10469,7 @@ fn test_worktree_info_missing_branch_returns_none() {
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].kind, ui::WorktreeKind::Main);
     assert_eq!(infos[0].branch_name, None);
-    assert_eq!(infos[0].name, SharedString::from("myapp"));
+    assert_eq!(infos[0].worktree_name, Some(SharedString::from("myapp")));
 }
 
 #[gpui::test]

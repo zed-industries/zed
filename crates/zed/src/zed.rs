@@ -159,8 +159,8 @@ pub fn init(cx: &mut App) {
 
     cx.observe_flag::<PanicFeatureFlag, _>({
         let mut added = false;
-        move |enabled, cx| {
-            if added || !enabled {
+        move |flag, cx| {
+            if added || !*flag {
                 return;
             }
             added = true;

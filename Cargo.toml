@@ -73,6 +73,7 @@ members = [
     "crates/extension_host",
     "crates/extensions_ui",
     "crates/feature_flags",
+    "crates/feature_flags_macros",
     "crates/feedback",
     "crates/file_finder",
     "crates/file_icons",
@@ -325,6 +326,7 @@ extension = { path = "crates/extension" }
 extension_host = { path = "crates/extension_host" }
 extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
+feature_flags_macros = { path = "crates/feature_flags_macros" }
 feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
@@ -891,6 +893,7 @@ debug = true
 # proc-macros start
 gpui_macros = { opt-level = 3 }
 derive_refineable = { opt-level = 3 }
+feature_flags_macros = { opt-level = 3 }
 settings_macros = { opt-level = 3 }
 sqlez_macros = { opt-level = 3, codegen-units = 1 }
 ui_macros = { opt-level = 3 }

@@ -6138,7 +6138,23 @@ dependencies = [
 name = "feature_flags"
 version = "0.1.0"
 dependencies = [
+ "collections",
+ "feature_flags_macros",
+ "fs",
  "gpui",
+ "inventory",
+ "schemars",
+ "serde_json",
+ "settings",
+]
+
+[[package]]
+name = "feature_flags_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -9096,6 +9112,7 @@ dependencies = [
  "collections",
  "dap",
  "extension",
+ "feature_flags",
  "gpui",
  "language",
  "parking_lot",
@@ -16044,6 +16061,7 @@ dependencies = [
  "db",
  "editor",
  "extension",
+ "feature_flags",
  "fs",
  "git",
  "gpui",
