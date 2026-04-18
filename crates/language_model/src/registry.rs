@@ -478,7 +478,7 @@ impl LanguageModelRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake_provider::FakeLanguageModelProvider;
+    use crate::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
 
     #[gpui::test]
     fn test_register_providers(cx: &mut App) {
@@ -656,5 +656,151 @@ mod tests {
         });
 
         assert_eq!(registry.read(cx).visible_providers().len(), 1);
+    }
+
+    #[gpui::test]
+    fn test_auxiliary_models_fall_back_to_default_model(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+        let provider_id = LanguageModelProviderId::from("test-provider".to_string());
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                provider_id.clone(),
+                crate::LanguageModelProviderName::from("Test Provider".to_string()),
+            )
+            .with_models(vec![
+                Arc::new(FakeLanguageModel::with_id_and_thinking(
+                    "test-provider",
+                    "default-model",
+                    "Default Model",
+                    false,
+                )),
+                Arc::new(FakeLanguageModel::with_id_and_thinking(
+                    "test-provider",
+                    "alternate-model",
+                    "Alternate Model",
+                    false,
+                )),
+            ]),
+        );
+
+        registry.update(cx, |registry, cx| {
+            registry.register_provider(provider, cx);
+            registry.select_default_model(
+                Some(&SelectedModel {
+                    provider: provider_id.clone(),
+                    model: LanguageModelId::from("default-model".to_string()),
+                }),
+                cx,
+            );
+        });
+
+        let registry = registry.read(cx);
+        assert_eq!(
+            registry
+                .inline_assistant_model()
+                .expect("inline assistant should fall back to the default model")
+                .model
+                .id()
+                .0
+                .as_ref(),
+            "default-model"
+        );
+        assert_eq!(
+            registry
+                .commit_message_model(cx)
+                .expect("commit message should fall back to the default model")
+                .model
+                .id()
+                .0
+                .as_ref(),
+            "default-model"
+        );
+        assert_eq!(
+            registry
+                .thread_summary_model(cx)
+                .expect("thread summary should fall back to the default model")
+                .model
+                .id()
+                .0
+                .as_ref(),
+            "default-model"
+        );
+    }
+
+    #[gpui::test]
+    fn test_auxiliary_models_prefer_explicit_overrides(cx: &mut App) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+        let provider_id = LanguageModelProviderId::from("test-provider".to_string());
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                provider_id.clone(),
+                crate::LanguageModelProviderName::from("Test Provider".to_string()),
+            )
+            .with_models(vec![
+                Arc::new(FakeLanguageModel::with_id_and_thinking(
+                    "test-provider",
+                    "default-model",
+                    "Default Model",
+                    false,
+                )),
+                Arc::new(FakeLanguageModel::with_id_and_thinking(
+                    "test-provider",
+                    "alternate-model",
+                    "Alternate Model",
+                    false,
+                )),
+            ]),
+        );
+
+        registry.update(cx, |registry, cx| {
+            registry.register_provider(provider, cx);
+            registry.select_default_model(
+                Some(&SelectedModel {
+                    provider: provider_id.clone(),
+                    model: LanguageModelId::from("default-model".to_string()),
+                }),
+                cx,
+            );
+
+            let explicit = SelectedModel {
+                provider: provider_id.clone(),
+                model: LanguageModelId::from("alternate-model".to_string()),
+            };
+            registry.select_inline_assistant_model(Some(&explicit), cx);
+            registry.select_commit_message_model(Some(&explicit), cx);
+            registry.select_thread_summary_model(Some(&explicit), cx);
+        });
+
+        let registry = registry.read(cx);
+        assert_eq!(
+            registry
+                .inline_assistant_model()
+                .expect("inline assistant override should be returned")
+                .model
+                .id()
+                .0
+                .as_ref(),
+            "alternate-model"
+        );
+        assert_eq!(
+            registry
+                .commit_message_model(cx)
+                .expect("commit message override should be returned")
+                .model
+                .id()
+                .0
+                .as_ref(),
+            "alternate-model"
+        );
+        assert_eq!(
+            registry
+                .thread_summary_model(cx)
+                .expect("thread summary override should be returned")
+                .model
+                .id()
+                .0
+                .as_ref(),
+            "alternate-model"
+        );
     }
 }

@@ -5147,8 +5147,10 @@ mod tests {
         active_session_id, active_thread_id, open_thread_with_connection,
         open_thread_with_custom_connection, send_message,
     };
+    use crate::thread_metadata_store::{ThreadId, ThreadMetadata, WorktreePaths};
     use acp_thread::{AgentConnection, StubAgentConnection, ThreadStatus, UserMessageId};
     use action_log::ActionLog;
+    use agent::{NativeAgent, NativeAgentConnection, Templates};
     use agent_servers::CODEX_ID;
     use anyhow::Result;
     use feature_flags::FeatureFlagAppExt;
@@ -5432,6 +5434,120 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    #[ignore = "requires native agent server filesystem access in the test harness"]
+    async fn test_native_thread_session_round_trip_with_thread_store(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            agent_settings::AgentSettings::register(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            project::DisableAiSettings::register(cx);
+            language::language_settings::AllLanguageSettings::register(cx);
+            prompt_store::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/test", json!({})).await;
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+        let project = Project::test(fs.clone(), [Path::new("/test")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+        let workspace_id = workspace
+            .read_with(cx, |workspace, _cx| workspace.database_id())
+            .expect("workspace should have a database id");
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        let thread_store = cx.update(|_, cx| agent::ThreadStore::global(cx));
+        let agent = cx
+            .update(|_, cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let work_dirs = PathList::new(&[Path::new("/test")]);
+        let acp_thread = cx
+            .update(|_, cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), work_dirs.clone(), cx)
+            })
+            .await
+            .expect("new native session should succeed");
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let native_thread = cx
+            .update(|_, cx| connection.thread(&session_id, cx))
+            .expect("native thread should exist");
+
+        let db_thread = native_thread
+            .update(cx, |thread, cx| thread.to_db(cx))
+            .await;
+        let thread_title = db_thread.title.to_string();
+        let metadata = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(session_id.clone()),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some(db_thread.title.clone()),
+            updated_at: db_thread.updated_at,
+            created_at: Some(db_thread.updated_at),
+            worktree_paths: WorktreePaths::from_folder_paths(&work_dirs),
+            remote_connection: None,
+            archived: false,
+        };
+        let save_task = cx.update(|_, cx| {
+            let thread_store = agent::ThreadStore::global(cx);
+            thread_store.update(cx, |store, cx| {
+                store.save_thread(session_id.clone(), db_thread, work_dirs.clone(), cx)
+            })
+        });
+        save_task
+            .await
+            .expect("thread should save to the thread store");
+        cx.update(|_, cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(metadata, cx);
+            });
+        });
+        let kvp = cx.update(|_, cx| KeyValueStore::global(cx));
+        save_serialized_panel(
+            workspace_id,
+            SerializedAgentPanel {
+                selected_agent: Some(Agent::NativeAgent),
+                last_active_thread: Some(SerializedActiveThread {
+                    session_id: Some(session_id.0.to_string()),
+                    agent_type: Agent::NativeAgent,
+                    title: Some(thread_title),
+                    work_dirs: Some(work_dirs.serialize()),
+                }),
+                draft_thread_prompt: None,
+            },
+            kvp,
+        )
+        .await
+        .expect("panel state should save");
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        loaded_panel.read_with(cx, |panel, cx| {
+            let restored_thread = panel
+                .active_agent_thread(cx)
+                .expect("native thread should be restored after load");
+            assert_eq!(restored_thread.read(cx).session_id(), &session_id);
+        });
+    }
+
+    // Simple regression test
     #[gpui::test]
     async fn test_non_native_thread_without_metadata_is_not_restored(cx: &mut TestAppContext) {
         init_test(cx);
