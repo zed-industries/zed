@@ -43,6 +43,12 @@ To still have a useful environment, Zed spawns a login shell in the user's home 
 
 Since that can lead to problems for users who need different environment variables per project (for example with `direnv`, `asdf`, or `mise`), Zed spawns another login shell when opening a project. This second shell runs in the project's directory. The environment from that shell is _not_ set on the process, because opening a new project would otherwise change the environment for all Zed windows. Instead, that environment is stored and passed along when running tasks, opening terminals, or spawning language servers.
 
+> **Note:** Login shells do not source `.zshrc` or `.bashrc`. If
+> you set variables such as `OPENAI_API_KEY` in those files, they
+> won't be available when Zed is launched this way. To fix this,
+> move those variables to `.zshenv` or `.zprofile`, set API keys
+> directly in the Settings Editor, or launch Zed from the terminal.
+
 ## Where and how are environment variables used?
 
 There are two sets of environment variables:
