@@ -8,7 +8,7 @@ description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copi
 Edit Prediction is how Zed's AI code completions work: an LLM predicts the code you want to write.
 Each keystroke sends a new request to the edit prediction provider, which returns individual or multi-line suggestions you accept by pressing `tab`.
 
-The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), but you can also use [other providers](#other-providers) like GitHub Copilot, Mercury Coder, and Codestral.
+The default provider is [Zeta, an open source model developed by Zed](https://zed.dev/blog/zeta2), but you can also use [other providers](#other-providers) like GitHub Copilot, Mercury Coder, and Codestral.
 
 ## Configuring Zeta
 
@@ -145,6 +145,8 @@ If you configured edit prediction keybindings before Zed `v0.229.0`, your `keyma
 ## Disabling Automatic Edit Prediction
 
 You can disable edit predictions at several levels, or turn them off entirely.
+
+Alternatively, consider [using Subtle Mode](#switching-modes).
 
 ### On Buffers
 
