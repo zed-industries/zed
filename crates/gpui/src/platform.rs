@@ -1981,6 +1981,7 @@ pub enum ImageFormat {
     Tiff,
     /// .ico
     Ico,
+    Pnm,
 }
 
 impl ImageFormat {
@@ -1995,6 +1996,7 @@ impl ImageFormat {
             ImageFormat::Bmp => "image/bmp",
             ImageFormat::Tiff => "image/tiff",
             ImageFormat::Ico => "image/ico",
+            ImageFormat::Pnm => "image/x-portable-anymap",
         }
     }
 
@@ -2131,6 +2133,7 @@ impl Image {
                     .render_single_frame(&self.bytes, 1.0)
                     .map_err(Into::into);
             }
+            ImageFormat::Pnm => frames_for_image(&self.bytes, image::ImageFormat::Pnm)?,
         };
 
         Ok(Arc::new(RenderImage::new(frames)))
