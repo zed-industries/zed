@@ -8,8 +8,8 @@ use crate::provider::{
     deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings,
     mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
     open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
-    opencode::OpenCodeSettings, vercel::VercelSettings, vercel_ai_gateway::VercelAiGatewaySettings,
-    x_ai::XAiSettings,
+    opencode::OpenCodeSettings, opencode_go::OpenCodeGoSettings, vercel::VercelSettings,
+    vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
 };
 
 #[derive(Debug, RegisterSetting)]
@@ -22,6 +22,7 @@ pub struct AllLanguageModelSettings {
     pub mistral: MistralSettings,
     pub ollama: OllamaSettings,
     pub opencode: OpenCodeSettings,
+    pub opencode_go: OpenCodeGoSettings,
     pub open_router: OpenRouterSettings,
     pub openai: OpenAiSettings,
     pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettings>,
@@ -44,6 +45,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let mistral = language_models.mistral.unwrap();
         let ollama = language_models.ollama.unwrap();
         let opencode = language_models.opencode.unwrap();
+        let opencode_go = language_models.opencode_go.unwrap();
         let open_router = language_models.open_router.unwrap();
         let openai = language_models.openai.unwrap();
         let openai_compatible = language_models.openai_compatible.unwrap();
@@ -91,6 +93,10 @@ impl settings::Settings for AllLanguageModelSettings {
             opencode: OpenCodeSettings {
                 api_url: opencode.api_url.unwrap(),
                 available_models: opencode.available_models.unwrap_or_default(),
+            },
+            opencode_go: OpenCodeGoSettings {
+                api_url: opencode_go.api_url.unwrap(),
+                available_models: opencode_go.available_models.unwrap_or_default(),
             },
             open_router: OpenRouterSettings {
                 api_url: open_router.api_url.unwrap(),
