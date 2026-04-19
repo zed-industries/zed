@@ -1861,6 +1861,8 @@ impl Element for MarkdownElement {
                             builder.push_div(div().pl_2p5(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
+                            // check offset 1 and 2 from MarkdownTag::Item because pulldown-cmark parser
+                            // may insert Paragraph between Item and TaskListMarker
                             let task_list_marker = (1..=2).find_map(|offset| match parsed_markdown
                                 .events
                                 .get(index.saturating_add(offset))
