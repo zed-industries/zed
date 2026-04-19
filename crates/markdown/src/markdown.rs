@@ -1872,39 +1872,39 @@ impl Element for MarkdownElement {
                             });
 
                             let bullet = if let Some((task_range, checked)) = task_list_marker {
-                                    let source = &parsed_markdown.source()[range.clone()];
-                                    let toggle_state = if checked {
-                                        ToggleState::Selected
-                                    } else {
-                                        ToggleState::Unselected
-                                    };
-
-                                    let checkbox = Checkbox::new(
-                                        ElementId::Name(source.to_string().into()),
-                                        toggle_state,
-                                    )
-                                    .fill();
-
-                                    if let Some(on_toggle) = self.on_checkbox_toggle.clone() {
-                                        let task_source_range = task_range.clone();
-                                        checkbox
-                                            .on_click(move |_state, window, cx| {
-                                                on_toggle(
-                                                    task_source_range.clone(),
-                                                    !checked,
-                                                    window,
-                                                    cx,
-                                                );
-                                            })
-                                            .into_any_element()
-                                    } else {
-                                        checkbox.visualization_only(true).into_any_element()
-                                    }
-                                } else if let Some(bullet_index) = builder.next_bullet_index() {
-                                    div().child(format!("{}.", bullet_index)).into_any_element()
+                                let source = &parsed_markdown.source()[range.clone()];
+                                let toggle_state = if checked {
+                                    ToggleState::Selected
                                 } else {
-                                    div().child("•").into_any_element()
+                                    ToggleState::Unselected
                                 };
+
+                                let checkbox = Checkbox::new(
+                                    ElementId::Name(source.to_string().into()),
+                                    toggle_state,
+                                )
+                                .fill();
+
+                                if let Some(on_toggle) = self.on_checkbox_toggle.clone() {
+                                    let task_source_range = task_range.clone();
+                                    checkbox
+                                        .on_click(move |_state, window, cx| {
+                                            on_toggle(
+                                                task_source_range.clone(),
+                                                !checked,
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                        .into_any_element()
+                                } else {
+                                    checkbox.visualization_only(true).into_any_element()
+                                }
+                            } else if let Some(bullet_index) = builder.next_bullet_index() {
+                                div().child(format!("{}.", bullet_index)).into_any_element()
+                            } else {
+                                div().child("•").into_any_element()
+                            };
                             self.push_markdown_list_item(&mut builder, bullet, range, markdown_end);
                         }
                         MarkdownTag::Emphasis => builder.push_text_style(TextStyleRefinement {
@@ -3973,5 +3973,84 @@ mod tests {
             h3_line_height > body_line_height,
             "H3 line height ({h3_line_height:?}) should be greater than body text ({body_line_height:?})"
         );
+    }
+
+    #[gpui::test]
+    fn test_checkboxes(cx: &mut TestAppContext) {
+        struct TestWindow {
+            markdown: Entity<Markdown>,
+        }
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        border: false,
+                    })
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let markdown_examples = [
+            ("- [x] a\n", 1),
+            ("- [x] a\n- [ ] b", 2),
+            ("- [x] a\n\n- [ ] b", 2),
+            ("- [x] a\n\n- [ ] b\n\n- [ ] c", 3),
+            ("- [x] a\n\n\n\n\n\n- [ ] b", 2),
+            ("- [x] a\n\n\n<br><br><br>\n\n\n- [ ] b", 2),
+        ];
+
+        for (markdown, expected_checkbox_count) in markdown_examples {
+            let (_, cx) = cx.add_window_view(|_, cx| {
+                let markdown = cx.new(|cx| {
+                    Markdown::new_with_options(
+                        markdown.to_string().into(),
+                        None,
+                        None,
+                        MarkdownOptions::default(),
+                        cx,
+                    )
+                });
+
+                TestWindow { markdown }
+            });
+
+            cx.run_until_parked();
+
+            let mut element_states: Vec<_> = cx.update(|window, _| {
+                window
+                    .rendered_frame
+                    .element_states
+                    .iter()
+                    .map(|x| {
+                        let slice: &[ElementId] = &*(x.0.0.clone());
+                        let mut seen = HashSet::default();
+                        slice
+                            .iter()
+                            .filter(|&elem_id| seen.insert(elem_id))
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    })
+                    .collect()
+            });
+
+            let mut seen = HashSet::default();
+            element_states.retain(|item| seen.insert(item.clone()));
+
+            assert_eq!(
+                element_states
+                    .into_iter()
+                    .filter(|x| {
+                        x.iter().any(|x| match x {
+                            gpui::ElementId::Name(v) => v.contains("Checkbox"),
+                            _ => false,
+                        })
+                    })
+                    .count(),
+                expected_checkbox_count
+            );
+        }
     }
 }
