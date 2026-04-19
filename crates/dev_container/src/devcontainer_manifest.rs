@@ -2376,39 +2376,102 @@ fn dockerfile_inject_alias(
     alias: &str,
     build_target: Option<String>,
 ) -> String {
-    match image_from_dockerfile(dockerfile_content.to_string(), &build_target) {
-        Some(target) => format!(
-            r#"{dockerfile_content}
-FROM {target} AS {alias}"#
-        ),
-        None => dockerfile_content.to_string(),
+    let from_lines = from_lines_from_dockerfile(dockerfile_content);
+    let mut lines: Vec<&str> = dockerfile_content.lines().collect();
+
+    if let Some(build_target) = build_target {
+        format!("{dockerfile_content}\nFROM {build_target} AS {alias}")
+    } else {
+        let Some(last_from_line) = from_lines.last() else {
+            return dockerfile_content.to_string();
+        };
+        if let Some(this_alias) = last_from_line.line.alias.as_deref() {
+            format!("{dockerfile_content}\nFROM {this_alias} AS {alias}")
+        } else {
+            let image = &last_from_line.line.image;
+            let line = format!("FROM {image} AS {alias}");
+            lines[last_from_line.line_number] = line.as_str();
+            lines.join("\n")
+        }
     }
 }
 
-fn image_from_dockerfile(dockerfile_contents: String, target: &Option<String>) -> Option<String> {
+// Represents a FROM line in a Dockerfile
+struct FromLine {
+    image: String,
+    alias: Option<String>,
+}
+
+struct IndexedFromLine {
+    line_number: usize,
+    line: FromLine,
+}
+
+impl TryFrom<&str> for FromLine {
+    type Error = String;
+
+    fn try_from(line: &str) -> Result<Self, Self::Error> {
+        let parts = line.split(' ').collect::<Vec<&str>>();
+
+        if parts.len() < 2 {
+            return Err("FROM line must have at least two parts".to_string());
+        }
+
+        if !parts
+            .first()
+            .map_or(false, |f| f.eq_ignore_ascii_case("from"))
+        {
+            return Err("Not a FROM line".to_string());
+        }
+
+        let image = parts[1].to_string();
+        let alias_index = parts
+            .iter()
+            .position(|p| p.eq_ignore_ascii_case("as"))
+            .map(|i| i + 1);
+        let alias = alias_index
+            .and_then(|i| parts.get(i))
+            .and_then(|p| Some(p.to_string()));
+        Ok(FromLine { image, alias })
+    }
+}
+
+fn image_from_dockerfile(
+    dockerfile_content: String,
+    build_target: &Option<String>,
+) -> Option<String> {
+    let from_lines = from_lines_from_dockerfile(&dockerfile_content);
+
+    if let Some(build_target) = build_target {
+        return from_lines
+            .iter()
+            .find(|f| {
+                f.line
+                    .alias
+                    .as_ref()
+                    .is_some_and(|alias| alias == build_target)
+            })
+            .and_then(|f| Some(f.line.image.clone()));
+    };
+
+    let Some(last_from_line) = from_lines.last() else {
+        // No FROM lines found in the dockerfile
+        return None;
+    };
+
+    Some(last_from_line.line.image.clone())
+}
+
+fn from_lines_from_dockerfile(dockerfile_contents: &str) -> Vec<IndexedFromLine> {
     dockerfile_contents
         .lines()
-        .filter(|line| line.starts_with("FROM"))
-        .rfind(|from_line| match &target {
-            Some(target) => {
-                let parts = from_line.split(' ').collect::<Vec<&str>>();
-                if parts.len() >= 3
-                    && parts.get(parts.len() - 2).unwrap_or(&"").to_lowercase() == "as"
-                {
-                    parts.last().unwrap_or(&"").to_lowercase() == target.to_lowercase()
-                } else {
-                    false
-                }
-            }
-            None => true,
+        .enumerate()
+        .filter(|(_, line)| line.trim_start().to_lowercase().starts_with("from"))
+        .map(|(line_number, from_line)| {
+            FromLine::try_from(from_line).and_then(|line| Ok(IndexedFromLine { line_number, line }))
         })
-        .and_then(|from_line| {
-            from_line
-                .split(' ')
-                .collect::<Vec<&str>>()
-                .get(1)
-                .map(|s| s.to_string())
-        })
+        .filter_map(|result| result.ok())
+        .collect()
 }
 
 fn get_remote_user_from_config(
@@ -2493,8 +2556,9 @@ mod test {
         devcontainer_json::MountDefinition,
         devcontainer_manifest::{
             ConfigStatus, DevContainerManifest, DockerBuildResources, DockerComposeResources,
-            DockerInspect, extract_feature_id, find_primary_service, get_remote_user_from_config,
-            image_from_dockerfile, resolve_compose_dockerfile,
+            DockerInspect, FromLine, dockerfile_inject_alias, extract_feature_id,
+            find_primary_service, get_remote_user_from_config, image_from_dockerfile,
+            resolve_compose_dockerfile,
         },
         docker::{
             DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -3212,7 +3276,7 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
 #  Copyright (c) Microsoft Corporation. All rights reserved.
 #  Licensed under the MIT License. See License.txt in the project root for license information.
 ARG VARIANT="16-bullseye"
-FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT}
+FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT} AS dev_container_auto_added_stage_label
 
 RUN mkdir -p /workspaces && chown node:node /workspaces
 
@@ -3225,7 +3289,6 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
 && mkdir -p /home/$USERNAME/commandhistory \
 && touch /home/$USERNAME/commandhistory/.bash_history \
 && chown -R $USERNAME /home/$USERNAME/commandhistory
-FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT} AS dev_container_auto_added_stage_label
 
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
 USER root
@@ -3553,14 +3616,13 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             &feature_dockerfile,
             r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
 
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 # Include lld linker to improve build times either by using environment variable
 # RUSTFLAGS="-C link-arg=-fuse-ld=lld" or with Cargo's configuration file (i.e see .cargo/config.toml).
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && apt-get -y install clang lld \
     && apt-get autoremove -y && apt-get clean -y
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
 USER root
@@ -3944,14 +4006,13 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             &feature_dockerfile,
             r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
 
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 # Include lld linker to improve build times either by using environment variable
 # RUSTFLAGS="-C link-arg=-fuse-ld=lld" or with Cargo's configuration file (i.e see .cargo/config.toml).
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 && apt-get -y install clang lld \
 && apt-get autoremove -y && apt-get clean -y
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
 USER root
@@ -4124,14 +4185,13 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             &feature_dockerfile,
             r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
 
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 # Include lld linker to improve build times either by using environment variable
 # RUSTFLAGS="-C link-arg=-fuse-ld=lld" or with Cargo's configuration file (i.e see .cargo/config.toml).
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 && apt-get -y install clang lld \
 && apt-get autoremove -y && apt-get clean -y
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 FROM dev_container_feature_content_temp as dev_containers_feature_content_source
 
@@ -4388,7 +4448,7 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
 && mkdir -p /home/$USERNAME/commandhistory \
 && touch /home/$USERNAME/commandhistory/.bash_history \
 && chown -R $USERNAME /home/$USERNAME/commandhistory
-FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT} AS dev_container_auto_added_stage_label
+FROM development AS dev_container_auto_added_stage_label
 
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
 USER root
@@ -4827,6 +4887,71 @@ FROM ${IMAGE} AS production
         .unwrap();
 
         assert_eq!(base_image, "docker.io/stuff/mybuild:latest".to_string());
+    }
+    #[test]
+    fn test_dockerfile_inject_alias_adds_to_existing_from_if_no_alias() {
+        let dockerfile = "\
+FROM gravisrobotics/amg:cross-v0.9.3
+USER root
+RUN install -o ubuntu -g ubuntu -d /home/ubuntu/.local
+USER ubuntu";
+
+        let result =
+            dockerfile_inject_alias(dockerfile, "dev_container_auto_added_stage_label", None);
+
+        assert_eq!(
+            result,
+            "\
+FROM gravisrobotics/amg:cross-v0.9.3 AS dev_container_auto_added_stage_label
+USER root
+RUN install -o ubuntu -g ubuntu -d /home/ubuntu/.local
+USER ubuntu"
+        );
+    }
+
+    #[test]
+    fn test_dockerfile_inject_alias_with_existing_stage_alias() {
+        let dockerfile = "\
+FROM base:latest AS predev
+FROM base:latest AS development
+RUN apt-get install -y build-essential";
+
+        let result = dockerfile_inject_alias(
+            dockerfile,
+            "dev_container_auto_added_stage_label",
+            Some("development".to_string()),
+        );
+
+        assert_eq!(
+            result,
+            "\
+FROM base:latest AS predev
+FROM base:latest AS development
+RUN apt-get install -y build-essential
+FROM development AS dev_container_auto_added_stage_label"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_parse_from_line(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+
+        let line = "FROM base:latest AS predev";
+        let result = FromLine::try_from(line).unwrap();
+        assert_eq!(result.image, "base:latest");
+        assert_eq!(result.alias, Some("predev".to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_parse_from_line_without_alias(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+
+        let line = "FROM base:latest";
+        let result = FromLine::try_from(line).unwrap();
+        assert_eq!(result.image, "base:latest");
+        assert_eq!(result.alias, None);
     }
 
     #[gpui::test]
