@@ -1,36 +1,42 @@
-use std::ops::Range;
-use tree_sitter::{Query, QueryMatch};
+use anyhow::Result;
+use serde_json::Value;
 
-use crate::MigrationPatterns;
-use crate::patterns::SETTINGS_NESTED_KEY_VALUE_PATTERN;
+use crate::migrations::migrate_settings;
 
-pub const SETTINGS_PATTERNS: MigrationPatterns = &[(
-    SETTINGS_NESTED_KEY_VALUE_PATTERN,
-    rename_show_branch_icon_to_show_branch_status_icon,
-)];
+const SETTINGS_KEY: &str = "settings";
+const TITLE_BAR_KEY: &str = "title_bar";
+const OLD_KEY: &str = "show_branch_icon";
+const NEW_KEY: &str = "show_branch_status_icon";
 
-fn rename_show_branch_icon_to_show_branch_status_icon(
-    contents: &str,
-    mat: &QueryMatch,
-    query: &Query,
-) -> Option<(Range<usize>, String)> {
-    let parent_key_ix = query.capture_index_for_name("parent_key")?;
-    let parent_range = mat
-        .nodes_for_capture_index(parent_key_ix)
-        .next()?
-        .byte_range();
-    if contents.get(parent_range) != Some("title_bar") {
-        return None;
+pub fn promote_show_branch_icon_true_to_show_branch_status_icon(value: &mut Value) -> Result<()> {
+    migrate_settings(value, &mut migrate_one)
+}
+
+fn migrate_one(object: &mut serde_json::Map<String, Value>) -> Result<()> {
+    migrate_title_bar_value(object);
+
+    if let Some(settings) = object.get_mut(SETTINGS_KEY).and_then(|value| value.as_object_mut()) {
+        migrate_title_bar_value(settings);
     }
 
-    let setting_name_ix = query.capture_index_for_name("setting_name")?;
-    let setting_name_range = mat
-        .nodes_for_capture_index(setting_name_ix)
-        .next()?
-        .byte_range();
-    if contents.get(setting_name_range.clone()) != Some("show_branch_icon") {
-        return None;
+    Ok(())
+}
+
+fn migrate_title_bar_value(object: &mut serde_json::Map<String, Value>) {
+    let Some(title_bar) = object.get_mut(TITLE_BAR_KEY).and_then(|value| value.as_object_mut())
+    else {
+        return;
+    };
+
+    let Some(old_value) = title_bar.remove(OLD_KEY) else {
+        return;
+    };
+
+    if title_bar.contains_key(NEW_KEY) {
+        return;
     }
 
-    Some((setting_name_range, "show_branch_status_icon".to_string()))
+    if old_value == Value::Bool(true) {
+        title_bar.insert(NEW_KEY.to_string(), Value::Bool(true));
+    }
 }

@@ -250,9 +250,8 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum),
         MigrationType::Json(migrations::m_2026_04_01::restructure_profiles_with_settings_key),
         MigrationType::Json(migrations::m_2026_04_10::rename_web_search_to_search_web),
-        MigrationType::TreeSitter(
-            migrations::m_2026_04_17::SETTINGS_PATTERNS,
-            &SETTINGS_QUERY_2026_04_17,
+        MigrationType::Json(
+            migrations::m_2026_04_17::promote_show_branch_icon_true_to_show_branch_status_icon,
         ),
     ];
     run_migrations(text, migrations)
@@ -395,10 +394,6 @@ define_query!(
 define_query!(
     KEYMAP_QUERY_2026_03_23,
     migrations::m_2026_03_23::KEYMAP_PATTERNS
-);
-define_query!(
-    SETTINGS_QUERY_2026_04_17,
-    migrations::m_2026_04_17::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -5036,7 +5031,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rename_show_branch_icon_to_show_branch_status_icon() {
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_at_root() {
         assert_migrate_settings(
             &r#"
             {
@@ -5058,6 +5053,211 @@ mod tests {
                 "#
                 .unindent(),
             ),
+        );
+    }
+
+    #[test]
+    fn test_drop_show_branch_icon_false_without_setting_status_icon() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "title_bar": {
+                    "show_branch_icon": false,
+                    "show_branch_name": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "title_bar": {
+                        "show_branch_name": true
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_in_platform_override() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "macos": {
+                    "title_bar": {
+                        "show_branch_icon": true,
+                        "show_branch_name": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "title_bar": {
+                            "show_branch_status_icon": true,
+                            "show_branch_name": true
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_in_release_override() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "preview": {
+                    "title_bar": {
+                        "show_branch_icon": true,
+                        "show_branch_name": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "preview": {
+                        "title_bar": {
+                            "show_branch_status_icon": true,
+                            "show_branch_name": true
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_in_profiles() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "title_bar": {
+                            "show_branch_icon": true,
+                            "show_branch_name": true
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "settings": {
+                                "title_bar": {
+                                    "show_branch_status_icon": true,
+                                    "show_branch_name": true
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_across_all_scopes() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "title_bar": {
+                    "show_branch_icon": true,
+                    "show_branch_name": true
+                },
+                "macos": {
+                    "title_bar": {
+                        "show_branch_icon": true,
+                        "show_branch_name": true
+                    }
+                },
+                "preview": {
+                    "title_bar": {
+                        "show_branch_icon": true,
+                        "show_branch_name": true
+                    }
+                },
+                "profiles": {
+                    "work": {
+                        "title_bar": {
+                            "show_branch_icon": true,
+                            "show_branch_name": true
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "title_bar": {
+                        "show_branch_status_icon": true,
+                        "show_branch_name": true
+                    },
+                    "macos": {
+                        "title_bar": {
+                            "show_branch_status_icon": true,
+                            "show_branch_name": true
+                        }
+                    },
+                    "preview": {
+                        "title_bar": {
+                            "show_branch_status_icon": true,
+                            "show_branch_name": true
+                        }
+                    },
+                    "profiles": {
+                        "work": {
+                            "settings": {
+                                "title_bar": {
+                                    "show_branch_status_icon": true,
+                                    "show_branch_name": true
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_no_change_when_already_migrated() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "title_bar": {
+                    "show_branch_status_icon": true,
+                    "show_branch_name": true
+                }
+            }
+            "#
+            .unindent(),
+            None,
         );
 
         // No title_bar key — should be unchanged
