@@ -10604,9 +10604,7 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_tracked_nested_bin_path_is_not_ignored_with_real_fs(
-    cx: &mut gpui::TestAppContext,
-) {
+async fn test_tracked_nested_bin_path_is_not_ignored_with_real_fs(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
 
@@ -10656,7 +10654,8 @@ async fn test_tracked_nested_bin_path_is_not_ignored_with_real_fs(
             false,
         );
         assert!(
-            !tree.read(cx)
+            !tree
+                .read(cx)
                 .entry_for_path(&rel_path("images/simple-bridge/src/rootfs/bin"))
                 .unwrap()
                 .is_ignored,

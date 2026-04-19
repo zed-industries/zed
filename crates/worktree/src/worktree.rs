@@ -3893,7 +3893,8 @@ impl BackgroundScanner {
             && scanning_enabled
         {
             maybe!(async {
-                let local_repository = self.state
+                let local_repository = self
+                    .state
                     .lock()
                     .await
                     .insert_git_repository_for_path(
@@ -3904,13 +3905,19 @@ impl BackgroundScanner {
                     )
                     .await
                     .log_err()?;
-                if let Some(tracked_paths) =
-                    self.load_tracked_paths_for_repository(&local_repository.dot_git_abs_path).await
+                if let Some(tracked_paths) = self
+                    .load_tracked_paths_for_repository(&local_repository.dot_git_abs_path)
+                    .await
                 {
-                    self.state.lock().await.snapshot.tracked_paths_by_work_dir_abs_path.insert(
-                        local_repository.work_directory_abs_path.clone(),
-                        tracked_paths,
-                    );
+                    self.state
+                        .lock()
+                        .await
+                        .snapshot
+                        .tracked_paths_by_work_dir_abs_path
+                        .insert(
+                            local_repository.work_directory_abs_path.clone(),
+                            tracked_paths,
+                        );
                 }
                 Some(ancestor_dot_git)
             })
@@ -4626,7 +4633,10 @@ impl BackgroundScanner {
             };
 
             if child_name == DOT_GIT {
-                let local_repository = self.state.lock().await
+                let local_repository = self
+                    .state
+                    .lock()
+                    .await
                     .insert_git_repository(
                         child_path.clone(),
                         self.fs.as_ref(),
@@ -4638,10 +4648,15 @@ impl BackgroundScanner {
                         .load_tracked_paths_for_repository(&local_repository.dot_git_abs_path)
                         .await
                 {
-                    self.state.lock().await.snapshot.tracked_paths_by_work_dir_abs_path.insert(
-                        local_repository.work_directory_abs_path.clone(),
-                        tracked_paths.clone(),
-                    );
+                    self.state
+                        .lock()
+                        .await
+                        .snapshot
+                        .tracked_paths_by_work_dir_abs_path
+                        .insert(
+                            local_repository.work_directory_abs_path.clone(),
+                            tracked_paths.clone(),
+                        );
                     ignore_stack.tracked_paths = Some(tracked_paths);
                 }
             } else if child_name == GITIGNORE {

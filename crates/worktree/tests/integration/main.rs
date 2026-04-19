@@ -2745,7 +2745,9 @@ async fn test_tracked_nested_path_is_not_ignored_by_bin_rule(cx: &mut TestAppCon
         .await;
     worktree.flush_fs_events(cx).await;
     worktree
-        .update(cx, |tree, cx| tree.load_file(rel_path("bin/ignored-file"), cx))
+        .update(cx, |tree, cx| {
+            tree.load_file(rel_path("bin/ignored-file"), cx)
+        })
         .await
         .unwrap();
 
@@ -2791,7 +2793,10 @@ async fn test_tracking_nested_path_updates_ignored_bin_dir(cx: &mut TestAppConte
         }),
     )
     .await;
-    fs.set_head_and_index_for_repo(path!("/root/.git").as_ref(), &[(".gitignore", "bin/\n".into())]);
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[(".gitignore", "bin/\n".into())],
+    );
 
     let worktree = Worktree::local(
         Path::new("/root"),
@@ -2808,7 +2813,9 @@ async fn test_tracking_nested_path_updates_ignored_bin_dir(cx: &mut TestAppConte
         .await;
     worktree.flush_fs_events(cx).await;
     worktree
-        .update(cx, |tree, cx| tree.load_file(rel_path("bin/ignored-file"), cx))
+        .update(cx, |tree, cx| {
+            tree.load_file(rel_path("bin/ignored-file"), cx)
+        })
         .await
         .unwrap();
 
@@ -2821,7 +2828,9 @@ async fn test_tracking_nested_path_updates_ignored_bin_dir(cx: &mut TestAppConte
         assert!(nested_bin.is_ignored);
         assert!(
             worktree
-                .entry_for_path(rel_path("images/simple-bridge/src/rootfs/bin/simple-bridge"))
+                .entry_for_path(rel_path(
+                    "images/simple-bridge/src/rootfs/bin/simple-bridge"
+                ))
                 .is_none(),
             "tracked file should not be visible before the repository starts tracking it"
         );
