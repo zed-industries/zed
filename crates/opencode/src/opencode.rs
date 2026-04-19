@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
 pub const OPENCODE_API_URL: &str = "https://opencode.ai/zen";
-pub const OPENCODE_GO_API_URL: &str = "https://opencode.ai/go";
+pub const OPENCODE_GO_API_URL: &str = "https://opencode.ai/zen/go";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]

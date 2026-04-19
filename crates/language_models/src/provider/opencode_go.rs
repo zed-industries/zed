@@ -146,7 +146,7 @@ impl LanguageModelProvider for OpenCodeGoLanguageModelProvider {
     }
 
     fn icon(&self) -> IconOrSvg {
-        IconOrSvg::Icon(IconName::AiOpenCodeGo)
+        IconOrSvg::Icon(IconName::AiOpenCode)
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -632,7 +632,7 @@ impl Render for ConfigurationView {
                                 .child(Label::new("Sign in and get your key at"))
                                 .child(ButtonLink::new(
                                     "OpenCode Go Console",
-                                    "https://opencode.ai/go",
+                                    "https://opencode.ai/zen/go",
                                 )),
                         )
                         .child(ListBulletItem::new(
