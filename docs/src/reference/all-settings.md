@@ -3942,6 +3942,7 @@ List of `integer` column numbers
     "copy_on_select": false,
     "keep_selection_on_copy": true,
     "dock": "bottom",
+    "starts_open": false,
     "default_width": 640,
     "default_height": 320,
     "detect_venv": {
@@ -3980,6 +3981,24 @@ List of `integer` column numbers
 **Options**
 
 `"bottom"`, `"left"` or `"right"`
+
+### Terminal: Starts Open
+
+- Description: Whether the terminal panel should open on startup.
+- Setting: `starts_open`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+```json [settings]
+{
+  "terminal": {
+    "starts_open": true
+  }
+}
+```
 
 ### Terminal: Alternate Scroll
 
