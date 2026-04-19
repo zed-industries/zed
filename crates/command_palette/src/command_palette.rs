@@ -87,6 +87,15 @@ impl CommandPalette {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        if workspace.active_modal::<CommandPalette>(cx).is_some() {
+            workspace.hide_modal(window, cx);
+            return;
+        }
+
+        if workspace.has_active_modal(window, cx) && !workspace.hide_modal(window, cx) {
+            return;
+        }
+
         let Some(previous_focus_handle) = window.focused(cx) else {
             return;
         };
@@ -600,6 +609,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         })
         .detach_and_log_err(cx);
         let action = command.action;
+        window.focus(&self.previous_focus_handle, cx);
         self.dismissed(window, cx);
         window.dispatch_action(action, cx);
     }
