@@ -1981,6 +1981,7 @@ pub enum ImageFormat {
     Tiff,
     /// .ico
     Ico,
+    /// Netpbm image formats (.pbm, .ppm, .pgm).
     Pnm,
 }
 
