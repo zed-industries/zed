@@ -28,18 +28,49 @@ impl From<PlanEntryStatus> for acp::PlanEntryStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[schemars(inline)]
+pub enum PlanEntryPriority {
+    /// A background or optional task; does not block progress.
+    Low,
+    /// Standard priority — the default for most steps.
+    Medium,
+    /// Blocking or time-sensitive; should be addressed before lower-priority steps.
+    High,
+}
+
+impl Default for PlanEntryPriority {
+    fn default() -> Self {
+        PlanEntryPriority::Medium
+    }
+}
+
+impl From<PlanEntryPriority> for acp::PlanEntryPriority {
+    fn from(value: PlanEntryPriority) -> Self {
+        match value {
+            PlanEntryPriority::Low => acp::PlanEntryPriority::Low,
+            PlanEntryPriority::Medium => acp::PlanEntryPriority::Medium,
+            PlanEntryPriority::High => acp::PlanEntryPriority::High,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PlanItem {
     /// Human-readable description of what this task aims to accomplish.
     pub step: String,
     /// The current status of this task.
     pub status: PlanEntryStatus,
+    /// The priority of this task. Defaults to `medium` when omitted.
+    #[serde(default)]
+    pub priority: PlanEntryPriority,
 }
 
 impl From<PlanItem> for acp::PlanEntry {
     fn from(value: PlanItem) -> Self {
         acp::PlanEntry::new(
             value.step,
-            acp::PlanEntryPriority::Medium,
+            value.priority.into(),
             value.status.into(),
         )
     }
