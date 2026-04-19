@@ -1545,6 +1545,10 @@ impl Panel for TerminalPanel {
         true
     }
 
+    fn starts_open(&self, _: &Window, cx: &App) -> bool {
+        TerminalSettings::get_global(cx).starts_open
+    }
+
     fn set_position(
         &mut self,
         position: DockPosition,
