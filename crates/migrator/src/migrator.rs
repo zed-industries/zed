@@ -5246,7 +5246,8 @@ mod tests {
     }
 
     #[test]
-    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_no_change_when_already_migrated() {
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_no_change_when_already_migrated()
+     {
         assert_migrate_settings(
             &r#"
             {

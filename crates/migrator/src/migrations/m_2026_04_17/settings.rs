@@ -15,7 +15,10 @@ pub fn promote_show_branch_icon_true_to_show_branch_status_icon(value: &mut Valu
 fn migrate_one(object: &mut serde_json::Map<String, Value>) -> Result<()> {
     migrate_title_bar_value(object);
 
-    if let Some(settings) = object.get_mut(SETTINGS_KEY).and_then(|value| value.as_object_mut()) {
+    if let Some(settings) = object
+        .get_mut(SETTINGS_KEY)
+        .and_then(|value| value.as_object_mut())
+    {
         migrate_title_bar_value(settings);
     }
 
@@ -23,7 +26,9 @@ fn migrate_one(object: &mut serde_json::Map<String, Value>) -> Result<()> {
 }
 
 fn migrate_title_bar_value(object: &mut serde_json::Map<String, Value>) {
-    let Some(title_bar) = object.get_mut(TITLE_BAR_KEY).and_then(|value| value.as_object_mut())
+    let Some(title_bar) = object
+        .get_mut(TITLE_BAR_KEY)
+        .and_then(|value| value.as_object_mut())
     else {
         return;
     };
