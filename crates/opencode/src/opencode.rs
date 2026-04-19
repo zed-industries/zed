@@ -4,6 +4,60 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
+#[derive(Deserialize)]
+struct ModelsResponse {
+    data: Vec<ModelEntry>,
+}
+
+#[derive(Deserialize)]
+struct ModelEntry {
+    id: String,
+}
+
+pub async fn list_model_ids(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: &str,
+) -> Result<Vec<String>> {
+    let uri = format!("{api_url}/v1/models");
+    let request_builder = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header("Accept", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key.trim()));
+
+    let request = request_builder
+        .body(AsyncBody::default())
+        .map_err(|e| anyhow!("failed to build request: {e}"))?;
+    let mut response = client
+        .send(request)
+        .await
+        .map_err(|e| anyhow!("failed to send request: {e}"))?;
+
+    let mut body = String::new();
+    response
+        .body_mut()
+        .read_to_string(&mut body)
+        .await
+        .map_err(|e| anyhow!("failed to read response: {e}"))?;
+
+    if response.status().is_success() {
+        let models_response: ModelsResponse =
+            serde_json::from_str(&body).map_err(|e| anyhow!("failed to parse response: {e}"))?;
+        Ok(models_response
+            .data
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect())
+    } else {
+        Err(anyhow!(
+            "failed to list models, status: {:?}, body: {}",
+            response.status(),
+            body
+        ))
+    }
+}
+
 pub const OPENCODE_API_URL: &str = "https://opencode.ai/zen";
 pub const OPENCODE_GO_API_URL: &str = "https://opencode.ai/zen/go";
 
@@ -80,23 +134,29 @@ pub enum Model {
     #[serde(rename = "gemini-3-flash")]
     Gemini3Flash,
 
+    // -- Anthropic protocol models (non-Claude) --
+    #[serde(rename = "minimax-m2.7")]
+    MiniMaxM2_7,
+
     // -- OpenAI Chat Completions protocol models --
     #[serde(rename = "minimax-m2.5")]
     MiniMaxM2_5,
     #[serde(rename = "minimax-m2.5-free")]
     MiniMaxM2_5Free,
+    #[serde(rename = "glm-5.1")]
+    Glm5_1,
     #[serde(rename = "glm-5")]
     Glm5,
     #[serde(rename = "kimi-k2.5")]
     KimiK2_5,
-    #[serde(rename = "mimo-v2-pro-free")]
-    MimoV2ProFree,
-    #[serde(rename = "mimo-v2-omni-free")]
-    MimoV2OmniFree,
-    #[serde(rename = "mimo-v2-flash-free")]
-    MimoV2FlashFree,
-    #[serde(rename = "trinity-large-preview-free")]
-    TrinityLargePreviewFree,
+    #[serde(rename = "mimo-v2-pro")]
+    MimoV2Pro,
+    #[serde(rename = "mimo-v2-omni")]
+    MimoV2Omni,
+    #[serde(rename = "qwen3.6-plus")]
+    Qwen3_6Plus,
+    #[serde(rename = "qwen3.5-plus")]
+    Qwen3_5Plus,
     #[serde(rename = "big-pickle")]
     BigPickle,
     #[serde(rename = "nemotron-3-super-free")]
@@ -149,14 +209,17 @@ impl Model {
             Self::Gemini3_1Pro => "gemini-3.1-pro",
             Self::Gemini3Flash => "gemini-3-flash",
 
+            Self::MiniMaxM2_7 => "minimax-m2.7",
+
             Self::MiniMaxM2_5 => "minimax-m2.5",
             Self::MiniMaxM2_5Free => "minimax-m2.5-free",
+            Self::Glm5_1 => "glm-5.1",
             Self::Glm5 => "glm-5",
             Self::KimiK2_5 => "kimi-k2.5",
-            Self::MimoV2ProFree => "mimo-v2-pro-free",
-            Self::MimoV2OmniFree => "mimo-v2-omni-free",
-            Self::MimoV2FlashFree => "mimo-v2-flash-free",
-            Self::TrinityLargePreviewFree => "trinity-large-preview-free",
+            Self::MimoV2Pro => "mimo-v2-pro",
+            Self::MimoV2Omni => "mimo-v2-omni",
+            Self::Qwen3_6Plus => "qwen3.6-plus",
+            Self::Qwen3_5Plus => "qwen3.5-plus",
             Self::BigPickle => "big-pickle",
             Self::Nemotron3SuperFree => "nemotron-3-super-free",
 
@@ -195,14 +258,17 @@ impl Model {
             Self::Gemini3_1Pro => "Gemini 3.1 Pro",
             Self::Gemini3Flash => "Gemini 3 Flash",
 
+            Self::MiniMaxM2_7 => "MiniMax M2.7",
+
             Self::MiniMaxM2_5 => "MiniMax M2.5",
             Self::MiniMaxM2_5Free => "MiniMax M2.5 Free",
+            Self::Glm5_1 => "GLM 5.1",
             Self::Glm5 => "GLM 5",
             Self::KimiK2_5 => "Kimi K2.5",
-            Self::MimoV2ProFree => "MiMo V2 Pro Free",
-            Self::MimoV2OmniFree => "MiMo V2 Omni Free",
-            Self::MimoV2FlashFree => "MiMo V2 Flash Free",
-            Self::TrinityLargePreviewFree => "Trinity Large Preview Free",
+            Self::MimoV2Pro => "MiMo V2 Pro",
+            Self::MimoV2Omni => "MiMo V2 Omni",
+            Self::Qwen3_6Plus => "Qwen3.6 Plus",
+            Self::Qwen3_5Plus => "Qwen3.5 Plus",
             Self::BigPickle => "Big Pickle",
             Self::Nemotron3SuperFree => "Nemotron 3 Super Free",
 
@@ -222,7 +288,8 @@ impl Model {
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
             | Self::ClaudeHaiku4_5
-            | Self::Claude3_5Haiku => ApiProtocol::Anthropic,
+            | Self::Claude3_5Haiku
+            | Self::MiniMaxM2_7 => ApiProtocol::Anthropic,
 
             Self::Gpt5_4
             | Self::Gpt5_4Pro
@@ -244,12 +311,13 @@ impl Model {
 
             Self::MiniMaxM2_5
             | Self::MiniMaxM2_5Free
+            | Self::Glm5_1
             | Self::Glm5
             | Self::KimiK2_5
-            | Self::MimoV2ProFree
-            | Self::MimoV2OmniFree
-            | Self::MimoV2FlashFree
-            | Self::TrinityLargePreviewFree
+            | Self::MimoV2Pro
+            | Self::MimoV2Omni
+            | Self::Qwen3_6Plus
+            | Self::Qwen3_5Plus
             | Self::BigPickle
             | Self::Nemotron3SuperFree => ApiProtocol::OpenAiChat,
 
@@ -281,13 +349,16 @@ impl Model {
             Self::Gemini3_1Pro => 1_048_576,
             Self::Gemini3Flash => 1_048_576,
 
+            // Anthropic non-Claude models
+            Self::MiniMaxM2_7 => 196_608,
+
             // OpenAI-compatible models
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 196_608,
-            Self::Glm5 => 200_000,
+            Self::Glm5 | Self::Glm5_1 => 200_000,
             Self::KimiK2_5 => 262_144,
-            Self::MimoV2ProFree => 1_048_576,
-            Self::MimoV2OmniFree | Self::MimoV2FlashFree => 262_144,
-            Self::TrinityLargePreviewFree => 131_072,
+            Self::MimoV2Pro => 1_048_576,
+            Self::MimoV2Omni => 262_144,
+            Self::Qwen3_6Plus | Self::Qwen3_5Plus => 131_072,
             Self::BigPickle => 200_000,
             Self::Nemotron3SuperFree => 262_144,
 
@@ -327,13 +398,17 @@ impl Model {
             // Google models
             Self::Gemini3_1Pro | Self::Gemini3Flash => Some(65_536),
 
+            // Anthropic non-Claude models
+            Self::MiniMaxM2_7 => Some(65_536),
+
             // OpenAI-compatible models
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(65_536),
-            Self::Glm5 | Self::BigPickle => Some(128_000),
+            Self::Glm5 | Self::Glm5_1 | Self::BigPickle => Some(128_000),
             Self::KimiK2_5 => Some(65_536),
-            Self::MimoV2ProFree => Some(131_072),
-            Self::MimoV2OmniFree | Self::MimoV2FlashFree => Some(65_536),
-            Self::TrinityLargePreviewFree | Self::Nemotron3SuperFree => Some(16_384),
+            Self::MimoV2Pro => Some(131_072),
+            Self::MimoV2Omni => Some(65_536),
+            Self::Qwen3_6Plus | Self::Qwen3_5Plus => Some(65_536),
+            Self::Nemotron3SuperFree => Some(16_384),
 
             Self::Custom {
                 max_output_tokens, ..
@@ -378,15 +453,19 @@ impl Model {
             // Google models support images
             Self::Gemini3_1Pro | Self::Gemini3Flash => true,
 
+            // Anthropic non-Claude models support images
+            Self::MiniMaxM2_7 => true,
+
             // OpenAI-compatible models — conservative default
             Self::MiniMaxM2_5
             | Self::MiniMaxM2_5Free
+            | Self::Glm5_1
             | Self::Glm5
             | Self::KimiK2_5
-            | Self::MimoV2ProFree
-            | Self::MimoV2OmniFree
-            | Self::MimoV2FlashFree
-            | Self::TrinityLargePreviewFree
+            | Self::MimoV2Pro
+            | Self::MimoV2Omni
+            | Self::Qwen3_6Plus
+            | Self::Qwen3_5Plus
             | Self::BigPickle
             | Self::Nemotron3SuperFree => false,
 

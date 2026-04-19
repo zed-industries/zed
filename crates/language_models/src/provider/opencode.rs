@@ -45,6 +45,9 @@ pub struct OpenCodeLanguageModelProvider {
 pub struct State {
     api_key_state: ApiKeyState,
     credentials_provider: Arc<dyn CredentialsProvider>,
+    http_client: Arc<dyn HttpClient>,
+    available_model_ids: Vec<String>,
+    fetch_models_task: Option<Task<Result<(), LanguageModelCompletionError>>>,
 }
 
 impl State {
@@ -67,12 +70,59 @@ impl State {
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let credentials_provider = self.credentials_provider.clone();
         let api_url = OpenCodeLanguageModelProvider::api_url(cx);
-        self.api_key_state.load_if_needed(
+        let task = self.api_key_state.load_if_needed(
             api_url,
             |this| &mut this.api_key_state,
             credentials_provider,
             cx,
-        )
+        );
+
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
+                .ok();
+            result
+        })
+    }
+
+    fn fetch_models(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), LanguageModelCompletionError>> {
+        let http_client = self.http_client.clone();
+        let api_url = OpenCodeLanguageModelProvider::api_url(cx);
+        let Some(api_key) = self.api_key_state.key(&api_url) else {
+            return Task::ready(Err(LanguageModelCompletionError::NoApiKey {
+                provider: PROVIDER_NAME,
+            }));
+        };
+        cx.spawn(async move |this, cx| {
+            let model_ids = opencode::list_model_ids(http_client.as_ref(), &api_url, &api_key)
+                .await
+                .map_err(|e| {
+                    LanguageModelCompletionError::Other(anyhow::anyhow!(
+                        "OpenCode Zen error: {:?}",
+                        e
+                    ))
+                })?;
+
+            this.update(cx, |this, cx| {
+                this.available_model_ids = model_ids;
+                cx.notify();
+            })
+            .map_err(|e| LanguageModelCompletionError::Other(e))?;
+
+            Ok(())
+        })
+    }
+
+    fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
+        if self.is_authenticated() {
+            let task = self.fetch_models(cx);
+            self.fetch_models_task.replace(task);
+        } else {
+            self.available_model_ids = Vec::new();
+        }
     }
 }
 
@@ -98,10 +148,15 @@ impl OpenCodeLanguageModelProvider {
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
                 credentials_provider,
+                http_client: http_client.clone(),
+                available_model_ids: Vec::new(),
+                fetch_models_task: None,
             }
         });
 
-        Self { http_client, state }
+        let this = Self { http_client, state };
+        this.state.update(cx, |state, cx| state.restart_fetch_models_task(cx));
+        this
     }
 
     fn create_language_model(&self, model: opencode::Model) -> Arc<dyn LanguageModel> {
@@ -160,8 +215,15 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
+        let available_model_ids = self.state.read(cx).available_model_ids.clone();
+
         for model in opencode::Model::iter() {
-            if !matches!(model, opencode::Model::Custom { .. }) {
+            if matches!(model, opencode::Model::Custom { .. }) {
+                continue;
+            }
+            if available_model_ids.is_empty()
+                || available_model_ids.contains(&model.id().to_string())
+            {
                 models.insert(model.id().to_string(), model);
             }
         }
@@ -172,7 +234,7 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
                 "openai_responses" => ApiProtocol::OpenAiResponses,
                 "openai_chat" => ApiProtocol::OpenAiChat,
                 "google" => ApiProtocol::Google,
-                _ => ApiProtocol::OpenAiChat, // default fallback
+                _ => ApiProtocol::OpenAiChat,
             };
             models.insert(
                 model.name.clone(),
