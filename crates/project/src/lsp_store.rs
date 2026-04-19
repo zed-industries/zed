@@ -75,10 +75,10 @@ use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff,
-    File as _, Language, LanguageAwareStyling, LanguageName, LanguageRegistry, LocalFile,
-    LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate, ManifestName, ModelineSettings,
-    OffsetUtf16, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16,
-    Toolchain, Transaction, Unclipped,
+    DiskState, File as _, Language, LanguageAwareStyling, LanguageName, LanguageRegistry,
+    LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate, ManifestName,
+    ModelineSettings, OffsetUtf16, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToOffsetUtf16,
+    ToPointUtf16, Toolchain, Transaction, Unclipped,
     language_settings::{
         AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, LineEndingSetting,
         all_language_settings,
@@ -4920,6 +4920,16 @@ impl LspStore {
     ) -> OpenLspBufferHandle {
         let buffer_id = buffer.read(cx).remote_id();
         let handle = OpenLspBufferHandle(cx.new(|_| OpenLspBuffer(buffer.clone())));
+        // Historic buffers represent past file content (e.g. the commit view)
+        // and would otherwise be treated as untitled, which starts a language
+        // server against content that is not the current file state.
+        if buffer
+            .read(cx)
+            .file()
+            .is_some_and(|file| matches!(file.disk_state(), DiskState::Historic { .. }))
+        {
+            return handle;
+        }
         if let Some(local) = self.as_local_mut() {
             let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
             if !ignore_refcounts {
