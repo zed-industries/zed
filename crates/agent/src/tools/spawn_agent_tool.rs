@@ -44,6 +44,11 @@ pub struct SpawnAgentToolInput {
     /// Session ID of an existing agent session to continue instead of creating a new one.
     #[serde(default)]
     pub session_id: Option<acp::SessionId>,
+    /// Hint to the orchestrator about the urgency of this subtask relative to
+    /// other parallel delegations. Use `high` for blocking work, `low` for
+    /// optional or exploratory tasks. Omit (or use `medium`) for standard tasks.
+    #[serde(default)]
+    pub task_priority: crate::tools::update_plan_tool::PlanEntryPriority,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
