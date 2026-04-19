@@ -167,10 +167,27 @@ impl Keymap {
         input: &[impl AsKeystroke],
         context_stack: &[KeyContext],
     ) -> (SmallVec<[KeyBinding; 1]>, bool) {
+        self.bindings_for_input_filtered(input, context_stack, |_| false)
+    }
+
+    /// Returns bindings for the given input while allowing callers to skip matching bindings.
+    pub fn bindings_for_input_filtered<T, F>(
+        &self,
+        input: &[T],
+        context_stack: &[KeyContext],
+        should_skip: F,
+    ) -> (SmallVec<[KeyBinding; 1]>, bool)
+    where
+        T: AsKeystroke,
+        F: Fn(&KeyBinding) -> bool,
+    {
         let mut matched_bindings = SmallVec::<[(usize, BindingIndex, &KeyBinding); 1]>::new();
         let mut pending_bindings = SmallVec::<[(BindingIndex, &KeyBinding); 1]>::new();
 
         for (ix, binding) in self.bindings().enumerate().rev() {
+            if should_skip(binding) {
+                continue;
+            }
             let Some(depth) = self.binding_enabled(binding, context_stack) else {
                 continue;
             };

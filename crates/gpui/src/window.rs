@@ -991,6 +991,7 @@ pub struct Window {
     focus_enabled: bool,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
+    skip_send_keystrokes_remap: bool,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
     pub(crate) client_inset: Option<Pixels>,
@@ -1148,6 +1149,7 @@ struct PendingInput {
     focus: Option<FocusId>,
     timer: Option<Task<()>>,
     needs_timeout: bool,
+    skip_send_keystrokes_remap: bool,
 }
 
 pub(crate) struct ElementStateBox {
@@ -1599,6 +1601,7 @@ impl Window {
             focus_enabled: true,
             pending_input: None,
             pending_modifier: ModifierState::default(),
+            skip_send_keystrokes_remap: false,
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
             client_inset: None,
@@ -4219,6 +4222,15 @@ impl Window {
         false
     }
 
+    /// Dispatch a given keystroke as though the user had typed it, without expanding
+    /// `workspace::SendKeystrokes` bindings.
+    pub fn dispatch_keystroke_no_remap(&mut self, keystroke: Keystroke, cx: &mut App) -> bool {
+        self.skip_send_keystrokes_remap = true;
+        let handled = self.dispatch_keystroke(keystroke, cx);
+        self.skip_send_keystrokes_remap = false;
+        handled
+    }
+
     /// Return a key binding string for an action, to display in the UI. Uses the highest precedence
     /// binding for the action (last binding added to the keymap).
     pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
@@ -4483,14 +4495,18 @@ impl Window {
             currently_pending = PendingInput::default();
         }
 
+        let skip_send_keystrokes_remap =
+            currently_pending.skip_send_keystrokes_remap || self.skip_send_keystrokes_remap;
+
         let match_result = self.rendered_frame.dispatch_tree.dispatch_key(
             currently_pending.keystrokes,
             keystroke,
             &dispatch_path,
+            skip_send_keystrokes_remap,
         );
 
         if !match_result.to_replay.is_empty() {
-            self.replay_pending_input(match_result.to_replay, cx);
+            self.replay_pending_input(match_result.to_replay, skip_send_keystrokes_remap, cx);
             cx.propagate_event = true;
         }
 
@@ -4498,6 +4514,7 @@ impl Window {
             currently_pending.timer.take();
             currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.focus;
+            currently_pending.skip_send_keystrokes_remap = skip_send_keystrokes_remap;
 
             let text_input_requires_timeout = event
                 .downcast_ref::<KeyDownEvent>()
@@ -4528,13 +4545,18 @@ impl Window {
                         let dispatch_path =
                             window.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
-                        let to_replay = window
-                            .rendered_frame
-                            .dispatch_tree
-                            .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
+                        let to_replay = window.rendered_frame.dispatch_tree.flush_dispatch(
+                            currently_pending.keystrokes,
+                            &dispatch_path,
+                            currently_pending.skip_send_keystrokes_remap,
+                        );
 
                         window.pending_input_changed(cx);
-                        window.replay_pending_input(to_replay, cx)
+                        window.replay_pending_input(
+                            to_replay,
+                            currently_pending.skip_send_keystrokes_remap,
+                            cx,
+                        )
                     })
                     .log_err();
                 }));
@@ -4676,7 +4698,12 @@ impl Window {
             .map(|pending_input| pending_input.keystrokes.as_slice())
     }
 
-    fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>, cx: &mut App) {
+    fn replay_pending_input(
+        &mut self,
+        replays: SmallVec<[Replay; 1]>,
+        skip_send_keystrokes_remap: bool,
+        cx: &mut App,
+    ) {
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);
         let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
 
@@ -4689,6 +4716,11 @@ impl Window {
 
             cx.propagate_event = true;
             for binding in replay.bindings {
+                if skip_send_keystrokes_remap
+                    && binding.action().name() == "workspace::SendKeystrokes"
+                {
+                    continue;
+                }
                 self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
                 if !cx.propagate_event {
                     self.dispatch_keystroke_observers(
