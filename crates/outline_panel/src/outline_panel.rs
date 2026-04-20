@@ -51,7 +51,8 @@ use theme::SyntaxTheme;
 use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, FluentBuilder, HighlightedLabel, IconButton, IconButtonShape, IndentGuideColors,
-    IndentGuideLayout, ListItem, ScrollAxes, Scrollbars, Tab, Tooltip, WithScrollbar, prelude::*,
+    IndentGuideLayout, KeyBinding, ListItem, ScrollAxes, Scrollbars, Tab, Tooltip, WithScrollbar,
+    prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, debug_panic, rel_path::RelPath};
 use workspace::{
@@ -4562,16 +4563,24 @@ impl OutlinePanel {
                     )
                 })
                 .child(h_flex().justify_center().child({
-                    let keystroke = match self.position(window, cx) {
-                        DockPosition::Left => window.keystroke_text_for(&workspace::ToggleLeftDock),
+                    let key_binding = match self.position(window, cx) {
+                        DockPosition::Left => {
+                            KeyBinding::for_action(&workspace::ToggleLeftDock, cx).into_any_element()
+                        }
                         DockPosition::Bottom => {
-                            window.keystroke_text_for(&workspace::ToggleBottomDock)
+                            KeyBinding::for_action(&workspace::ToggleBottomDock, cx)
+                                .into_any_element()
                         }
                         DockPosition::Right => {
-                            window.keystroke_text_for(&workspace::ToggleRightDock)
+                            KeyBinding::for_action(&workspace::ToggleRightDock, cx)
+                                .into_any_element()
                         }
                     };
-                    Label::new(format!("Toggle Panel With {keystroke}")).color(Color::Muted)
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(Label::new("Toggle Panel With").color(Color::Muted))
+                        .child(key_binding)
                 }))
         } else {
             let list_contents = {
