@@ -62,6 +62,21 @@ pub struct TextSystem {
     fallback_font_stack: SmallVec<[Font; 2]>,
 }
 
+struct ResolvedFallbacks {
+    primary: FontId,
+    fallbacks: SmallVec<[FontId; 4]>,
+}
+
+fn weighted_variant(family: SharedString, font: &Font) -> Font {
+    Font {
+        family,
+        features: font.features.clone(),
+        weight: font.weight,
+        style: font.style,
+        fallbacks: None,
+    }
+}
+
 impl TextSystem {
     /// Create a new TextSystem with the given platform text system.
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
@@ -153,17 +168,8 @@ impl TextSystem {
         if let Ok(font_id) = self.font_id(font) {
             return font_id;
         }
-        // When falling back to the system font stack, preserve the requested
-        // weight and style so that e.g. bold text still renders bold even when
-        // the primary font family cannot be loaded.
         for fallback in &self.fallback_font_stack {
-            let weighted_fallback = Font {
-                family: fallback.family.clone(),
-                features: font.features.clone(),
-                weight: font.weight,
-                style: font.style,
-                fallbacks: None,
-            };
+            let weighted_fallback = weighted_variant(fallback.family.clone(), font);
             if let Ok(font_id) = self.font_id(&weighted_fallback) {
                 return font_id;
             }
@@ -179,67 +185,77 @@ impl TextSystem {
         );
     }
 
-    /// Resolves the best font for a given character, trying user-specified fallbacks
-    /// and then system fallbacks while preserving the requested weight and style.
-    /// Returns `None` if the primary font already supports the character.
-    fn resolve_fallback_for_char(
+    /// Resolves fallback font IDs for a run, caching lookups to avoid per-character repetition.
+    fn resolve_run_fallbacks(&self, font: &Font, primary: FontId) -> ResolvedFallbacks {
+        let mut fallbacks = SmallVec::<[FontId; 4]>::new();
+        let mut push = |id: FontId| {
+            if id != primary && !fallbacks.contains(&id) {
+                fallbacks.push(id);
+            }
+        };
+
+        if let Some(user_fallbacks) = &font.fallbacks {
+            for fallback_name in user_fallbacks.fallback_list() {
+                let variant = weighted_variant(SharedString::from(fallback_name.clone()), font);
+                if let Ok(id) = self.font_id(&variant) {
+                    push(id);
+                }
+            }
+        }
+
+        for fallback in &self.fallback_font_stack {
+            let variant = weighted_variant(fallback.family.clone(), font);
+            if let Ok(id) = self.font_id(&variant) {
+                push(id);
+            }
+        }
+
+        ResolvedFallbacks { primary, fallbacks }
+    }
+
+    fn push_char_font_runs(
         &self,
-        font: &Font,
-        ch: char,
-        primary_font_id: FontId,
-    ) -> Option<FontId> {
-        // Check if the primary font already has this glyph
+        resolved: &ResolvedFallbacks,
+        run_text: &str,
+        decoration_changed: bool,
+        font_runs: &mut Vec<FontRun>,
+    ) {
+        let mut first_char_in_run = true;
+        for ch in run_text.chars() {
+            let ch_len = ch.len_utf8();
+            let font_id = self.font_for_char(resolved, ch);
+
+            let force_new_run = first_char_in_run && decoration_changed;
+            first_char_in_run = false;
+
+            if let Some(font_run) = font_runs.last_mut()
+                && font_id == font_run.font_id
+                && !force_new_run
+            {
+                font_run.len += ch_len;
+            } else {
+                font_runs.push(FontRun {
+                    len: ch_len,
+                    font_id,
+                });
+            }
+        }
+    }
+
+    fn font_for_char(&self, resolved: &ResolvedFallbacks, ch: char) -> FontId {
         if self
             .platform_text_system
-            .glyph_for_char(primary_font_id, ch)
+            .glyph_for_char(resolved.primary, ch)
             .is_some()
         {
-            return None;
+            return resolved.primary;
         }
-
-        // Try user-specified fallback fonts with the same weight and style
-        if let Some(fallbacks) = &font.fallbacks {
-            for fallback_name in fallbacks.fallback_list() {
-                let fallback_font = Font {
-                    family: SharedString::from(fallback_name.clone()),
-                    features: font.features.clone(),
-                    weight: font.weight,
-                    style: font.style,
-                    fallbacks: None,
-                };
-                if let Ok(fallback_id) = self.font_id(&fallback_font) {
-                    if self
-                        .platform_text_system
-                        .glyph_for_char(fallback_id, ch)
-                        .is_some()
-                    {
-                        return Some(fallback_id);
-                    }
-                }
+        for &fid in &resolved.fallbacks {
+            if self.platform_text_system.glyph_for_char(fid, ch).is_some() {
+                return fid;
             }
         }
-
-        // Try system fallback fonts with the same weight and style
-        for fallback in &self.fallback_font_stack {
-            let weighted_fallback = Font {
-                family: fallback.family.clone(),
-                features: font.features.clone(),
-                weight: font.weight,
-                style: font.style,
-                fallbacks: None,
-            };
-            if let Ok(fallback_id) = self.font_id(&weighted_fallback) {
-                if self
-                    .platform_text_system
-                    .glyph_for_char(fallback_id, ch)
-                    .is_some()
-                {
-                    return Some(fallback_id);
-                }
-            }
-        }
-
-        None
+        resolved.primary
     }
 
     /// Get the bounding box for the given font and font size.
@@ -515,23 +531,27 @@ impl WindowTextSystem {
 
     /// Shape the given line using a caller-provided content hash as the cache key.
     ///
-    /// This enables cache hits without materializing a contiguous `SharedString` for the text.
-    /// If the cache misses, `materialize_text` is invoked to produce the `SharedString` for shaping.
+    /// Behaves like [`Self::shape_line`] but uses `text_hash` (rather than hashing
+    /// the text) to key the cache. Per-character font fallback requires access to
+    /// the text, so it is passed directly.
     ///
-    /// Contract (caller enforced):
-    /// - Same `text_hash` implies identical text content (collision risk accepted by caller).
-    /// - `text_len` should be the UTF-8 byte length of the text (helps reduce accidental collisions).
+    /// Contract (caller enforced): same `text_hash` implies identical text content
+    /// (collision risk accepted by caller).
     ///
     /// Like [`Self::shape_line`], this must be used only for single-line text (no `\n`).
     pub fn shape_line_by_hash(
         &self,
+        text: SharedString,
         text_hash: u64,
-        text_len: usize,
         font_size: Pixels,
         runs: &[TextRun],
         force_width: Option<Pixels>,
-        materialize_text: impl FnOnce() -> SharedString,
     ) -> ShapedLine {
+        debug_assert!(
+            text.find('\n').is_none(),
+            "text argument should not contain newlines"
+        );
+
         let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
         for run in runs {
             if let Some(last_run) = decoration_runs.last_mut()
@@ -552,27 +572,7 @@ impl WindowTextSystem {
             });
         }
 
-        let mut used_force_width = force_width;
-        let layout = self.layout_line_by_hash(
-            text_hash,
-            text_len,
-            font_size,
-            runs,
-            used_force_width,
-            || {
-                let text = materialize_text();
-                debug_assert!(
-                    text.find('\n').is_none(),
-                    "text argument should not contain newlines"
-                );
-                text
-            },
-        );
-
-        // We only materialize actual text on cache miss; on hit we avoid allocations.
-        // Since `ShapedLine` carries a `SharedString`, use an empty placeholder for hits.
-        // NOTE: Callers must not rely on `ShapedLine.text` for content when using this API.
-        let text: SharedString = SharedString::new_static("");
+        let layout = self.layout_line_by_hash(&text, text_hash, font_size, runs, force_width);
 
         ShapedLine {
             layout,
@@ -632,37 +632,10 @@ impl WindowTextSystem {
                 };
 
                 let primary_font_id = self.resolve_font(&run.font);
+                let resolved = self.resolve_run_fallbacks(&run.font, primary_font_id);
                 let local_start = run_start - line_start;
                 let run_text = &line_text[local_start..local_start + run_len_within_line];
-                let mut first_char_in_segment = true;
-
-                for ch in run_text.chars() {
-                    let ch_len = ch.len_utf8();
-                    let font_id = if ch.is_ascii() {
-                        primary_font_id
-                    } else if let Some(fallback_id) =
-                        self.resolve_fallback_for_char(&run.font, ch, primary_font_id)
-                    {
-                        fallback_id
-                    } else {
-                        primary_font_id
-                    };
-
-                    let force_new_run = first_char_in_segment && decoration_changed;
-                    first_char_in_segment = false;
-
-                    if let Some(font_run) = font_runs.last_mut()
-                        && font_id == font_run.font_id
-                        && !force_new_run
-                    {
-                        font_run.len += ch_len;
-                    } else {
-                        font_runs.push(FontRun {
-                            len: ch_len,
-                            font_id,
-                        });
-                    }
-                }
+                self.push_char_font_runs(&resolved, run_text, decoration_changed, &mut font_runs);
 
                 // Preserve the remainder of the run for the next line
                 run.len -= run_len_within_line;
@@ -747,59 +720,9 @@ impl WindowTextSystem {
         runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout> {
-        let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
-
-        let mut text_offset = 0;
-        for run in runs.iter() {
-            let decoration_changed = if let Some(last_run) = last_run
-                && last_run.color == run.color
-                && last_run.underline == run.underline
-                && last_run.strikethrough == run.strikethrough
-            // we do not consider differing background color relevant, as it does not affect glyphs
-            // && last_run.background_color == run.background_color
-            {
-                false
-            } else {
-                last_run = Some(run);
-                true
-            };
-
-            let primary_font_id = self.resolve_font(&run.font);
-            let run_text = &text[text_offset..text_offset + run.len];
-            let mut first_char_in_run = true;
-
-            for ch in run_text.chars() {
-                let ch_len = ch.len_utf8();
-                let font_id = if ch.is_ascii() {
-                    primary_font_id
-                } else if let Some(fallback_id) =
-                    self.resolve_fallback_for_char(&run.font, ch, primary_font_id)
-                {
-                    fallback_id
-                } else {
-                    primary_font_id
-                };
-
-                let force_new_run = first_char_in_run && decoration_changed;
-                first_char_in_run = false;
-
-                if let Some(font_run) = font_runs.last_mut()
-                    && font_id == font_run.font_id
-                    && !force_new_run
-                {
-                    font_run.len += ch_len;
-                } else {
-                    font_runs.push(FontRun {
-                        len: ch_len,
-                        font_id,
-                    });
-                }
-            }
-
-            text_offset += run.len;
-        }
+        self.build_font_runs(text, runs, &mut font_runs);
 
         let layout = self.line_layout_cache.layout_line(
             &SharedString::new(text),
@@ -813,57 +736,32 @@ impl WindowTextSystem {
         layout
     }
 
-    /// Probe the line layout cache using a caller-provided content hash, without allocating.
+    /// Probe the line layout cache using a caller-provided content hash.
     ///
-    /// Returns `Some(layout)` if the layout is already cached in either the current frame
-    /// or the previous frame. Returns `None` if it is not cached.
+    /// Returns `Some(layout)` if the layout is already cached in either the current
+    /// frame or the previous frame. Returns `None` otherwise.
     ///
-    /// Contract (caller enforced):
-    /// - Same `text_hash` implies identical text content (collision risk accepted by caller).
-    /// - `text_len` should be the UTF-8 byte length of the text (helps reduce accidental collisions).
+    /// `text` is required because per-character font fallback determines the
+    /// `font_runs` used as part of the cache key, and accurate resolution needs the
+    /// codepoints themselves.
+    ///
+    /// Contract (caller enforced): same `text_hash` implies identical text content
+    /// (collision risk accepted by caller).
     pub fn try_layout_line_by_hash(
         &self,
+        text: &str,
         text_hash: u64,
-        text_len: usize,
         font_size: Pixels,
         runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> Option<Arc<LineLayout>> {
-        let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
-
-        for run in runs.iter() {
-            let decoration_changed = if let Some(last_run) = last_run
-                && last_run.color == run.color
-                && last_run.underline == run.underline
-                && last_run.strikethrough == run.strikethrough
-            // we do not consider differing background color relevant, as it does not affect glyphs
-            // && last_run.background_color == run.background_color
-            {
-                false
-            } else {
-                last_run = Some(run);
-                true
-            };
-
-            let font_id = self.resolve_font(&run.font);
-            if let Some(font_run) = font_runs.last_mut()
-                && font_id == font_run.font_id
-                && !decoration_changed
-            {
-                font_run.len += run.len;
-            } else {
-                font_runs.push(FontRun {
-                    len: run.len,
-                    font_id,
-                });
-            }
-        }
+        self.build_font_runs(text, runs, &mut font_runs);
 
         let layout = self.line_layout_cache.try_layout_line_by_hash(
             text_hash,
-            text_len,
+            text.len(),
             font_size,
             &font_runs,
             force_width,
@@ -876,32 +774,48 @@ impl WindowTextSystem {
 
     /// Layout the given line of text using a caller-provided content hash as the cache key.
     ///
-    /// This enables cache hits without materializing a contiguous `SharedString` for the text.
-    /// If the cache misses, `materialize_text` is invoked to produce the `SharedString` for shaping.
+    /// Behaves like [`Self::layout_line`] but keys the cache on `text_hash` rather
+    /// than hashing the text. Per-character font fallback requires the text, so it
+    /// is passed directly.
     ///
-    /// Contract (caller enforced):
-    /// - Same `text_hash` implies identical text content (collision risk accepted by caller).
-    /// - `text_len` should be the UTF-8 byte length of the text (helps reduce accidental collisions).
+    /// Contract (caller enforced): same `text_hash` implies identical text content
+    /// (collision risk accepted by caller).
     pub fn layout_line_by_hash(
         &self,
+        text: &SharedString,
         text_hash: u64,
-        text_len: usize,
         font_size: Pixels,
         runs: &[TextRun],
         force_width: Option<Pixels>,
-        materialize_text: impl FnOnce() -> SharedString,
     ) -> Arc<LineLayout> {
-        let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
+        self.build_font_runs(text, runs, &mut font_runs);
 
+        let text_len = text.len();
+        let text_for_miss = text.clone();
+        let layout = self.line_layout_cache.layout_line_by_hash(
+            text_hash,
+            text_len,
+            font_size,
+            &font_runs,
+            force_width,
+            || text_for_miss,
+        );
+
+        self.font_runs_pool.lock().push(font_runs);
+
+        layout
+    }
+
+    fn build_font_runs(&self, text: &str, runs: &[TextRun], font_runs: &mut Vec<FontRun>) {
+        let mut last_run = None::<&TextRun>;
+        let mut text_offset = 0;
         for run in runs.iter() {
             let decoration_changed = if let Some(last_run) = last_run
                 && last_run.color == run.color
                 && last_run.underline == run.underline
                 && last_run.strikethrough == run.strikethrough
-            // we do not consider differing background color relevant, as it does not affect glyphs
-            // && last_run.background_color == run.background_color
             {
                 false
             } else {
@@ -909,32 +823,13 @@ impl WindowTextSystem {
                 true
             };
 
-            let font_id = self.resolve_font(&run.font);
-            if let Some(font_run) = font_runs.last_mut()
-                && font_id == font_run.font_id
-                && !decoration_changed
-            {
-                font_run.len += run.len;
-            } else {
-                font_runs.push(FontRun {
-                    len: run.len,
-                    font_id,
-                });
-            }
+            let primary_font_id = self.resolve_font(&run.font);
+            let resolved = self.resolve_run_fallbacks(&run.font, primary_font_id);
+            let run_text = &text[text_offset..text_offset + run.len];
+            self.push_char_font_runs(&resolved, run_text, decoration_changed, font_runs);
+
+            text_offset += run.len;
         }
-
-        let layout = self.line_layout_cache.layout_line_by_hash(
-            text_hash,
-            text_len,
-            font_size,
-            &font_runs,
-            force_width,
-            materialize_text,
-        );
-
-        self.font_runs_pool.lock().push(font_runs);
-
-        layout
     }
 }
 
@@ -1281,6 +1176,180 @@ pub fn font_name_with_fallbacks<'a>(name: &'a str, system: &'a str) -> &'a str {
         ".ZedSans" | "Zed Plex Sans" => "IBM Plex Sans",
         ".ZedMono" | "Zed Plex Mono" => "Lilex",
         _ => name,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        DevicePixels, FontRun, GlyphId, LineLayout, PlatformTextSystem, RenderGlyphParams,
+        ShapedRun, TextRenderingMode, point, px, size,
+    };
+    use anyhow::anyhow;
+    use parking_lot::Mutex;
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    struct MockPlatformTextSystem {
+        fonts: Mutex<HashMap<(String, u32, FontStyle), FontId>>,
+        coverage: Mutex<HashMap<(FontId, char), GlyphId>>,
+        next_id: Mutex<usize>,
+    }
+
+    impl MockPlatformTextSystem {
+        fn register(
+            &self,
+            family: &str,
+            weight: FontWeight,
+            style: FontStyle,
+            chars: &[char],
+        ) -> FontId {
+            let mut next = self.next_id.lock();
+            *next += 1;
+            let id = FontId(*next);
+            self.fonts
+                .lock()
+                .insert((family.to_string(), weight.0.to_bits(), style), id);
+            let mut cov = self.coverage.lock();
+            for &ch in chars {
+                cov.insert((id, ch), GlyphId(1));
+            }
+            id
+        }
+    }
+
+    impl PlatformTextSystem for MockPlatformTextSystem {
+        fn add_fonts(&self, _: Vec<Cow<'static, [u8]>>) -> Result<()> {
+            Ok(())
+        }
+        fn all_font_names(&self) -> Vec<String> {
+            Vec::new()
+        }
+        fn font_id(&self, d: &Font) -> Result<FontId> {
+            self.fonts
+                .lock()
+                .get(&(d.family.to_string(), d.weight.0.to_bits(), d.style))
+                .copied()
+                .ok_or_else(|| anyhow!("unknown font"))
+        }
+        fn font_metrics(&self, _: FontId) -> FontMetrics {
+            FontMetrics {
+                units_per_em: 1000,
+                ascent: 800.0,
+                descent: -200.0,
+                line_gap: 0.0,
+                underline_position: -50.0,
+                underline_thickness: 50.0,
+                cap_height: 700.0,
+                x_height: 500.0,
+                bounding_box: Bounds {
+                    origin: Point { x: 0.0, y: 0.0 },
+                    size: Size {
+                        width: 1000.0,
+                        height: 1000.0,
+                    },
+                },
+            }
+        }
+        fn typographic_bounds(&self, _: FontId, _: GlyphId) -> Result<Bounds<f32>> {
+            Ok(Bounds {
+                origin: Point { x: 0.0, y: 0.0 },
+                size: size(500.0, 500.0),
+            })
+        }
+        fn advance(&self, _: FontId, _: GlyphId) -> Result<Size<f32>> {
+            Ok(size(500.0, 0.0))
+        }
+        fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+            self.coverage.lock().get(&(font_id, ch)).copied()
+        }
+        fn glyph_raster_bounds(&self, _: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+            Ok(Default::default())
+        }
+        fn rasterize_glyph(
+            &self,
+            _: &RenderGlyphParams,
+            raster: Bounds<DevicePixels>,
+        ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
+            Ok((raster.size, Vec::new()))
+        }
+        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            let mut pos = px(0.);
+            let em = font_size * 0.5;
+            let mut shaped_runs = Vec::new();
+            let mut offset = 0;
+            for r in runs {
+                let mut glyphs = Vec::new();
+                for (ix, _ch) in text[offset..offset + r.len].char_indices() {
+                    glyphs.push(crate::ShapedGlyph {
+                        id: GlyphId(1),
+                        position: point(pos, px(0.)),
+                        index: offset + ix,
+                        is_emoji: false,
+                    });
+                    pos += em;
+                }
+                shaped_runs.push(ShapedRun {
+                    font_id: r.font_id,
+                    glyphs,
+                });
+                offset += r.len;
+            }
+            LineLayout {
+                font_size,
+                width: pos,
+                ascent: font_size,
+                descent: font_size * 0.25,
+                runs: shaped_runs,
+                len: text.len(),
+            }
+        }
+        fn recommended_rendering_mode(&self, _: FontId, _: Pixels) -> TextRenderingMode {
+            TextRenderingMode::Grayscale
+        }
+    }
+
+    #[test]
+    fn fallback_preserves_weight_and_style() {
+        let mock = MockPlatformTextSystem::default();
+        let primary_bold =
+            mock.register("Primary", FontWeight::BOLD, FontStyle::Normal, &['a', 'b']);
+        let _primary_regular =
+            mock.register("Primary", FontWeight::NORMAL, FontStyle::Normal, &['a', 'b']);
+        let fallback_bold =
+            mock.register("Fallback", FontWeight::BOLD, FontStyle::Normal, &['\u{4e2d}']);
+        let _fallback_regular = mock.register(
+            "Fallback",
+            FontWeight::NORMAL,
+            FontStyle::Normal,
+            &['\u{4e2d}'],
+        );
+
+        let text_system = TextSystem::new(Arc::new(mock));
+
+        let font = Font {
+            family: "Primary".into(),
+            features: FontFeatures::default(),
+            fallbacks: Some(FontFallbacks::from_fonts(vec!["Fallback".to_string()])),
+            weight: FontWeight::BOLD,
+            style: FontStyle::Normal,
+        };
+
+        let primary_id = text_system.resolve_font(&font);
+        assert_eq!(primary_id, primary_bold);
+
+        let resolved = text_system.resolve_run_fallbacks(&font, primary_id);
+        assert!(
+            resolved.fallbacks.contains(&fallback_bold),
+            "bold fallback must be part of resolved fallbacks"
+        );
+
+        // '中' is missing from Primary-Bold; route to Fallback-Bold, not Fallback-Regular.
+        assert_eq!(
+            text_system.font_for_char(&resolved, '\u{4e2d}'),
+            fallback_bold
+        );
     }
 }
 
