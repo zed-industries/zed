@@ -1188,6 +1188,8 @@ pub struct Editor {
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
+    show_coverage_gutter: bool,
+    coverage_data: HashMap<MultiBufferRow, CoverageStatus>,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_bookmarks: Option<bool>,
@@ -1403,6 +1405,7 @@ pub struct EditorSnapshot {
     show_line_numbers: Option<bool>,
     number_deleted_lines: bool,
     show_git_diff_gutter: Option<bool>,
+    show_coverage_gutter: bool,
     show_code_actions: Option<bool>,
     show_runnables: Option<bool>,
     show_breakpoints: Option<bool>,
@@ -1416,6 +1419,13 @@ pub struct EditorSnapshot {
     current_line_highlight: CurrentLineHighlight,
     gutter_hovered: bool,
     semantic_tokens_enabled: bool,
+}
+
+/// Represents the code coverage status of a line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoverageStatus {
+    Covered,
+    Uncovered,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -2448,6 +2458,8 @@ impl Editor {
             enable_runnables: full_mode,
             enable_mouse_wheel_zoom: full_mode,
             show_git_diff_gutter: None,
+            show_coverage_gutter: false,
+            coverage_data: HashMap::default(),
             show_code_actions: None,
             show_runnables: None,
             show_bookmarks: None,
@@ -3330,6 +3342,7 @@ impl Editor {
             show_line_numbers: self.show_line_numbers,
             number_deleted_lines: self.number_deleted_lines,
             show_git_diff_gutter: self.show_git_diff_gutter,
+            show_coverage_gutter: self.show_coverage_gutter,
             semantic_tokens_enabled: self.semantic_token_state.enabled(),
             show_code_actions: self.show_code_actions,
             show_runnables: self.show_runnables,
@@ -22218,6 +22231,51 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_show_coverage_gutter(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_coverage_gutter = show;
+        cx.notify();
+    }
+
+    pub fn set_coverage_data(
+        &mut self,
+        data: HashMap<MultiBufferRow, CoverageStatus>,
+        cx: &mut Context<Self>,
+    ) {
+        self.coverage_data = data;
+        self.show_coverage_gutter = true;
+        cx.notify();
+    }
+
+    pub fn coverage_data(&self) -> &HashMap<MultiBufferRow, CoverageStatus> {
+        &self.coverage_data
+    }
+
+    pub fn toggle_coverage_gutter(
+        &mut self,
+        _: &ToggleCoverageGutter,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.show_coverage_gutter {
+            self.show_coverage_gutter = false;
+            self.coverage_data.clear();
+        } else {
+            let max_row = self.buffer.read(cx).read(cx).max_point().row;
+            let mut data = HashMap::default();
+            for row in 0..=max_row {
+                let status = if row % 7 == 0 || row % 13 == 0 {
+                    CoverageStatus::Uncovered
+                } else {
+                    CoverageStatus::Covered
+                };
+                data.insert(MultiBufferRow(row), status);
+            }
+            self.coverage_data = data;
+            self.show_coverage_gutter = true;
+        }
+        cx.notify();
+    }
+
     pub fn set_show_code_actions(&mut self, show_code_actions: bool, cx: &mut Context<Self>) {
         self.show_code_actions = Some(show_code_actions);
         cx.notify();
@@ -28471,7 +28529,7 @@ impl EditorSnapshot {
 
             let is_singleton = self.buffer_snapshot().is_singleton();
 
-            let left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO)
+            let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO)
                 + if !is_singleton {
                     ch_width * 4.0
                 // runnables, breakpoints and bookmarks are shown in the same place
@@ -28485,6 +28543,10 @@ impl EditorSnapshot {
                 } else {
                     px(0.)
                 };
+
+            if self.show_coverage_gutter {
+                left_padding += ch_width;
+            }
 
             let shows_folds = is_singleton && gutter_settings.folds;
 

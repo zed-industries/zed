@@ -1,15 +1,15 @@
 use crate::{
     ActiveDiagnostic, BUFFER_HEADER_PADDING, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext,
     ChunkReplacement, CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker,
-    ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape,
-    CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction,
-    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
-    FocusedBlock, GutterDimensions, GutterHoverButton, HalfPageDown, HalfPageUp, HandleInput,
-    HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
-    MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
-    PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold, ToggleFoldAll,
+    ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CoverageStatus,
+    CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode,
+    EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
+    FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, GutterHoverButton, HalfPageDown,
+    HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown,
+    LineHighlight, LineUp, MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    OpenExcerpts, PageDown, PageUp, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
+    SelectPhase, Selection, SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap,
+    StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -47,8 +47,8 @@ use gpui::{
     MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
     PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun, TextStyleRefinement,
-    WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline,
-    pattern_slash, point, px, quad, relative, size, solid_background, transparent_black,
+    WeakEntity, Window, anchored, deferred, div, fill, hsla, linear_color_stop, linear_gradient,
+    outline, pattern_slash, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{
@@ -526,6 +526,7 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_git_blame);
         register_action(editor, window, Editor::toggle_git_blame_inline);
         register_action(editor, window, Editor::open_git_blame_commit);
+        register_action(editor, window, Editor::toggle_coverage_gutter);
         register_action(editor, window, Editor::toggle_selected_diff_hunks);
         register_action(editor, window, Editor::toggle_staged_selected_diff_hunks);
         register_action(editor, window, Editor::stage_and_next);
@@ -3327,10 +3328,12 @@ impl EditorElement {
             .ilog10()
             + 1;
 
-        let git_gutter_width = Self::gutter_strip_width(line_height)
-            + gutter_dimensions
-                .git_blame_entries_width
-                .unwrap_or_default();
+        let show_coverage = self.editor.read(cx).show_coverage_gutter;
+        let git_gutter_width = Self::gutter_left_strips_width(
+            line_height,
+            show_coverage,
+            gutter_dimensions.git_blame_entries_width,
+        );
         let available_width = gutter_dimensions.left_padding - git_gutter_width;
 
         buffer_rows
@@ -3378,7 +3381,7 @@ impl EditorElement {
                     .into_any_element();
 
                 let position = point(
-                    git_gutter_width + px(1.),
+                    git_gutter_width,
                     ix as f32 * line_height
                         - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height))
                         + px(1.),
@@ -6273,8 +6276,59 @@ impl EditorElement {
         });
     }
 
+    fn paint_coverage_gutter(layout: &EditorLayout, window: &mut Window, cx: &mut App) {
+        if layout.coverage_data.is_empty() {
+            return;
+        }
+
+        let line_height = layout.position_map.line_height;
+        let scroll_position = layout.position_map.snapshot.scroll_position();
+        let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
+        let strip_width = Self::coverage_strip_width(line_height);
+        let git_strip_width = Self::gutter_strip_width(line_height);
+        let x_offset = git_strip_width + px(1.);
+
+        window.paint_layer(layout.gutter_hitbox.bounds, |window| {
+            for &(display_row, status) in &layout.coverage_data {
+                let color = match status {
+                    CoverageStatus::Covered => hsla(0.33, 0.8, 0.45, 0.8),
+                    CoverageStatus::Uncovered => hsla(0.0, 0.8, 0.45, 0.8),
+                };
+
+                let start_y = Pixels::from(
+                    display_row.as_f64() * ScrollPixelOffset::from(line_height) - scroll_top,
+                );
+                let end_y = start_y + line_height;
+
+                let origin = layout.gutter_hitbox.bounds.origin + point(x_offset, start_y);
+                let bounds = Bounds::new(origin, size(strip_width, end_y - start_y));
+
+                let flattened_color = cx.theme().colors().editor_background.blend(color);
+
+                window.paint_quad(fill(bounds, flattened_color));
+            }
+        });
+    }
+
     fn gutter_strip_width(line_height: Pixels) -> Pixels {
         (0.275 * line_height).floor()
+    }
+
+    fn coverage_strip_width(line_height: Pixels) -> Pixels {
+        (0.15 * line_height).floor()
+    }
+
+    fn gutter_left_strips_width(
+        line_height: Pixels,
+        show_coverage: bool,
+        git_blame_entries_width: Option<Pixels>,
+    ) -> Pixels {
+        let mut width =
+            Self::gutter_strip_width(line_height) + git_blame_entries_width.unwrap_or_default();
+        if show_coverage {
+            width += Self::coverage_strip_width(line_height) + px(1.);
+        }
+        width
     }
 
     fn diff_hunk_bounds(
@@ -6423,6 +6477,8 @@ impl EditorElement {
         if show_git_gutter {
             Self::paint_gutter_diff_hunks(layout, self.split_side, window, cx)
         }
+
+        Self::paint_coverage_gutter(layout, window, cx);
 
         let highlight_width = 0.275 * layout.position_map.line_height;
         let highlight_corner_radii = Corners::all(0.05 * layout.position_map.line_height);
@@ -7984,8 +8040,11 @@ impl Gutter<'_> {
             AvailableSpace::Definite(self.line_height),
         );
         let indicator_size = button.layout_as_root(available_space, window, cx);
-        let git_gutter_width = EditorElement::gutter_strip_width(self.line_height)
-            + self.dimensions.git_blame_entries_width.unwrap_or_default();
+        let git_gutter_width = EditorElement::gutter_left_strips_width(
+            self.line_height,
+            self.snapshot.show_coverage_gutter,
+            self.dimensions.git_blame_entries_width,
+        );
 
         let x = git_gutter_width + px(2.);
 
@@ -10799,10 +10858,11 @@ impl Element for EditorElement {
                         );
                     }
 
-                    let git_gutter_width = Self::gutter_strip_width(line_height)
-                        + gutter_dimensions
-                            .git_blame_entries_width
-                            .unwrap_or_default();
+                    let git_gutter_width = Self::gutter_left_strips_width(
+                        line_height,
+                        snapshot.show_coverage_gutter,
+                        gutter_dimensions.git_blame_entries_width,
+                    );
                     let available_width = gutter_dimensions.left_padding - git_gutter_width;
 
                     let max_line_number_length = self
@@ -11045,6 +11105,24 @@ impl Element for EditorElement {
                         editor.last_position_map = Some(position_map.clone())
                     });
 
+                    let coverage_data = {
+                        let editor = self.editor.read(cx);
+                        let coverage = editor.coverage_data();
+                        if position_map.snapshot.show_coverage_gutter && !coverage.is_empty() {
+                            row_infos
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(ix, row_info)| {
+                                    let multibuffer_row = row_info.multibuffer_row?;
+                                    let status = coverage.get(&multibuffer_row)?;
+                                    Some((DisplayRow(start_row.0 + ix as u32), *status))
+                                })
+                                .collect()
+                        } else {
+                            Vec::new()
+                        }
+                    };
+
                     EditorLayout {
                         mode,
                         position_map,
@@ -11088,6 +11166,7 @@ impl Element for EditorElement {
                         sticky_buffer_header,
                         sticky_headers,
                         expand_toggles,
+                        coverage_data,
                         text_align: self.style.text.text_align,
                         content_width: text_hitbox.size.width,
                     }
@@ -11281,6 +11360,7 @@ pub struct EditorLayout {
     sticky_buffer_header: Option<AnyElement>,
     sticky_headers: Option<StickyHeaders>,
     document_colors: Option<(DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>)>,
+    coverage_data: Vec<(DisplayRow, CoverageStatus)>,
     text_align: TextAlign,
     content_width: Pixels,
 }

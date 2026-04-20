@@ -847,6 +847,8 @@ actions!(
         ToggleDiagnostics,
         /// Toggles indent guides display.
         ToggleIndentGuides,
+        /// Toggles code coverage gutter display.
+        ToggleCoverageGutter,
         /// Toggles inlay hints display.
         ToggleInlayHints,
         /// Toggles semantic highlights display.
