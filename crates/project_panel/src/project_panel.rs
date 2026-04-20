@@ -2079,12 +2079,15 @@ impl ProjectPanel {
         let new_entry_id = self.resolve_entry(entry_id);
         if let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) {
             let worktree = worktree.read(cx);
-            let root_entry_id = worktree.root_entry().map(|entry| entry.id);
-            let expanded_dir_ids = self
-                .state
-                .expanded_dir_ids
-                .entry(worktree_id)
-                .or_insert_with(|| root_entry_id.into_iter().collect());
+            let expanded_dir_ids = match self.state.expanded_dir_ids.entry(worktree_id) {
+                hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                hash_map::Entry::Vacant(entry) => {
+                    let Some(root_entry_id) = worktree.root_entry().map(|entry| entry.id) else {
+                        return;
+                    };
+                    entry.insert(vec![root_entry_id])
+                }
+            };
 
             if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
                 loop {
