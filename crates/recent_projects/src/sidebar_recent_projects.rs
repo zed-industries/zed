@@ -423,7 +423,6 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                                 .w_full()
                                 .gap_1()
                                 .justify_between()
-                                .items_center()
                                 .child(Label::new("Add Local Folders"))
                                 .child(KeyBinding::for_action_in(&open_action, &focus_handle, cx)),
                         )
@@ -439,7 +438,6 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                                 .w_full()
                                 .gap_1()
                                 .justify_between()
-                                .items_center()
                                 .child(Label::new("Add Remote Folder"))
                                 .child(KeyBinding::for_action(
                                     &OpenRemote {
