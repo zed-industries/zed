@@ -1017,10 +1017,10 @@ impl Item for Editor {
         if let Some(workspace_entity) = &workspace.weak_handle().upgrade() {
             cx.subscribe(
                 workspace_entity,
-                |editor, _, event: &workspace::Event, _cx| {
+                |editor, _, event: &workspace::Event, cx| {
                     if let workspace::Event::ModalOpened = event {
                         editor.mouse_context_menu.take();
-                        editor.inline_blame_popover.take();
+                        editor.hide_blame_popover(true, cx);
                     }
                 },
             )

@@ -494,7 +494,7 @@ impl Sidebar {
             &multi_workspace,
             window,
             |this, _multi_workspace, event: &MultiWorkspaceEvent, window, cx| match event {
-                MultiWorkspaceEvent::ActiveWorkspaceChanged => {
+                MultiWorkspaceEvent::ActiveWorkspaceChanged { .. } => {
                     this.sync_active_entry_from_active_workspace(cx);
                     this.replace_archived_panel_thread(window, cx);
                     this.update_entries(cx);
@@ -1669,6 +1669,17 @@ impl Sidebar {
                         cx,
                     )),
             )
+            .on_mouse_down(gpui::MouseButton::Right, {
+                let menu_handle = self
+                    .project_header_menu_handles
+                    .get(&ix)
+                    .cloned()
+                    .unwrap_or_default();
+                move |_, window, cx| {
+                    cx.stop_propagation();
+                    menu_handle.toggle(window, cx);
+                }
+            })
             .on_click(
                 cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
                     if event.modifiers().secondary() {
@@ -1898,18 +1909,18 @@ impl Sidebar {
                                         let label_color = if is_active_workspace {
                                             Color::Accent
                                         } else {
-                                            Color::Muted
+                                            Color::Default
                                         };
                                         let row_group_name = SharedString::from(format!(
                                             "workspace-menu-row-{workspace_index}"
                                         ));
 
                                         h_flex()
-                                            .w_full()
                                             .group(&row_group_name)
-                                            .justify_between()
+                                            .w_full()
                                             .gap_2()
-                                            .child(h_flex().min_w_0().gap_3().children(
+                                            .justify_between()
+                                            .child(h_flex().min_w_0().gap_2().children(
                                                 workspace_label.iter().map(|label| {
                                                     h_flex()
                                                         .min_w_0()
@@ -1931,7 +1942,8 @@ impl Sidebar {
                                                             |this, secondary_name| {
                                                                 this.child(
                                                                     Label::new(":")
-                                                                        .color(label_color),
+                                                                        .color(label_color)
+                                                                        .alpha(0.5),
                                                                 )
                                                                 .child(
                                                                     Label::new(secondary_name)
@@ -1949,7 +1961,6 @@ impl Sidebar {
                                                     IconName::Close,
                                                 )
                                                 .shape(ui::IconButtonShape::Square)
-                                                .style(ButtonStyle::Subtle)
                                                 .visible_on_hover(&row_group_name)
                                                 .tooltip(Tooltip::text("Close Workspace"))
                                                 .on_click(move |_, window, cx| {
@@ -1978,6 +1989,7 @@ impl Sidebar {
                                             .update(cx, |multi_workspace, cx| {
                                                 multi_workspace.activate(
                                                     activate_workspace.clone(),
+                                                    None,
                                                     window,
                                                     cx,
                                                 );
@@ -2464,7 +2476,7 @@ impl Sidebar {
         }
 
         multi_workspace.update(cx, |multi_workspace, cx| {
-            multi_workspace.activate(workspace.clone(), window, cx);
+            multi_workspace.activate(workspace.clone(), None, window, cx);
             if retain {
                 multi_workspace.retain_active_workspace(cx);
             }
@@ -2504,7 +2516,7 @@ impl Sidebar {
         let activated = target_window
             .update(cx, |multi_workspace, window, cx| {
                 window.activate_window();
-                multi_workspace.activate(workspace.clone(), window, cx);
+                multi_workspace.activate(workspace.clone(), None, window, cx);
                 Self::load_agent_thread_in_workspace(&workspace, &metadata, true, window, cx);
             })
             .log_err()
@@ -3526,7 +3538,7 @@ impl Sidebar {
     ) {
         if let Some(multi_workspace) = self.multi_workspace.upgrade() {
             multi_workspace.update(cx, |mw, cx| {
-                mw.activate(workspace.clone(), window, cx);
+                mw.activate(workspace.clone(), None, window, cx);
             });
         }
     }
@@ -3722,7 +3734,7 @@ impl Sidebar {
                 } => {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
                         mw.update(cx, |mw, cx| {
-                            mw.activate(workspace.clone(), window, cx);
+                            mw.activate(workspace.clone(), None, window, cx);
                         });
                     }
                     this.active_entry = Some(ActiveEntry {
@@ -3741,7 +3753,7 @@ impl Sidebar {
                 } => {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
                         mw.update(cx, |mw, cx| {
-                            mw.activate(workspace.clone(), window, cx);
+                            mw.activate(workspace.clone(), None, window, cx);
                             mw.retain_active_workspace(cx);
                         });
                     }
@@ -3759,7 +3771,7 @@ impl Sidebar {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
                         if let Some(original_ws) = &original_workspace {
                             mw.update(cx, |mw, cx| {
-                                mw.activate(original_ws.clone(), window, cx);
+                                mw.activate(original_ws.clone(), None, window, cx);
                             });
                         }
                     }
@@ -3816,7 +3828,7 @@ impl Sidebar {
         if let Some((metadata, workspace)) = initial_preview {
             if let Some(mw) = self.multi_workspace.upgrade() {
                 mw.update(cx, |mw, cx| {
-                    mw.activate(workspace.clone(), window, cx);
+                    mw.activate(workspace.clone(), None, window, cx);
                 });
             }
             self.active_entry = Some(ActiveEntry {
@@ -4063,7 +4075,7 @@ impl Sidebar {
         };
 
         multi_workspace.update(cx, |multi_workspace, cx| {
-            multi_workspace.activate(workspace.clone(), window, cx);
+            multi_workspace.activate(workspace.clone(), None, window, cx);
         });
 
         let draft_id = workspace.update(cx, |workspace, cx| {
@@ -4190,7 +4202,7 @@ impl Sidebar {
                 .workspace_for_paths(key.path_list(), key.host().as_ref(), cx)
         }) {
             multi_workspace.update(cx, |multi_workspace, cx| {
-                multi_workspace.activate(workspace, window, cx);
+                multi_workspace.activate(workspace, None, window, cx);
                 multi_workspace.retain_active_workspace(cx);
             });
         } else {
