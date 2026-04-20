@@ -41,8 +41,8 @@ use workspace::ProjectGroupKey;
 
 use dev_container::{DevContainerContext, find_devcontainer_configs};
 use ui::{
-    ContextMenu, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, ListSubHeader,
-    PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    ButtonLike, ContextMenu, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
+    ListSubHeader, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, paths::PathExt};
 use workspace::{
@@ -1638,20 +1638,17 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
                     .child({
-                        let open_action = workspace::Open {
-                            create_new_window: self.create_new_window,
-                        };
-                        ListItem::new("open_local_folder")
-                            .inset(true)
-                            .spacing(ListItemSpacing::Sparse)
+                        ButtonLike::new("open_local_folder")
                             .child(
                                 h_flex()
                                     .w_full()
+                                    .gap_1()
                                     .justify_between()
-                                    .items_center()
                                     .child(Label::new("Open Local Folders"))
                                     .child(KeyBinding::for_action_in(
-                                        &open_action,
+                                        &workspace::Open {
+                                            create_new_window: self.create_new_window,
+                                        },
                                         &focus_handle,
                                         cx,
                                     )),
@@ -1670,14 +1667,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                             })
                     })
                     .child(
-                        ListItem::new("open_remote_folder")
-                            .inset(true)
-                            .spacing(ListItemSpacing::Sparse)
+                        ButtonLike::new("open_remote_folder")
                             .child(
                                 h_flex()
                                     .w_full()
+                                    .gap_1()
                                     .justify_between()
-                                    .items_center()
                                     .child(Label::new("Open Remote Folder"))
                                     .child(KeyBinding::for_action(
                                         &OpenRemote {
