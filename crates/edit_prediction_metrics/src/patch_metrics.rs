@@ -687,7 +687,6 @@ fn diff_tokens<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<DiffOp> {
         .collect()
 }
 
-
 /// Reconstruct old and new text from a unified diff.
 ///
 /// Context and deletion lines form the old text; context and addition
