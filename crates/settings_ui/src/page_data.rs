@@ -5185,7 +5185,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn terminal_panel_section() -> [SettingsPageItem; 4] {
+    fn terminal_panel_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Terminal Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5196,6 +5196,24 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| settings_content.terminal.as_ref()?.dock.as_ref(),
                     write: |settings_content, value| {
                         settings_content.terminal.get_or_insert_default().dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Starts Open",
+                description: "Whether the terminal panel should open on startup.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.starts_open"),
+                    pick: |settings_content| {
+                        settings_content.terminal.as_ref()?.starts_open.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .starts_open = value;
                     },
                 }),
                 metadata: None,
@@ -5448,7 +5466,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 14] {
+    fn git_panel_section() -> [SettingsPageItem; 15] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5472,6 +5490,21 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| settings_content.git_panel.as_ref()?.dock.as_ref(),
                     write: |settings_content, value| {
                         settings_content.git_panel.get_or_insert_default().dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Starts Open",
+                description: "Whether the git panel should open on startup.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.starts_open"),
+                    pick: |settings_content| {
+                        settings_content.git_panel.as_ref()?.starts_open.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.git_panel.get_or_insert_default().starts_open = value;
                     },
                 }),
                 metadata: None,
