@@ -37,6 +37,7 @@ sysinfo.workspace = true
 smol.workspace = true
 task.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 thiserror.workspace = true
 url.workspace = true
 util.workspace = true

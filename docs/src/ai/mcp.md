@@ -31,14 +31,14 @@ Many MCP servers are available as extensions. Find them via:
 
 Popular servers available as an extension include:
 
-- [Context7](https://zed.dev/extensions/context7-mcp-server)
-- [GitHub](https://zed.dev/extensions/github-mcp-server)
-- [Puppeteer](https://zed.dev/extensions/puppeteer-mcp-server)
+- [Context7](https://zed.dev/extensions/mcp-server-context7)
+- [GitHub](https://zed.dev/extensions/mcp-server-github)
+- [Puppeteer](https://zed.dev/extensions/mcp-server-puppeteer)
 - [Gem](https://zed.dev/extensions/gem)
-- [Brave Search](https://zed.dev/extensions/brave-search-mcp-server)
+- [Brave Search](https://zed.dev/extensions/mcp-server-brave-search)
 - [Prisma](https://github.com/aqrln/prisma-mcp-zed)
-- [Framelink Figma](https://zed.dev/extensions/framelink-figma-mcp-server)
-- [Resend](https://zed.dev/extensions/resend-mcp-server)
+- [Framelink Figma](https://zed.dev/extensions/mcp-server-figma)
+- [Resend](https://zed.dev/extensions/mcp-server-resend)
 
 ### As Custom Servers
 
@@ -56,6 +56,9 @@ You can connect them by adding their commands directly to your settings file ([h
     "remote-mcp-server": {
       "url": "custom",
       "headers": { "Authorization": "Bearer <token>" }
+    },
+    "remote-mcp-server-with-oauth": {
+      "url": "https://mcp.example.com/mcp"
     }
   }
 }
@@ -63,6 +66,8 @@ You can connect them by adding their commands directly to your settings file ([h
 
 Alternatively, you can also add a custom server by accessing the Agent Panel's Settings view (also accessible via the `agent: open settings` action).
 From there, you can add it through the modal that appears when you click the "Add Custom Server" button.
+
+> Note: When a remote MCP server has no configured `"Authorization"` header, Zed will prompt you to authenticate yourself against the MCP server using the standard MCP OAuth flow.
 
 ## Using MCP Servers
 
