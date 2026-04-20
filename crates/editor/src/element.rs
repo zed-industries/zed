@@ -12403,7 +12403,6 @@ fn calculate_wrap_width(
         SoftWrap::GitDiff => None,
         SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
         SoftWrap::EditorWidth => Some(editor_width),
-        SoftWrap::Column(column) => Some(wrap_width_for(column)),
         SoftWrap::Bounded(column) => Some(editor_width.min(wrap_width_for(column))),
     }
 }
@@ -12442,7 +12441,8 @@ fn compute_auto_height_layout(
     let overscroll = size(em_width, px(0.));
 
     let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
-    let wrap_width = calculate_wrap_width(editor.soft_wrap_mode(cx), editor_width, em_width);
+    let wrap_width = calculate_wrap_width(editor.soft_wrap_mode(cx), editor_width, em_width)
+        .map(|width| width.min(editor_width));
     if wrap_width.is_some() && editor.set_wrap_width(wrap_width, cx) {
         snapshot = editor.snapshot(window, cx);
     }
@@ -12807,7 +12807,7 @@ mod tests {
 
         update_test_language_settings(cx, &|s| {
             s.defaults.preferred_line_length = Some(5_u32);
-            s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
+            s.defaults.soft_wrap = Some(language_settings::SoftWrap::Bounded);
         });
 
         let editor = window.root(cx).unwrap();
@@ -13163,7 +13163,7 @@ mod tests {
                     s.defaults.tab_size = NonZeroU32::new(tab_size);
                     s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
                     s.defaults.preferred_line_length = Some(editor_width as u32);
-                    s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
+                    s.defaults.soft_wrap = Some(language_settings::SoftWrap::Bounded);
                 });
 
                 let actual_invisibles = collect_invisibles_from_new_editor(
@@ -13613,11 +13613,6 @@ mod tests {
         assert_eq!(
             calculate_wrap_width(SoftWrap::EditorWidth, editor_width, em_width),
             Some(px(800.0)),
-        );
-
-        assert_eq!(
-            calculate_wrap_width(SoftWrap::Column(72), editor_width, em_width),
-            Some(px((72.0 * 8.0_f32).ceil())),
         );
 
         assert_eq!(

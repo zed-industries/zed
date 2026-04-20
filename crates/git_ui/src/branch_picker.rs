@@ -97,10 +97,11 @@ pub fn create_embedded(
     workspace: WeakEntity<Workspace>,
     repository: Option<Entity<Repository>>,
     width: Rems,
+    show_footer: bool,
     window: &mut Window,
     cx: &mut Context<BranchList>,
 ) -> BranchList {
-    BranchList::new_embedded(workspace, repository, width, window, cx)
+    BranchList::new_embedded(workspace, repository, width, show_footer, window, cx)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -164,6 +165,7 @@ impl BranchList {
 
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
+            picker.delegate.show_footer = !embedded;
         });
 
         let mut subscriptions = Vec::new();
@@ -223,6 +225,7 @@ impl BranchList {
         workspace: WeakEntity<Workspace>,
         repository: Option<Entity<Repository>>,
         width: Rems,
+        show_footer: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -235,6 +238,9 @@ impl BranchList {
             window,
             cx,
         );
+        this.picker.update(cx, |picker, _| {
+            picker.delegate.show_footer = show_footer;
+        });
         this._subscriptions
             .push(cx.subscribe(&this.picker, |_, _, _, cx| {
                 cx.emit(DismissEvent);
@@ -386,6 +392,7 @@ pub struct BranchListDelegate {
     state: PickerState,
     focus_handle: FocusHandle,
     restore_selected_branch: Option<SharedString>,
+    show_footer: bool,
 }
 
 #[derive(Debug)]
@@ -452,6 +459,7 @@ impl BranchListDelegate {
             state: PickerState::List,
             focus_handle: cx.focus_handle(),
             restore_selected_branch: None,
+            show_footer: false,
         }
     }
 
@@ -1172,7 +1180,7 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        if self.editor_position() == PickerEditorPosition::End {
+        if !self.show_footer || self.editor_position() == PickerEditorPosition::End {
             return None;
         }
         let focus_handle = self.focus_handle.clone();

@@ -550,8 +550,6 @@ pub enum SoftWrap {
     None,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
-    /// Soft wrap lines at the preferred line length.
-    Column(u32),
     /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
     Bounded(u32),
 }
@@ -21924,9 +21922,6 @@ impl Editor {
         let settings = self.buffer.read(cx).language_settings(cx);
         if settings.show_wrap_guides {
             match self.soft_wrap_mode(cx) {
-                SoftWrap::Column(soft_wrap) => {
-                    wrap_guides.push((soft_wrap as usize, true));
-                }
                 SoftWrap::Bounded(soft_wrap) => {
                     wrap_guides.push((soft_wrap as usize, true));
                 }
@@ -21946,9 +21941,6 @@ impl Editor {
                 SoftWrap::None
             }
             language_settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
-            language_settings::SoftWrap::PreferredLineLength => {
-                SoftWrap::Column(settings.preferred_line_length)
-            }
             language_settings::SoftWrap::Bounded => {
                 SoftWrap::Bounded(settings.preferred_line_length)
             }
@@ -22025,9 +22017,7 @@ impl Editor {
             let soft_wrap = match self.soft_wrap_mode(cx) {
                 SoftWrap::GitDiff => return,
                 SoftWrap::None => language_settings::SoftWrap::EditorWidth,
-                SoftWrap::EditorWidth | SoftWrap::Column(_) | SoftWrap::Bounded(_) => {
-                    language_settings::SoftWrap::None
-                }
+                SoftWrap::EditorWidth | SoftWrap::Bounded(_) => language_settings::SoftWrap::None,
             };
             self.soft_wrap_mode_override = Some(soft_wrap);
         }
@@ -29388,7 +29378,7 @@ pub fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors
         lsp::DiagnosticSeverity::ERROR => colors.error,
         lsp::DiagnosticSeverity::WARNING => colors.warning,
         lsp::DiagnosticSeverity::INFORMATION => colors.info,
-        lsp::DiagnosticSeverity::HINT => colors.info,
+        lsp::DiagnosticSeverity::HINT => colors.hint,
         _ => colors.ignored,
     }
 }
