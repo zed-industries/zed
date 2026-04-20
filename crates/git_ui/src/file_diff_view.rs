@@ -6,9 +6,9 @@ use editor::{Editor, EditorEvent, MultiBuffer};
 use futures::{FutureExt, select_biased};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, Render, Task, WeakEntity, Window,
+    Focusable, Font, IntoElement, Render, Task, WeakEntity, Window,
 };
-use language::{Buffer, LanguageRegistry};
+use language::{Buffer, HighlightedText, LanguageRegistry};
 use project::Project;
 use std::{
     any::{Any, TypeId},
@@ -21,7 +21,7 @@ use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
 use util::paths::PathExt as _;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
@@ -108,7 +108,7 @@ impl FileDiffView {
 
         for buffer in [&old_buffer, &new_buffer] {
             cx.subscribe(buffer, move |this, _, event, _| match event {
-                language::BufferEvent::Edited
+                language::BufferEvent::Edited { .. }
                 | language::BufferEvent::LanguageChanged(_)
                 | language::BufferEvent::Reparsed => {
                     this.buffer_changes_tx.send(()).ok();
@@ -324,7 +324,7 @@ impl Item for FileDiffView {
         ToolbarItemLocation::PrimaryLeft
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         self.editor.breadcrumbs(cx)
     }
 
@@ -379,7 +379,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
     }
 

@@ -40,6 +40,7 @@ message AddWorktree {
 message AddWorktreeResponse {
   uint64 worktree_id = 1;
   string canonicalized_path = 2;
+  optional string root_repo_common_dir = 3;
 }
 
 message RemoveWorktree {
@@ -62,6 +63,7 @@ message WorktreeMetadata {
   string root_name = 2;
   bool visible = 3;
   string abs_path = 4;
+  optional string root_repo_common_dir = 5;
 }
 
 message ProjectPath {

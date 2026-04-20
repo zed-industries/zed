@@ -20,12 +20,15 @@ use windows::{
         Foundation::*,
         Graphics::Dwm::*,
         Graphics::Gdi::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
+        System::{
+            Com::*, Diagnostics::Debug::MessageBeep, LibraryLoader::*, Ole::*, SystemServices::*,
+        },
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
 };
 
+use crate::direct_manipulation::DirectManipulationHandler;
 use crate::*;
 use gpui::*;
 
@@ -57,6 +60,7 @@ pub struct WindowsWindowState {
     pub last_reported_modifiers: Cell<Option<Modifiers>>,
     pub last_reported_capslock: Cell<Option<Capslock>>,
     pub hovered: Cell<bool>,
+    pub direct_manipulation: DirectManipulationHandler,
 
     pub renderer: RefCell<DirectXRenderer>,
 
@@ -131,6 +135,9 @@ impl WindowsWindowState {
         let fullscreen = None;
         let initial_placement = None;
 
+        let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
+            .context("initializing Direct Manipulation")?;
+
         Ok(Self {
             origin: Cell::new(origin),
             logical_size: Cell::new(logical_size),
@@ -157,6 +164,7 @@ impl WindowsWindowState {
             initial_placement: Cell::new(initial_placement),
             hwnd,
             invalidate_devices,
+            direct_manipulation,
         })
     }
 
@@ -532,10 +540,9 @@ impl rwh::HasWindowHandle for WindowsWindow {
     }
 }
 
-// todo(windows)
 impl rwh::HasDisplayHandle for WindowsWindow {
     fn display_handle(&self) -> std::result::Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        Ok(rwh::DisplayHandle::windows())
     }
 }
 
@@ -943,6 +950,11 @@ impl PlatformWindow for WindowsWindow {
         };
 
         self.0.update_ime_position(self.0.hwnd, caret_position);
+    }
+
+    fn play_system_bell(&self) {
+        // MB_OK: The sound specified as the Windows Default Beep sound.
+        let _ = unsafe { MessageBeep(MB_OK) };
     }
 }
 

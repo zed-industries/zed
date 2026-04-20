@@ -11,18 +11,19 @@ use http_client::{AsyncBody, HttpClient};
 use serde::Deserialize;
 use settings::Settings as _;
 
-use crate::DisableAiSettings;
+use crate::{AgentId, DisableAiSettings};
 
 const REGISTRY_URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const REFRESH_THROTTLE_DURATION: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone, Debug)]
 pub struct RegistryAgentMetadata {
-    pub id: SharedString,
+    pub id: AgentId,
     pub name: SharedString,
     pub description: SharedString,
     pub version: SharedString,
     pub repository: Option<SharedString>,
+    pub website: Option<SharedString>,
     pub icon_path: Option<SharedString>,
 }
 
@@ -55,7 +56,7 @@ impl RegistryAgent {
         }
     }
 
-    pub fn id(&self) -> &SharedString {
+    pub fn id(&self) -> &AgentId {
         &self.metadata().id
     }
 
@@ -73,6 +74,10 @@ impl RegistryAgent {
 
     pub fn repository(&self) -> Option<&SharedString> {
         self.metadata().repository.as_ref()
+    }
+
+    pub fn website(&self) -> Option<&SharedString> {
+        self.metadata().website.as_ref()
     }
 
     pub fn icon_path(&self) -> Option<&SharedString> {
@@ -147,12 +152,34 @@ impl AgentRegistryStore {
             .map(|store| store.0.clone())
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn init_test_global(cx: &mut App, agents: Vec<RegistryAgent>) -> Entity<Self> {
+        let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.background_executor().clone());
+        let store = cx.new(|_cx| Self {
+            fs,
+            http_client: http_client::FakeHttpClient::with_404_response(),
+            agents,
+            is_fetching: false,
+            fetch_error: None,
+            pending_refresh: None,
+            last_refresh: None,
+        });
+        cx.set_global(GlobalAgentRegistryStore(store.clone()));
+        store
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_agents(&mut self, agents: Vec<RegistryAgent>, cx: &mut Context<Self>) {
+        self.agents = agents;
+        cx.notify();
+    }
+
     pub fn agents(&self) -> &[RegistryAgent] {
         &self.agents
     }
 
-    pub fn agent(&self, id: &str) -> Option<&RegistryAgent> {
-        self.agents.iter().find(|agent| agent.id().as_ref() == id)
+    pub fn agent(&self, id: &AgentId) -> Option<&RegistryAgent> {
+        self.agents.iter().find(|agent| agent.id() == id)
     }
 
     pub fn is_fetching(&self) -> bool {
@@ -348,11 +375,12 @@ async fn build_registry_agents(
         .await?;
 
         let metadata = RegistryAgentMetadata {
-            id: entry.id.into(),
+            id: AgentId::new(entry.id),
             name: entry.name.into(),
             description: entry.description.into(),
             version: entry.version.into(),
             repository: entry.repository.map(Into::into),
+            website: entry.website.map(Into::into),
             icon_path,
         };
 
@@ -551,6 +579,8 @@ struct RegistryEntry {
     description: String,
     #[serde(default)]
     repository: Option<String>,
+    #[serde(default)]
+    website: Option<String>,
     #[serde(default)]
     icon: Option<String>,
     distribution: RegistryDistribution,
