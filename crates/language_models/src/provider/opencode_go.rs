@@ -155,7 +155,8 @@ impl OpenCodeGoLanguageModelProvider {
         });
 
         let this = Self { http_client, state };
-        this.state.update(cx, |state, cx| state.restart_fetch_models_task(cx));
+        this.state
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
         this
     }
 
@@ -501,9 +502,7 @@ impl LanguageModel for OpenCodeGoLanguageModel {
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => true,
-            LanguageModelToolChoice::None => {
-                self.go_protocol() != ApiProtocol::Google
-            }
+            LanguageModelToolChoice::None => self.go_protocol() != ApiProtocol::Google,
         }
     }
 

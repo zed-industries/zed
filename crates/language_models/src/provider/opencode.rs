@@ -155,7 +155,8 @@ impl OpenCodeLanguageModelProvider {
         });
 
         let this = Self { http_client, state };
-        this.state.update(cx, |state, cx| state.restart_fetch_models_task(cx));
+        this.state
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
         this
     }
 
