@@ -1,4 +1,5 @@
 pub mod batches;
+pub mod completion;
 pub mod responses;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -7,9 +8,9 @@ use http_client::{
     AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode,
     http::{HeaderMap, HeaderValue},
 };
+pub use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-pub use settings::OpenAiReasoningEffort as ReasoningEffort;
 use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
 use thiserror::Error;
@@ -97,7 +98,7 @@ pub enum Model {
     #[serde(rename = "custom")]
     Custom {
         name: String,
-        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        /// The name displayed in the UI, such as in the agent panel model dropdown menu.
         display_name: Option<String>,
         max_tokens: u64,
         max_output_tokens: Option<u64>,
@@ -715,5 +716,28 @@ pub fn embed<'a>(
         let response: OpenAiEmbeddingResponse =
             serde_json::from_str(&body).context("failed to parse OpenAI embedding response")?;
         Ok(response)
+    }
+}
+
+// -- Conversions to `language_model_core` types --
+
+impl From<RequestError> for language_model_core::LanguageModelCompletionError {
+    fn from(error: RequestError) -> Self {
+        match error {
+            RequestError::HttpResponseError {
+                provider,
+                status_code,
+                body,
+                headers,
+            } => {
+                let retry_after = headers
+                    .get(http_client::http::header::RETRY_AFTER)
+                    .and_then(|val| val.to_str().ok()?.parse::<u64>().ok())
+                    .map(std::time::Duration::from_secs);
+
+                Self::from_http_status(provider.into(), status_code, body, retry_after)
+            }
+            RequestError::Other(e) => Self::Other(e),
+        }
     }
 }

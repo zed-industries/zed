@@ -12,7 +12,6 @@ AI features in Zed include:
 - [Agent Panel](./agent-panel.md)
 - [Edit Predictions](./edit-prediction.md)
 - [Inline Assist](./inline-assistant.md)
-- [Text Threads](./text-threads.md)
 - Auto Git Commit Message Generation
 
 By default, Zed does not store your prompts or code context. This data is sent to your selected AI provider (e.g., Anthropic, OpenAI, Google, or xAI) to generate responses, then discarded. Zed will not use your data to evaluate or improve AI features unless you explicitly share it (see [AI Feedback with Ratings](#ai-feedback-with-ratings)) or you opt in to edit prediction training data collection (see [Edit Predictions](#edit-predictions)).

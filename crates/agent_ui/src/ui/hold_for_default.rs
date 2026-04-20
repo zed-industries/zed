@@ -15,6 +15,7 @@ impl HoldForDefault {
         }
     }
 
+    #[allow(dead_code)]
     pub fn more_content(mut self, more_content: bool) -> Self {
         self.more_content = more_content;
         self

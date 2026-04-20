@@ -1,7 +1,7 @@
 use buffer_diff::BufferDiff;
 use edit_prediction::{EditPrediction, EditPredictionRating, EditPredictionStore};
 use editor::{Editor, Inlay, MultiBuffer};
-use feature_flags::FeatureFlag;
+use feature_flags::{FeatureFlag, PresenceFlag, register_feature_flag};
 use gpui::{
     App, BorderStyle, DismissEvent, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
     Length, StyleRefinement, TextStyleRefinement, Window, actions, prelude::*,
@@ -14,7 +14,7 @@ use project::{
 use settings::Settings as _;
 use std::rc::Rc;
 use std::{fmt::Write, sync::Arc};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, DropdownMenu, KeyBinding, List, ListItem, ListItemSpacing, PopoverMenuHandle,
     Tooltip, prelude::*,
@@ -43,7 +43,9 @@ pub struct PredictEditsRatePredictionsFeatureFlag;
 
 impl FeatureFlag for PredictEditsRatePredictionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";
+    type Value = PresenceFlag;
 }
+register_feature_flag!(PredictEditsRatePredictionsFeatureFlag);
 
 pub struct RatePredictionsModal {
     ep_store: Entity<EditPredictionStore>,
@@ -357,35 +359,26 @@ impl RatePredictionsModal {
                 });
 
                 editor.disable_header_for_buffer(new_buffer_id, cx);
-                let excerpt_id = editor.buffer().update(cx, |multibuffer, cx| {
+                editor.buffer().update(cx, |multibuffer, cx| {
                     multibuffer.clear(cx);
-                    multibuffer.set_excerpts_for_buffer(new_buffer, [start..end], 0, cx);
+                    multibuffer.set_excerpts_for_buffer(new_buffer.clone(), [start..end], 0, cx);
                     multibuffer.add_diff(diff, cx);
-                    multibuffer.excerpt_ids().into_iter().next()
                 });
 
-                if let Some((excerpt_id, cursor_position)) =
-                    excerpt_id.zip(prediction.cursor_position.as_ref())
-                {
+                if let Some(cursor_position) = prediction.cursor_position.as_ref() {
                     let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                    if let Some(buffer_snapshot) =
-                        multibuffer_snapshot.buffer_for_excerpt(excerpt_id)
-                    {
-                        let cursor_offset = prediction
-                            .edit_preview
-                            .anchor_to_offset_in_result(cursor_position.anchor)
-                            + cursor_position.offset;
-                        let cursor_anchor = buffer_snapshot.anchor_after(cursor_offset);
+                    let cursor_offset = prediction
+                        .edit_preview
+                        .anchor_to_offset_in_result(cursor_position.anchor)
+                        + cursor_position.offset;
+                    let cursor_anchor = new_buffer.read(cx).snapshot().anchor_after(cursor_offset);
 
-                        if let Some(anchor) =
-                            multibuffer_snapshot.anchor_in_excerpt(excerpt_id, cursor_anchor)
-                        {
-                            editor.splice_inlays(
-                                &[InlayId::EditPrediction(0)],
-                                vec![Inlay::edit_prediction(0, anchor, "▏")],
-                                cx,
-                            );
-                        }
+                    if let Some(anchor) = multibuffer_snapshot.anchor_in_excerpt(cursor_anchor) {
+                        editor.splice_inlays(
+                            &[InlayId::EditPrediction(0)],
+                            vec![Inlay::edit_prediction(0, anchor, "▏")],
+                            cx,
+                        );
                     }
                 }
             });
@@ -448,6 +441,7 @@ impl RatePredictionsModal {
                     editor.set_show_git_diff_gutter(false, cx);
                     editor.set_show_code_actions(false, cx);
                     editor.set_show_runnables(false, cx);
+                    editor.set_show_bookmarks(false, cx);
                     editor.set_show_breakpoints(false, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_indent_guides(false, cx);
@@ -991,7 +985,6 @@ impl FeedbackCompletionProvider {
 impl editor::CompletionProvider for FeedbackCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: editor::ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,

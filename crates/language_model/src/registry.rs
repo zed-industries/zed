@@ -1,12 +1,11 @@
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderState,
+    LanguageModelProviderState, ZED_CLOUD_PROVIDER_ID,
 };
 use collections::{BTreeMap, HashSet};
 use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
 use std::{str::FromStr, sync::Arc};
 use thiserror::Error;
-use util::maybe;
 
 /// Function type for checking if a built-in provider should be hidden.
 /// Returns Some(extension_id) if the provider should be hidden when that extension is installed.
@@ -46,7 +45,9 @@ impl std::fmt::Debug for ConfigurationError {
 #[derive(Default)]
 pub struct LanguageModelRegistry {
     default_model: Option<ConfiguredModel>,
-    default_fast_model: Option<ConfiguredModel>,
+    /// This model is automatically configured by a user's environment after
+    /// authenticating all providers. It's only used when `default_model` is not set.
+    available_fallback_model: Option<ConfiguredModel>,
     inline_assistant_model: Option<ConfiguredModel>,
     commit_message_model: Option<ConfiguredModel>,
     thread_summary_model: Option<ConfiguredModel>,
@@ -101,7 +102,7 @@ impl ConfiguredModel {
     }
 
     pub fn is_provided_by_zed(&self) -> bool {
-        self.provider.id() == crate::ZED_CLOUD_PROVIDER_ID
+        self.provider.id() == ZED_CLOUD_PROVIDER_ID
     }
 }
 
@@ -349,20 +350,27 @@ impl LanguageModelRegistry {
     }
 
     pub fn set_default_model(&mut self, model: Option<ConfiguredModel>, cx: &mut Context<Self>) {
-        match (self.default_model.as_ref(), model.as_ref()) {
+        match (self.default_model(), model.as_ref()) {
             (Some(old), Some(new)) if old.is_same_as(new) => {}
             (None, None) => {}
             _ => cx.emit(Event::DefaultModelChanged),
         }
-        self.default_fast_model = maybe!({
-            let provider = &model.as_ref()?.provider;
-            let fast_model = provider.default_fast_model(cx)?;
-            Some(ConfiguredModel {
-                provider: provider.clone(),
-                model: fast_model,
-            })
-        });
         self.default_model = model;
+    }
+
+    pub fn set_environment_fallback_model(
+        &mut self,
+        model: Option<ConfiguredModel>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.default_model.is_none() {
+            match (self.available_fallback_model.as_ref(), model.as_ref()) {
+                (Some(old), Some(new)) if old.is_same_as(new) => {}
+                (None, None) => {}
+                _ => cx.emit(Event::DefaultModelChanged),
+            }
+        }
+        self.available_fallback_model = model;
     }
 
     pub fn set_inline_assistant_model(
@@ -410,7 +418,18 @@ impl LanguageModelRegistry {
             return None;
         }
 
-        self.default_model.clone()
+        self.default_model
+            .clone()
+            .or_else(|| self.available_fallback_model.clone())
+    }
+
+    pub fn default_fast_model(&self, cx: &App) -> Option<ConfiguredModel> {
+        let configured = self.default_model()?;
+        let fast_model = configured.provider.default_fast_model(cx)?;
+        Some(ConfiguredModel {
+            provider: configured.provider,
+            model: fast_model,
+        })
     }
 
     pub fn inline_assistant_model(&self) -> Option<ConfiguredModel> {
@@ -424,7 +443,7 @@ impl LanguageModelRegistry {
             .or_else(|| self.default_model.clone())
     }
 
-    pub fn commit_message_model(&self) -> Option<ConfiguredModel> {
+    pub fn commit_message_model(&self, cx: &App) -> Option<ConfiguredModel> {
         #[cfg(debug_assertions)]
         if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
             return None;
@@ -432,11 +451,11 @@ impl LanguageModelRegistry {
 
         self.commit_message_model
             .clone()
-            .or_else(|| self.default_fast_model.clone())
-            .or_else(|| self.default_model.clone())
+            .or_else(|| self.default_fast_model(cx))
+            .or_else(|| self.default_model())
     }
 
-    pub fn thread_summary_model(&self) -> Option<ConfiguredModel> {
+    pub fn thread_summary_model(&self, cx: &App) -> Option<ConfiguredModel> {
         #[cfg(debug_assertions)]
         if std::env::var("ZED_SIMULATE_NO_LLM_PROVIDER").is_ok() {
             return None;
@@ -444,8 +463,8 @@ impl LanguageModelRegistry {
 
         self.thread_summary_model
             .clone()
-            .or_else(|| self.default_fast_model.clone())
-            .or_else(|| self.default_model.clone())
+            .or_else(|| self.default_fast_model(cx))
+            .or_else(|| self.default_model())
     }
 
     /// The models to use for inline assists. Returns the union of the active
@@ -574,6 +593,35 @@ mod tests {
         assert!(!registry_read.should_hide_provider(&LanguageModelProviderId("openai".into())));
 
         assert!(!registry_read.should_hide_provider(&LanguageModelProviderId("unknown".into())));
+    }
+
+    #[gpui::test]
+    async fn test_configure_environment_fallback_model(cx: &mut gpui::TestAppContext) {
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+
+        let provider = Arc::new(FakeLanguageModelProvider::default());
+        registry.update(cx, |registry, cx| {
+            registry.register_provider(provider.clone(), cx);
+        });
+
+        cx.update(|cx| provider.authenticate(cx)).await.unwrap();
+
+        registry.update(cx, |registry, cx| {
+            let provider = registry.provider(&provider.id()).unwrap();
+            let model = provider.default_model(cx).unwrap();
+
+            registry.set_environment_fallback_model(
+                Some(ConfiguredModel {
+                    provider: provider.clone(),
+                    model: model.clone(),
+                }),
+                cx,
+            );
+
+            let default_model = registry.default_model().unwrap();
+            assert_eq!(default_model.model.id(), model.id());
+            assert_eq!(default_model.provider.id(), provider.id());
+        });
     }
 
     #[gpui::test]

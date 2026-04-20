@@ -9,7 +9,7 @@ use gpui::{
 };
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use parking_lot::Mutex;
 use project::{
     context_server_store::{
@@ -22,7 +22,7 @@ use project::{
 use serde::Deserialize;
 use settings::{Settings as _, update_settings_file};
 use std::sync::Arc;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip,
     WithScrollbar, prelude::*,
@@ -631,8 +631,12 @@ impl ConfigureContextServerModal {
                         format!("{} configured successfully.", id.0),
                         cx,
                         |this, _cx| {
-                            this.icon(ToastIcon::new(IconName::ToolHammer).color(Color::Muted))
-                                .action("Dismiss", |_, _| {})
+                            this.icon(
+                                Icon::new(IconName::ToolHammer)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .action("Dismiss", |_, _| {})
                         },
                     );
 
