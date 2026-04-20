@@ -1458,6 +1458,7 @@
     "context": "Welcome",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-n": "workspace::NewFile",
       "cmd-=": ["zed::IncreaseUiFontSize", { "persist": false }],
       "cmd-+": ["zed::IncreaseUiFontSize", { "persist": false }],
       "cmd--": ["zed::DecreaseUiFontSize", { "persist": false }],

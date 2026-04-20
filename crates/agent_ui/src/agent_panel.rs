@@ -3553,9 +3553,8 @@ impl AgentPanel {
 
         let base_container = h_flex()
             .size_full()
-            // TODO: This is only until we remove Agent settings from the panel.
             .when(!is_in_history_or_config, |this| {
-                this.max_w(max_content_width).mx_auto()
+                this.when_some(max_content_width, |this, max_w| this.max_w(max_w).mx_auto())
             })
             .flex_none()
             .justify_between()

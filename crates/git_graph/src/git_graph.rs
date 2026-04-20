@@ -2100,9 +2100,17 @@ impl GitGraph {
                             .w_full()
                             .justify_between()
                             .child(
-                                Label::new(format!("{} Changed Files", changed_files_count))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                Label::new(format!(
+                                    "{} Changed {}",
+                                    changed_files_count,
+                                    if changed_files_count == 1 {
+                                        "File"
+                                    } else {
+                                        "Files"
+                                    }
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
                             )
                             .child(DiffStat::new(
                                 "commit-diff-stat",

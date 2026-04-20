@@ -17,8 +17,8 @@ use crate::{
     command_json::{CommandRunner, DefaultCommandRunner},
     devcontainer_api::{DevContainerError, DevContainerUp},
     devcontainer_json::{
-        DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort, MountDefinition,
-        deserialize_devcontainer_json,
+        ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort,
+        MountDefinition, deserialize_devcontainer_json,
     },
     docker::{
         Docker, DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -1605,6 +1605,26 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             }
         }
 
+        if let Some(options) = dev_container
+            .build
+            .as_ref()
+            .and_then(|b| b.options.as_ref())
+        {
+            for option in options {
+                command.arg(option);
+            }
+        }
+
+        if let Some(cache_from_images) = dev_container
+            .build
+            .as_ref()
+            .and_then(|b| b.cache_from.as_ref())
+        {
+            for cache_from_image in cache_from_images {
+                command.args(["--cache-from", cache_from_image]);
+            }
+        }
+
         command.args(["--target", "dev_containers_target_stage"]);
 
         command.args([
@@ -1614,8 +1634,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
         command.args(["-t", &features_build_info.image_tag]);
 
-        if let DevContainerBuildType::Dockerfile(_) = dev_container.build_type() {
-            command.arg(self.config_directory.display().to_string());
+        if let DevContainerBuildType::Dockerfile(build) = dev_container.build_type() {
+            command.arg(self.calculate_context_dir(build).display().to_string());
         } else {
             // Use an empty folder as the build context to avoid pulling in unneeded files.
             // The actual feature content is supplied via the BuildKit build context above.
@@ -2094,6 +2114,19 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
         Ok(parsed_lines.join("\n"))
     }
+
+    fn calculate_context_dir(&self, build: ContainerBuild) -> PathBuf {
+        let Some(context) = build.context else {
+            return self.config_directory.clone();
+        };
+        let context_path = PathBuf::from(context);
+
+        if context_path.is_absolute() {
+            context_path
+        } else {
+            self.config_directory.join(context_path)
+        }
+    }
 }
 
 /// Holds all the information needed to construct a `docker buildx build` command
@@ -2376,12 +2409,58 @@ fn dockerfile_inject_alias(
     alias: &str,
     build_target: Option<String>,
 ) -> String {
-    match image_from_dockerfile(dockerfile_content.to_string(), &build_target) {
-        Some(target) => format!(
-            r#"{dockerfile_content}
-FROM {target} AS {alias}"#
-        ),
-        None => dockerfile_content.to_string(),
+    let from_lines: Vec<(usize, &str)> = dockerfile_content
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.starts_with("FROM"))
+        .collect();
+
+    let target_entry = match &build_target {
+        Some(target) => from_lines.iter().rfind(|(_, line)| {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            parts.len() >= 3
+                && parts
+                    .get(parts.len() - 2)
+                    .map_or(false, |p| p.eq_ignore_ascii_case("as"))
+                && parts
+                    .last()
+                    .map_or(false, |p| p.eq_ignore_ascii_case(target))
+        }),
+        None => from_lines.last(),
+    };
+
+    let Some(&(line_idx, from_line)) = target_entry else {
+        return dockerfile_content.to_string();
+    };
+
+    let parts: Vec<&str> = from_line.split_whitespace().collect();
+    let has_alias = parts.len() >= 3
+        && parts
+            .get(parts.len() - 2)
+            .map_or(false, |p| p.eq_ignore_ascii_case("as"));
+
+    if has_alias {
+        let Some(existing_alias) = parts.last() else {
+            return dockerfile_content.to_string();
+        };
+        format!("{dockerfile_content}\nFROM {existing_alias} AS {alias}")
+    } else {
+        let lines: Vec<&str> = dockerfile_content.lines().collect();
+        let mut result = String::new();
+        for (i, line) in lines.iter().enumerate() {
+            if i > 0 {
+                result.push('\n');
+            }
+            if i == line_idx {
+                result.push_str(&format!("{line} AS {alias}"));
+            } else {
+                result.push_str(line);
+            }
+        }
+        if dockerfile_content.ends_with('\n') {
+            result.push('\n');
+        }
+        result
     }
 }
 
@@ -3212,7 +3291,7 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
 #  Copyright (c) Microsoft Corporation. All rights reserved.
 #  Licensed under the MIT License. See License.txt in the project root for license information.
 ARG VARIANT="16-bullseye"
-FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT}
+FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT} AS dev_container_auto_added_stage_label
 
 RUN mkdir -p /workspaces && chown node:node /workspaces
 
@@ -3225,7 +3304,6 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
 && mkdir -p /home/$USERNAME/commandhistory \
 && touch /home/$USERNAME/commandhistory/.bash_history \
 && chown -R $USERNAME /home/$USERNAME/commandhistory
-FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT} AS dev_container_auto_added_stage_label
 
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
 USER root
@@ -3553,14 +3631,13 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             &feature_dockerfile,
             r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
 
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 # Include lld linker to improve build times either by using environment variable
 # RUSTFLAGS="-C link-arg=-fuse-ld=lld" or with Cargo's configuration file (i.e see .cargo/config.toml).
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && apt-get -y install clang lld \
     && apt-get autoremove -y && apt-get clean -y
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
 USER root
@@ -3944,14 +4021,13 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             &feature_dockerfile,
             r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
 
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 # Include lld linker to improve build times either by using environment variable
 # RUSTFLAGS="-C link-arg=-fuse-ld=lld" or with Cargo's configuration file (i.e see .cargo/config.toml).
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 && apt-get -y install clang lld \
 && apt-get autoremove -y && apt-get clean -y
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
 USER root
@@ -4124,14 +4200,13 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             &feature_dockerfile,
             r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
 
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 # Include lld linker to improve build times either by using environment variable
 # RUSTFLAGS="-C link-arg=-fuse-ld=lld" or with Cargo's configuration file (i.e see .cargo/config.toml).
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 && apt-get -y install clang lld \
 && apt-get autoremove -y && apt-get clean -y
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 FROM dev_container_feature_content_temp as dev_containers_feature_content_source
 
@@ -4388,7 +4463,7 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
 && mkdir -p /home/$USERNAME/commandhistory \
 && touch /home/$USERNAME/commandhistory/.bash_history \
 && chown -R $USERNAME /home/$USERNAME/commandhistory
-FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT} AS dev_container_auto_added_stage_label
+FROM development AS dev_container_auto_added_stage_label
 
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
 USER root
