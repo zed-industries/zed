@@ -16,6 +16,7 @@ use mermaid::{
 };
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
+use theme::GlobalTheme;
 use theme_settings::ThemeSettings;
 use ui::Checkbox;
 use ui::CopyButton;
@@ -36,7 +37,7 @@ use gpui::{
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
-    StyleRefinement, StyledText, Task, TextAlign, TextLayout, TextRun, TextStyle,
+    StyleRefinement, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun, TextStyle,
     TextStyleRefinement, actions, img, point, quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
@@ -329,6 +330,7 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
+    _theme_subscription: Option<Subscription>,
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
@@ -501,6 +503,7 @@ impl Markdown {
             fallback_code_block_language,
             options,
             mermaid_state: MermaidState::default(),
+            _theme_subscription: None,
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
@@ -508,6 +511,14 @@ impl Markdown {
             search_highlights: Vec::new(),
             active_search_highlight: None,
         };
+        if this.options.render_mermaid_diagrams {
+            this._theme_subscription = Some(cx.observe_global::<GlobalTheme>(|this, cx| {
+                this.mermaid_state.clear();
+                let parsed_markdown = this.parsed_markdown.clone();
+                this.mermaid_state.update(&parsed_markdown, cx);
+                cx.notify();
+            }));
+        }
         this.parse(cx);
         this
     }
