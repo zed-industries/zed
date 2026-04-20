@@ -117,6 +117,9 @@ pub trait LanguageModel: Send + Sync {
     }
 
     fn max_token_count(&self) -> u64;
+    fn max_prompt_token_count(&self) -> Option<u64> {
+        None
+    }
     fn max_output_tokens(&self) -> Option<u64> {
         None
     }

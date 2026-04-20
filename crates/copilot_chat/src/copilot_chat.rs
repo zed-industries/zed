@@ -264,6 +264,15 @@ impl Model {
         self.capabilities.limits.max_context_window_tokens as u64
     }
 
+    pub fn max_prompt_token_count(&self) -> Option<u64> {
+        let max_prompt_tokens = self.capabilities.limits.max_prompt_tokens;
+        if max_prompt_tokens == 0 {
+            None
+        } else {
+            Some(max_prompt_tokens)
+        }
+    }
+
     pub fn max_output_tokens(&self) -> usize {
         self.capabilities.limits.max_output_tokens
     }
@@ -1262,9 +1271,11 @@ mod tests {
 
         // max_token_count() should return context window (200000), not prompt tokens (90000)
         assert_eq!(schema.data[0].max_token_count(), 200000);
+        assert_eq!(schema.data[0].max_prompt_token_count(), Some(90000));
 
         // GPT-4o should return 128000 (context window), not 110000 (prompt tokens)
         assert_eq!(schema.data[1].max_token_count(), 128000);
+        assert_eq!(schema.data[1].max_prompt_token_count(), Some(110000));
     }
 
     #[test]

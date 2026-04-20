@@ -1691,7 +1691,9 @@ impl Thread {
         let usage = self.latest_request_token_usage()?;
         let model = self.model.clone()?;
         Some(acp_thread::TokenUsage {
-            max_tokens: model.max_token_count(),
+            max_tokens: model
+                .max_prompt_token_count()
+                .unwrap_or_else(|| model.max_token_count()),
             max_output_tokens: model.max_output_tokens(),
             used_tokens: usage.total_tokens(),
             input_tokens: usage.input_tokens,
