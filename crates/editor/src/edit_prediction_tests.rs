@@ -494,42 +494,34 @@ async fn test_hidden_edit_prediction_does_not_open_snippet_menu_on_word_input(
 ) {
     init_test(cx, |_| {});
 
-    let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
-    assign_editor_completion_provider(provider.clone(), &mut cx);
-    cx.update_editor(|editor, _, cx| {
-        editor.set_menu_edit_predictions_policy(MenuEditPredictionsPolicy::Never);
-        editor.project().unwrap().update(cx, |project, cx| {
-            project.snippets().update(cx, |snippets, _cx| {
-                let snippet = project::snippet_provider::Snippet {
-                    prefix: vec!["Theta".to_string(), "turnstile".to_string()],
-                    body: "⊢".to_string(),
-                    description: Some("unicode symbol".to_string()),
-                    name: "unicode snippets".to_string(),
-                };
-                snippets.add_snippet_for_test(
-                    None,
-                    PathBuf::from("test_snippets.json"),
-                    vec![Arc::new(snippet)],
-                );
-            });
-        })
-    });
-    cx.set_state("ˇ");
-
-    propose_edits(&provider, vec![(0..0, "x")], &mut cx);
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
-
+    let mut cx = hidden_edit_prediction_snippet_test_context(cx).await;
     cx.simulate_input("t");
     cx.run_until_parked();
 
     cx.update_editor(|editor, _, _| {
         assert!(editor.has_active_edit_prediction());
         assert!(editor.context_menu.borrow().is_none());
-        assert!(!matches!(
-            &*editor.context_menu.borrow(),
-            Some(CodeContextMenu::Completions(_))
-        ));
+    });
+}
+
+#[gpui::test]
+async fn test_hidden_edit_prediction_opens_snippet_menu_for_strong_prefix_match(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = hidden_edit_prediction_snippet_test_context(cx).await;
+    cx.simulate_input("t");
+    cx.run_until_parked();
+    cx.simulate_input("h");
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, _, _| {
+        let Some(CodeContextMenu::Completions(menu)) = &*editor.context_menu.borrow() else {
+            panic!("expected completions menu");
+        };
+        let entries = menu.entries.borrow();
+        assert!(entries.iter().any(|entry| entry.string == "Theta"));
     });
 }
 
@@ -1272,6 +1264,37 @@ fn propose_edits_with_cursor_position_in_insertion<T: ToOffset>(
             }))
         })
     });
+}
+
+async fn hidden_edit_prediction_snippet_test_context(
+    cx: &mut gpui::TestAppContext,
+) -> EditorTestContext {
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.update_editor(|editor, _, cx| {
+        editor.set_menu_edit_predictions_policy(MenuEditPredictionsPolicy::Never);
+        editor.project().unwrap().update(cx, |project, cx| {
+            project.snippets().update(cx, |snippets, _cx| {
+                let snippet = project::snippet_provider::Snippet {
+                    prefix: vec!["Theta".to_string(), "turnstile".to_string()],
+                    body: "⊢".to_string(),
+                    description: Some("unicode symbol".to_string()),
+                    name: "unicode snippets".to_string(),
+                };
+                snippets.add_snippet_for_test(
+                    None,
+                    PathBuf::from("test_snippets.json"),
+                    vec![Arc::new(snippet)],
+                );
+            });
+        })
+    });
+    cx.set_state("ˇ");
+
+    propose_edits(&provider, vec![(0..0, "x")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx
 }
 
 fn assign_editor_completion_provider(
