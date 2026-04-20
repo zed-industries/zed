@@ -1903,7 +1903,6 @@ impl Sidebar {
                             menu
                         } else {
                             let mut menu = menu.separator().header("Open Workspaces");
-                            let has_multiple_workspaces = open_workspaces.len() > 1;
 
                             for (
                                 workspace_index,
@@ -1956,7 +1955,7 @@ impl Sidebar {
                                                     },
                                                 ),
                                             ))
-                                            .when(has_multiple_workspaces, |this| {
+                                            .when(!is_active_workspace, |this| {
                                                 let close_multi_workspace =
                                                     close_multi_workspace.clone();
                                                 let close_weak_menu = close_weak_menu.clone();
