@@ -210,7 +210,58 @@ impl AgentSettings {
             .map(|sel| ModelId::new(format!("{}/{}", sel.provider.0, sel.model)))
             .collect()
     }
+}
 
+pub fn favorite_selection_for_model(
+    model: &Arc<dyn LanguageModel>,
+    cx: &App,
+) -> LanguageModelSelection {
+    let provider_id = model.provider_id().0.to_string();
+    let model_id = model.id().0.to_string();
+
+    let current_selection = AgentSettings::get_global(cx)
+        .default_model
+        .as_ref()
+        .filter(|selection| selection.provider.0 == provider_id && selection.model == model_id);
+
+    let (enable_thinking, effort, speed) = match current_selection {
+        Some(current) => (
+            current.enable_thinking && model.supports_thinking(),
+            current
+                .effort
+                .clone()
+                .filter(|value| {
+                    model
+                        .supported_effort_levels()
+                        .iter()
+                        .any(|level| level.value.as_ref() == value.as_str())
+                })
+                .or_else(|| {
+                    model
+                        .default_effort_level()
+                        .map(|effort| effort.value.to_string())
+                }),
+            current.speed.filter(|_| model.supports_fast_mode()),
+        ),
+        None => (
+            model.supports_thinking(),
+            model
+                .default_effort_level()
+                .map(|effort| effort.value.to_string()),
+            None,
+        ),
+    };
+
+    LanguageModelSelection {
+        provider: provider_id.into(),
+        model: model_id,
+        enable_thinking,
+        effort,
+        speed,
+    }
+}
+
+impl AgentSettings {
     pub fn get_layout(cx: &App) -> WindowLayout {
         let store = cx.global::<SettingsStore>();
         let merged = store.merged_settings();

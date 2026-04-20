@@ -2,7 +2,7 @@ use std::{any::Any, rc::Rc, sync::Arc};
 
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use agent_settings::AgentSettings;
+use agent_settings::{AgentSettings, favorite_selection_for_model};
 use anyhow::Result;
 use collections::HashSet;
 use fs::Fs;
@@ -105,46 +105,15 @@ fn model_id_to_selection(model_id: &acp::ModelId, cx: &App) -> LanguageModelSele
                 .find(|m| m.id() == model_id_typed)
         });
 
-    let live = AgentSettings::get_global(cx)
-        .default_model
-        .as_ref()
-        .filter(|selection| selection.provider.0 == provider && selection.model == model);
-
-    let (enable_thinking, effort, speed) = match (resolved.as_ref(), live) {
-        (Some(model), Some(current)) => (
-            current.enable_thinking && model.supports_thinking(),
-            current
-                .effort
-                .clone()
-                .filter(|value| {
-                    model
-                        .supported_effort_levels()
-                        .iter()
-                        .any(|level| level.value.as_ref() == value.as_str())
-                })
-                .or_else(|| {
-                    model
-                        .default_effort_level()
-                        .map(|effort| effort.value.to_string())
-                }),
-            current.speed.filter(|_| model.supports_fast_mode()),
-        ),
-        (Some(model), None) => (
-            model.supports_thinking(),
-            model
-                .default_effort_level()
-                .map(|effort| effort.value.to_string()),
-            None,
-        ),
-        (None, _) => (false, None, None),
-    };
-
-    LanguageModelSelection {
-        provider: provider.to_owned().into(),
-        model: model.to_owned(),
-        enable_thinking,
-        effort,
-        speed,
+    match resolved {
+        Some(model) => favorite_selection_for_model(&model, cx),
+        None => LanguageModelSelection {
+            provider: provider.to_owned().into(),
+            model: model.to_owned(),
+            enable_thinking: false,
+            effort: None,
+            speed: None,
+        },
     }
 }
 
