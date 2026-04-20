@@ -4084,6 +4084,115 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_load_preserves_session_when_agent_server_not_yet_registered(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+        });
+
+        let connection = StubAgentConnection::new().with_supports_load_session(true);
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("response".into()),
+        )]);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::new(connection)),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        send_message(&panel, cx);
+        let original_session_id = active_session_id(&panel, cx);
+
+        panel.update(cx, |panel, cx| panel.serialize(cx));
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let entry = store.read(cx).entry_by_session(&original_session_id);
+            assert!(
+                entry.is_some_and(|e| !e.archived),
+                "metadata for the original session must have been saved \
+                 by send_message and not archived; otherwise is_restorable \
+                 in load() returns false for an unrelated reason"
+            );
+        });
+
+        let kvp = cx.update(|_window, cx| KeyValueStore::global(cx));
+        let workspace_id = workspace
+            .read_with(cx, |workspace, _cx| workspace.database_id())
+            .expect("workspace should have a database id");
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        loaded.read_with(cx, |panel, cx| {
+            let view = panel.active_conversation_view();
+            let thread = panel.active_agent_thread(cx);
+            assert!(
+                view.is_some(),
+                "loaded panel should have produced a conversation view",
+            );
+            assert!(
+                thread.is_none(),
+                "loaded panel's thread must NOT be in Connected state \
+                 (agent `Test` is not registered in AgentServerStore); \
+                 if this assertion fails the repro isn't exercising the \
+                 'not registered' code path"
+            );
+        });
+
+        let serialized_after_load: Option<SerializedAgentPanel> = cx
+            .background_spawn({
+                let kvp = kvp.clone();
+                async move { read_serialized_panel(workspace_id, &kvp) }
+            })
+            .await;
+
+        let restored_session_id = serialized_after_load
+            .as_ref()
+            .and_then(|p| p.last_active_thread.as_ref())
+            .and_then(|t| t.session_id.clone());
+
+        assert_eq!(
+            restored_session_id,
+            Some(original_session_id.0.to_string()),
+            "the KVP must still contain the original session id after a \
+             load that ran before the external agent was registered; \
+             otherwise a restart permanently wipes the session (#52993)"
+        );
+    }
+
+    #[gpui::test]
     async fn test_non_native_thread_without_metadata_is_not_restored(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
