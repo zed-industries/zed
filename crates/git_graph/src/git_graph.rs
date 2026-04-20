@@ -1872,12 +1872,6 @@ impl GitGraph {
             .map(|diff| diff.files.len())
             .unwrap_or(0);
 
-        let changed_files_heading = if changed_files_count == 1 {
-            "1 Changed File".to_string()
-        } else {
-            format!("{changed_files_count} Changed Files")
-        };
-
         let (total_lines_added, total_lines_removed) =
             self.selected_commit_diff_stats.unwrap_or((0, 0));
 
@@ -2106,9 +2100,17 @@ impl GitGraph {
                             .w_full()
                             .justify_between()
                             .child(
-                                Label::new(changed_files_heading)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                Label::new(format!(
+                                    "{} Changed {}",
+                                    changed_files_count,
+                                    if changed_files_count == 1 {
+                                        "File"
+                                    } else {
+                                        "Files"
+                                    }
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
                             )
                             .child(DiffStat::new(
                                 "commit-diff-stat",
