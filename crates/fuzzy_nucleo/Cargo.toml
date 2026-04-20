@@ -20,6 +20,7 @@ util.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 
 [[bench]]

@@ -7,6 +7,7 @@ mod update_version;
 
 use crate::application_menu::{ApplicationMenu, show_menus};
 use crate::plan_chip::PlanChip;
+use git_ui::worktree_picker::WorktreePicker;
 pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
     ShowNextWindowTab, ShowPreviousWindowTab,
@@ -389,6 +390,16 @@ impl TitleBar {
             }),
         );
         subscriptions.push(cx.observe(&user_store, |_a, _, cx| cx.notify()));
+        if let Some(workspace_entity) = workspace.weak_handle().upgrade() {
+            subscriptions.push(cx.subscribe(
+                &workspace_entity,
+                |_, _, event: &workspace::Event, cx| {
+                    if matches!(event, workspace::Event::WorktreeCreationChanged) {
+                        cx.notify();
+                    }
+                },
+            ));
+        }
         subscriptions.push(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             subscriptions.push(cx.subscribe(&trusted_worktrees, |_, _, _, cx| {
@@ -816,11 +827,13 @@ impl TitleBar {
         repository: Entity<project::git_store::Repository>,
         linked_worktree_name: Option<SharedString>,
         cx: &mut Context<Self>,
-    ) -> Option<impl IntoElement> {
+    ) -> Option<AnyElement> {
         let workspace = self.workspace.upgrade()?;
 
-        let (branch_name, icon_info) = {
+        let (branch_name, icon_info, is_detached_head) = {
             let repo = repository.read(cx);
+
+            let is_detached_head = repo.branch.is_none();
 
             let branch_name = repo
                 .branch
@@ -851,67 +864,131 @@ impl TitleBar {
                 (IconName::GitBranch, Color::Muted)
             };
 
-            (branch_name, icon_info)
+            (branch_name, icon_info, is_detached_head)
         };
 
         let branch_name = branch_name?;
         let settings = TitleBarSettings::get_global(cx);
         let effective_repository = Some(repository);
 
-        Some(
-            PopoverMenu::new("branch-menu")
+        let worktree_label: SharedString = linked_worktree_name.unwrap_or_else(|| "main".into());
+
+        let (creation_in_progress, is_switch) = self
+            .workspace
+            .upgrade()
+            .map(|ws| {
+                let creation = ws.read(cx).active_worktree_creation();
+                (creation.label.clone(), creation.is_switch)
+            })
+            .unwrap_or((None, false));
+        let is_creating = creation_in_progress.is_some();
+
+        let display_label: SharedString = if let Some(ref name) = creation_in_progress {
+            if is_switch {
+                format!("Loading {}…", name).into()
+            } else {
+                format!("Creating {}…", name).into()
+            }
+        } else {
+            worktree_label.clone()
+        };
+
+        let worktree_button = {
+            let project = self.project.clone();
+            let workspace_handle = workspace.downgrade();
+            PopoverMenu::new("worktree-picker-menu")
                 .menu(move |window, cx| {
-                    Some(git_ui::git_picker::popover(
-                        workspace.downgrade(),
-                        effective_repository.clone(),
-                        git_ui::git_picker::GitPickerTab::Branches,
-                        gpui::rems(34.),
-                        window,
-                        cx,
-                    ))
+                    // When opened from the title bar, focus is on the trigger
+                    // button (not a dock), so `focused_dock` is `None`. That's
+                    // fine — there's no prior dock focus to restore.
+                    Some(cx.new(|cx| {
+                        WorktreePicker::new(project.clone(), workspace_handle.clone(), window, cx)
+                    }))
                 })
                 .trigger_with_tooltip(
-                    ButtonLike::new("project_branch_trigger")
+                    Button::new("worktree_picker_trigger", display_label)
                         .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                        .child(
-                            h_flex()
-                                .gap_0p5()
-                                .when(settings.show_branch_icon, |this| {
-                                    let (icon, icon_color) = icon_info;
-                                    this.child(
-                                        Icon::new(icon).size(IconSize::XSmall).color(icon_color),
-                                    )
-                                })
-                                .when_some(linked_worktree_name.as_ref(), |this, worktree_name| {
-                                    this.child(
-                                        Label::new(worktree_name)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new("/").size(LabelSize::Small).color(
-                                            Color::Custom(
-                                                cx.theme().colors().text_muted.opacity(0.4),
-                                            ),
-                                        ),
-                                    )
-                                })
-                                .child(
-                                    Label::new(branch_name)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                ),
+                        .label_size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .loading(is_creating)
+                        .start_icon(
+                            Icon::new(IconName::GitWorktree)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
                         ),
                     move |_window, cx| {
                         Tooltip::with_meta(
-                            "Git Switcher",
-                            Some(&zed_actions::git::Branch),
-                            "Worktrees, Branches, and Stashes",
+                            "Worktree",
+                            Some(&zed_actions::git::Worktree),
+                            format!("Currently In Use: {}", worktree_label),
                             cx,
                         )
                     },
                 )
-                .anchor(gpui::Corner::TopLeft),
+                .anchor(gpui::Corner::TopLeft)
+        };
+
+        let branch_tooltip_label = branch_name.clone();
+        let (branch_icon, branch_icon_color) = if settings.show_branch_status_icon {
+            icon_info
+        } else {
+            (IconName::GitBranch, Color::Muted)
+        };
+
+        let trigger = if is_detached_head {
+            Button::new("project_branch_trigger", "Create Branch")
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .label_size(LabelSize::Small)
+                .start_icon(
+                    Icon::new(IconName::GitBranchPlus)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                )
+        } else {
+            Button::new("project_branch_trigger", branch_name)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .start_icon(
+                    Icon::new(branch_icon)
+                        .size(IconSize::XSmall)
+                        .color(branch_icon_color),
+                )
+        };
+
+        let git_picker_button = PopoverMenu::new("branch-menu")
+            .menu(move |window, cx| {
+                Some(git_ui::git_picker::popover(
+                    workspace.downgrade(),
+                    effective_repository.clone(),
+                    git_ui::git_picker::GitPickerTab::Branches,
+                    gpui::rems(34.),
+                    window,
+                    cx,
+                ))
+            })
+            .trigger_with_tooltip(trigger, move |_window, cx| {
+                let meta = if is_detached_head {
+                    format!("Detached HEAD: {}", branch_tooltip_label)
+                } else {
+                    format!("Currently Checked Out: {}", branch_tooltip_label)
+                };
+                Tooltip::with_meta("Branch & Stash", Some(&zed_actions::git::Branch), meta, cx)
+            })
+            .anchor(gpui::Corner::TopLeft);
+
+        Some(
+            h_flex()
+                .gap_px()
+                .child(worktree_button)
+                .child(
+                    Label::new("/")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .alpha(0.25),
+                )
+                .child(git_picker_button)
+                .into_any_element(),
         )
     }
 
