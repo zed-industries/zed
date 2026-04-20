@@ -165,7 +165,7 @@ impl PtyProcessInfo {
 
     #[cfg(not(unix))]
     pub(crate) fn terminate_child_process(&self) -> bool {
-        self.get_child().is_some_and(|process| process.kill())
+        false
     }
 
     fn load(&self) -> Option<ProcessInfo> {
