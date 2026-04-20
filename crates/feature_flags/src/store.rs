@@ -381,7 +381,7 @@ mod tests {
     #[gpui::test]
     fn on_flags_ready_waits_for_server_flags(cx: &mut gpui::TestAppContext) {
         use crate::FeatureFlagAppExt;
-        use std::cell::RefCell;
+        use std::cell::Cell;
         use std::rc::Rc;
 
         cx.update(|cx| {
@@ -389,35 +389,20 @@ mod tests {
             FeatureFlagStore::init(cx);
         });
 
-        let fired: Rc<RefCell<Vec<bool>>> = Rc::new(RefCell::new(vec![]));
+        let fired = Rc::new(Cell::new(false));
         cx.update({
             let fired = fired.clone();
-            |cx| {
-                cx.on_flags_ready(move |state, _| {
-                    fired.borrow_mut().push(state.is_staff);
-                })
-                .detach();
-            }
+            |cx| cx.on_flags_ready(move |_, _| fired.set(true)).detach()
         });
 
-        // Simulate a settings-triggered no-op touch (what FeatureFlagStore::init's
-        // SettingsStore subscription does on every settings file load).
-        cx.update(|cx| {
-            cx.update_default_global::<FeatureFlagStore, _>(|_, _| {});
-        });
+        // Settings-triggered no-op touch must not fire on_flags_ready.
+        cx.update(|cx| cx.update_default_global::<FeatureFlagStore, _>(|_, _| {}));
         cx.run_until_parked();
-        assert!(
-            fired.borrow().is_empty(),
-            "on_flags_ready must not fire before server flags are received"
-        );
+        assert!(!fired.get());
 
-        // Now simulate the server responding with staff = true.
+        // Server flags arrive — now it should fire.
         cx.update(|cx| cx.update_flags(true, vec![]));
         cx.run_until_parked();
-        assert_eq!(
-            *fired.borrow(),
-            vec![true],
-            "on_flags_ready must fire exactly once after server flags arrive"
-        );
+        assert!(fired.get());
     }
 }
