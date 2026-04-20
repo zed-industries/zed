@@ -3224,7 +3224,7 @@ impl BackgroundScannerState {
     }
 }
 
-async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
+async fn is_dot_git(path: &Path, fs: &dyn Fs) -> bool {
     if let Some(file_name) = path.file_name()
         && file_name == DOT_GIT
     {
@@ -4220,7 +4220,7 @@ impl BackgroundScanner {
                 let mut dot_git_paths = None;
 
                 for ancestor in abs_path.as_path().ancestors() {
-                    if is_git_dir(ancestor, self.fs.as_ref()).await {
+                    if is_dot_git(ancestor, self.fs.as_ref()).await {
                         let path_in_git_dir = abs_path
                             .as_path()
                             .strip_prefix(ancestor)
@@ -4241,15 +4241,7 @@ impl BackgroundScanner {
                     let is_dot_git_changed = {
                         path_in_git_dir == Path::new("")
                             && event.kind == Some(PathEventKind::Changed)
-                            && abs_path
-                                .strip_prefix(root_canonical_path)
-                                .ok()
-                                .and_then(|it| RelPath::new(it, PathStyle::local()).ok())
-                                .is_some_and(|it| {
-                                    snapshot
-                                        .entry_for_path(&it)
-                                        .is_some_and(|entry| entry.kind == EntryKind::Dir)
-                                })
+                            && self.fs.is_dir(abs_path.as_path()).await
                     };
                     let condition = skipped_files_in_dot_git.iter().any(|skipped| {
                         OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
