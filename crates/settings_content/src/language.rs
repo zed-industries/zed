@@ -449,6 +449,14 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub ensure_final_newline_on_save: Option<bool>,
+    /// The line ending style to use when saving the buffer.
+    ///
+    /// - `auto` preserves the existing line endings of the file.
+    /// - `lf` normalizes line endings to `\n` on save.
+    /// - `crlf` normalizes line endings to `\r\n` on save.
+    ///
+    /// Default: auto
+    pub line_ending: Option<LineEndingSetting>,
     /// How to perform a buffer format.
     ///
     /// Default: auto
@@ -897,6 +905,30 @@ pub enum FormatOnSave {
     On,
     /// Files should not be formatted on save.
     Off,
+}
+
+/// Controls how line endings are normalized when a buffer is saved.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum LineEndingSetting {
+    /// Preserve the existing line endings of the file.
+    Auto,
+    /// Normalize line endings to LF (`\n`) on save.
+    Lf,
+    /// Normalize line endings to CRLF (`\r\n`) on save.
+    Crlf,
 }
 
 /// Controls which formatters should be used when formatting code.

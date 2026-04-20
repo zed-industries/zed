@@ -540,6 +540,12 @@ impl VsCodeSettings {
             edit_predictions_disabled_in: None,
             enable_language_server: None,
             ensure_final_newline_on_save: self.read_bool("files.insertFinalNewline"),
+            line_ending: self.read_enum("files.eol", |s| match s {
+                "\n" => Some(LineEndingSetting::Lf),
+                "\r\n" => Some(LineEndingSetting::Crlf),
+                "auto" => Some(LineEndingSetting::Auto),
+                _ => None,
+            }),
             extend_comment_on_newline: None,
             extend_list_on_newline: None,
             indent_list_on_tab: None,

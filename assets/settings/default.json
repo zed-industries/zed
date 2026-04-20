@@ -1363,6 +1363,11 @@
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
+  // The line ending style to use when saving the buffer:
+  //  1. "auto" - preserve the existing line endings of the file
+  //  2. "lf"   - normalize line endings to LF ("\n") on save
+  //  3. "crlf" - normalize line endings to CRLF ("\r\n") on save
+  "line_ending": "auto",
   // Whether or not to perform a buffer format before saving: [on, off]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",

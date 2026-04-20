@@ -1618,6 +1618,38 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 `boolean` values
 
+## Line Ending
+
+- Description: The line ending style to use when saving the buffer. When `auto` is used, the file's existing line endings are preserved. Setting `lf` or `crlf` normalizes line endings on every save, matching the behavior of `remove_trailing_whitespace_on_save` and `ensure_final_newline_on_save`. The [`.editorconfig`](https://editorconfig.org) `end_of_line` property is also honored when present and overrides this setting.
+- Setting: `line_ending`
+- Default: `"auto"`
+
+**Options**
+
+1. Preserve the file's existing line endings:
+
+```json
+{
+  "line_ending": "auto"
+}
+```
+
+2. Normalize to LF (`\n`) on save:
+
+```json
+{
+  "line_ending": "lf"
+}
+```
+
+3. Normalize to CRLF (`\r\n`) on save:
+
+```json
+{
+  "line_ending": "crlf"
+}
+```
+
 ## Expand Excerpt Lines
 
 - Description: The default number of lines to expand excerpts in the multibuffer by
@@ -2772,6 +2804,7 @@ The following settings can be overridden for each specific language:
 
 - [`enable_language_server`](#enable-language-server)
 - [`ensure_final_newline_on_save`](#ensure-final-newline-on-save)
+- [`line_ending`](#line-ending)
 - [`format_on_save`](#format-on-save)
 - [`formatter`](#formatter)
 - [`hard_tabs`](#hard-tabs)

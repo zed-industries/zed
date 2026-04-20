@@ -46,7 +46,9 @@ use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
     ManifestQuery, OffsetRangeExt, Point, ToPoint, Toolchain, ToolchainList, ToolchainLister,
     ToolchainMetadata,
-    language_settings::{Formatter, FormatterList, LanguageSettings, LanguageSettingsContent},
+    language_settings::{
+        Formatter, FormatterList, LanguageSettings, LanguageSettingsContent, LineEndingSetting,
+    },
     markdown_lang, rust_lang, tree_sitter_typescript,
 };
 use lsp::{
@@ -318,6 +320,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     assert_eq!(settings_a.hard_tabs, true);
     assert_eq!(settings_a.ensure_final_newline_on_save, true);
     assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
+    assert_eq!(settings_a.line_ending, LineEndingSetting::Lf);
     assert_eq!(settings_a.preferred_line_length, 120);
 
     // .editorconfig in b/ overrides .editorconfig in root
@@ -6418,6 +6421,83 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
         fs.load(path!("/dir/file2").as_ref()).await.unwrap(),
         "one\r\ntwo\r\nthree\r\nfour\r\n",
     );
+}
+
+#[gpui::test]
+async fn test_line_ending_normalization_on_format(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".editorconfig": "root = true\n[*.rs]\nend_of_line = lf\n",
+            "crlf_file.rs": "one\r\ntwo\r\nthree\r\n",
+            "lf_file.rs": "one\ntwo\nthree\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |p, cx| {
+            p.open_local_buffer(path!("/dir/crlf_file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    // The buffer detected CRLF line endings on open.
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+
+    // Format the buffer, which triggers line ending normalization via editorconfig.
+    let mut buffers = HashSet::default();
+    buffers.insert(buffer.clone());
+    project
+        .update(cx, |project, cx| {
+            project.format(
+                buffers,
+                project::lsp_store::LspFormatTarget::Buffers,
+                false,
+                project::lsp_store::FormatTrigger::Save,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    // The buffer's line ending was normalized to LF by the editorconfig setting.
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+
+    // Save the buffer and verify the file on disk uses LF.
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer, cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.load(path!("/dir/crlf_file.rs").as_ref()).await.unwrap(),
+        "one\ntwo\nthree\n",
+    );
+
+    // Verify that a file already using LF is unchanged.
+    let lf_buffer = project
+        .update(cx, |p, cx| {
+            p.open_local_buffer(path!("/dir/lf_file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    lf_buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
 }
 
 #[gpui::test]

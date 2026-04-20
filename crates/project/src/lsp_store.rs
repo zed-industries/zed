@@ -77,7 +77,8 @@ use language::{
     OffsetUtf16, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16,
     Toolchain, Transaction, Unclipped,
     language_settings::{
-        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, all_language_settings,
+        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, LineEndingSetting,
+        all_language_settings,
     },
     modeline, point_to_lsp,
     proto::{
@@ -1620,6 +1621,20 @@ impl LocalLspStore {
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.ensure_final_newline(cx);
             })?;
+        }
+
+        let desired_line_ending = match settings.line_ending {
+            LineEndingSetting::Auto => None,
+            LineEndingSetting::Lf => Some(LineEnding::Unix),
+            LineEndingSetting::Crlf => Some(LineEnding::Windows),
+        };
+        if let Some(desired_line_ending) = desired_line_ending {
+            zlog::trace!(logger => "normalizing line endings to {}", desired_line_ending.label());
+            buffer.handle.update(cx, |buffer, cx| {
+                if buffer.line_ending() != desired_line_ending {
+                    buffer.set_line_ending(desired_line_ending, cx);
+                }
+            });
         }
 
         // Formatter for `code_actions_on_format` that runs before
