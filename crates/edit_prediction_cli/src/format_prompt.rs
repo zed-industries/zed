@@ -33,10 +33,10 @@ pub async fn run_format_prompt(
         .context("prompt_inputs must be set after context retrieval")?;
 
     match args.provider {
-        PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
+        PredictionProvider::Teacher(_, zeta_format)
+        | PredictionProvider::TeacherNonBatching(_, zeta_format) => {
             step_progress.set_substatus("formatting teacher prompt");
 
-            let zeta_format = ZetaFormat::default();
             let (editable_range, context_range) =
                 excerpt_range_for_format(zeta_format, &prompt_inputs.excerpt_ranges);
 

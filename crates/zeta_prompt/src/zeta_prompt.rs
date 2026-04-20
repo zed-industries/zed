@@ -89,10 +89,10 @@ pub enum ZetaFormat {
     V0306SeedMultiRegions,
     /// Byte-exact marker spans; all intermediate markers emitted; repeated marker means no-edit.
     V0316SeedMultiRegions,
-    /// V0316 with larger block sizes.
-    V0318SeedMultiRegions,
     /// V0316, but marker numbers are relative to the cursor block (e.g. -1, -0, +1).
     V0317SeedMultiRegions,
+    /// V0316 with larger block sizes.
+    V0318SeedMultiRegions,
     /// V0318-style markers over the full available current file excerpt with no related files.
     V0327SingleFile,
 }
@@ -351,6 +351,7 @@ pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
     }
 }
 
+/// Return (editable_range, context_range) for the prompt format
 pub fn excerpt_ranges_for_format(
     format: ZetaFormat,
     ranges: &ExcerptRanges,
@@ -378,8 +379,11 @@ pub fn excerpt_ranges_for_format(
             ranges.editable_350_context_150.clone(),
         ),
         ZetaFormat::V0327SingleFile => (
-            0..ranges.editable_350_context_150.end,
-            0..ranges.editable_350_context_150.end,
+            ranges.editable_350_context_150.clone(),
+            ranges.context_8192.clone().unwrap_or(
+                // shouldn't be used, only for compat with old data/clients
+                ranges.editable_350_context_150.clone(),
+            ),
         ),
 
         ZetaFormat::V0304VariableEdit => {
