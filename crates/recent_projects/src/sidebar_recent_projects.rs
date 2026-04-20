@@ -417,22 +417,40 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         create_new_window: false,
                     };
 
-                    Button::new("open_local_folder", "Add Local Folders")
-                        .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
+                    ListItem::new("open_local_folder")
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .items_center()
+                                .child(Label::new("Add Local Folders"))
+                                .child(KeyBinding::for_action_in(&open_action, &focus_handle, cx)),
+                        )
                         .on_click(cx.listener(move |_, _, window, cx| {
                             window.dispatch_action(open_action.boxed_clone(), cx);
                             cx.emit(DismissEvent);
                         }))
                 })
                 .child(
-                    Button::new("open_remote_folder", "Add Remote Folder")
-                        .key_binding(KeyBinding::for_action(
-                            &OpenRemote {
-                                from_existing_connection: false,
-                                create_new_window: false,
-                            },
-                            cx,
-                        ))
+                    ListItem::new("open_remote_folder")
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .items_center()
+                                .child(Label::new("Add Remote Folder"))
+                                .child(KeyBinding::for_action(
+                                    &OpenRemote {
+                                        from_existing_connection: false,
+                                        create_new_window: false,
+                                    },
+                                    cx,
+                                )),
+                        )
                         .on_click(cx.listener(|_, _, window, cx| {
                             window.dispatch_action(
                                 OpenRemote {
