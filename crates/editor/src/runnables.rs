@@ -125,9 +125,7 @@ impl Editor {
             }
             let buffer_id = buffer_read.remote_id();
             if invalidate_buffer_data != Some(buffer_id)
-                && self
-                    .runnables
-                    .has_cached(buffer_id, &buffer_read.version())
+                && self.runnables.has_cached(buffer_id, &buffer_read.version())
             {
                 return;
             }
@@ -719,11 +717,11 @@ mod tests {
         FakeFs, Project, ProjectPath,
         lsp_store::lsp_ext_command::{CargoRunnableArgs, Runnable, RunnableArgs, RunnableKind},
     };
-    use util::rel_path::rel_path;
     use serde_json::json;
     use task::{TaskTemplate, TaskTemplates};
     use text::Point;
     use util::path;
+    use util::rel_path::rel_path;
 
     use crate::{
         Editor, UPDATE_DEBOUNCE, editor_tests::init_test, scroll::scroll_amount::ScrollAmount,
@@ -1139,7 +1137,12 @@ mod tests {
         );
 
         let worktree_id = project.update(cx, |project, cx| {
-            project.worktrees(cx).next().expect("worktree").read(cx).id()
+            project
+                .worktrees(cx)
+                .next()
+                .expect("worktree")
+                .read(cx)
+                .id()
         });
         project
             .update(cx, |project, cx| {
