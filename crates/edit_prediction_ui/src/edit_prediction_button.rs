@@ -630,10 +630,7 @@ impl EditPredictionButton {
         menu
     }
 
-    fn add_configure_providers_item(
-        &self,
-        menu: ContextMenu,
-    ) -> ContextMenu {
+    fn add_configure_providers_item(&self, menu: ContextMenu) -> ContextMenu {
         menu.separator().item(
             ContextMenuEntry::new("Configure Providers")
                 .icon(IconName::Settings)
@@ -690,7 +687,8 @@ impl EditPredictionButton {
                     }
                 });
 
-            let menu = self.add_provider_switching_section(menu, EditPredictionProvider::Copilot, cx);
+            let menu =
+                self.add_provider_switching_section(menu, EditPredictionProvider::Copilot, cx);
             let menu = self.add_configure_providers_item(menu);
             menu
         })
@@ -1032,7 +1030,8 @@ impl EditPredictionButton {
                 self.add_provider_switching_section(menu, EditPredictionProvider::Copilot, cx);
 
             let menu = self.add_configure_providers_item(menu);
-            let menu = menu.separator()
+            let menu = menu
+                .separator()
                 .item(
                     ContextMenuEntry::new("Copilot: Next Edit Suggestions")
                         .toggleable(IconPosition::Start, next_edit_suggestions)
