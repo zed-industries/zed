@@ -1669,6 +1669,17 @@ impl Sidebar {
                         cx,
                     )),
             )
+            .on_mouse_down(gpui::MouseButton::Right, {
+                let menu_handle = self
+                    .project_header_menu_handles
+                    .get(&ix)
+                    .cloned()
+                    .unwrap_or_default();
+                move |_, window, cx| {
+                    cx.stop_propagation();
+                    menu_handle.toggle(window, cx);
+                }
+            })
             .on_click(
                 cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
                     if event.modifiers().secondary() {
@@ -1898,18 +1909,18 @@ impl Sidebar {
                                         let label_color = if is_active_workspace {
                                             Color::Accent
                                         } else {
-                                            Color::Muted
+                                            Color::Default
                                         };
                                         let row_group_name = SharedString::from(format!(
                                             "workspace-menu-row-{workspace_index}"
                                         ));
 
                                         h_flex()
-                                            .w_full()
                                             .group(&row_group_name)
-                                            .justify_between()
+                                            .w_full()
                                             .gap_2()
-                                            .child(h_flex().min_w_0().gap_3().children(
+                                            .justify_between()
+                                            .child(h_flex().min_w_0().gap_2().children(
                                                 workspace_label.iter().map(|label| {
                                                     h_flex()
                                                         .min_w_0()
@@ -1931,7 +1942,8 @@ impl Sidebar {
                                                             |this, secondary_name| {
                                                                 this.child(
                                                                     Label::new(":")
-                                                                        .color(label_color),
+                                                                        .color(label_color)
+                                                                        .alpha(0.5),
                                                                 )
                                                                 .child(
                                                                     Label::new(secondary_name)
@@ -1949,7 +1961,6 @@ impl Sidebar {
                                                     IconName::Close,
                                                 )
                                                 .shape(ui::IconButtonShape::Square)
-                                                .style(ButtonStyle::Subtle)
                                                 .visible_on_hover(&row_group_name)
                                                 .tooltip(Tooltip::text("Close Workspace"))
                                                 .on_click(move |_, window, cx| {
