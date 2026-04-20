@@ -3561,11 +3561,7 @@ impl Sidebar {
         self.thread_last_accessed.insert(*id, Utc::now());
     }
 
-    fn record_thread_interacted(
-        &mut self,
-        thread_id: &agent_ui::ThreadId,
-        cx: &mut App,
-    ) {
+    fn record_thread_interacted(&mut self, thread_id: &agent_ui::ThreadId, cx: &mut App) {
         let store = ThreadMetadataStore::global(cx);
         store.update(cx, |store, cx| {
             store.update_interacted_at(thread_id, Utc::now(), cx);
