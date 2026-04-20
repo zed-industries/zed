@@ -43,6 +43,20 @@ pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 
+fn line_count_for_diff_stat(contents: &[u8]) -> u32 {
+    if contents.is_empty() {
+        return 0;
+    }
+
+    let trailing_line = if contents.last() == Some(&b'\n') {
+        0
+    } else {
+        1
+    };
+    let line_count = contents.iter().filter(|byte| **byte == b'\n').count() + trailing_line;
+    u32::try_from(line_count).unwrap_or(u32::MAX)
+}
+
 /// Format string used in graph log to get initial data for the git graph
 /// %H - Full commit hash
 /// %P - Parent hashes
@@ -2117,7 +2131,60 @@ impl GitRepository for RealGitRepository {
                     );
                 }
                 let output = git_binary.run(&args).await?;
-                Ok(crate::status::parse_numstat(&output))
+                let mut diff_stat = crate::status::parse_numstat(&output);
+                let mut entries = diff_stat.entries.to_vec();
+                let mut paths_with_stats = entries
+                    .iter()
+                    .map(|(path, _)| path.clone())
+                    .collect::<HashSet<_>>();
+
+                let mut untracked_args: Vec<OsString> = vec![
+                    "ls-files".into(),
+                    "--others".into(),
+                    "--exclude-standard".into(),
+                    "-z".into(),
+                ];
+                if !path_prefixes.is_empty() {
+                    untracked_args.push("--".into());
+                    untracked_args.extend(
+                        path_prefixes
+                            .iter()
+                            .map(|p| p.as_std_path().as_os_str().to_os_string()),
+                    );
+                }
+                let untracked_output = git_binary.run_raw(&untracked_args).await?;
+
+                for path_str in untracked_output.split_terminator('\0') {
+                    let Ok(path) = RepoPath::new(path_str) else {
+                        continue;
+                    };
+                    if paths_with_stats.contains(&path) {
+                        continue;
+                    }
+
+                    let full_path = git_binary.working_directory.join(path.as_std_path());
+                    match smol::fs::read(&full_path).await {
+                        Ok(contents) => {
+                            entries.push((
+                                path.clone(),
+                                crate::status::DiffStat {
+                                    added: line_count_for_diff_stat(&contents),
+                                    deleted: 0,
+                                },
+                            ));
+                            paths_with_stats.insert(path);
+                        }
+                        Err(err) => {
+                            log::debug!("failed to read untracked file {full_path:?}: {err}");
+                        }
+                    }
+                }
+
+                entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+                entries.dedup_by(|(a, _), (b, _)| a == b);
+                diff_stat.entries = entries.into();
+
+                Ok(diff_stat)
             })
             .boxed()
     }
@@ -3672,6 +3739,15 @@ mod tests {
             std::env::set_var("GIT_CONFIG_GLOBAL", "");
             std::env::set_var("GIT_CONFIG_SYSTEM", "");
         }
+    }
+
+    #[test]
+    fn test_line_count_for_diff_stat() {
+        assert_eq!(line_count_for_diff_stat(b""), 0);
+        assert_eq!(line_count_for_diff_stat(b"one"), 1);
+        assert_eq!(line_count_for_diff_stat(b"one\n"), 1);
+        assert_eq!(line_count_for_diff_stat(b"one\ntwo"), 2);
+        assert_eq!(line_count_for_diff_stat(b"one\ntwo\n"), 2);
     }
 
     #[gpui::test]
