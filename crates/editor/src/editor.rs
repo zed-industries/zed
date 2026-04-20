@@ -7451,16 +7451,14 @@ impl Editor {
     }
 
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let previous_actions = match std::mem::replace(
-            &mut self.available_code_actions,
-            AvailableCodeActions::None,
-        ) {
-            AvailableCodeActions::Ready { location, actions } => Some((location, actions)),
-            AvailableCodeActions::Fetching {
-                previous_actions, ..
-            } => previous_actions,
-            AvailableCodeActions::None => None,
-        };
+        let previous_actions =
+            match std::mem::replace(&mut self.available_code_actions, AvailableCodeActions::None) {
+                AvailableCodeActions::Ready { location, actions } => Some((location, actions)),
+                AvailableCodeActions::Fetching {
+                    previous_actions, ..
+                } => previous_actions,
+                AvailableCodeActions::None => None,
+            };
 
         self.code_actions_generation += 1;
         let generation = self.code_actions_generation;
