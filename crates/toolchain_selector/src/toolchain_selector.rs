@@ -584,11 +584,11 @@ impl ToolchainSelector {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<()> {
-        let (_, buffer, _) = workspace
+        let buffer = workspace
             .active_item(cx)?
             .act_as::<Editor>(cx)?
             .read(cx)
-            .active_excerpt(cx)?;
+            .active_buffer(cx)?;
         let project = workspace.project().clone();
 
         let language_name = buffer.read(cx).language()?.name();
@@ -920,16 +920,16 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                 let worktree_abs_path_root = self.worktree_abs_path_root.clone();
                 let path = self.relative_path.clone();
                 let relative_path = self.relative_path.clone();
+                let db = workspace::WorkspaceDb::global(cx);
                 cx.spawn_in(window, async move |_, cx| {
-                    workspace::WORKSPACE_DB
-                        .set_toolchain(
-                            workspace_id,
-                            worktree_abs_path_root,
-                            relative_path,
-                            toolchain.clone(),
-                        )
-                        .await
-                        .log_err();
+                    db.set_toolchain(
+                        workspace_id,
+                        worktree_abs_path_root,
+                        relative_path,
+                        toolchain.clone(),
+                    )
+                    .await
+                    .log_err();
                     workspace
                         .update(cx, |this, cx| {
                             this.project().update(cx, |this, cx| {

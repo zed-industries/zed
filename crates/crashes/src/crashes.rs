@@ -1,7 +1,7 @@
 use crash_handler::{CrashEventResult, CrashHandler};
 use futures::future::BoxFuture;
 use log::info;
-use minidumper::{Client, LoopAction, MinidumpBinary};
+use minidumper::{Client, LoopAction, MinidumpBinary, Server, SocketName};
 use parking_lot::Mutex;
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
@@ -128,7 +128,7 @@ async fn connect_and_keepalive(crash_init: InitCrashHandler, handler: CrashHandl
     let retry_frequency = Duration::from_millis(100);
     let mut maybe_client = None;
     while maybe_client.is_none() {
-        if let Ok(client) = Client::with_name(socket_name.as_path()) {
+        if let Ok(client) = Client::with_name(SocketName::Path(&socket_name)) {
             maybe_client = Some(client);
             info!("connected to crash handler process after {elapsed:?}");
             break;
@@ -350,8 +350,34 @@ impl minidumper::ServerHandler for CrashServer {
     }
 }
 
+/// Rust's string-slicing panics embed the user's string content in the message,
+/// e.g. "byte index 4 is out of bounds of `a`". Strip that suffix so we
+/// don't upload arbitrary user text in crash reports.
+fn strip_user_string_from_panic(message: &str) -> String {
+    const STRING_PANIC_PREFIXES: &[&str] = &[
+        // Older rustc (pre-1.95):
+        "byte index ",
+        "begin <= end (",
+        // Newer rustc (1.95+):
+        // https://github.com/rust-lang/rust/pull/145024
+        "start byte index ",
+        "end byte index ",
+        "begin > end (",
+    ];
+
+    if (message.ends_with('`') || message.ends_with("`[...]"))
+        && STRING_PANIC_PREFIXES
+            .iter()
+            .any(|prefix| message.starts_with(prefix))
+        && let Some(open) = message.find('`')
+    {
+        return format!("{} `<redacted>`", &message[..open]);
+    }
+    message.to_owned()
+}
+
 pub fn panic_hook(info: &PanicHookInfo) {
-    let message = info.payload_as_str().unwrap_or("Box<Any>").to_owned();
+    let message = strip_user_string_from_panic(info.payload_as_str().unwrap_or("Box<Any>"));
 
     let span = info
         .location()
@@ -446,7 +472,7 @@ fn spawn_crash_handler_windows(exe: &Path, socket_name: &Path) {
 }
 
 pub fn crash_server(socket: &Path) {
-    let Ok(mut server) = minidumper::Server::with_name(socket) else {
+    let Ok(mut server) = Server::with_name(SocketName::Path(socket)) else {
         log::info!("Couldn't create socket, there may already be a running crash server");
         return;
     };

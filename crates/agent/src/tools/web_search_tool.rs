@@ -53,7 +53,7 @@ impl AgentTool for WebSearchTool {
     type Input = WebSearchToolInput;
     type Output = WebSearchToolOutput;
 
-    const NAME: &'static str = "web_search";
+    const NAME: &'static str = "search_web";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Fetch

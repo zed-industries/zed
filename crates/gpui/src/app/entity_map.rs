@@ -59,7 +59,8 @@ pub(crate) struct EntityMap {
     ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
-struct EntityRefCounts {
+#[doc(hidden)]
+pub(crate) struct EntityRefCounts {
     counts: SlotMap<EntityId, AtomicUsize>,
     dropped_entity_ids: Vec<EntityId>,
     #[cfg(any(test, feature = "leak-detection"))]
@@ -84,7 +85,7 @@ impl EntityMap {
     }
 
     #[doc(hidden)]
-    pub fn ref_counts_drop_handle(&self) -> impl Sized + use<> {
+    pub fn ref_counts_drop_handle(&self) -> Arc<RwLock<EntityRefCounts>> {
         self.ref_counts.clone()
     }
 
@@ -893,6 +894,9 @@ pub(crate) struct HandleId {
 /// created, all participating strong entities in this cycle will effectively
 /// leak as they cannot be released anymore.
 ///
+/// Cycles can also happen if an entity owns a task or subscription that it
+/// itself owns a strong reference to the entity again.
+///
 /// # Usage
 ///
 /// You can use `WeakEntity::assert_released` or `AnyWeakEntity::assert_released`
@@ -918,7 +922,7 @@ pub(crate) struct HandleId {
 /// ```
 ///
 /// This will capture and display backtraces for each leaked handle, helping you
-/// identify where handles were created but not released.
+/// identify where leaked handles were created.
 ///
 /// # How It Works
 ///
@@ -1001,11 +1005,13 @@ impl LeakDetector {
     /// otherwise it suggests setting the environment variable to get more info.
     pub fn assert_released(&mut self, entity_id: EntityId) {
         use std::fmt::Write as _;
+
         if let Some(data) = self.entity_handles.remove(&entity_id) {
             let mut out = String::new();
             for (_, backtrace) in data.handles {
                 if let Some(mut backtrace) = backtrace {
                     backtrace.resolve();
+                    let backtrace = BacktraceFormatter(backtrace);
                     writeln!(out, "Leaked handle:\n{:?}", backtrace).unwrap();
                 } else {
                     writeln!(
@@ -1015,7 +1021,7 @@ impl LeakDetector {
                     .unwrap();
                 }
             }
-            panic!("{out}");
+            panic!("Handles for {} leaked:\n{out}", data.type_name);
         }
     }
 
@@ -1053,6 +1059,7 @@ impl LeakDetector {
                 if let Some(backtrace) = backtrace {
                     let mut backtrace = backtrace.clone();
                     backtrace.resolve();
+                    let backtrace = BacktraceFormatter(backtrace);
                     writeln!(
                         out,
                         "Leaked handle for entity {} ({entity_id:?}):\n{:?}",
@@ -1090,6 +1097,7 @@ impl Drop for LeakDetector {
             for (_handle, backtrace) in data.handles {
                 if let Some(mut backtrace) = backtrace {
                     backtrace.resolve();
+                    let backtrace = BacktraceFormatter(backtrace);
                     writeln!(
                         out,
                         "Leaked handle for entity {} ({entity_id:?}):\n{:?}",
@@ -1107,6 +1115,71 @@ impl Drop for LeakDetector {
             }
         }
         panic!("Exited with leaked handles:\n{out}");
+    }
+}
+
+#[cfg(any(test, feature = "leak-detection"))]
+struct BacktraceFormatter(backtrace::Backtrace);
+
+#[cfg(any(test, feature = "leak-detection"))]
+impl fmt::Debug for BacktraceFormatter {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use backtrace::{BacktraceFmt, BytesOrWideString, PrintFmt};
+
+        let style = if fmt.alternate() {
+            PrintFmt::Full
+        } else {
+            PrintFmt::Short
+        };
+
+        // When printing paths we try to strip the cwd if it exists, otherwise
+        // we just print the path as-is. Note that we also only do this for the
+        // short format, because if it's full we presumably want to print
+        // everything.
+        let cwd = std::env::current_dir();
+        let mut print_path = move |fmt: &mut fmt::Formatter<'_>, path: BytesOrWideString<'_>| {
+            let path = path.into_path_buf();
+            if style != PrintFmt::Full {
+                if let Ok(cwd) = &cwd {
+                    if let Ok(suffix) = path.strip_prefix(cwd) {
+                        return fmt::Display::fmt(&suffix.display(), fmt);
+                    }
+                }
+            }
+            fmt::Display::fmt(&path.display(), fmt)
+        };
+
+        let mut f = BacktraceFmt::new(fmt, style, &mut print_path);
+        f.add_context()?;
+        let mut strip = true;
+        for frame in self.0.frames() {
+            if let [symbol, ..] = frame.symbols()
+                && let Some(name) = symbol.name()
+                && let Some(filename) = name.as_str()
+            {
+                match filename {
+                    "test::run_test_in_process"
+                    | "scheduler::executor::spawn_local_with_source_location::impl$1::poll<core::pin::Pin<alloc::boxed::Box<dyn$<core::future::future::Future<assoc$<Output,enum2$<core::result::Result<workspace::OpenResult,anyhow::Error> > > > >,alloc::alloc::Global> > >" => {
+                        strip = true
+                    }
+                    "gpui::app::entity_map::LeakDetector::handle_created" => {
+                        strip = false;
+                        continue;
+                    }
+                    "zed::main" => {
+                        strip = true;
+                        f.frame().backtrace_frame(frame)?;
+                    }
+                    _ => {}
+                }
+            }
+            if strip {
+                continue;
+            }
+            f.frame().backtrace_frame(frame)?;
+        }
+        f.finish()?;
+        Ok(())
     }
 }
 

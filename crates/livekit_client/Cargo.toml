@@ -47,6 +47,10 @@ util.workspace = true
 libwebrtc.workspace = true
 livekit.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+tokio = { workspace = true, features = ["time"] }
+webrtc-sys.workspace = true
+
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
 scap.workspace = true
 
@@ -61,7 +65,6 @@ objc.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform.workspace = true
-sha2.workspace = true
 simplelog.workspace = true
 
 [build-dependencies]

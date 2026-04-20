@@ -224,16 +224,27 @@ impl PythonDebugAdapter {
     ) -> Result<Arc<Path>, String> {
         self.debugpy_whl_base_path
             .get_or_init(|| async move {
-                self.maybe_fetch_new_wheel(toolchain, delegate)
-                    .await
-                    .map_err(|e| format!("{e}"))?;
-                Ok(Arc::from(
-                    debug_adapters_dir()
-                        .join(Self::ADAPTER_NAME)
-                        .join("debugpy")
-                        .join("adapter")
-                        .as_ref(),
-                ))
+                let adapter_path = debug_adapters_dir()
+                    .join(Self::ADAPTER_NAME)
+                    .join("debugpy")
+                    .join("adapter");
+
+                if let Err(error) = self.maybe_fetch_new_wheel(toolchain, delegate).await {
+                    if delegate
+                        .fs()
+                        .metadata(&adapter_path)
+                        .await
+                        .is_ok_and(|m| m.is_some())
+                    {
+                        log::warn!(
+                            "Failed to fetch latest debugpy, using cached version: {error:#}"
+                        );
+                    } else {
+                        return Err(format!("{error}"));
+                    }
+                }
+
+                Ok(Arc::from(adapter_path.as_ref()))
             })
             .await
             .clone()

@@ -44,6 +44,35 @@ You can set the mode to `"dark"` or `"light"` to ignore the current system mode.
 }
 ```
 
+### Toggle Theme Mode from the Keyboard
+
+Use {#kb theme::ToggleMode} to switch the current theme mode between light and dark.
+
+If your settings currently use a static theme value, like:
+
+```json [settings]
+{
+  "theme": "Any Theme"
+}
+```
+
+the first toggle converts it to dynamic theme selection with default themes:
+
+```json [settings]
+{
+  "theme": {
+    "mode": "system",
+    "light": "One Light",
+    "dark": "One Dark"
+  }
+}
+```
+
+You are required to set both `light` and `dark` themes manually after the first toggle.
+
+After that, toggling updates only `theme.mode`.
+If `light` and `dark` are the same theme, the first toggle may not produce a visible UI change until you set different values for `light` and `dark`.
+
 ## Theme Overrides
 
 To override specific attributes of a theme, use the `theme_overrides` setting.

@@ -1,10 +1,10 @@
 #[derive(Default, Clone, Copy)]
 pub enum RowRenderMechanism {
-    /// Default behaviour
-    #[default]
-    VariableList,
-    /// More performance oriented, but all rows are same height
+    /// More correct for multiline content, but slower.
     #[allow(dead_code)] // Will be used when settings ui is added
+    VariableList,
+    /// Default behaviour for now while resizable columns are being stabilized.
+    #[default]
     UniformList,
 }
 

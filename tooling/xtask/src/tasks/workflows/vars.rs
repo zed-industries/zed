@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, ops::Not};
 
 use gh_workflow::{
     Concurrency, Env, Expression, Step, WorkflowCallInput, WorkflowCallSecret,
@@ -130,21 +130,50 @@ impl PathCondition {
             set_by_step: Default::default(),
         }
     }
-    pub fn guard(&self, job: NamedJob) -> NamedJob {
+
+    pub fn and_always<'a>(&'a self) -> PathContextCondition<'a> {
+        PathContextCondition {
+            condition: self,
+            run_in_merge_queue: true,
+        }
+    }
+
+    pub fn and_not_in_merge_queue<'a>(&'a self) -> PathContextCondition<'a> {
+        PathContextCondition {
+            condition: self,
+            run_in_merge_queue: false,
+        }
+    }
+}
+
+pub struct PathContextCondition<'a> {
+    condition: &'a PathCondition,
+    run_in_merge_queue: bool,
+}
+
+impl<'a> PathContextCondition<'a> {
+    pub fn then(&'a self, job: NamedJob) -> NamedJob {
         let set_by_step = self
+            .condition
             .set_by_step
             .borrow()
             .clone()
-            .unwrap_or_else(|| panic!("condition {},is never set", self.name));
+            .unwrap_or_else(|| panic!("condition {},is never set", self.condition.name));
         NamedJob {
             name: job.name,
-            job: job
-                .job
-                .add_need(set_by_step.clone())
-                .cond(Expression::new(format!(
-                    "needs.{}.outputs.{} == 'true'",
-                    &set_by_step, self.name
-                ))),
+            job: job.job.add_need(set_by_step.clone()).cond(Expression::new(
+                format!(
+                    "needs.{}.outputs.{} == 'true' {merge_queue_condition}",
+                    &set_by_step,
+                    self.condition.name,
+                    merge_queue_condition = self
+                        .run_in_merge_queue
+                        .not()
+                        .then_some("&& github.event_name != 'merge_group'")
+                        .unwrap_or_default()
+                )
+                .trim(),
+            )),
         }
     }
 }
@@ -156,14 +185,31 @@ pub(crate) struct StepOutput {
 
 impl StepOutput {
     pub fn new<T>(step: &Step<T>, name: &'static str) -> Self {
-        Self {
-            name,
-            step_id: step
-                .value
-                .id
-                .clone()
-                .expect("Steps that produce outputs must have an ID"),
-        }
+        let step_id = step
+            .value
+            .id
+            .clone()
+            .expect("Steps that produce outputs must have an ID");
+
+        assert!(
+            step.value
+                .run
+                .as_ref()
+                .is_none_or(|run_command| run_command.contains(name)),
+            "Step output with name '{name}' must occur at least once in run command with ID {step_id}!"
+        );
+
+        Self { name, step_id }
+    }
+
+    pub fn new_unchecked<T>(step: &Step<T>, name: &'static str) -> Self {
+        let step_id = step
+            .value
+            .id
+            .clone()
+            .expect("Steps that produce outputs must have an ID");
+
+        Self { name, step_id }
     }
 
     pub fn expr(&self) -> String {
