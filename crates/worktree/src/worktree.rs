@@ -5318,16 +5318,13 @@ impl BackgroundScanner {
             match existing_repository_entry {
                 None => {
                     let Ok(relative) = dot_git_dir.strip_prefix(state.snapshot.abs_path()) else {
-                        // This can happen legitimately when `.git` is a
-                        // gitfile (e.g. in a linked worktree or submodule)
-                        // pointing to a directory outside the worktree root.
-                        // Skip it — the repository was already registered
-                        // during the initial scan via `discover_git_paths`.
-                        debug_assert!(
-                            self.fs.is_file(&dot_git_dir).await,
-                            "update_git_repositories: .git path outside worktree root \
-                             is not a gitfile: {dot_git_dir:?}",
-                        );
+                        // A `.git` path outside the worktree root is not
+                        // ours to register. This happens legitimately when
+                        // `.git` is a gitfile pointing outside the worktree
+                        // (linked worktrees and submodules), and also when
+                        // a rescan of a linked worktree's commondir arrives
+                        // after the worktree's repository has already been
+                        // unregistered.
                         continue;
                     };
                     affected_repo_roots.push(dot_git_dir.parent().unwrap().into());
