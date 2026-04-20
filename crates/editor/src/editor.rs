@@ -23918,38 +23918,46 @@ impl Editor {
 
         let multi_buffer = self.buffer().read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let buffer_ranges = multi_buffer_snapshot
-            .range_to_buffer_ranges(selection_range.start..selection_range.end);
-        let selected_buffer_range = if selection.reversed {
-            buffer_ranges.first()
-        } else {
-            buffer_ranges.last()
+        let format_location = |buffer_snapshot, buffer_range: Range<Point>| {
+            let start_line = buffer_range.start.row + 1;
+            let end_line = buffer_range.end.row + 1;
+
+            let end_line = if buffer_range.end.column == 0 && end_line > start_line {
+                end_line - 1
+            } else {
+                end_line
+            };
+
+            let project = self.project()?.read(cx);
+            let file = buffer_snapshot.file()?;
+            let path = file.path().display(project.path_style(cx));
+
+            let location = if start_line == end_line {
+                format!("{path}:{start_line}")
+            } else {
+                format!("{path}:{start_line}-{end_line}")
+            };
+            Some(location)
         };
 
-        if let Some(file_location) =
+        let file_location = if selection_range.start == selection_range.end {
+            multi_buffer_snapshot
+                .point_to_buffer_point(selection.head())
+                .and_then(|(buffer_snapshot, point)| format_location(buffer_snapshot, point..point))
+        } else {
+            let buffer_ranges = multi_buffer_snapshot
+                .range_to_buffer_ranges(selection_range.start..selection_range.end);
+            let selected_buffer_range = if selection.reversed {
+                buffer_ranges.first()
+            } else {
+                buffer_ranges.last()
+            };
             selected_buffer_range.and_then(|(buffer_snapshot, range, _)| {
-                let buffer_range = range.to_point(buffer_snapshot);
-                let start_line = buffer_range.start.row + 1;
-                let end_line = buffer_range.end.row + 1;
-
-                let end_line = if buffer_range.end.column == 0 && end_line > start_line {
-                    end_line - 1
-                } else {
-                    end_line
-                };
-
-                let project = self.project()?.read(cx);
-                let file = buffer_snapshot.file()?;
-                let path = file.path().display(project.path_style(cx));
-
-                let location = if start_line == end_line {
-                    format!("{path}:{start_line}")
-                } else {
-                    format!("{path}:{start_line}-{end_line}")
-                };
-                Some(location)
+                format_location(buffer_snapshot, range.to_point(buffer_snapshot))
             })
-        {
+        };
+
+        if let Some(file_location) = file_location {
             cx.write_to_clipboard(ClipboardItem::new_string(file_location));
         }
     }
