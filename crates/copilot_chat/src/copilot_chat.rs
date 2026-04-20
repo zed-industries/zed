@@ -1269,11 +1269,13 @@ mod tests {
 
         let schema: ModelSchema = serde_json::from_str(json).unwrap();
 
-        // max_token_count() should return context window (200000), not prompt tokens (90000)
+        // max_token_count() should return the context window (200000), while
+        // max_prompt_token_count() should return the prompt/input limit (90000).
         assert_eq!(schema.data[0].max_token_count(), 200000);
         assert_eq!(schema.data[0].max_prompt_token_count(), Some(90000));
 
-        // GPT-4o should return 128000 (context window), not 110000 (prompt tokens)
+        // GPT-4o should return 128000 as the context window, while
+        // max_prompt_token_count() should return the prompt/input limit (110000).
         assert_eq!(schema.data[1].max_token_count(), 128000);
         assert_eq!(schema.data[1].max_prompt_token_count(), Some(110000));
     }
