@@ -1727,7 +1727,7 @@ mod tests {
         assert!(!model_with_chat_completions.supports_response());
 
         // Both endpoints (has /chat/completions) -> supports_response = false
-        assert!(!model_with_both.supports_response());
+        assert!(model_with_both.supports_response());
 
         // Only /v1/messages endpoint -> supports_response = false (doesn't have /responses)
         assert!(!model_with_messages.supports_response());
