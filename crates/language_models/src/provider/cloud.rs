@@ -299,7 +299,7 @@ impl RenderOnce for ZedAiConfiguration {
             ),
             Some(Plan::ZedBusiness) => (
                 if self.is_zed_model_provider_enabled {
-                    "You have access to Zed's hosted models through your Organization."
+                    "You have access to Zed's hosted models through your organization."
                 } else {
                     "Zed's hosted models are disabled by your organization's configuration."
                 },
