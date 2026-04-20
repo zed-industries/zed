@@ -132,13 +132,6 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 }
 
 impl Vim {
-    fn reset_cmd_f_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.search.cmd_f_search {
-            self.search.cmd_f_search = false;
-            self.sync_vim_settings(window, cx);
-        }
-    }
-
     fn search_under_cursor(
         &mut self,
         action: &SearchUnderCursor,
@@ -301,41 +294,17 @@ impl Vim {
     }
 
     // hook into the existing to clear out any vim search state on cmd+f or edit -> find.
-    fn search_deploy(
-        &mut self,
-        _: &buffer_search::Deploy,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let dismiss_subscription = self
-            .pane(window, cx)
-            .and_then(|pane| {
-                pane.read(cx)
-                    .toolbar()
-                    .read(cx)
-                    .item_of_type::<BufferSearchBar>()
-            })
-            .map(|search_bar| {
-                cx.subscribe_in(&search_bar, window, |vim, _, event, window, cx| {
-                    if matches!(event, buffer_search::Event::Dismissed) {
-                        vim.reset_cmd_f_search(window, cx);
-                    }
-                })
-            });
-
+    fn search_deploy(&mut self, _: &buffer_search::Deploy, _: &mut Window, cx: &mut Context<Self>) {
         // Preserve the current mode when resetting search state
         let current_mode = self.mode;
         self.search = Default::default();
         self.search.prior_mode = current_mode;
         self.search.cmd_f_search = true;
-        self.search._dismiss_subscription = dismiss_subscription;
-        self.sync_vim_settings(window, cx);
         cx.propagate();
     }
 
     pub fn search_submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.store_visual_marks(window, cx);
-        self.reset_cmd_f_search(window, cx);
         let Some(pane) = self.pane(window, cx) else {
             return;
         };
@@ -418,7 +387,6 @@ impl Vim {
         let Some(pane) = self.pane(window, cx) else {
             return;
         };
-        self.reset_cmd_f_search(window, cx);
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         let prior_selections = self.editor_selections(window, cx);
@@ -506,9 +474,6 @@ impl Vim {
                 let search_bar = search_bar.downgrade();
                 cx.spawn_in(window, async move |_, cx| {
                     search.await?;
-                    vim.update(cx, |vim, cx| {
-                        vim.reset_cmd_f_search(window, cx);
-                    });
                     search_bar.update_in(cx, |search_bar, window, cx| {
                         search_bar.select_match(direction, count, window, cx);
 
@@ -1013,40 +978,6 @@ mod test {
         cx.simulate_keystrokes("escape");
         cx.run_until_parked();
         cx.assert_state("«oneˇ» one one one", Mode::Visual);
-    }
-
-    #[gpui::test]
-    async fn test_cmd_f_search_dismissed_n_stays_in_normal_mode(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
-        cx.set_state("ˇone two one two\n", Mode::Normal);
-
-        cx.simulate_keystrokes("cmd-f");
-        cx.run_until_parked();
-        cx.simulate_keystrokes("o n e");
-        cx.run_until_parked();
-
-        cx.workspace(|workspace, window, cx| {
-            let pane = workspace.active_pane().read(cx);
-            let search_bar = pane
-                .toolbar()
-                .read(cx)
-                .item_of_type::<search::BufferSearchBar>()
-                .expect("Buffer search bar should be deployed");
-            search_bar.update(cx, |bar, cx| {
-                bar.dismiss(&search::buffer_search::Dismiss, window, cx);
-            });
-        });
-        cx.run_until_parked();
-
-        cx.simulate_keystrokes("escape");
-        cx.run_until_parked();
-
-        cx.assert_state("oneˇ two one two\n", Mode::Normal);
-
-        cx.simulate_keystrokes("n");
-        cx.run_until_parked();
-
-        cx.assert_state("one two oneˇ two\n", Mode::Normal);
     }
 
     #[gpui::test]
