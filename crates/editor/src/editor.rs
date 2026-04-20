@@ -6302,8 +6302,15 @@ impl Editor {
         let provider_responses = if let Some(provider) = &provider
             && load_provider_completions
         {
-            let trigger_character =
-                trigger.filter(|trigger| buffer.read(cx).completion_triggers().contains(trigger));
+            let trigger_character = trigger
+                .as_ref()
+                .filter(|trigger| {
+                    buffer
+                        .read(cx)
+                        .completion_triggers()
+                        .contains(trigger.as_str())
+                })
+                .cloned();
             let completion_context = CompletionContext {
                 trigger_kind: match &trigger_character {
                     Some(_) => CompletionTriggerKind::TRIGGER_CHARACTER,
@@ -6351,16 +6358,30 @@ impl Editor {
             Task::ready(BTreeMap::default())
         };
 
+        let snippet_char_classifier = buffer_snapshot
+            .char_classifier_at(buffer_position)
+            .scope_context(Some(CharScopeContext::Completion));
+        let load_snippet_completions = trigger.as_ref().is_none_or(|trigger| {
+            trigger.is_empty()
+                || !trigger
+                    .chars()
+                    .all(|character| snippet_char_classifier.is_word(character))
+                || trigger_in_words
+        });
+
         let snippets = if let Some(provider) = &provider
-            && load_provider_completions
+            && load_snippet_completions
             && provider.show_snippets()
             && let Some(project) = self.project()
         {
-            let char_classifier = buffer_snapshot
-                .char_classifier_at(buffer_position)
-                .scope_context(Some(CharScopeContext::Completion));
             project.update(cx, |project, cx| {
-                snippet_completions(project, &buffer, buffer_position, char_classifier, cx)
+                snippet_completions(
+                    project,
+                    &buffer,
+                    buffer_position,
+                    snippet_char_classifier,
+                    cx,
+                )
             })
         } else {
             Task::ready(Ok(CompletionResponse {
