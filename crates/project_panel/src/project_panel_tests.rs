@@ -8097,9 +8097,8 @@ async fn test_context_menu_new_file_in_empty_hidden_root(cx: &mut gpui::TestAppC
     });
     cx.run_until_parked();
 
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &[],
+    assert!(
+        visible_entries_as_strings(&panel, 0..20, cx).is_empty(),
         "Empty worktree with hide_root=true should render no entries"
     );
 
