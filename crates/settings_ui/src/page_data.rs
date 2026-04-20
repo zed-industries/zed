@@ -3631,22 +3631,22 @@ fn window_and_layout_page() -> SettingsPage {
         [
             SettingsPageItem::SectionHeader("Title Bar"),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Show Branch Icon",
-                description: "Show the branch icon beside branch switcher in the titlebar.",
+                title: "Show Branch Status Icon",
+                description: "Show git status indicators on the branch icon in the titlebar.",
                 field: Box::new(SettingField {
-                    json_path: Some("title_bar.show_branch_icon"),
+                    json_path: Some("title_bar.show_branch_status_icon"),
                     pick: |settings_content| {
                         settings_content
                             .title_bar
                             .as_ref()?
-                            .show_branch_icon
+                            .show_branch_status_icon
                             .as_ref()
                     },
                     write: |settings_content, value| {
                         settings_content
                             .title_bar
                             .get_or_insert_default()
-                            .show_branch_icon = value;
+                            .show_branch_status_icon = value;
                     },
                 }),
                 metadata: None,

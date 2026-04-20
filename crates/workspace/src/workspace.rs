@@ -1109,6 +1109,23 @@ struct GlobalAppState(Arc<AppState>);
 
 impl Global for GlobalAppState {}
 
+/// Tracks worktree creation progress for the workspace.
+/// Read by the title bar to show a loading indicator on the worktree button.
+#[derive(Default)]
+pub struct ActiveWorktreeCreation {
+    pub label: Option<SharedString>,
+    pub is_switch: bool,
+}
+
+/// Captured workspace state used when switching between worktrees.
+/// Stores the layout and open files so they can be restored in the new workspace.
+pub struct PreviousWorkspaceState {
+    pub dock_structure: DockStructure,
+    pub open_file_paths: Vec<PathBuf>,
+    pub active_file_path: Option<PathBuf>,
+    pub focused_dock: Option<DockPosition>,
+}
+
 pub struct WorkspaceStore {
     workspaces: HashSet<(gpui::AnyWindowHandle, WeakEntity<Workspace>)>,
     client: Arc<Client>,
@@ -1269,6 +1286,7 @@ pub enum Event {
     ModalOpened,
     Activate,
     PanelAdded(AnyView),
+    WorktreeCreationChanged,
 }
 
 #[derive(Debug, Clone)]
@@ -1377,6 +1395,7 @@ pub struct Workspace {
     _panels_task: Option<Task<Result<()>>>,
     sidebar_focus_handle: Option<FocusHandle>,
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
+    active_worktree_creation: ActiveWorktreeCreation,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1805,6 +1824,7 @@ impl Workspace {
             removing: false,
             sidebar_focus_handle: None,
             multi_workspace,
+            active_worktree_creation: ActiveWorktreeCreation::default(),
             open_in_dev_container: false,
             _dev_container_task: None,
         }
@@ -1947,7 +1967,7 @@ impl Workspace {
                         });
                         match open_mode {
                             OpenMode::Activate => {
-                                multi_workspace.activate(workspace.clone(), window, cx);
+                                multi_workspace.activate(workspace.clone(), None, window, cx);
                             }
                             OpenMode::Add => {
                                 multi_workspace.add(workspace.clone(), &*window, cx);
@@ -2175,6 +2195,64 @@ impl Workspace {
                 dock.serialized_dock = Some(data);
                 dock.restore_state(window, cx);
             });
+        }
+    }
+
+    /// Returns which dock currently has focus, or `None` if focus is in the
+    /// center pane or elsewhere. Does NOT fall back to any global state.
+    pub fn focused_dock_position(&self, window: &Window, cx: &App) -> Option<DockPosition> {
+        [
+            (DockPosition::Left, &self.left_dock),
+            (DockPosition::Right, &self.right_dock),
+            (DockPosition::Bottom, &self.bottom_dock),
+        ]
+        .into_iter()
+        .find(|(_, dock)| {
+            dock.read(cx).is_open() && dock.focus_handle(cx).contains_focused(window, cx)
+        })
+        .map(|(position, _)| position)
+    }
+
+    pub fn active_worktree_creation(&self) -> &ActiveWorktreeCreation {
+        &self.active_worktree_creation
+    }
+
+    pub fn set_active_worktree_creation(
+        &mut self,
+        label: Option<SharedString>,
+        is_switch: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_worktree_creation.label = label;
+        self.active_worktree_creation.is_switch = is_switch;
+        cx.emit(Event::WorktreeCreationChanged);
+        cx.notify();
+    }
+
+    /// Captures the current workspace state for restoring after a worktree switch.
+    /// This includes dock layout, open file paths, and the active file path.
+    pub fn capture_state_for_worktree_switch(
+        &self,
+        window: &Window,
+        fallback_focused_dock: Option<DockPosition>,
+        cx: &App,
+    ) -> PreviousWorkspaceState {
+        let dock_structure = self.capture_dock_state(window, cx);
+        let open_file_paths = self.open_item_abs_paths(cx);
+        let active_file_path = self
+            .active_item(cx)
+            .and_then(|item| item.project_path(cx))
+            .and_then(|pp| self.project().read(cx).absolute_path(&pp, cx));
+
+        let focused_dock = self
+            .focused_dock_position(window, cx)
+            .or(fallback_focused_dock);
+
+        PreviousWorkspaceState {
+            dock_structure,
+            open_file_paths,
+            active_file_path,
+            focused_dock,
         }
     }
 
@@ -3449,6 +3527,11 @@ impl Workspace {
                         OpenOptions {
                             requesting_window,
                             open_mode,
+                            workspace_matching: if open_mode == OpenMode::NewWindow {
+                                WorkspaceMatching::None
+                            } else {
+                                WorkspaceMatching::default()
+                            },
                             ..Default::default()
                         },
                         cx,
@@ -9608,7 +9691,7 @@ pub fn open_paths(
             let open_task = existing
                 .update(cx, |multi_workspace, window, cx| {
                     window.activate_window();
-                    multi_workspace.activate(target_workspace.clone(), window, cx);
+                    multi_workspace.activate(target_workspace.clone(), None, window, cx);
                     target_workspace.update(cx, |workspace, cx| {
                         if open_in_dev_container {
                             workspace.set_open_in_dev_container(true);
@@ -9834,6 +9917,7 @@ pub fn open_remote_project_with_new_connection(
             app_state,
             window,
             None,
+            None,
             cx,
         )
         .await
@@ -9847,6 +9931,7 @@ pub fn open_remote_project_with_existing_connection(
     app_state: Arc<AppState>,
     window: WindowHandle<MultiWorkspace>,
     provisional_project_group_key: Option<ProjectGroupKey>,
+    source_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut AsyncApp,
 ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
@@ -9861,6 +9946,7 @@ pub fn open_remote_project_with_existing_connection(
             app_state,
             window,
             provisional_project_group_key,
+            source_workspace,
             cx,
         )
         .await
@@ -9875,6 +9961,7 @@ async fn open_remote_project_inner(
     app_state: Arc<AppState>,
     window: WindowHandle<MultiWorkspace>,
     provisional_project_group_key: Option<ProjectGroupKey>,
+    source_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut AsyncApp,
 ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
     let db = cx.update(|cx| WorkspaceDb::global(cx));
@@ -9945,7 +10032,7 @@ async fn open_remote_project_inner(
                 cx,
             );
         } else {
-            multi_workspace.activate(new_workspace.clone(), window, cx);
+            multi_workspace.activate(new_workspace.clone(), source_workspace, window, cx);
         }
         new_workspace
     })?;
@@ -10033,7 +10120,7 @@ pub fn join_in_room_project(
         {
             existing_window
                 .update(cx, |multi_workspace, window, cx| {
-                    multi_workspace.activate(target_workspace, window, cx);
+                    multi_workspace.activate(target_workspace, None, window, cx);
                 })
                 .ok();
             existing_window
@@ -10973,7 +11060,7 @@ mod tests {
         // Activate workspace A
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
-                mw.activate(workspace_a.clone(), window, cx);
+                mw.activate(workspace_a.clone(), None, window, cx);
             })
             .unwrap();
 
@@ -11058,7 +11145,7 @@ mod tests {
         // Activate workspace A.
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
-                mw.activate(workspace_a.clone(), window, cx);
+                mw.activate(workspace_a.clone(), None, window, cx);
             })
             .unwrap();
 
@@ -11110,7 +11197,7 @@ mod tests {
         let remove_task = multi_workspace_handle
             .update(cx, |mw, window, cx| {
                 // First switch back to A.
-                mw.activate(workspace_a.clone(), window, cx);
+                mw.activate(workspace_a.clone(), None, window, cx);
                 mw.remove([workspace_b.clone()], |_, _, _| unreachable!(), window, cx)
             })
             .unwrap();
@@ -14836,7 +14923,7 @@ mod tests {
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
                 let workspace = mw.workspaces().next().unwrap().clone();
-                mw.activate(workspace, window, cx);
+                mw.activate(workspace, None, window, cx);
             })
             .unwrap();
 
@@ -14882,7 +14969,7 @@ mod tests {
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
                 let workspace = mw.workspaces().nth(1).unwrap().clone();
-                mw.activate(workspace, window, cx);
+                mw.activate(workspace, None, window, cx);
             })
             .unwrap();
         cx.run_until_parked();
@@ -14891,7 +14978,7 @@ mod tests {
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
                 let workspace = mw.workspaces().next().unwrap().clone();
-                mw.activate(workspace, window, cx);
+                mw.activate(workspace, None, window, cx);
             })
             .unwrap();
         cx.run_until_parked();

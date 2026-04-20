@@ -340,3 +340,9 @@ pub(crate) mod m_2026_04_15 {
 
     pub(crate) use settings::remove_settings_from_http_context_servers;
 }
+
+pub(crate) mod m_2026_04_17 {
+    mod settings;
+
+    pub(crate) use settings::promote_show_branch_icon_true_to_show_branch_status_icon;
+}

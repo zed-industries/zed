@@ -2568,7 +2568,7 @@ mod tests {
         let workspace2 = multi_workspace.update_in(cx, |mw, window, cx| {
             let workspace = cx.new(|cx| crate::Workspace::test_new(project2.clone(), window, cx));
             workspace.update(cx, |ws, _cx| ws.set_random_database_id());
-            mw.activate(workspace.clone(), window, cx);
+            mw.activate(workspace.clone(), None, window, cx);
             workspace
         });
 
@@ -4947,7 +4947,7 @@ mod tests {
 
         // Activate workspace B so removing its group exercises the fallback.
         multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.activate(workspace_b.clone(), window, cx);
+            mw.activate(workspace_b.clone(), None, window, cx);
         });
         cx.run_until_parked();
 
@@ -4976,7 +4976,7 @@ mod tests {
         let workspace_a =
             multi_workspace.read_with(cx, |mw, _cx| mw.workspaces().next().unwrap().clone());
         multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.activate(workspace_a.clone(), window, cx);
+            mw.activate(workspace_a.clone(), None, window, cx);
         });
         cx.run_until_parked();
 
@@ -5052,7 +5052,7 @@ mod tests {
 
         // Activate workspace_a so removing it triggers the fallback path.
         multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.activate(workspace_a.clone(), window, cx);
+            mw.activate(workspace_a.clone(), None, window, cx);
         });
         cx.run_until_parked();
 

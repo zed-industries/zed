@@ -32,12 +32,10 @@ mod thread_history_view;
 mod thread_import;
 pub mod thread_metadata_store;
 pub mod thread_worktree_archive;
-mod thread_worktree_picker;
+
 pub mod threads_archive_view;
 mod ui;
-mod worktree_names;
 
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -65,9 +63,7 @@ use std::any::TypeId;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
-pub use crate::agent_panel::{
-    AgentPanel, AgentPanelEvent, MaxIdleRetainedThreads, WorktreeCreationStatus,
-};
+pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, MaxIdleRetainedThreads};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread_metadata_store::ThreadId;
@@ -84,6 +80,7 @@ pub use thread_import::{
     channels_with_threads, import_threads_from_other_channels,
 };
 use zed_actions;
+pub use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, SwitchWorktree};
 
 pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
 const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";
@@ -92,8 +89,6 @@ actions!(
     [
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
-        /// Toggles the worktree selector popover for choosing which worktree to use.
-        ToggleWorktreeSelector,
         /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
@@ -346,46 +341,6 @@ impl Agent {
             Self::Stub => Rc::new(crate::test_support::StubAgentServer::default_response()),
         }
     }
-}
-
-/// Describes which branch to use when creating a new git worktree.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum NewWorktreeBranchTarget {
-    /// Create a new randomly named branch from the current HEAD.
-    /// Will match worktree name if the newly created worktree was also randomly named.
-    #[default]
-    CurrentBranch,
-    /// Check out an existing branch, or create a new branch from it if it's
-    /// already occupied by another worktree.
-    ExistingBranch { name: String },
-    /// Create a new branch with an explicit name, optionally from a specific ref.
-    CreateBranch {
-        name: String,
-        #[serde(default)]
-        from_ref: Option<String>,
-    },
-}
-
-/// Creates a new git worktree and switches the workspace to it.
-/// Dispatched by the unified worktree picker when the user selects a "Create new worktree" entry.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
-#[action(namespace = agent)]
-#[serde(deny_unknown_fields)]
-pub struct CreateWorktree {
-    /// When this is None, Zed will randomly generate a worktree name.
-    pub worktree_name: Option<String>,
-    pub branch_target: NewWorktreeBranchTarget,
-}
-
-/// Switches the workspace to an existing linked worktree.
-/// Dispatched by the unified worktree picker when the user selects an existing worktree.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
-#[action(namespace = agent)]
-#[serde(deny_unknown_fields)]
-pub struct SwitchWorktree {
-    pub path: PathBuf,
-    pub display_name: String,
 }
 
 /// Content to initialize new external agent with.

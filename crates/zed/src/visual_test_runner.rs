@@ -2605,7 +2605,7 @@ fn run_multi_workspace_sidebar_visual_tests(
                     });
                     cx.new(|cx| {
                         let mut multi_workspace = MultiWorkspace::new(workspace1, window, cx);
-                        multi_workspace.activate(workspace2, window, cx);
+                        multi_workspace.activate(workspace2, None, window, cx);
                         multi_workspace
                     })
                 },
@@ -2657,7 +2657,7 @@ fn run_multi_workspace_sidebar_visual_tests(
     multi_workspace_window
         .update(cx, |multi_workspace, window, cx| {
             let workspace = multi_workspace.workspaces().next().unwrap().clone();
-            multi_workspace.activate(workspace, window, cx);
+            multi_workspace.activate(workspace, None, window, cx);
         })
         .context("Failed to activate workspace 1")?;
 
@@ -3393,7 +3393,7 @@ fn open_sidebar_test_window(
                             let ws = cx.new(|cx| {
                                 Workspace::new(None, project, app_state.clone(), window, cx)
                             });
-                            mw.activate(ws, window, cx);
+                            mw.activate(ws, None, window, cx);
                         }
                         mw
                     })
