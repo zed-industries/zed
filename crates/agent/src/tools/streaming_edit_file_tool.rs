@@ -189,9 +189,9 @@ pub enum StreamingEditFileToolOutput {
     },
     Error {
         error: String,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         input_path: Option<PathBuf>,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         diff: String,
     },
 }

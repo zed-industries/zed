@@ -3,19 +3,21 @@ use client::{Client, EditPredictionUsage, NeedsLlmTokenRefresh, UserStore, globa
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::{OrganizationId, SubmitEditPredictionFeedbackBody};
 use cloud_llm_client::predict_edits_v3::{
-    PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
+    PREDICT_EDITS_MODE_HEADER_NAME, PredictEditsMode, PredictEditsV3Request,
+    PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
 };
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection,
     MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
-    PredictEditsRequestTrigger, RejectEditPredictionsBodyRef, ZED_VERSION_HEADER_NAME,
+    PREFERRED_EXPERIMENT_HEADER_NAME, PredictEditsRequestTrigger, RejectEditPredictionsBodyRef,
+    ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet};
 use copilot::{Copilot, Reinstall, SignIn, SignOut};
 use credentials_provider::CredentialsProvider;
 use db::kvp::{Dismissable, KeyValueStore};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use futures::{
     AsyncReadExt as _, FutureExt as _, StreamExt as _,
     channel::mpsc::{self, UnboundedReceiver},
@@ -29,9 +31,10 @@ use gpui::{
     prelude::*,
 };
 use heapless::Vec as ArrayVec;
-use language::language_settings::all_language_settings;
-use language::{Anchor, Buffer, EditPreview, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
-use language::{BufferSnapshot, OffsetRangeExt};
+use language::{
+    Anchor, Buffer, BufferSnapshot, EditPredictionsMode, EditPreview, File, OffsetRangeExt, Point,
+    TextBufferSnapshot, ToOffset, ToPoint, language_settings::all_language_settings,
+};
 use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
@@ -117,7 +120,9 @@ pub struct EditPredictionJumpsFeatureFlag;
 
 impl FeatureFlag for EditPredictionJumpsFeatureFlag {
     const NAME: &'static str = "edit_prediction_jumps";
+    type Value = PresenceFlag;
 }
+register_feature_flag!(EditPredictionJumpsFeatureFlag);
 
 #[derive(Clone)]
 struct EditPredictionStoreGlobal(Entity<EditPredictionStore>);
@@ -176,6 +181,7 @@ pub struct EditPredictionModelInput {
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
     related_files: Vec<RelatedFile>,
+    mode: PredictEditsMode,
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
@@ -1690,12 +1696,16 @@ impl EditPredictionStore {
                     settled_editable_region,
                     ts_error_count_before_prediction,
                     ts_error_count_after_prediction,
-                    edit_bytes_predicted_new = kept_rate_result.predicted_new_chars,
-                    edit_bytes_final_new = kept_rate_result.final_new_chars,
+                    edit_bytes_candidate_new = kept_rate_result.candidate_new_chars,
+                    edit_bytes_reference_new = kept_rate_result.reference_new_chars,
+                    edit_bytes_candidate_deleted = kept_rate_result.candidate_deleted_chars,
+                    edit_bytes_reference_deleted = kept_rate_result.reference_deleted_chars,
                     edit_bytes_kept = kept_rate_result.kept_chars,
+                    edit_bytes_correctly_deleted = kept_rate_result.correctly_deleted_chars,
                     edit_bytes_discarded = kept_rate_result.discarded_chars,
                     edit_bytes_context = kept_rate_result.context_chars,
                     edit_bytes_kept_rate = kept_rate_result.kept_rate,
+                    edit_bytes_recall_rate = kept_rate_result.recall_rate,
                     example,
                     e2e_latency = e2e_latency.as_millis(),
                 );
@@ -2362,6 +2372,10 @@ impl EditPredictionStore {
             Point::new(diagnostic_search_start, 0)..Point::new(diagnostic_search_end, 0);
 
         let related_files = self.context_for_project(&project, cx);
+        let mode = match all_language_settings(snapshot.file(), cx).edit_predictions_mode() {
+            EditPredictionsMode::Eager => PredictEditsMode::Eager,
+            EditPredictionsMode::Subtle => PredictEditsMode::Subtle,
+        };
 
         let is_open_source = snapshot
             .file()
@@ -2373,7 +2387,6 @@ impl EditPredictionStore {
             && is_open_source
             && self.is_data_collection_enabled(cx)
             && matches!(self.edit_prediction_model, EditPredictionModel::Zeta);
-
         let inputs = EditPredictionModelInput {
             project: project.clone(),
             buffer: active_buffer,
@@ -2381,8 +2394,9 @@ impl EditPredictionStore {
             position,
             events,
             related_files,
+            mode,
             trigger,
-            diagnostic_search_range: diagnostic_search_range,
+            diagnostic_search_range,
             debug_tx,
             can_collect_data,
             is_open_source,
@@ -2575,11 +2589,13 @@ impl EditPredictionStore {
 
     pub(crate) async fn send_v3_request(
         input: ZetaPromptInput,
+        preferred_experiment: Option<String>,
         client: Arc<Client>,
         llm_token: LlmApiToken,
         organization_id: Option<OrganizationId>,
         app_version: Version,
         trigger: PredictEditsRequestTrigger,
+        mode: PredictEditsMode,
     ) -> Result<(PredictEditsV3Response, Option<EditPredictionUsage>)> {
         let url = client
             .http_client()
@@ -2592,10 +2608,16 @@ impl EditPredictionStore {
 
         Self::send_api_request(
             |builder| {
-                let req = builder
+                let builder = builder
                     .uri(url.as_ref())
                     .header("Content-Encoding", "zstd")
-                    .body(compressed.clone().into());
+                    .header(PREDICT_EDITS_MODE_HEADER_NAME, mode.as_ref());
+                let builder = if let Some(preferred_experiment) = preferred_experiment.as_deref() {
+                    builder.header(PREFERRED_EXPERIMENT_HEADER_NAME, preferred_experiment)
+                } else {
+                    builder
+                };
+                let req = builder.body(compressed.clone().into());
                 Ok(req?)
             },
             client,

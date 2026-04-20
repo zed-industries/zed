@@ -128,6 +128,12 @@ pub struct AgentSettingsContent {
     /// Default: 320
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_height: Option<f32>,
+    /// Whether to limit the content width in the agent panel. When enabled,
+    /// content will be constrained to `max_content_width` and centered when
+    /// the panel is wider than that value, for optimal readability.
+    ///
+    /// Default: true
+    pub limit_content_width: Option<bool>,
     /// Maximum content width in pixels for the agent panel. Content will be
     /// centered when the panel is wider than this value.
     ///

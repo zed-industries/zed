@@ -15,7 +15,7 @@ use dap::adapters::DebugAdapterName;
 use dap::{DapRegistry, StartDebuggingRequestArguments};
 use dap::{client::SessionId, debugger_settings::DebuggerSettings};
 use editor::{Editor, MultiBufferOffset, ToPoint};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, Corner, DismissEvent, Entity,
     EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point,
@@ -50,7 +50,9 @@ pub struct DebuggerHistoryFeatureFlag;
 
 impl FeatureFlag for DebuggerHistoryFeatureFlag {
     const NAME: &'static str = "debugger-history";
+    type Value = PresenceFlag;
 }
+register_feature_flag!(DebuggerHistoryFeatureFlag);
 
 const DEBUG_PANEL_KEY: &str = "DebugPanel";
 
