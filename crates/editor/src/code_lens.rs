@@ -1,4 +1,4 @@
-use std::{collections::HashMap as StdHashMap, iter, ops::Range, sync::Arc};
+use std::{iter, ops::Range, sync::Arc};
 
 use collections::{HashMap, HashSet};
 use futures::future::join_all;
@@ -57,31 +57,24 @@ fn group_lenses_by_row(
     lenses: Vec<(Anchor, CodeLensItem)>,
     snapshot: &MultiBufferSnapshot,
 ) -> impl Iterator<Item = CodeLensLine> {
-    let mut grouped: HashMap<MultiBufferRow, (Anchor, Vec<CodeLensItem>)> = HashMap::default();
-
-    for (position, item) in lenses {
-        let row = position.to_point(snapshot).row;
-        grouped
-            .entry(MultiBufferRow(row))
-            .or_insert_with(|| (position, Vec::new()))
-            .1
-            .push(item);
-    }
-
-    grouped
+    lenses
         .into_iter()
-        .map(|(_, (position, items))| {
+        .into_group_map_by(|(position, _)| {
             let row = position.to_point(snapshot).row;
-            let indent_column = snapshot
-                .indent_size_for_line(multi_buffer::MultiBufferRow(row))
-                .len;
-            CodeLensLine {
+            MultiBufferRow(row)
+        })
+        .into_iter()
+        .sorted_by_key(|(row, _)| *row)
+        .filter_map(|(row, entries)| {
+            let position = entries.first()?.0;
+            let items = entries.into_iter().map(|(_, item)| item).collect();
+            let indent_column = snapshot.indent_size_for_line(row).len;
+            Some(CodeLensLine {
                 position,
                 indent_column,
                 items,
-            }
+            })
         })
-        .sorted_by_key(|lens| lens.position.to_point(snapshot).row)
 }
 
 fn render_code_lens_line(
@@ -90,7 +83,7 @@ fn render_code_lens_line(
     editor: WeakEntity<Editor>,
 ) -> impl Fn(&mut crate::display_map::BlockContext) -> gpui::AnyElement {
     move |cx| {
-        let mut children: Vec<gpui::AnyElement> = Vec::new();
+        let mut children = Vec::with_capacity((2 * lens.items.len()).saturating_sub(1));
         let text_style = &cx.editor_style.text;
         let font = text_style.font();
         let font_size = text_style.font_size.to_pixels(cx.window.rem_size()) * 0.9;
@@ -287,8 +280,7 @@ fn try_show_references(
     let workspace = workspace.clone();
 
     cx.spawn_in(window, async move |_editor, cx| {
-        let mut buffer_locations: StdHashMap<gpui::Entity<language::Buffer>, Vec<Range<Point>>> =
-            StdHashMap::default();
+        let mut buffer_locations = std::collections::HashMap::default();
 
         for location in &locations {
             let open_task = cx.update(|_, cx| {
@@ -300,7 +292,10 @@ fn try_show_references(
             let buffer = open_task.await?;
 
             let range = range_from_lsp(location.range);
-            buffer_locations.entry(buffer).or_default().push(range);
+            buffer_locations
+                .entry(buffer)
+                .or_insert_with(Vec::new)
+                .push(range);
         }
 
         workspace.update_in(cx, |workspace, window, cx| {
