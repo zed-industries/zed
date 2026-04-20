@@ -334,3 +334,9 @@ pub(crate) mod m_2026_04_10 {
 
     pub(crate) use settings::rename_web_search_to_search_web;
 }
+
+pub(crate) mod m_2026_04_17 {
+    mod settings;
+
+    pub(crate) use settings::promote_show_branch_icon_true_to_show_branch_status_icon;
+}
