@@ -2560,7 +2560,7 @@ impl AgentPanel {
                 &tv,
                 window,
                 |this, _view, event: &AcpThreadViewEvent, _window, cx| match event {
-                    AcpThreadViewEvent::MessageSentOrQueued => {
+                    AcpThreadViewEvent::Interacted => {
                         let Some(thread_id) = this.active_thread_id(cx) else {
                             return;
                         };
@@ -2572,7 +2572,7 @@ impl AgentPanel {
                             this._draft_editor_observation = None;
                         }
                         this.retained_threads.remove(&thread_id);
-                        cx.emit(AgentPanelEvent::MessageSentOrQueued { thread_id });
+                        cx.emit(AgentPanelEvent::ThreadInteracted { thread_id });
                     }
                 },
             )
@@ -3843,7 +3843,7 @@ pub enum AgentPanelEvent {
     ActiveViewChanged,
     ThreadFocused,
     RetainedThreadChanged,
-    MessageSentOrQueued { thread_id: ThreadId },
+    ThreadInteracted { thread_id: ThreadId },
 }
 
 impl EventEmitter<PanelEvent> for AgentPanel {}

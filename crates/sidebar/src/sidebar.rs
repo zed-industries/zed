@@ -736,8 +736,8 @@ impl Sidebar {
                     this.sync_active_entry_from_panel(_agent_panel, cx);
                     this.update_entries(cx);
                 }
-                AgentPanelEvent::MessageSentOrQueued { thread_id } => {
-                    this.record_thread_message_sent_or_queued(thread_id, cx);
+                AgentPanelEvent::ThreadInteracted { thread_id } => {
+                    this.record_thread_interacted(thread_id, cx);
                     this.update_entries(cx);
                 }
             },
@@ -3571,11 +3571,7 @@ impl Sidebar {
         self.thread_last_accessed.insert(*id, Utc::now());
     }
 
-    fn record_thread_message_sent_or_queued(
-        &mut self,
-        thread_id: &agent_ui::ThreadId,
-        cx: &mut App,
-    ) {
+    fn record_thread_interacted(&mut self, thread_id: &agent_ui::ThreadId, cx: &mut App) {
         let store = ThreadMetadataStore::global(cx);
         store.update(cx, |store, cx| {
             store.update_interacted_at(thread_id, Utc::now(), cx);
