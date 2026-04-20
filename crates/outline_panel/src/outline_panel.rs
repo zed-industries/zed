@@ -4562,26 +4562,30 @@ impl OutlinePanel {
                             .child(Label::new(query)),
                     )
                 })
-                .child(h_flex().justify_center().child({
-                    let key_binding = match self.position(window, cx) {
-                        DockPosition::Left => {
-                            KeyBinding::for_action(&workspace::ToggleLeftDock, cx).into_any_element()
-                        }
-                        DockPosition::Bottom => {
-                            KeyBinding::for_action(&workspace::ToggleBottomDock, cx)
-                                .into_any_element()
-                        }
-                        DockPosition::Right => {
-                            KeyBinding::for_action(&workspace::ToggleRightDock, cx)
-                                .into_any_element()
-                        }
-                    };
+                .child(
                     h_flex()
                         .gap_1()
-                        .items_center()
+                        .justify_center()
                         .child(Label::new("Toggle Panel With").color(Color::Muted))
-                        .child(key_binding)
-                }))
+                        .child({
+                            let key_binding = match self.position(window, cx) {
+                                DockPosition::Left => {
+                                    KeyBinding::for_action(&workspace::ToggleLeftDock, cx)
+                                        .into_any_element()
+                                }
+                                DockPosition::Bottom => {
+                                    KeyBinding::for_action(&workspace::ToggleBottomDock, cx)
+                                        .into_any_element()
+                                }
+                                DockPosition::Right => {
+                                    KeyBinding::for_action(&workspace::ToggleRightDock, cx)
+                                        .into_any_element()
+                                }
+                            };
+
+                            key_binding
+                        }),
+                )
         } else {
             let list_contents = {
                 let items_len = self.cached_entries.len();
