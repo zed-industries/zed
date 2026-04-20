@@ -102,6 +102,7 @@ unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
 criterion.workspace = true
+theme_settings.workspace = true
 
 [[bench]]
 name = "highlight_map"

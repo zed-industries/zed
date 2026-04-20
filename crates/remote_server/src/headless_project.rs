@@ -191,6 +191,7 @@ impl HeadlessProject {
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 environment.clone(),
+                git_store.clone(),
                 cx,
             );
             task_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
@@ -522,6 +523,9 @@ impl HeadlessProject {
             proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
                 canonicalized_path: canonicalized.to_string_lossy().into_owned(),
+                root_repo_common_dir: worktree
+                    .root_repo_common_dir()
+                    .map(|p| p.to_string_lossy().into_owned()),
             }
         });
 

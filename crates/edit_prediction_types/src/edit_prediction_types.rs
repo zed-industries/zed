@@ -168,6 +168,10 @@ pub trait EditPredictionDelegate: 'static + Sized {
         None
     }
 
+    fn can_toggle_data_collection(&self, _cx: &App) -> bool {
+        true
+    }
+
     fn toggle_data_collection(&mut self, _cx: &mut App) {}
     fn is_enabled(
         &self,
@@ -209,6 +213,7 @@ pub trait EditPredictionDelegateHandle {
     fn icons(&self, cx: &App) -> EditPredictionIconSet;
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage>;
+    fn can_toggle_data_collection(&self, cx: &App) -> bool;
     fn toggle_data_collection(&self, cx: &mut App);
     fn is_refreshing(&self, cx: &App) -> bool;
     fn refresh(
@@ -263,6 +268,10 @@ where
 
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
         self.read(cx).usage(cx)
+    }
+
+    fn can_toggle_data_collection(&self, cx: &App) -> bool {
+        self.read(cx).can_toggle_data_collection(cx)
     }
 
     fn toggle_data_collection(&self, cx: &mut App) {

@@ -26,7 +26,7 @@ use language_model::{
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_models::AllLanguageModelSettings;
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use project::{
     agent_server_store::{AgentId, AgentServerStore, ExternalAgentSource},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
@@ -1330,40 +1330,44 @@ fn show_unable_to_uninstall_extension_with_context_server(
         move |this, _cx| {
             let workspace_handle = workspace_handle.clone();
 
-            this.icon(ToastIcon::new(IconName::Warning).color(Color::Warning))
-                .dismiss_button(true)
-                .action("Uninstall", move |_, _cx| {
-                    if let Some((extension_id, _)) =
-                        resolve_extension_for_context_server(&context_server_id, _cx)
-                    {
-                        ExtensionStore::global(_cx).update(_cx, |store, cx| {
-                            store
-                                .uninstall_extension(extension_id, cx)
-                                .detach_and_log_err(cx);
-                        });
+            this.icon(
+                Icon::new(IconName::Warning)
+                    .size(IconSize::Small)
+                    .color(Color::Warning),
+            )
+            .dismiss_button(true)
+            .action("Uninstall", move |_, _cx| {
+                if let Some((extension_id, _)) =
+                    resolve_extension_for_context_server(&context_server_id, _cx)
+                {
+                    ExtensionStore::global(_cx).update(_cx, |store, cx| {
+                        store
+                            .uninstall_extension(extension_id, cx)
+                            .detach_and_log_err(cx);
+                    });
 
-                        workspace_handle
-                            .update(_cx, |workspace, cx| {
-                                let fs = workspace.app_state().fs.clone();
-                                cx.spawn({
-                                    let context_server_id = context_server_id.clone();
-                                    async move |_workspace_handle, cx| {
-                                        cx.update(|cx| {
-                                            update_settings_file(fs, cx, move |settings, _| {
-                                                settings
-                                                    .project
-                                                    .context_servers
-                                                    .remove(&context_server_id.0);
-                                            });
+                    workspace_handle
+                        .update(_cx, |workspace, cx| {
+                            let fs = workspace.app_state().fs.clone();
+                            cx.spawn({
+                                let context_server_id = context_server_id.clone();
+                                async move |_workspace_handle, cx| {
+                                    cx.update(|cx| {
+                                        update_settings_file(fs, cx, move |settings, _| {
+                                            settings
+                                                .project
+                                                .context_servers
+                                                .remove(&context_server_id.0);
                                         });
-                                        anyhow::Ok(())
-                                    }
-                                })
-                                .detach_and_log_err(cx);
+                                    });
+                                    anyhow::Ok(())
+                                }
                             })
-                            .log_err();
-                    }
-                })
+                            .detach_and_log_err(cx);
+                        })
+                        .log_err();
+                }
+            })
         },
     );
 
@@ -1392,38 +1396,45 @@ async fn open_new_agent_servers_entry_in_settings_editor(
             let settings = cx.global::<SettingsStore>();
 
             let mut unique_server_name = None;
-            let edits = settings.edits_for_update(&text, |settings| {
-                let server_name: Option<String> = (0..u8::MAX)
-                    .map(|i| {
-                        if i == 0 {
-                            "your_agent".to_string()
-                        } else {
-                            format!("your_agent_{}", i)
-                        }
-                    })
-                    .find(|name| {
-                        !settings
-                            .agent_servers
-                            .as_ref()
-                            .is_some_and(|agent_servers| agent_servers.contains_key(name.as_str()))
-                    });
-                if let Some(server_name) = server_name {
-                    unique_server_name = Some(SharedString::from(server_name.clone()));
-                    settings.agent_servers.get_or_insert_default().insert(
-                        server_name,
-                        settings::CustomAgentServerSettings::Custom {
-                            path: "path_to_executable".into(),
-                            args: vec![],
-                            env: HashMap::default(),
-                            default_mode: None,
-                            default_model: None,
-                            favorite_models: vec![],
-                            default_config_options: Default::default(),
-                            favorite_config_option_values: Default::default(),
-                        },
-                    );
-                }
-            });
+            let Some(edits) = settings
+                .edits_for_update(&text, |settings| {
+                    let server_name: Option<String> = (0..u8::MAX)
+                        .map(|i| {
+                            if i == 0 {
+                                "your_agent".to_string()
+                            } else {
+                                format!("your_agent_{}", i)
+                            }
+                        })
+                        .find(|name| {
+                            !settings
+                                .agent_servers
+                                .as_ref()
+                                .is_some_and(|agent_servers| {
+                                    agent_servers.contains_key(name.as_str())
+                                })
+                        });
+                    if let Some(server_name) = server_name {
+                        unique_server_name = Some(SharedString::from(server_name.clone()));
+                        settings.agent_servers.get_or_insert_default().insert(
+                            server_name,
+                            settings::CustomAgentServerSettings::Custom {
+                                path: "path_to_executable".into(),
+                                args: vec![],
+                                env: HashMap::default(),
+                                default_mode: None,
+                                default_model: None,
+                                favorite_models: vec![],
+                                default_config_options: Default::default(),
+                                favorite_config_option_values: Default::default(),
+                            },
+                        );
+                    }
+                })
+                .log_err()
+            else {
+                return;
+            };
 
             if edits.is_empty() {
                 return;

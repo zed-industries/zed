@@ -204,8 +204,8 @@ impl GitBlame {
                         git_blame.generate(cx);
                     }
                 }
-                multi_buffer::Event::ExcerptsAdded { .. }
-                | multi_buffer::Event::ExcerptsEdited { .. } => git_blame.regenerate_on_edit(cx),
+                multi_buffer::Event::BufferRangesUpdated { .. }
+                | multi_buffer::Event::BuffersEdited { .. } => git_blame.regenerate_on_edit(cx),
                 _ => {}
             },
         );
@@ -346,11 +346,10 @@ impl GitBlame {
         let Some(multi_buffer) = self.multi_buffer.upgrade() else {
             return;
         };
-        multi_buffer
-            .read(cx)
-            .excerpt_buffer_ids()
-            .into_iter()
-            .for_each(|id| self.sync(cx, id));
+        let snapshot = multi_buffer.read(cx).snapshot(cx);
+        for id in snapshot.all_buffer_ids() {
+            self.sync(cx, id)
+        }
     }
 
     fn sync(&mut self, cx: &mut App, buffer_id: BufferId) {
@@ -497,10 +496,10 @@ impl GitBlame {
         }
         let buffers_to_blame = self
             .multi_buffer
-            .update(cx, |multi_buffer, _| {
-                multi_buffer
+            .update(cx, |multi_buffer, cx| {
+                let snapshot = multi_buffer.snapshot(cx);
+                snapshot
                     .all_buffer_ids()
-                    .into_iter()
                     .filter_map(|id| Some(multi_buffer.buffer(id)?.downgrade()))
                     .collect::<Vec<_>>()
             })
@@ -746,7 +745,7 @@ mod tests {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
 
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
 
             crate::init(cx);
         });

@@ -684,7 +684,7 @@ impl ContextServerStore {
             let server_url = url.clone();
             let id = id.clone();
             cx.spawn(async move |_this, cx| {
-                let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx));
+                let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
                 if let Err(err) = Self::clear_session(&credentials_provider, &server_url, &cx).await
                 {
                     log::warn!("{} failed to clear OAuth session on removal: {}", id, err);
@@ -797,8 +797,7 @@ impl ContextServerStore {
                 if configuration.has_static_auth_header() {
                     None
                 } else {
-                    let credentials_provider =
-                        cx.update(|cx| <dyn CredentialsProvider>::global(cx));
+                    let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
                     let http_client = cx.update(|cx| cx.http_client());
 
                     match Self::load_session(&credentials_provider, url, &cx).await {
@@ -1070,7 +1069,7 @@ impl ContextServerStore {
             .context("Failed to start OAuth callback server")?;
 
         let http_client = cx.update(|cx| cx.http_client());
-        let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx));
+        let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
         let server_url = match configuration.as_ref() {
             ContextServerConfiguration::Http { url, .. } => url.clone(),
             _ => anyhow::bail!("OAuth authentication only supported for HTTP servers"),
@@ -1233,7 +1232,7 @@ impl ContextServerStore {
         self.stop_server(&id, cx)?;
 
         cx.spawn(async move |this, cx| {
-            let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx));
+            let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
             if let Err(err) = Self::clear_session(&credentials_provider, &server_url, &cx).await {
                 log::error!("{} failed to clear OAuth session: {}", id, err);
             }
@@ -1451,7 +1450,7 @@ async fn resolve_start_failure(
     // (e.g. timeout because the server rejected the token silently). Clear it
     // so the next start attempt can get a clean 401 and trigger the auth flow.
     if www_authenticate.is_none() {
-        let credentials_provider = cx.update(|cx| <dyn CredentialsProvider>::global(cx));
+        let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
         match ContextServerStore::load_session(&credentials_provider, &server_url, cx).await {
             Ok(Some(_)) => {
                 log::info!("{id} start failed with a cached OAuth session present; clearing it");
