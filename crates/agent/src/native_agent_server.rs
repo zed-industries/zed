@@ -2,7 +2,7 @@ use std::{any::Any, rc::Rc, sync::Arc};
 
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use agent_settings::{AgentSettings, favorite_selection_for_model};
+use agent_settings::{AgentSettings, language_model_to_selection};
 use anyhow::Result;
 use collections::HashSet;
 use fs::Fs;
@@ -106,7 +106,7 @@ fn model_id_to_selection(model_id: &acp::ModelId, cx: &App) -> LanguageModelSele
         });
 
     match resolved {
-        Some(model) => favorite_selection_for_model(&model, cx),
+        Some(model) => language_model_to_selection(&model, cx),
         None => LanguageModelSelection {
             provider: provider.to_owned().into(),
             model: model.to_owned(),

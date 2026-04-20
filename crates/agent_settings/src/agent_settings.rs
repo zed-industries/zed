@@ -252,7 +252,7 @@ pub fn resolve_model_preferences(
     }
 }
 
-pub fn favorite_selection_for_model(
+pub fn language_model_to_selection(
     model: &Arc<dyn LanguageModel>,
     cx: &App,
 ) -> LanguageModelSelection {

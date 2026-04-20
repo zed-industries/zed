@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agent_settings::favorite_selection_for_model;
+use agent_settings::language_model_to_selection;
 use fs::Fs;
 use language_model::LanguageModel;
 use settings::update_settings_file;
@@ -12,7 +12,7 @@ pub fn toggle_in_settings(
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) {
-    let selection = favorite_selection_for_model(&model, cx);
+    let selection = language_model_to_selection(&model, cx);
     update_settings_file(fs, cx, move |settings, _| {
         let agent = settings.agent.get_or_insert_default();
         if should_be_favorite {
