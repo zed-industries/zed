@@ -1949,11 +1949,7 @@ impl AgentPanel {
         };
 
         let Some(metadata) = store.read(cx).entry(thread_id).cloned() else {
-            Self::show_deferred_toast(
-                &self.workspace,
-                "No metadata found for active thread",
-                cx,
-            );
+            Self::show_deferred_toast(&self.workspace, "No metadata found for active thread", cx);
             return;
         };
 
@@ -2015,18 +2011,13 @@ impl AgentPanel {
                 });
 
                 workspace.update_in(cx, |workspace, window, cx| {
-                    let buffer = cx.new(|cx| {
-                        MultiBuffer::singleton(buffer, cx).with_title(title.clone())
-                    });
+                    let buffer =
+                        cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.clone()));
 
                     workspace.add_item_to_active_pane(
                         Box::new(cx.new(|cx| {
-                            let mut editor = Editor::for_multibuffer(
-                                buffer,
-                                Some(project.clone()),
-                                window,
-                                cx,
-                            );
+                            let mut editor =
+                                Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
                             editor.set_breadcrumb_header(title);
                             editor.disable_mouse_wheel_zoom();
                             editor
