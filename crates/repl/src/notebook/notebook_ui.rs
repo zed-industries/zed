@@ -1330,16 +1330,19 @@ impl Render for NotebookEditor {
             .on_action(cx.listener(|this, action, window, cx| {
                 this.select_previous(action, SelectionMode::SelectOnly, window, cx)
             }))
-            .on_action(
-                cx.listener(|this, action, window, cx| this.select_first(action, window, cx)),
-            )
-            .on_action(cx.listener(|this, action, window, cx| this.select_last(action, window, cx)))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(|this, _: &MoveDown, window, cx| {
-                this.select_next(&menu::SelectNext, SelectionMode::SelectAndMove, window, cx);
+                this.select_next(
+                    &Default::default(),
+                    SelectionMode::SelectAndMove,
+                    window,
+                    cx,
+                );
             }))
             .on_action(cx.listener(|this, _: &MoveUp, window, cx| {
                 this.select_previous(
-                    &menu::SelectPrevious,
+                    &Default::default(),
                     SelectionMode::SelectAndMove,
                     window,
                     cx,
@@ -1369,7 +1372,12 @@ impl Render for NotebookEditor {
                 });
 
                 if is_at_last_line {
-                    this.select_next(&menu::SelectNext, SelectionMode::SelectAndMove, window, cx);
+                    this.select_next(
+                        &Default::default(),
+                        SelectionMode::SelectAndMove,
+                        window,
+                        cx,
+                    );
                 } else {
                     editor.update(cx, |editor, cx| {
                         editor.move_down(&Default::default(), window, cx);
@@ -1400,7 +1408,7 @@ impl Render for NotebookEditor {
 
                 if is_at_first_line {
                     this.select_previous(
-                        &menu::SelectPrevious,
+                        &Default::default(),
                         SelectionMode::SelectAndMove,
                         window,
                         cx,

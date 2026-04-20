@@ -231,37 +231,34 @@ impl Cell {
 
     pub(crate) fn move_to(&self, direction: MovementDirection, window: &mut Window, cx: &mut App) {
         fn move_in_editor(
-            editor: &mut Editor,
+            editor: &Entity<Editor>,
             direction: MovementDirection,
             window: &mut Window,
-            cx: &mut Context<Editor>,
+            cx: &mut App,
         ) {
-            match direction {
-                MovementDirection::Start => {
-                    editor.move_to_beginning(&Default::default(), window, cx);
+            editor.update(cx, |editor, cx| {
+                match direction {
+                    MovementDirection::Start => {
+                        editor.move_to_beginning(&Default::default(), window, cx);
+                    }
+                    MovementDirection::End => {
+                        editor.move_to_end(&Default::default(), window, cx);
+                    }
                 }
-                MovementDirection::End => {
-                    editor.move_to_end(&Default::default(), window, cx);
-                }
-            }
+                editor.focus_handle(cx).focus(window, cx);
+            })
         }
 
         match self {
             Cell::Code(cell) => {
                 cell.update(cx, |cell, cx| {
-                    cell.editor.update(cx, |editor, cx| {
-                        move_in_editor(editor, direction, window, cx)
-                    });
-                    cell.editor.focus_handle(cx).focus(window, cx);
+                    move_in_editor(&cell.editor, direction, window, cx)
                 });
             }
             Cell::Markdown(cell) => {
                 cell.update(cx, |cell, cx| {
                     cell.set_editing(true);
-                    cell.editor.update(cx, |editor, cx| {
-                        move_in_editor(editor, direction, window, cx)
-                    });
-                    cell.editor.focus_handle(cx).focus(window, cx);
+                    move_in_editor(&cell.editor, direction, window, cx);
 
                     cx.notify();
                 });
