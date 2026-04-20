@@ -2560,7 +2560,12 @@ impl ConversationView {
                                     .update(cx, |multi_workspace, window, cx| {
                                         window.activate_window();
                                         if let Some(workspace) = workspace_handle.upgrade() {
-                                            multi_workspace.activate(workspace.clone(), window, cx);
+                                            multi_workspace.activate(
+                                                workspace.clone(),
+                                                None,
+                                                window,
+                                                cx,
+                                            );
                                             workspace.update(cx, |workspace, cx| {
                                                 workspace.reveal_panel::<AgentPanel>(window, cx);
                                                 if let Some(panel) =
