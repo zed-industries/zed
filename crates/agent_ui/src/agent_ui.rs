@@ -200,6 +200,16 @@ actions!(
     ]
 );
 
+actions!(
+    dev,
+    [
+        /// Shows metadata for the currently active thread.
+        ShowThreadMetadata,
+        /// Shows metadata for all threads in the sidebar.
+        ShowAllSidebarThreadMetadata,
+    ]
+);
+
 /// Action to authorize a tool call with a specific permission option.
 /// This is used by the permission granularity dropdown to authorize tool calls.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]

@@ -34,8 +34,8 @@ use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow,
     InlineAssistant, LoadThreadFromClipboard, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
-    OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, ToggleNavigationMenu, ToggleNewThreadMenu,
-    ToggleOptionsMenu,
+    OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, ShowAllSidebarThreadMetadata,
+    ShowThreadMetadata, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     conversation_view::{AcpThreadViewEvent, ThreadView},
     ui::EndTrialUpsell,
@@ -50,10 +50,11 @@ use crate::{ThreadHistory, agent_connection_store::AgentConnectionStore};
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Context as _, Result};
+use chrono::{DateTime, Utc};
 use client::UserStore;
 use cloud_api_types::Plan;
 use collections::HashMap;
-use editor::Editor;
+use editor::{Editor, MultiBuffer};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
 use fs::Fs;
@@ -308,6 +309,24 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.load_thread_from_clipboard(window, cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &ShowThreadMetadata, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.show_thread_metadata(&ShowThreadMetadata, window, cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &ShowAllSidebarThreadMetadata, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.show_all_sidebar_thread_metadata(
+                                &ShowAllSidebarThreadMetadata,
+                                window,
+                                cx,
+                            );
                         });
                     }
                 })
@@ -586,6 +605,46 @@ fn build_conflicted_files_resolution_prompt(
         content.push(acp::ContentBlock::Text(acp::TextContent::new("\n")));
     }
     content
+}
+
+fn format_timestamp_human(dt: &DateTime<Utc>) -> String {
+    let now = Utc::now();
+    let duration = now.signed_duration_since(*dt);
+
+    let relative = if duration.num_seconds() < 0 {
+        "in the future".to_string()
+    } else if duration.num_seconds() < 60 {
+        let seconds = duration.num_seconds();
+        format!("{seconds} seconds ago")
+    } else if duration.num_minutes() < 60 {
+        let minutes = duration.num_minutes();
+        format!("{minutes} minutes ago")
+    } else if duration.num_hours() < 24 {
+        let hours = duration.num_hours();
+        format!("{hours} hours ago")
+    } else {
+        let days = duration.num_days();
+        format!("{days} days ago")
+    };
+
+    format!("{} ({})", dt.to_rfc3339(), relative)
+}
+
+/// Used for `dev: show thread metadata` action
+fn thread_metadata_to_debug_json(
+    metadata: &crate::thread_metadata_store::ThreadMetadata,
+) -> serde_json::Value {
+    serde_json::json!({
+        "thread_id": metadata.thread_id,
+        "session_id": metadata.session_id.as_ref().map(|s| s.0.to_string()),
+        "agent_id": metadata.agent_id.0.to_string(),
+        "title": metadata.title.as_ref().map(|t| t.to_string()),
+        "updated_at": format_timestamp_human(&metadata.updated_at),
+        "created_at": metadata.created_at.as_ref().map(format_timestamp_human),
+        "interacted_at": metadata.interacted_at.as_ref().map(format_timestamp_human),
+        "worktree_paths": format!("{:?}", metadata.worktree_paths),
+        "archived": metadata.archived,
+    })
 }
 
 pub(crate) struct AgentThread {
@@ -1871,6 +1930,108 @@ impl AgentPanel {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    fn show_thread_metadata(
+        &mut self,
+        _: &ShowThreadMetadata,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread_id) = self.active_thread_id(cx) else {
+            Self::show_deferred_toast(&self.workspace, "No active thread", cx);
+            return;
+        };
+
+        let Some(store) = ThreadMetadataStore::try_global(cx) else {
+            Self::show_deferred_toast(&self.workspace, "Thread metadata store not available", cx);
+            return;
+        };
+
+        let Some(metadata) = store.read(cx).entry(thread_id).cloned() else {
+            Self::show_deferred_toast(&self.workspace, "No metadata found for active thread", cx);
+            return;
+        };
+
+        let json = thread_metadata_to_debug_json(&metadata);
+        let text = serde_json::to_string_pretty(&json).unwrap_or_default();
+        let title = format!("Thread Metadata: {}", metadata.display_title());
+
+        self.open_json_buffer(title, text, window, cx);
+    }
+
+    fn show_all_sidebar_thread_metadata(
+        &mut self,
+        _: &ShowAllSidebarThreadMetadata,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(store) = ThreadMetadataStore::try_global(cx) else {
+            Self::show_deferred_toast(&self.workspace, "Thread metadata store not available", cx);
+            return;
+        };
+
+        let entries: Vec<serde_json::Value> = store
+            .read(cx)
+            .entries()
+            .filter(|t| !t.archived)
+            .map(thread_metadata_to_debug_json)
+            .collect();
+
+        let json = serde_json::Value::Array(entries);
+        let text = serde_json::to_string_pretty(&json).unwrap_or_default();
+
+        self.open_json_buffer("All Sidebar Thread Metadata".to_string(), text, window, cx);
+    }
+
+    fn open_json_buffer(
+        &self,
+        title: String,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let json_language = self.language_registry.language_for_name("JSON");
+        let project = self.project.clone();
+        let workspace = self.workspace.clone();
+
+        window
+            .spawn(cx, async move |cx| {
+                let json_language = json_language.await.ok();
+
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.create_buffer(json_language, false, cx)
+                    })
+                    .await?;
+
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_text(text, cx);
+                    buffer.set_capability(language::Capability::ReadWrite, cx);
+                });
+
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let buffer =
+                        cx.new(|cx| MultiBuffer::singleton(buffer, cx).with_title(title.clone()));
+
+                    workspace.add_item_to_active_pane(
+                        Box::new(cx.new(|cx| {
+                            let mut editor =
+                                Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
+                            editor.set_breadcrumb_header(title);
+                            editor.disable_mouse_wheel_zoom();
+                            editor
+                        })),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
     }
 
     fn handle_agent_configuration_event(
