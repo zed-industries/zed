@@ -69,6 +69,10 @@ Settings are applied in layers:
 
 Later layers override earlier ones. For object settings (like `terminal`), properties merge rather than replace entirely.
 
+## Per-file Settings
+
+Zed has some compatibility support for Emacs and Vim [modelines](./modelines.md), so you can set some settings per-file.
+
 ## Per-Release Channel Overrides
 
 Use different settings for Stable, Preview, or Nightly builds by adding top-level channel keys:

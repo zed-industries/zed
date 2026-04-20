@@ -2,6 +2,17 @@ use crate::PredictEditsRequestTrigger;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::ops::Range;
+use strum::{AsRefStr, EnumString};
+
+pub const PREDICT_EDITS_MODE_HEADER_NAME: &str = "X-Zed-Predict-Edits-Mode";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, AsRefStr, EnumString)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum PredictEditsMode {
+    Eager,
+    Subtle,
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RawCompletionRequest {

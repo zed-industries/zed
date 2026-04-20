@@ -284,6 +284,7 @@ mod tests {
 
     #[gpui::test]
     pub async fn test_initialize_client(cx: &mut TestAppContext) {
+        #![expect(clippy::result_large_err)]
         init_test(cx);
 
         let client = DebugAdapterClient::start(

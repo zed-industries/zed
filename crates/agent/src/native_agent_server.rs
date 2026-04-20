@@ -7,7 +7,7 @@ use anyhow::Result;
 use collections::HashSet;
 use fs::Fs;
 use gpui::{App, Entity, Task};
-use project::AgentId;
+use project::{AgentId, Project};
 use prompt_store::PromptStore;
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 
@@ -37,6 +37,7 @@ impl AgentServer for NativeAgentServer {
     fn connect(
         &self,
         _delegate: AgentServerDelegate,
+        _project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
         log::debug!("NativeAgentServer::connect");
@@ -96,6 +97,7 @@ fn model_id_to_selection(model_id: &acp::ModelId) -> LanguageModelSelection {
         model: model.to_owned(),
         enable_thinking: false,
         effort: None,
+        speed: None,
     }
 }
 

@@ -85,7 +85,6 @@ pub enum EditPredictionProvider {
     Codestral,
     Ollama,
     OpenAiCompatibleApi,
-    Sweep,
     Mercury,
     Experimental(&'static str),
 }
@@ -106,7 +105,6 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Codestral,
             Ollama,
             OpenAiCompatibleApi,
-            Sweep,
             Mercury,
             Experimental(String),
         }
@@ -118,7 +116,6 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
             Content::Codestral => EditPredictionProvider::Codestral,
             Content::Ollama => EditPredictionProvider::Ollama,
             Content::OpenAiCompatibleApi => EditPredictionProvider::OpenAiCompatibleApi,
-            Content::Sweep => EditPredictionProvider::Sweep,
             Content::Mercury => EditPredictionProvider::Mercury,
             Content::Experimental(name)
                 if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME =>
@@ -144,7 +141,6 @@ impl EditPredictionProvider {
             | EditPredictionProvider::Codestral
             | EditPredictionProvider::Ollama
             | EditPredictionProvider::OpenAiCompatibleApi
-            | EditPredictionProvider::Sweep
             | EditPredictionProvider::Mercury
             | EditPredictionProvider::Experimental(_) => false,
         }
@@ -155,7 +151,6 @@ impl EditPredictionProvider {
             EditPredictionProvider::Zed => Some("Zed AI"),
             EditPredictionProvider::Copilot => Some("GitHub Copilot"),
             EditPredictionProvider::Codestral => Some("Codestral"),
-            EditPredictionProvider::Sweep => Some("Sweep"),
             EditPredictionProvider::Mercury => Some("Mercury"),
             EditPredictionProvider::Experimental(_) | EditPredictionProvider::None => None,
             EditPredictionProvider::Ollama => Some("Ollama"),
@@ -181,15 +176,10 @@ pub struct EditPredictionSettingsContent {
     pub copilot: Option<CopilotSettingsContent>,
     /// Settings specific to Codestral.
     pub codestral: Option<CodestralSettingsContent>,
-    /// Settings specific to Sweep.
-    pub sweep: Option<SweepSettingsContent>,
     /// Settings specific to Ollama.
     pub ollama: Option<OllamaEditPredictionSettingsContent>,
     /// Settings specific to using custom OpenAI-compatible servers for edit prediction.
     pub open_ai_compatible_api: Option<CustomEditPredictionProviderSettingsContent>,
-    /// Whether edit predictions are enabled in the assistant prompt editor.
-    /// This has no effect if globally disabled.
-    pub enabled_in_text_threads: Option<bool>,
     /// The directory where manually captured edit prediction examples are stored.
     pub examples_dir: Option<Arc<Path>>,
 }
@@ -209,8 +199,7 @@ pub struct CustomEditPredictionProviderSettingsContent {
     ///
     /// Default: ""
     pub model: Option<String>,
-    /// Maximum tokens to generate for FIM models.
-    /// This setting does not apply to sweep models.
+    /// Maximum tokens to generate.
     ///
     /// Default: 256
     pub max_output_tokens: Option<u32>,
@@ -283,18 +272,6 @@ pub struct CodestralSettingsContent {
     pub api_url: Option<String>,
 }
 
-#[with_fallible_options]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
-pub struct SweepSettingsContent {
-    /// When enabled, Sweep will not store edit prediction inputs or outputs.
-    /// When disabled, Sweep may collect data including buffer contents,
-    /// diagnostics, file paths, repository names, and generated predictions
-    /// to improve the service.
-    ///
-    /// Default: false
-    pub privacy_mode: Option<bool>,
-}
-
 /// Ollama model name for edit predictions.
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
@@ -327,7 +304,6 @@ pub struct OllamaEditPredictionSettingsContent {
     /// Default: none
     pub model: Option<OllamaModelName>,
     /// Maximum tokens to generate for FIM models.
-    /// This setting does not apply to sweep models.
     ///
     /// Default: 256
     pub max_output_tokens: Option<u32>,
@@ -418,9 +394,8 @@ pub enum SoftWrap {
     PreferLine,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
-    /// Soft wrap lines at the preferred line length.
-    PreferredLineLength,
     /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
+    #[serde(alias = "preferred_line_length")]
     Bounded,
 }
 
@@ -955,6 +930,8 @@ pub enum Formatter {
     /// or falling back to formatting via language server.
     #[default]
     Auto,
+    /// Do not format code.
+    None,
     /// Format code using Zed's Prettier integration.
     Prettier,
     /// Format code using an external command.
@@ -1147,6 +1124,12 @@ mod test {
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Single(Formatter::Auto))
+        );
+        let raw_none = "{\"formatter\": \"none\"}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw_none).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(FormatterList::Single(Formatter::None))
         );
         let raw = "{\"formatter\": \"language_server\"}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
