@@ -1613,7 +1613,7 @@ fn python_lang() -> Language {
     )
     .with_queries(LanguageQueries {
         injections: Some(Cow::from(include_str!(
-            "../../../languages/src/python/injections.scm"
+            "../../../grammars/src/python/injections.scm"
         ))),
         ..Default::default()
     })

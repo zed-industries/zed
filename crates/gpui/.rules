@@ -1,9 +1,0 @@
-# GPUI crate-specific rules
-#
-# This file is non-exhaustive. Check the root .rules for general guidelines.
-
-# Platform callbacks
-
-* Platform callbacks (e.g., `on_keyboard_layout_change`, `on_thermal_state_change`) can fire
-  asynchronously from macOS while `AppCell` is already borrowed. Defer work via
-  `ForegroundExecutor::spawn` rather than borrowing `AppCell` directly in the callback body.

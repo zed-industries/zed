@@ -1,4 +1,3 @@
-use anyhow::{Context as _, Result};
 use client::{ParticipantIndex, User, proto};
 use collections::HashMap;
 use gpui::WeakEntity;
@@ -8,30 +7,6 @@ use std::sync::Arc;
 
 pub use livekit_client::TrackSid;
 pub use livekit_client::{RemoteAudioTrack, RemoteVideoTrack};
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum ParticipantLocation {
-    SharedProject { project_id: u64 },
-    UnsharedProject,
-    External,
-}
-
-impl ParticipantLocation {
-    pub fn from_proto(location: Option<proto::ParticipantLocation>) -> Result<Self> {
-        match location
-            .and_then(|l| l.variant)
-            .context("participant location was not provided")?
-        {
-            proto::participant_location::Variant::SharedProject(project) => {
-                Ok(Self::SharedProject {
-                    project_id: project.id,
-                })
-            }
-            proto::participant_location::Variant::UnsharedProject(_) => Ok(Self::UnsharedProject),
-            proto::participant_location::Variant::External(_) => Ok(Self::External),
-        }
-    }
-}
 
 #[derive(Clone, Default)]
 pub struct LocalParticipant {
@@ -54,7 +29,7 @@ pub struct RemoteParticipant {
     pub peer_id: proto::PeerId,
     pub role: proto::ChannelRole,
     pub projects: Vec<proto::ParticipantProject>,
-    pub location: ParticipantLocation,
+    pub location: workspace::ParticipantLocation,
     pub participant_index: ParticipantIndex,
     pub muted: bool,
     pub speaking: bool,

@@ -83,7 +83,7 @@ impl Render for ToolbarControls {
                             .icon_color(Color::Error)
                             .icon_size(IconSize::Small)
                             .tooltip(Tooltip::for_action_title(
-                                "Stop Siagnostics Update",
+                                "Stop Diagnostics Update",
                                 &ToggleDiagnosticsRefresh,
                             ))
                             .on_click(cx.listener(move |toolbar_controls, _, _, cx| {

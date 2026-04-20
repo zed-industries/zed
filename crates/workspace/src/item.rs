@@ -9,13 +9,14 @@ use crate::{
 };
 use anyhow::Result;
 use client::{Client, proto};
-use futures::{StreamExt, channel::mpsc};
+use futures::channel::mpsc;
 use gpui::{
     Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
-    EventEmitter, FocusHandle, Focusable, Font, HighlightStyle, Pixels, Point, Render,
-    SharedString, Task, WeakEntity, Window,
+    EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task,
+    WeakEntity, Window,
 };
 use language::Capability;
+pub use language::HighlightedText;
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
     ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
@@ -25,7 +26,6 @@ use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
-    ops::Range,
     path::Path,
     rc::Rc,
     sync::Arc,
@@ -39,6 +39,7 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 #[derive(Clone, Copy, Debug)]
 pub struct SaveOptions {
     pub format: bool,
+    pub force_format: bool,
     pub autosave: bool,
 }
 
@@ -46,6 +47,7 @@ impl Default for SaveOptions {
     fn default() -> Self {
         Self {
             format: true,
+            force_format: false,
             autosave: false,
         }
     }
@@ -79,6 +81,7 @@ impl Settings for ItemSettings {
             git_status: tabs.git_status.unwrap()
                 && content
                     .git
+                    .as_ref()
                     .unwrap()
                     .enabled
                     .unwrap()
@@ -121,14 +124,6 @@ pub enum ItemEvent {
     UpdateTab,
     UpdateBreadcrumbs,
     Edit,
-}
-
-// TODO: Combine this with existing HighlightedText struct?
-#[derive(Debug)]
-pub struct BreadcrumbText {
-    pub text: String,
-    pub highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
-    pub font: Option<Font>,
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -212,12 +207,13 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         self.tab_tooltip_text(cx).map(TabTooltipContent::Text)
     }
 
-    fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
+    fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(ItemEvent)) {}
 
     fn deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
     fn discarded(&self, _project: Entity<Project>, _window: &mut Window, _cx: &mut Context<Self>) {}
     fn on_removed(&self, _cx: &mut Context<Self>) {}
     fn workspace_deactivated(&mut self, _window: &mut Window, _: &mut Context<Self>) {}
+    fn pane_changed(&mut self, _new_pane_id: EntityId, _cx: &mut Context<Self>) {}
     fn navigate(
         &mut self,
         _: Arc<dyn Any + Send>,
@@ -327,7 +323,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         ToolbarItemLocation::Hidden
     }
 
-    fn breadcrumbs(&self, _cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, _cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         None
     }
 
@@ -362,6 +358,18 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 
     fn include_in_nav_history() -> bool {
         true
+    }
+
+    /// Called when the containing pane receives a drop on the item or the item's tab.
+    /// Returns `true` to consume it and suppress the pane's default drop behavior.
+    fn handle_drop(
+        &self,
+        _active_pane: &Pane,
+        _dropped: &dyn Any,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> bool {
+        false
     }
 
     /// Returns additional actions to add to the tab's context menu.
@@ -534,7 +542,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui::Subscription;
     fn to_searchable_item_handle(&self, cx: &App) -> Option<Box<dyn SearchableItemHandle>>;
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation;
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>>;
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)>;
     fn breadcrumb_prefix(&self, window: &mut Window, cx: &mut App) -> Option<gpui::AnyElement>;
     fn show_toolbar(&self, cx: &App) -> bool;
     fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>>;
@@ -543,6 +551,13 @@ pub trait ItemHandle: 'static + Send {
     fn preserve_preview(&self, cx: &App) -> bool;
     fn include_in_nav_history(&self) -> bool;
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App);
+    fn handle_drop(
+        &self,
+        active_pane: &Pane,
+        dropped: &dyn Any,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool;
     fn tab_extra_context_menu_actions(
         &self,
         window: &mut Window,
@@ -579,7 +594,7 @@ impl<T: Item> ItemHandle for Entity<T> {
         handler: Box<dyn Fn(ItemEvent, &mut Window, &mut App)>,
     ) -> gpui::Subscription {
         window.subscribe(self, cx, move |_, event, window, cx| {
-            T::to_item_events(event, |item_event| handler(item_event, window, cx));
+            T::to_item_events(event, &mut |item_event| handler(item_event, window, cx));
         })
     }
 
@@ -736,11 +751,22 @@ impl<T: Item> ItemHandle for Entity<T> {
                 .log_err();
         }
 
-        if workspace
+        let new_pane_id = pane.entity_id();
+        let old_item_pane = workspace
             .panes_by_item
-            .insert(self.item_id(), pane.downgrade())
-            .is_none()
-        {
+            .insert(self.item_id(), pane.downgrade());
+
+        if old_item_pane.as_ref().is_none_or(|old_pane| {
+            old_pane
+                .upgrade()
+                .is_some_and(|old_pane| old_pane.entity_id() != new_pane_id)
+        }) {
+            self.update(cx, |this, cx| {
+                this.pane_changed(new_pane_id, cx);
+            });
+        }
+
+        if old_item_pane.is_none() {
             let mut pending_autosave = DelayedDebouncedEditAction::new();
             let (pending_update_tx, mut pending_update_rx) = mpsc::unbounded();
             let pending_update = Rc::new(RefCell::new(None));
@@ -753,8 +779,8 @@ impl<T: Item> ItemHandle for Entity<T> {
                 send_follower_updates = Some(cx.spawn_in(window, {
                     let pending_update = pending_update.clone();
                     async move |workspace, cx| {
-                        while let Some(mut leader_id) = pending_update_rx.next().await {
-                            while let Ok(Some(id)) = pending_update_rx.try_next() {
+                        while let Ok(mut leader_id) = pending_update_rx.recv().await {
+                            while let Ok(id) = pending_update_rx.try_recv() {
                                 leader_id = id;
                             }
 
@@ -836,7 +862,7 @@ impl<T: Item> ItemHandle for Entity<T> {
                         workspace.enqueue_item_serialization(item).ok();
                     }
 
-                    T::to_item_events(event, |event| match event {
+                    T::to_item_events(event, &mut |event| match event {
                         ItemEvent::CloseItem => {
                             pane.update(cx, |pane, cx| {
                                 pane.close_item_by_id(
@@ -912,25 +938,39 @@ impl<T: Item> ItemHandle for Entity<T> {
                 },
             ));
 
-            cx.on_blur(
+            cx.on_focus_out(
                 &self.read(cx).focus_handle(cx),
                 window,
-                move |workspace, window, cx| {
+                move |workspace, _event, window, cx| {
                     if let Some(item) = weak_item.upgrade()
                         && item.workspace_settings(cx).autosave == AutosaveSetting::OnFocusChange
                     {
                         // Only trigger autosave if focus has truly left the item.
                         // If focus is still within the item's hierarchy (e.g., moved to a context menu),
                         // don't trigger autosave to avoid unwanted formatting and cursor jumps.
-                        // Also skip autosave if focus moved to a modal (e.g., command palette),
-                        // since the user is still interacting with the workspace.
                         let focus_handle = item.item_focus_handle(cx);
-                        if !focus_handle.contains_focused(window, cx)
-                            && !workspace.has_active_modal(window, cx)
-                        {
-                            Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                                .detach_and_log_err(cx);
+                        if focus_handle.contains_focused(window, cx) {
+                            return;
                         }
+
+                        let vim_mode = vim_mode_setting::VimModeSetting::is_enabled(cx);
+                        let helix_mode = vim_mode_setting::HelixModeSetting::is_enabled(cx);
+
+                        if vim_mode || helix_mode {
+                            // We use the command palette for executing commands in Vim and Helix modes (e.g., `:w`), so
+                            // in those cases we don't want to trigger auto-save if the focus has just been transferred
+                            // to the command palette.
+                            //
+                            // This isn't totally perfect, as you could still switch files indirectly via the command
+                            // palette (such as by opening up the tab switcher from it and then switching tabs that
+                            // way).
+                            if workspace.is_active_modal_command_palette(cx) {
+                                return;
+                            }
+                        }
+
+                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
+                            .detach_and_log_err(cx);
                     }
                 },
             )
@@ -1058,7 +1098,7 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.read(cx).breadcrumb_location(cx)
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         self.read(cx).breadcrumbs(cx)
     }
 
@@ -1094,6 +1134,20 @@ impl<T: Item> ItemHandle for Entity<T> {
         self.update(cx, |this, cx| {
             this.focus_handle(cx).focus(window, cx);
             window.dispatch_action(action, cx);
+        })
+    }
+
+    /// Called when the containing pane receives a drop on the item or the item's tab.
+    /// Returns `true` if the item handled it and the pane should skip its default drop behavior.
+    fn handle_drop(
+        &self,
+        active_pane: &Pane,
+        dropped: &dyn Any,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        self.update(cx, |this, cx| {
+            this.handle_drop(active_pane, dropped, window, cx)
         })
     }
 
@@ -1358,7 +1412,8 @@ pub mod test {
     };
     use gpui::{
         AnyElement, App, AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable,
-        InteractiveElement, IntoElement, Render, SharedString, Task, WeakEntity, Window,
+        InteractiveElement, IntoElement, ParentElement, Render, SharedString, Task, WeakEntity,
+        Window,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, sync::Arc};
@@ -1387,6 +1442,7 @@ pub mod test {
         pub tab_detail: Cell<Option<usize>>,
         serialize: Option<Box<dyn Fn() -> Option<Task<anyhow::Result<()>>>>>,
         focus_handle: gpui::FocusHandle,
+        pub child_focus_handles: Vec<gpui::FocusHandle>,
     }
 
     impl project::ProjectItem for TestProjectItem {
@@ -1469,6 +1525,7 @@ pub mod test {
                 workspace_id: Default::default(),
                 focus_handle: cx.focus_handle(),
                 serialize: None,
+                child_focus_handles: Vec::new(),
             }
         }
 
@@ -1516,6 +1573,11 @@ pub mod test {
             self
         }
 
+        pub fn with_child_focus_handles(mut self, count: usize, cx: &mut Context<Self>) -> Self {
+            self.child_focus_handles = (0..count).map(|_| cx.focus_handle()).collect();
+            self
+        }
+
         pub fn set_state(&mut self, state: String, cx: &mut Context<Self>) {
             self.push_to_nav_history(cx);
             self.state = state;
@@ -1523,14 +1585,19 @@ pub mod test {
 
         fn push_to_nav_history(&mut self, cx: &mut Context<Self>) {
             if let Some(history) = &mut self.nav_history {
-                history.push(Some(Box::new(self.state.clone())), cx);
+                history.push(Some(Box::new(self.state.clone())), None, cx);
             }
         }
     }
 
     impl Render for TestItem {
         fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-            gpui::div().track_focus(&self.focus_handle(cx))
+            let parent = gpui::div().track_focus(&self.focus_handle(cx));
+            self.child_focus_handles
+                .iter()
+                .fold(parent, |parent, child_handle| {
+                    parent.child(gpui::div().track_focus(child_handle))
+                })
         }
     }
 
@@ -1545,7 +1612,7 @@ pub mod test {
     impl Item for TestItem {
         type Event = ItemEvent;
 
-        fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {
+        fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(ItemEvent)) {
             f(*event)
         }
 
@@ -1628,23 +1695,30 @@ pub mod test {
         where
             Self: Sized,
         {
-            Task::ready(Some(cx.new(|cx| Self {
-                state: self.state.clone(),
-                label: self.label.clone(),
-                save_count: self.save_count,
-                save_as_count: self.save_as_count,
-                reload_count: self.reload_count,
-                is_dirty: self.is_dirty,
-                buffer_kind: self.buffer_kind,
-                has_conflict: self.has_conflict,
-                has_deleted_file: self.has_deleted_file,
-                project_items: self.project_items.clone(),
-                nav_history: None,
-                tab_descriptions: None,
-                tab_detail: Default::default(),
-                workspace_id: self.workspace_id,
-                focus_handle: cx.focus_handle(),
-                serialize: None,
+            Task::ready(Some(cx.new(|cx| {
+                Self {
+                    state: self.state.clone(),
+                    label: self.label.clone(),
+                    save_count: self.save_count,
+                    save_as_count: self.save_as_count,
+                    reload_count: self.reload_count,
+                    is_dirty: self.is_dirty,
+                    buffer_kind: self.buffer_kind,
+                    has_conflict: self.has_conflict,
+                    has_deleted_file: self.has_deleted_file,
+                    project_items: self.project_items.clone(),
+                    nav_history: None,
+                    tab_descriptions: None,
+                    tab_detail: Default::default(),
+                    workspace_id: self.workspace_id,
+                    focus_handle: cx.focus_handle(),
+                    serialize: None,
+                    child_focus_handles: self
+                        .child_focus_handles
+                        .iter()
+                        .map(|_| cx.focus_handle())
+                        .collect(),
+                }
             })))
         }
 

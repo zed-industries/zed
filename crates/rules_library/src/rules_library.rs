@@ -1,6 +1,6 @@
 use anyhow::Result;
 use collections::{HashMap, HashSet};
-use editor::{CompletionProvider, SelectionEffects};
+use editor::SelectionEffects;
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
     App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, PromptLevel,
@@ -15,12 +15,11 @@ use picker::{Picker, PickerDelegate};
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
 use rope::Rope;
-use settings::Settings;
-use std::rc::Rc;
+use settings::{ActionSequence, Settings};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Divider, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, TryFutureExt};
@@ -76,7 +75,6 @@ pub trait InlineAssistDelegate {
 pub fn open_rules_library(
     language_registry: Arc<LanguageRegistry>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
-    make_completion_provider: Rc<dyn Fn() -> Rc<dyn CompletionProvider>>,
     prompt_to_select: Option<PromptId>,
     cx: &mut App,
 ) -> Task<Result<WindowHandle<RulesLibrary>>> {
@@ -141,7 +139,6 @@ pub fn open_rules_library(
                             store,
                             language_registry,
                             inline_assist_delegate,
-                            make_completion_provider,
                             prompt_to_select,
                             window,
                             cx,
@@ -162,7 +159,6 @@ pub struct RulesLibrary {
     picker: Entity<Picker<RulePickerDelegate>>,
     pending_load: Task<()>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
-    make_completion_provider: Rc<dyn Fn() -> Rc<dyn CompletionProvider>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -222,11 +218,15 @@ impl PickerDelegate for RulePickerDelegate {
         cx.notify();
     }
 
-    fn can_select(&mut self, ix: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
+    fn can_select(&self, ix: usize, _: &mut Window, _: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
             Some(RulePickerEntry::Rule(_)) => true,
             Some(RulePickerEntry::Header(_)) | Some(RulePickerEntry::Separator) | None => false,
         }
+    }
+
+    fn select_on_hover(&self) -> bool {
+        false
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
@@ -393,7 +393,7 @@ impl PickerDelegate for RulePickerDelegate {
                                 }))
                         }))
                         .when(!prompt_id.is_built_in(), |this| {
-                            this.end_hover_slot(
+                            this.end_slot_on_hover(
                                 h_flex()
                                     .child(
                                         IconButton::new("delete-rule", IconName::Trash)
@@ -471,7 +471,6 @@ impl RulesLibrary {
         store: Entity<PromptStore>,
         language_registry: Arc<LanguageRegistry>,
         inline_assist_delegate: Box<dyn InlineAssistDelegate>,
-        make_completion_provider: Rc<dyn Fn() -> Rc<dyn CompletionProvider>>,
         rule_to_select: Option<PromptId>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -514,7 +513,6 @@ impl RulesLibrary {
             active_rule_id: None,
             pending_load: Task::ready(()),
             inline_assist_delegate,
-            make_completion_provider,
             _subscriptions: vec![cx.subscribe_in(&picker, window, Self::handle_picker_event)],
             picker,
         }
@@ -721,7 +719,6 @@ impl RulesLibrary {
         } else if let Some(rule_metadata) = self.store.read(cx).metadata(prompt_id) {
             let language_registry = self.language_registry.clone();
             let rule = self.store.read(cx).load(prompt_id, cx);
-            let make_completion_provider = self.make_completion_provider.clone();
             self.pending_load = cx.spawn_in(window, async move |this, cx| {
                 let rule = rule.await;
                 let markdown = language_registry.language_for_name("Markdown").await;
@@ -756,7 +753,6 @@ impl RulesLibrary {
                             editor.set_show_indent_guides(false, cx);
                             editor.set_use_modal_editing(true);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
-                            editor.set_completion_provider(Some(make_completion_provider()));
                             if focus {
                                 window.focus(&editor.focus_handle(cx), cx);
                             }
@@ -1106,6 +1102,7 @@ impl RulesLibrary {
                                     temperature: None,
                                     thinking_allowed: true,
                                     thinking_effort: None,
+                                    speed: None,
                                 },
                                 cx,
                             )
@@ -1158,10 +1155,11 @@ impl RulesLibrary {
                             Button::new("new-rule", "New Rule")
                                 .full_width()
                                 .style(ButtonStyle::Outlined)
-                                .icon(IconName::Plus)
-                                .icon_size(IconSize::Small)
-                                .icon_position(IconPosition::Start)
-                                .icon_color(Color::Muted)
+                                .start_icon(
+                                    Icon::new(IconName::Plus)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(Box::new(NewRule), cx);
                                 }),
@@ -1390,13 +1388,20 @@ impl RulesLibrary {
 
 impl Render for RulesLibrary {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
         let theme = cx.theme().clone();
 
         client_side_decorations(
             v_flex()
                 .id("rules-library")
                 .key_context("RulesLibrary")
+                .on_action(
+                    |action_sequence: &ActionSequence, window: &mut Window, cx: &mut App| {
+                        for action in &action_sequence.0 {
+                            window.dispatch_action(action.boxed_clone(), cx);
+                        }
+                    },
+                )
                 .on_action(cx.listener(|this, &NewRule, window, cx| this.new_rule(window, cx)))
                 .on_action(
                     cx.listener(|this, &DeleteRule, window, cx| {

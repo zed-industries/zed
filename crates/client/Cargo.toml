@@ -22,9 +22,11 @@ base64.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 cloud_api_client.workspace = true
+cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 credentials_provider.workspace = true
+db.workspace = true
 derive_more.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
@@ -59,6 +61,7 @@ tokio.workspace = true
 url.workspace = true
 util.workspace = true
 worktree.workspace = true
+zed_credentials_provider.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

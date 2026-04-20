@@ -7,7 +7,7 @@ use gpui::{
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use shell_command_parser::extract_commands;
 use std::sync::Arc;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Banner, ContextMenu, Divider, PopoverMenu, Severity, Tooltip, prelude::*};
 use util::ResultExt as _;
 use util::shell::ShellKind;
@@ -69,7 +69,7 @@ const TOOLS: &[ToolInfo] = &[
         regex_explanation: "Patterns are matched against the URL being fetched.",
     },
     ToolInfo {
-        id: "web_search",
+        id: "search_web",
         name: "Web Search",
         description: "Web search queries",
         regex_explanation: "Patterns are matched against the search query.",
@@ -249,10 +249,13 @@ fn render_tool_list_item(
 
     h_flex()
         .w_full()
+        .min_w_0()
         .py_3()
         .justify_between()
         .child(
             v_flex()
+                .w_full()
+                .min_w_0()
                 .child(h_flex().gap_1().child(Label::new(tool.name)).when_some(
                     rule_summary,
                     |this, summary| {
@@ -275,10 +278,11 @@ fn render_tool_list_item(
                 .tab_index(tool_index as isize)
                 .style(ButtonStyle::OutlinedGhost)
                 .size(ButtonSize::Medium)
-                .icon(IconName::ChevronRight)
-                .icon_position(IconPosition::End)
-                .icon_color(Color::Muted)
-                .icon_size(IconSize::Small)
+                .end_icon(
+                    Icon::new(IconName::ChevronRight)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.push_dynamic_sub_page(
                         tool_name,
@@ -305,7 +309,7 @@ fn get_tool_render_fn(
         "create_directory" => render_create_directory_tool_config,
         "save_file" => render_save_file_tool_config,
         "fetch" => render_fetch_tool_config,
-        "web_search" => render_web_search_tool_config,
+        "search_web" => render_web_search_tool_config,
         "restore_file_from_disk" => render_restore_file_from_disk_tool_config,
         _ => render_terminal_tool_config, // fallback
     }
@@ -1071,9 +1075,12 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
 
     h_flex()
         .my_4()
+        .min_w_0()
         .justify_between()
         .child(
             v_flex()
+                .w_full()
+                .min_w_0()
                 .child(Label::new("Default Permission"))
                 .child(
                     Label::new(
@@ -1090,9 +1097,7 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
                         .tab_index(0_isize)
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
-                        .icon(IconName::ChevronDown)
-                        .icon_position(IconPosition::End)
-                        .icon_size(IconSize::Small),
+                        .end_icon(Icon::new(IconName::ChevronDown).size(IconSize::Small)),
                 )
                 .menu(move |window, cx| {
                     Some(ContextMenu::build(window, cx, move |menu, _, _| {
@@ -1126,13 +1131,18 @@ fn render_default_mode_section(
     let tool_id_owned = tool_id.to_string();
 
     h_flex()
+        .min_w_0()
         .justify_between()
         .child(
-            v_flex().child(Label::new("Default Action")).child(
-                Label::new("Action to take when no patterns match.")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            ),
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .child(Label::new("Default Action"))
+                .child(
+                    Label::new("Action to take when no patterns match.")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
         )
         .child(
             PopoverMenu::new(format!("default-mode-{}", tool_id))
@@ -1141,9 +1151,7 @@ fn render_default_mode_section(
                         .tab_index(0_isize)
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)
-                        .icon(IconName::ChevronDown)
-                        .icon_position(IconPosition::End)
-                        .icon_size(IconSize::Small),
+                        .end_icon(Icon::new(IconName::ChevronDown).size(IconSize::Small)),
                 )
                 .menu(move |window, cx| {
                     let tool_id = tool_id_owned.clone();
@@ -1381,7 +1389,7 @@ tool_config_page_fn!(render_move_path_tool_config, "move_path");
 tool_config_page_fn!(render_create_directory_tool_config, "create_directory");
 tool_config_page_fn!(render_save_file_tool_config, "save_file");
 tool_config_page_fn!(render_fetch_tool_config, "fetch");
-tool_config_page_fn!(render_web_search_tool_config, "web_search");
+tool_config_page_fn!(render_web_search_tool_config, "search_web");
 tool_config_page_fn!(
     render_restore_file_from_disk_tool_config,
     "restore_file_from_disk"
@@ -1412,7 +1420,10 @@ mod tests {
             "streaming_edit_file",
             // Subagent permission checks happen at the level of individual
             // tool calls within the subagent, not at the spawning level.
-            "subagent",
+            "spawn_agent",
+            // update_plan updates UI-visible planning state but does not use
+            // tool permission rules.
+            "update_plan",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

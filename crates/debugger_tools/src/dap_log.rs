@@ -761,6 +761,7 @@ impl DapLogView {
             editor.set_text(log_contents, window, cx);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
             editor.set_show_code_actions(false, cx);
+            editor.set_show_bookmarks(false, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_runnables(false, cx);
@@ -986,7 +987,7 @@ pub fn init(cx: &mut App) {
 impl Item for DapLogView {
     type Event = EditorEvent;
 
-    fn to_item_events(event: &Self::Event, f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
@@ -1086,6 +1087,7 @@ impl SearchableItem for DapLogView {
             // DAP log is read-only.
             replacement: false,
             selection: false,
+            select_all: true,
         }
     }
     fn active_match_index(

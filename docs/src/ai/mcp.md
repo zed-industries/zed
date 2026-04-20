@@ -7,7 +7,7 @@ description: Install and configure MCP servers in Zed to extend your AI agent wi
 
 Zed uses the [Model Context Protocol](https://modelcontextprotocol.io/) to interact with context servers.
 
-> The Model Context Protocol (MCP) is an open protocol that enables seamless integration between LLM applications and external data sources and tools. Whether you're building an AI-powered IDE, enhancing a chat interface, or creating custom AI workflows, MCP provides a standardized way to connect LLMs with the context they need.
+> The Model Context Protocol (MCP) is an open protocol for connecting LLM applications to external tools and data sources through a standard interface.
 
 ## Supported Features
 
@@ -31,20 +31,19 @@ Many MCP servers are available as extensions. Find them via:
 
 Popular servers available as an extension include:
 
-- [Context7](https://zed.dev/extensions/context7-mcp-server)
-- [GitHub](https://zed.dev/extensions/github-mcp-server)
-- [Puppeteer](https://zed.dev/extensions/puppeteer-mcp-server)
+- [Context7](https://zed.dev/extensions/mcp-server-context7)
+- [GitHub](https://zed.dev/extensions/mcp-server-github)
+- [Puppeteer](https://zed.dev/extensions/mcp-server-puppeteer)
 - [Gem](https://zed.dev/extensions/gem)
-- [Brave Search](https://zed.dev/extensions/brave-search-mcp-server)
+- [Brave Search](https://zed.dev/extensions/mcp-server-brave-search)
 - [Prisma](https://github.com/aqrln/prisma-mcp-zed)
-- [Framelink Figma](https://zed.dev/extensions/framelink-figma-mcp-server)
-- [Linear](https://zed.dev/extensions/linear-mcp-server)
-- [Resend](https://zed.dev/extensions/resend-mcp-server)
+- [Framelink Figma](https://zed.dev/extensions/mcp-server-figma)
+- [Resend](https://zed.dev/extensions/mcp-server-resend)
 
 ### As Custom Servers
 
 Creating an extension is not the only way to use MCP servers in Zed.
-You can connect them by adding their commands directly to your `settings.json`, like so:
+You can connect them by adding their commands directly to your settings file ([how to edit](../configuring-zed.md#settings-files)), like so:
 
 ```json [settings]
 {
@@ -57,6 +56,9 @@ You can connect them by adding their commands directly to your `settings.json`, 
     "remote-mcp-server": {
       "url": "custom",
       "headers": { "Authorization": "Bearer <token>" }
+    },
+    "remote-mcp-server-with-oauth": {
+      "url": "https://mcp.example.com/mcp"
     }
   }
 }
@@ -64,6 +66,8 @@ You can connect them by adding their commands directly to your `settings.json`, 
 
 Alternatively, you can also add a custom server by accessing the Agent Panel's Settings view (also accessible via the `agent: open settings` action).
 From there, you can add it through the modal that appears when you click the "Add Custom Server" button.
+
+> Note: When a remote MCP server has no configured `"Authorization"` header, Zed will prompt you to authenticate yourself against the MCP server using the standard MCP OAuth flow.
 
 ## Using MCP Servers
 
@@ -87,7 +91,7 @@ Once installation is complete, you can return to the Agent Panel and start promp
 How reliably MCP tools get called can vary from model to model.
 Mentioning the MCP server by name can help the model pick tools from that server.
 
-If you want to _ensure_ a given MCP server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
+However, if you want to _ensure_ a given MCP server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
 
 As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#zed) doing that with their [Container Use MCP server](https://zed.dev/extensions/mcp-server-container-use):
 
@@ -155,5 +159,17 @@ Learn more about [how tool permissions work](./tool-permissions.md), how to furt
 
 Note that for [external agents](./external-agents.md) connected through the [Agent Client Protocol](https://agentclientprotocol.com/), access to MCP servers installed from Zed may vary depending on the ACP agent implementation.
 
-Regarding the built-in ones, Claude Code and Codex both support it, and Gemini CLI does not yet.
+Regarding the built-in ones, Claude Agent and Codex both support it, and Gemini CLI does not yet.
 In the meantime, learn how to add MCP server support to Gemini CLI through [their documentation](https://github.com/google-gemini/gemini-cli?tab=readme-ov-file#using-mcp-servers).
+
+### Error Handling
+
+When a MCP server encounters an error while processing a tool call, the agent receives the error message directly and the operation fails.
+Common error scenarios include:
+
+- Invalid parameters passed to the tool
+- Server-side failures (database connection issues, rate limits)
+- Unsupported operations or missing resources
+
+The error message from the context server will be shown in the agent's response, allowing you to diagnose and correct the issue.
+Check the context server's logs or documentation for details about specific error codes.

@@ -11,7 +11,7 @@ The snippets are located in `~/.config/zed/snippets` directory to which you can 
 
 ## Example configuration
 
-```json [settings]
+```json
 {
   // Each snippet must have a name and body, but the prefix and description are optional.
   // The prefix is used to trigger the snippet, but when omitted then the name is used.
@@ -42,24 +42,4 @@ To create JSX snippets you have to use `javascript.json` snippets file, instead 
 ## Known Limitations
 
 - Only the first prefix is used when a list of prefixes is passed in.
-- Currently only the `json` snippet file format is supported, even though the `simple-completion-language-server` supports both `json` and `toml` file formats.
-
-## See also
-
-The `feature_paths` option in `simple-completion-language-server` is disabled by default.
-
-If you want to enable it you can add the following to your `settings.json`:
-
-```json [settings]
-{
-  "lsp": {
-    "snippet-completion-server": {
-      "settings": {
-        "feature_paths": true
-      }
-    }
-  }
-}
-```
-
-For more configuration information, see the [`simple-completion-language-server` instructions](https://github.com/zed-industries/simple-completion-language-server/tree/main).
+- Currently only the `json` snippet file format is supported.

@@ -1,3 +1,8 @@
+---
+title: Haskell
+description: "Configure Haskell language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Haskell
 
 Haskell support is available through the [Haskell extension](https://github.com/zed-extensions/haskell).

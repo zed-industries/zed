@@ -24,7 +24,7 @@ Many popular themes have been ported to Zed, and if you're struggling to choose 
 You can use [Zed's Theme Builder](https://zed.dev/theme-builder) to design your own custom theme based on an existing one.
 
 This tool lets you fine-tune and preview how every surface in the Zed app will look.
-You can then export the JSON for [local use](/themes.md#local-themes) or for [publishing in Zed's extension store](/extensions/themes.md).
+You can then export the JSON for [local use](./themes.md#local-themes) or for [publishing in Zed's extension store](./extensions/themes.md).
 
 ## Configuring a Theme
 
@@ -43,6 +43,35 @@ You can set the mode to `"dark"` or `"light"` to ignore the current system mode.
   }
 }
 ```
+
+### Toggle Theme Mode from the Keyboard
+
+Use {#kb theme::ToggleMode} to switch the current theme mode between light and dark.
+
+If your settings currently use a static theme value, like:
+
+```json [settings]
+{
+  "theme": "Any Theme"
+}
+```
+
+the first toggle converts it to dynamic theme selection with default themes:
+
+```json [settings]
+{
+  "theme": {
+    "mode": "system",
+    "light": "One Light",
+    "dark": "One Dark"
+  }
+}
+```
+
+You are required to set both `light` and `dark` themes manually after the first toggle.
+
+After that, toggling updates only `theme.mode`.
+If `light` and `dark` are the same theme, the first toggle may not produce a visible UI change until you set different values for `light` and `dark`.
 
 ## Theme Overrides
 

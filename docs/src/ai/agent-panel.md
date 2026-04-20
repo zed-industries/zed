@@ -17,7 +17,7 @@ You can do that by:
 
 1. [subscribing to our Pro plan](https://zed.dev/pricing), so you have access to our hosted models
 2. [using your own API keys](./llm-providers.md#use-your-own-keys), either from model providers like Anthropic or model gateways like OpenRouter.
-3. using an [external agent](./external-agents.md) like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code)
+3. using an [external agent](./external-agents.md) like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Agent](./external-agents.md#claude-agent)
 
 ## Overview {#overview}
 
@@ -27,14 +27,14 @@ Expand the editor with {#kb agent::ExpandMessageEditor} if you need more room.
 Responses stream in with indicators showing [which tools](./tools.md) the model is using.
 The sections below cover what you can do from here.
 
-> Note that for external agents, like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Code](./external-agents.md#claude-code), some of the features outlined below may _not_ be supported—for example, _restoring threads from history_, _checkpoints_, _token usage display_, and others.
+> Note that for external agents, like [Gemini CLI](./external-agents.md#gemini-cli) or [Claude Agent](./external-agents.md#claude-agent), some of the features outlined below may _not_ be supported—for example, _restoring threads from history_, _checkpoints_, _token usage display_, and others.
 > Their availability varies depending on the agent.
 
 ### Creating New Threads {#new-thread}
 
 By default, the Agent Panel uses Zed's first-party agent.
 
-To choose another agent, go to the plus button in the top-right of the Agent Panel and pick either one of the [external agents](./external-agents.md) installed out of the box or a new [Text Thread](./text-threads.md).
+To choose another agent, go to the plus button in the top-right of the Agent Panel and pick one of the [external agents](./external-agents.md) installed out of the box.
 
 ### Editing Messages {#editing-messages}
 
@@ -67,7 +67,9 @@ Right-click on any agent response in the thread view to access a context menu wi
 
 ### Navigating the Thread {#navigating-the-thread}
 
-In long conversations, use the scroll arrow buttons at the bottom of the panel to jump to your most recent prompt or to the very beginning of the thread.
+In long conversations, use the scroll arrow buttons at the bottom of the panel to jump to your most recent prompt or to the very beginning of the thread. You can also scroll the thread using arrow keys, Page Up/Down, Home/End, and Shift+Page Up/Down to jump between messages, when the thread pane is focused.
+
+When focus is in the message editor, you can also use {#kb agent::ScrollOutputPageUp}, {#kb agent::ScrollOutputPageDown}, {#kb agent::ScrollOutputToTop}, {#kb agent::ScrollOutputToBottom}, {#kb agent::ScrollOutputLineUp}, and {#kb agent::ScrollOutputLineDown} to navigate the thread, or {#kb agent::ScrollOutputToPreviousMessage} and {#kb agent::ScrollOutputToNextMessage} to jump between your prompts.
 
 ### Navigating History {#navigating-history}
 
@@ -114,14 +116,20 @@ The agent can search your codebase to find relevant context, but providing it ex
 Add context by typing `@` in the message editor.
 You can mention files, directories, symbols, previous threads, rules files, and diagnostics.
 
-Copying images and pasting them in the panel's message editor is also supported.
-
 When you paste multi-line code selections copied from a buffer, Zed automatically formats them as @-mentions with the file context.
 To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
 
 ### Selection as Context
 
 Additionally, you can also select text in a buffer or terminal and add it as context by using the {#kb agent::AddSelectionToThread} keybinding, running the {#action agent::AddSelectionToThread} action, or choosing the "Selection" item in the `+` menu in the message editor.
+
+### Images as Context
+
+It's also possible to attach images in your prompt for providers that support vision models.
+OpenAI GPT-4o and later, Anthropic Claude 3 and later, Google Gemini 1.5 and 2.0, and Bedrock vision models (Claude 3+, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision, Mistral Pixtral) all support image inputs.
+
+To add an image, you can either search in your project's directory by @-mentioning it, or drag it from your file system directly into the agent panel message editor.
+Copying an image and pasting it is also supported.
 
 ## Token Usage {#token-usage}
 
@@ -134,7 +142,7 @@ You can also do this at any time with an ongoing thread via the "Agent Options" 
 
 After you've configured your LLM providers—either via [a custom API key](./llm-providers.md) or through [Zed's hosted models](./models.md)—you can switch between their models by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
-> The same model can be offered via multiple providers - for example, Claude Sonnet 4 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
+> The same model can be offered via multiple providers - for example, Claude Sonnet 4.5 is available via Zed Pro, OpenRouter, Anthropic directly, and more.
 > Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
 
 ### Favoriting Models
@@ -168,7 +176,7 @@ You can explore the exact tools enabled in each profile by clicking on the profi
 
 Alternatively, you can also use either the command palette, by running {#action agent::ManageProfiles}, or the keybinding directly, {#kb agent::ManageProfiles}, to have access to the profile management modal.
 
-Use {#kb agent::CycleModeSelector} to switch between profiles without opening the modal.
+Use {#kb agent::CycleModeSelector} to cycle through available profiles without opening the modal.
 
 #### Custom Profiles {#custom-profiles}
 
@@ -180,7 +188,7 @@ In the Agent Profile modal, select a built-in profile, navigate to `Configure To
 
 Zed will store this profile in your settings using the same profile name as the default you overrode.
 
-All custom profiles can be edited via the UI or by hand under the `agent.profiles` key in your `settings.json` file.
+All custom profiles can be edited via the UI or by hand under the `agent.profiles` key in your settings file.
 
 To delete a custom profile, open the Agent Profile modal, select the profile you want to remove, and click the delete button.
 
@@ -216,18 +224,9 @@ All [Zed's hosted models](./models.md) support tool calling out-of-the-box.
 Similarly to the built-in tools, some models may not support all tools included in a given MCP Server.
 Zed's UI will inform you about this via a warning icon that appears close to the model selector.
 
-## Text Threads {#text-threads}
-
-["Text Threads"](./text-threads.md) present your conversation with the LLM in a different format—as raw text.
-With text threads, you have full control over the conversation data.
-You can remove and edit responses from the LLM, swap roles, and include more context earlier in the conversation.
-
-Text threads are Zed's original assistant panel format, preserved for users who want direct control over conversation data.
-Autonomous code editing (where the agent writes to files) is only available in the default thread format, not text threads.
-
 ## Errors and Debugging {#errors-and-debugging}
 
-In case of any error or strange LLM response behavior, the best way to help the Zed team debug is by reaching for the `agent: open thread as markdown` action and attaching that data as part of your issue on GitHub.
+If you hit an error or unusual LLM behavior, open the thread as Markdown with `agent: open thread as markdown` and attach it to your GitHub issue.
 
 You can also open threads as Markdown by clicking on the file icon button, to the right of the thumbs down button, when focused on the panel's editor.
 
@@ -240,7 +239,7 @@ You can rate agent responses to help improve Zed's system prompt and tools.
 > **_If you don't want data persisted on Zed's servers, don't rate_**.
 > We will not collect data for improving our Agentic offering without you explicitly rating responses.
 
-The best way you can help influence the next change to Zed's system prompt and tools is by rating the LLM's response via the thumbs up/down buttons at the end of every response.
+To help improve Zed's system prompt and tools, rate responses with the thumbs up/down controls at the end of each response.
 In case of a thumbs down, a new text area will show up where you can add more specifics about what happened.
 
 You can provide feedback on the thread at any point after the agent responds, and multiple times within the same thread.

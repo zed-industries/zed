@@ -265,7 +265,8 @@ impl Keystroke {
 
 impl KeybindingKeystroke {
     #[cfg(target_os = "windows")]
-    pub(crate) fn new(inner: Keystroke, display_modifiers: Modifiers, display_key: String) -> Self {
+    #[expect(missing_docs)]
+    pub fn new(inner: Keystroke, display_modifiers: Modifiers, display_key: String) -> Self {
         KeybindingKeystroke {
             inner,
             display_modifiers,

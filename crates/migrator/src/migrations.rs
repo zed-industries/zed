@@ -6,7 +6,7 @@ use settings_content::{PlatformOverrides, ReleaseChannelOverrides};
 /// nested platform, release-channel, and profile override objects.
 pub(crate) fn migrate_settings(
     value: &mut Value,
-    mut migrate_one: impl FnMut(&mut serde_json::Map<String, Value>) -> Result<()>,
+    migrate_one: &mut dyn FnMut(&mut serde_json::Map<String, Value>) -> Result<()>,
 ) -> Result<()> {
     let Some(root_object) = value.as_object_mut() else {
         return Ok(());
@@ -275,6 +275,12 @@ pub(crate) mod m_2025_12_15 {
     pub(crate) use settings::SETTINGS_PATTERNS;
 }
 
+pub(crate) mod m_2025_01_27 {
+    mod settings;
+
+    pub(crate) use settings::make_auto_indent_an_enum;
+}
+
 pub(crate) mod m_2026_02_02 {
     mod settings;
 
@@ -291,4 +297,40 @@ pub(crate) mod m_2026_02_04 {
     mod settings;
 
     pub(crate) use settings::migrate_tool_permission_defaults;
+}
+
+pub(crate) mod m_2026_02_25 {
+    mod settings;
+
+    pub(crate) use settings::migrate_builtin_agent_servers_to_registry;
+}
+
+pub(crate) mod m_2026_03_16 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}
+
+pub(crate) mod m_2026_03_23 {
+    mod keymap;
+
+    pub(crate) use keymap::KEYMAP_PATTERNS;
+}
+
+pub(crate) mod m_2026_03_30 {
+    mod settings;
+
+    pub(crate) use settings::make_play_sound_when_agent_done_an_enum;
+}
+
+pub(crate) mod m_2026_04_01 {
+    mod settings;
+
+    pub(crate) use settings::restructure_profiles_with_settings_key;
+}
+
+pub(crate) mod m_2026_04_10 {
+    mod settings;
+
+    pub(crate) use settings::rename_web_search_to_search_web;
 }

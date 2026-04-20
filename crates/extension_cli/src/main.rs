@@ -1,4 +1,5 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -12,8 +13,10 @@ use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
+use settings_content::SemanticTokenRules;
 use snippet_provider::file_to_snippets;
 use snippet_provider::format::VsSnippetsFile;
+use task::TaskTemplates;
 use tokio::process::Command;
 use tree_sitter::{Language, Query, WasmStore};
 
@@ -36,7 +39,7 @@ async fn main() -> Result<()> {
     env_logger::init();
 
     let args = Args::parse();
-    let fs = Arc::new(RealFs::new(None, gpui::background_executor()));
+    let fs = Arc::new(RealFs::new(None, gpui_platform::background_executor()));
     let engine = wasmtime::Engine::default();
     let mut wasm_store = WasmStore::new(&engine)?;
 
@@ -78,11 +81,8 @@ async fn main() -> Result<()> {
         .await
         .context("failed to compile extension")?;
 
-    let extension_provides = extension_provides(&manifest);
-
-    if extension_provides.is_empty() {
-        bail!("extension does not provide any features");
-    }
+    let extension_provides = manifest.provides();
+    validate_extension_features(&extension_provides)?;
 
     let grammars = test_grammars(&manifest, &extension_path, &mut wasm_store)?;
     test_languages(&manifest, &extension_path, &grammars)?;
@@ -124,48 +124,6 @@ async fn main() -> Result<()> {
     fs::write(output_dir.join("manifest.json"), manifest_json.as_bytes())?;
 
     Ok(())
-}
-
-/// Returns the set of features provided by the extension.
-fn extension_provides(manifest: &ExtensionManifest) -> BTreeSet<ExtensionProvides> {
-    let mut provides = BTreeSet::default();
-    if !manifest.themes.is_empty() {
-        provides.insert(ExtensionProvides::Themes);
-    }
-
-    if !manifest.icon_themes.is_empty() {
-        provides.insert(ExtensionProvides::IconThemes);
-    }
-
-    if !manifest.languages.is_empty() {
-        provides.insert(ExtensionProvides::Languages);
-    }
-
-    if !manifest.grammars.is_empty() {
-        provides.insert(ExtensionProvides::Grammars);
-    }
-
-    if !manifest.language_servers.is_empty() {
-        provides.insert(ExtensionProvides::LanguageServers);
-    }
-
-    if !manifest.context_servers.is_empty() {
-        provides.insert(ExtensionProvides::ContextServers);
-    }
-
-    if !manifest.agent_servers.is_empty() {
-        provides.insert(ExtensionProvides::AgentServers);
-    }
-
-    if manifest.snippets.is_some() {
-        provides.insert(ExtensionProvides::Snippets);
-    }
-
-    if !manifest.debug_adapters.is_empty() {
-        provides.insert(ExtensionProvides::DebugAdapters);
-    }
-
-    provides
 }
 
 async fn copy_extension_resources(
@@ -244,7 +202,7 @@ async fn copy_extension_resources(
             },
         )
         .await
-        .with_context(|| "failed to copy icons")?;
+        .context("failed to copy icons")?;
     }
 
     for (_, agent_entry) in &manifest.agent_servers {
@@ -338,6 +296,22 @@ async fn copy_extension_resources(
     Ok(())
 }
 
+fn validate_extension_features(provides: &BTreeSet<ExtensionProvides>) -> Result<()> {
+    if provides.is_empty() {
+        bail!("extension does not provide any features");
+    }
+
+    if provides.contains(&ExtensionProvides::Themes) && provides.len() != 1 {
+        bail!("extension must not provide other features along with themes");
+    }
+
+    if provides.contains(&ExtensionProvides::IconThemes) && provides.len() != 1 {
+        bail!("extension must not provide other features along with icon themes");
+    }
+
+    Ok(())
+}
+
 fn test_grammars(
     manifest: &ExtensionManifest,
     extension_path: &Path,
@@ -366,9 +340,8 @@ fn test_languages(
 ) -> Result<()> {
     for relative_language_dir in &manifest.languages {
         let language_dir = extension_path.join(relative_language_dir);
-        let config_path = language_dir.join("config.toml");
-        let config_content = fs::read_to_string(&config_path)?;
-        let config: LanguageConfig = toml::from_str(&config_content)?;
+        let config_path = language_dir.join(LanguageConfig::FILE_NAME);
+        let config = LanguageConfig::load(&config_path)?;
         let grammar = if let Some(name) = &config.grammar {
             Some(
                 grammars
@@ -382,18 +355,48 @@ fn test_languages(
         let query_entries = fs::read_dir(&language_dir)?;
         for entry in query_entries {
             let entry = entry?;
-            let query_path = entry.path();
-            if query_path.extension() == Some("scm".as_ref()) {
-                let grammar = grammar.with_context(|| {
-                    format! {
-                        "language {} provides query {} but no grammar",
-                        config.name,
-                        query_path.display()
-                    }
-                })?;
+            let file_path = entry.path();
 
-                let query_source = fs::read_to_string(&query_path)?;
-                let _query = Query::new(grammar, &query_source)?;
+            let Some(file_name) = file_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+
+            match file_name {
+                LanguageConfig::FILE_NAME => {
+                    // Loaded above
+                }
+                SemanticTokenRules::FILE_NAME => {
+                    let _token_rules = SemanticTokenRules::load(&file_path)?;
+                }
+                TaskTemplates::FILE_NAME => {
+                    let task_file_content = std::fs::read(&file_path).with_context(|| {
+                        anyhow!(
+                            "Failed to read tasks file at {path}",
+                            path = file_path.display()
+                        )
+                    })?;
+                    let _task_templates =
+                        serde_json_lenient::from_slice::<TaskTemplates>(&task_file_content)
+                            .with_context(|| {
+                                anyhow!(
+                                    "Failed to parse tasks file at {path}",
+                                    path = file_path.display()
+                                )
+                            })?;
+                }
+                _ if file_name.ends_with(".scm") => {
+                    let grammar = grammar.with_context(|| {
+                        format! {
+                            "language {} provides query {} but no grammar",
+                            config.name,
+                            file_path.display()
+                        }
+                    })?;
+
+                    let query_source = fs::read_to_string(&file_path)?;
+                    let _query = Query::new(grammar, &query_source)?;
+                }
+                _ => {}
             }
         }
 
@@ -410,7 +413,8 @@ async fn test_themes(
 ) -> Result<()> {
     for relative_theme_path in &manifest.themes {
         let theme_path = extension_path.join(relative_theme_path);
-        let theme_family = theme::read_user_theme(&theme_path, fs.clone()).await?;
+        let theme_family =
+            theme_settings::deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
         log::info!("loaded theme family {}", theme_family.name);
 
         for theme in &theme_family.themes {

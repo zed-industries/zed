@@ -1,10 +1,20 @@
 use gh_workflow::*;
+use serde_json::Value;
 
-use crate::tasks::workflows::{runners::Platform, vars, vars::StepOutput};
+use crate::tasks::workflows::{
+    runners::Platform,
+    steps::named::function_name,
+    vars::{self, StepOutput},
+};
+
+pub(crate) fn use_clang(job: Job) -> Job {
+    job.add_env(Env::new("CC", "clang"))
+        .add_env(Env::new("CXX", "clang++"))
+}
 
 const SCCACHE_R2_BUCKET: &str = "sccache-zed";
 
-const BASH_SHELL: &str = "bash -euxo pipefail {0}";
+pub(crate) const BASH_SHELL: &str = "bash -euxo pipefail {0}";
 // https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsshell
 pub const PWSH_SHELL: &str = "pwsh";
 
@@ -13,18 +23,11 @@ pub(crate) struct Nextest(Step<Run>);
 pub(crate) fn cargo_nextest(platform: Platform) -> Nextest {
     Nextest(named::run(
         platform,
-        "cargo nextest run --workspace --no-fail-fast",
+        "cargo nextest run --workspace --no-fail-fast --no-tests=warn",
     ))
 }
 
 impl Nextest {
-    pub(crate) fn with_target(mut self, target: &str) -> Step<Run> {
-        if let Some(nextest_command) = self.0.value.run.as_mut() {
-            nextest_command.push_str(&format!(r#" --target "{target}""#));
-        }
-        self.into()
-    }
-
     #[allow(dead_code)]
     pub(crate) fn with_filter_expr(mut self, filter_expr: &str) -> Self {
         if let Some(nextest_command) = self.0.value.run.as_mut() {
@@ -49,25 +52,93 @@ impl From<Nextest> for Step<Run> {
     }
 }
 
-pub fn checkout_repo() -> Step<Use> {
-    named::uses(
-        "actions",
-        "checkout",
-        "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
-    )
-    // prevent checkout action from running `git clean -ffdx` which
-    // would delete the target directory
-    .add_with(("clean", false))
+#[derive(Default)]
+enum FetchDepth {
+    #[default]
+    Shallow,
+    Full,
+    Custom(serde_json::Value),
 }
 
-pub fn checkout_repo_with_token(token: &StepOutput) -> Step<Use> {
-    named::uses(
-        "actions",
-        "checkout",
-        "11bd71901bbe5b1630ceea73d27597364c9af683", // v4
-    )
-    .add_with(("clean", false))
-    .add_with(("token", token.to_string()))
+#[derive(Default)]
+pub(crate) struct CheckoutStep {
+    fetch_depth: FetchDepth,
+    name: Option<String>,
+    token: Option<String>,
+    path: Option<String>,
+    repository: Option<String>,
+    ref_: Option<String>,
+}
+
+impl CheckoutStep {
+    pub fn with_full_history(mut self) -> Self {
+        self.fetch_depth = FetchDepth::Full;
+        self
+    }
+
+    pub fn with_custom_name(mut self, name: &str) -> Self {
+        self.name = Some(name.to_string());
+        self
+    }
+
+    pub fn with_custom_fetch_depth(mut self, fetch_depth: impl Into<Value>) -> Self {
+        self.fetch_depth = FetchDepth::Custom(fetch_depth.into());
+        self
+    }
+
+    /// Sets `fetch-depth` to `2` on the main branch and `350` on all other branches.
+    pub fn with_deep_history_on_non_main(self) -> Self {
+        self.with_custom_fetch_depth("${{ github.ref == 'refs/heads/main' && 2 || 350 }}")
+    }
+
+    pub fn with_token(mut self, token: &StepOutput) -> Self {
+        self.token = Some(token.to_string());
+        self
+    }
+
+    pub fn with_path(mut self, path: &str) -> Self {
+        self.path = Some(path.to_string());
+        self
+    }
+
+    pub fn with_repository(mut self, repository: &str) -> Self {
+        self.repository = Some(repository.to_string());
+        self
+    }
+
+    pub fn with_ref(mut self, ref_: impl ToString) -> Self {
+        self.ref_ = Some(ref_.to_string());
+        self
+    }
+}
+
+impl From<CheckoutStep> for Step<Use> {
+    fn from(value: CheckoutStep) -> Self {
+        Step::new(value.name.unwrap_or("steps::checkout_repo".to_string()))
+            .uses(
+                "actions",
+                "checkout",
+                "93cb6efe18208431cddfb8368fd83d5badbf9bfd", // v5.0.1
+            )
+            // prevent checkout action from running `git clean -ffdx` which
+            // would delete the target directory
+            .add_with(("clean", false))
+            .map(|step| match value.fetch_depth {
+                FetchDepth::Shallow => step,
+                FetchDepth::Full => step.add_with(("fetch-depth", 0)),
+                FetchDepth::Custom(depth) => step.add_with(("fetch-depth", depth)),
+            })
+            .when_some(value.path, |step, path| step.add_with(("path", path)))
+            .when_some(value.repository, |step, repository| {
+                step.add_with(("repository", repository))
+            })
+            .when_some(value.ref_, |step, ref_| step.add_with(("ref", ref_)))
+            .when_some(value.token, |step, token| step.add_with(("token", token)))
+    }
+}
+
+pub fn checkout_repo() -> CheckoutStep {
+    CheckoutStep::default()
 }
 
 pub fn setup_pnpm() -> Step<Use> {
@@ -106,7 +177,11 @@ pub fn cargo_fmt() -> Step<Run> {
 }
 
 pub fn cargo_install_nextest() -> Step<Use> {
-    named::uses("taiki-e", "install-action", "nextest")
+    named::uses(
+        "taiki-e",
+        "install-action",
+        "921e2c9f7148d7ba14cd819f417db338f63e733c", // nextest
+    )
 }
 
 pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
@@ -138,23 +213,34 @@ pub fn cleanup_cargo_config(platform: Platform) -> Step<Run> {
 
 pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     match platform {
-        Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 250"),
-        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 250"),
-        Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 300"),
+        Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 350 200"),
+        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 350 200"),
+        Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 350 200"),
     }
 }
 
-pub fn clippy(platform: Platform) -> Step<Run> {
+pub fn clippy(platform: Platform, target: Option<&str>) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh("./script/clippy.ps1"),
-        _ => named::bash("./script/clippy"),
+        _ => match target {
+            Some(target) => named::bash(format!("./script/clippy --target {target}")),
+            None => named::bash("./script/clippy"),
+        },
     }
+}
+
+pub fn install_rustup_target(target: &str) -> Step<Run> {
+    named::bash(format!("rustup target add {target}"))
 }
 
 pub fn cache_rust_dependencies_namespace() -> Step<Use> {
-    named::uses("namespacelabs", "nscloud-cache-action", "v1")
-        .add_with(("cache", "rust"))
-        .add_with(("path", "~/.rustup"))
+    named::uses(
+        "namespacelabs",
+        "nscloud-cache-action",
+        "a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9", // v1
+    )
+    .add_with(("cache", "rust"))
+    .add_with(("path", "~/.rustup"))
 }
 
 pub fn setup_sccache(platform: Platform) -> Step<Run> {
@@ -181,22 +267,28 @@ pub fn show_sccache_stats(platform: Platform) -> Step<Run> {
 }
 
 pub fn cache_nix_dependencies_namespace() -> Step<Use> {
-    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("cache", "nix"))
+    named::uses(
+        "namespacelabs",
+        "nscloud-cache-action",
+        "a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9", // v1
+    )
+    .add_with(("cache", "nix"))
 }
 
 pub fn cache_nix_store_macos() -> Step<Use> {
     // On macOS, `/nix` is on a read-only root filesystem so nscloud's `cache: nix`
     // cannot mount or symlink there. Instead we cache a user-writable directory and
     // use nix-store --import/--export in separate steps to transfer store paths.
-    named::uses("namespacelabs", "nscloud-cache-action", "v1").add_with(("path", "~/nix-cache"))
+    named::uses(
+        "namespacelabs",
+        "nscloud-cache-action",
+        "a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9", // v1
+    )
+    .add_with(("path", "~/nix-cache"))
 }
 
 pub fn setup_linux() -> Step<Run> {
     named::bash("./script/linux")
-}
-
-fn install_mold() -> Step<Run> {
-    named::bash("./script/install-mold")
 }
 
 fn download_wasi_sdk() -> Step<Run> {
@@ -204,9 +296,7 @@ fn download_wasi_sdk() -> Step<Run> {
 }
 
 pub(crate) fn install_linux_dependencies(job: Job) -> Job {
-    job.add_step(setup_linux())
-        .add_step(install_mold())
-        .add_step(download_wasi_sdk())
+    job.add_step(setup_linux()).add_step(download_wasi_sdk())
 }
 
 pub fn script(name: &str) -> Step<Run> {
@@ -270,6 +360,7 @@ pub(crate) fn dependant_job(deps: &[&NamedJob]) -> Job {
 impl FluentBuilder for Job {}
 impl FluentBuilder for Workflow {}
 impl FluentBuilder for Input {}
+impl<T> FluentBuilder for Step<T> {}
 
 /// A helper trait for building complex objects with imperative conditionals in a fluent style.
 /// Copied from GPUI to avoid adding GPUI as dependency
@@ -418,20 +509,142 @@ pub mod named {
 }
 
 pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
-    named::bash(&format!(
-        "git fetch origin {ref_name} && git checkout {ref_name}"
-    ))
+    named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
+        .add_env(("REF_NAME", ref_name.to_string()))
 }
 
-pub fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
-    let step = named::uses(
-        "actions",
-        "create-github-app-token",
-        "bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1",
-    )
-    .add_with(("app-id", vars::ZED_ZIPPY_APP_ID))
-    .add_with(("private-key", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
-    .id("get-app-token");
-    let output = StepOutput::new(&step, "token");
-    (step, output)
+/// Non-exhaustive list of the permissions to be set for a GitHub app token.
+///
+/// See https://github.com/actions/create-github-app-token?tab=readme-ov-file#permission-permission-name
+/// and beyond for a full list of available permissions.
+#[allow(unused)]
+pub(crate) enum TokenPermissions {
+    Contents,
+    Issues,
+    PullRequests,
+    Workflows,
+}
+
+impl TokenPermissions {
+    pub fn environment_name(&self) -> &'static str {
+        match self {
+            TokenPermissions::Contents => "permission-contents",
+            TokenPermissions::Issues => "permission-issues",
+            TokenPermissions::PullRequests => "permission-pull-requests",
+            TokenPermissions::Workflows => "permission-workflows",
+        }
+    }
+}
+
+pub(crate) struct GenerateAppToken<'a> {
+    job_name: String,
+    app_id: &'a str,
+    app_secret: &'a str,
+    repository_target: Option<RepositoryTarget>,
+    permissions: Option<Vec<(TokenPermissions, Level)>>,
+}
+
+impl<'a> GenerateAppToken<'a> {
+    pub fn for_repository(self, repository_target: RepositoryTarget) -> Self {
+        Self {
+            repository_target: Some(repository_target),
+            ..self
+        }
+    }
+
+    pub fn with_permissions(self, permissions: impl Into<Vec<(TokenPermissions, Level)>>) -> Self {
+        Self {
+            permissions: Some(permissions.into()),
+            ..self
+        }
+    }
+}
+
+impl<'a> From<GenerateAppToken<'a>> for (Step<Use>, StepOutput) {
+    fn from(token: GenerateAppToken<'a>) -> Self {
+        let step = Step::new(token.job_name)
+            .uses(
+                "actions",
+                "create-github-app-token",
+                "f8d387b68d61c58ab83c6c016672934102569859",
+            )
+            .id("generate-token")
+            .add_with(
+                Input::default()
+                    .add("app-id", token.app_id)
+                    .add("private-key", token.app_secret)
+                    .when_some(
+                        token.repository_target,
+                        |input,
+                         RepositoryTarget {
+                             owner,
+                             repositories,
+                         }| {
+                            input
+                                .when_some(owner, |input, owner| input.add("owner", owner))
+                                .when_some(repositories, |input, repositories| {
+                                    input.add("repositories", repositories)
+                                })
+                        },
+                    )
+                    .when_some(token.permissions, |input, permissions| {
+                        permissions
+                            .into_iter()
+                            .fold(input, |input, (permission, level)| {
+                                input.add(
+                                    permission.environment_name(),
+                                    serde_json::to_value(&level).unwrap_or_default(),
+                                )
+                            })
+                    }),
+            );
+
+        let generated_token = StepOutput::new(&step, "token");
+        (step, generated_token)
+    }
+}
+
+pub(crate) struct RepositoryTarget {
+    owner: Option<String>,
+    repositories: Option<String>,
+}
+
+impl RepositoryTarget {
+    pub fn new<T: ToString>(owner: T, repositories: &[&str]) -> Self {
+        Self {
+            owner: Some(owner.to_string()),
+            repositories: Some(repositories.join("\n")),
+        }
+    }
+
+    pub fn current() -> Self {
+        Self {
+            owner: None,
+            repositories: None,
+        }
+    }
+}
+
+pub(crate) fn generate_token<'a>(
+    app_id_source: &'a str,
+    app_secret_source: &'a str,
+) -> GenerateAppToken<'a> {
+    generate_token_with_job_name(app_id_source, app_secret_source)
+}
+
+pub fn authenticate_as_zippy() -> GenerateAppToken<'static> {
+    generate_token_with_job_name(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
+}
+
+fn generate_token_with_job_name<'a>(
+    app_id_source: &'a str,
+    app_secret_source: &'a str,
+) -> GenerateAppToken<'a> {
+    GenerateAppToken {
+        job_name: function_name(1),
+        app_id: app_id_source,
+        app_secret: app_secret_source,
+        repository_target: None,
+        permissions: None,
+    }
 }

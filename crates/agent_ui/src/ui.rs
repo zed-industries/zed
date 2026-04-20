@@ -1,17 +1,26 @@
-mod acp_onboarding_modal;
 mod agent_notification;
-mod claude_code_onboarding_modal;
 mod end_trial_upsell;
 mod hold_for_default;
 mod mention_crease;
 mod model_selector_components;
-mod onboarding_modal;
+mod undo_reject_toast;
 
-pub use acp_onboarding_modal::*;
 pub use agent_notification::*;
-pub use claude_code_onboarding_modal::*;
 pub use end_trial_upsell::*;
 pub use hold_for_default::*;
 pub use mention_crease::*;
 pub use model_selector_components::*;
-pub use onboarding_modal::*;
+pub use undo_reject_toast::*;
+
+/// Returns the appropriate [`DocumentationSide`] for documentation asides
+/// in the agent panel, based on the current dock position.
+pub fn documentation_aside_side(cx: &gpui::App) -> ui::DocumentationSide {
+    use agent_settings::AgentSettings;
+    use settings::Settings;
+    use ui::DocumentationSide;
+
+    match AgentSettings::get_global(cx).dock {
+        settings::DockPosition::Left => DocumentationSide::Right,
+        settings::DockPosition::Bottom | settings::DockPosition::Right => DocumentationSide::Left,
+    }
+}

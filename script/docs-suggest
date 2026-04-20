@@ -1,0 +1,620 @@
+#!/usr/bin/env bash
+#
+# Analyze code changes and suggest documentation updates.
+#
+# Usage:
+#   script/docs-suggest --pr 49177           # Analyze a PR (immediate mode)
+#   script/docs-suggest --commit abc123      # Analyze a commit
+#   script/docs-suggest --diff file.patch    # Analyze a diff file
+#   script/docs-suggest --staged             # Analyze staged changes
+#
+# Modes:
+#   --batch       Append suggestions to batch file for later PR (default for main)
+#   --immediate   Output suggestions directly (default for cherry-picks)
+#
+# Options:
+#   --dry-run     Show assembled context without calling LLM
+#   --output FILE Write suggestions to file instead of stdout (immediate mode)
+#   --verbose     Show detailed progress
+#   --model NAME  Override default model
+#   --preview     Add preview callout to suggested docs (auto-detected)
+#
+# Batch mode:
+#   Suggestions are appended to docs/.suggestions/pending.md
+#   Use script/docs-suggest-publish to create a PR from batched suggestions
+#
+# Examples:
+#   # Analyze a PR to main (batches by default)
+#   script/docs-suggest --pr 49100
+#
+#   # Analyze a cherry-pick PR (immediate by default)
+#   script/docs-suggest --pr 49152
+#
+#   # Force immediate output for testing
+#   script/docs-suggest --pr 49100 --immediate
+#
+#   # Dry run to see context
+#   script/docs-suggest --pr 49100 --dry-run
+
+set -euo pipefail
+
+# Defaults
+MODE=""
+TARGET=""
+DRY_RUN=false
+VERBOSE=false
+OUTPUT=""
+MODEL="${DROID_MODEL:-claude-sonnet-4-5-20250929}"
+OUTPUT_MODE=""  # batch or immediate, auto-detected if not set
+ADD_PREVIEW_CALLOUT=""  # auto-detected if not set
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+log() {
+    if [[ "$VERBOSE" == "true" ]]; then
+        echo -e "${BLUE}[docs-suggest]${NC} $*" >&2
+    fi
+}
+
+error() {
+    echo -e "${RED}Error:${NC} $*" >&2
+    exit 1
+}
+
+warn() {
+    echo -e "${YELLOW}Warning:${NC} $*" >&2
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --pr)
+            MODE="pr"
+            TARGET="$2"
+            shift 2
+            ;;
+        --commit)
+            MODE="commit"
+            TARGET="$2"
+            shift 2
+            ;;
+        --diff)
+            MODE="diff"
+            TARGET="$2"
+            shift 2
+            ;;
+        --staged)
+            MODE="staged"
+            shift
+            ;;
+        --batch)
+            OUTPUT_MODE="batch"
+            shift
+            ;;
+        --immediate)
+            OUTPUT_MODE="immediate"
+            shift
+            ;;
+        --preview)
+            ADD_PREVIEW_CALLOUT="true"
+            shift
+            ;;
+        --no-preview)
+            ADD_PREVIEW_CALLOUT="false"
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --verbose)
+            VERBOSE=true
+            shift
+            ;;
+        --output)
+            OUTPUT="$2"
+            shift 2
+            ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
+        -h|--help)
+            head -42 "$0" | tail -40
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            ;;
+    esac
+done
+
+# Validate mode
+if [[ -z "$MODE" ]]; then
+    error "Must specify one of: --pr, --commit, --diff, or --staged"
+fi
+
+# Get repo root
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
+
+# Batch file location
+BATCH_DIR="$REPO_ROOT/docs/.suggestions"
+BATCH_FILE="$BATCH_DIR/pending.md"
+
+# Temp directory for context assembly
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+log "Mode: $MODE, Target: ${TARGET:-staged changes}"
+log "Temp dir: $TMPDIR"
+
+# ============================================================================
+# Step 1: Get the diff and detect context
+# ============================================================================
+
+get_diff() {
+    case $MODE in
+        pr)
+            if ! command -v gh &> /dev/null; then
+                error "gh CLI required for --pr mode. Install: https://cli.github.com"
+            fi
+            log "Fetching PR #$TARGET info..."
+            
+            # Get PR metadata for auto-detection
+            PR_JSON=$(gh pr view "$TARGET" --json baseRefName,title,number)
+            PR_BASE=$(echo "$PR_JSON" | grep -o '"baseRefName":"[^"]*"' | cut -d'"' -f4)
+            PR_TITLE=$(echo "$PR_JSON" | grep -o '"title":"[^"]*"' | cut -d'"' -f4)
+            PR_NUMBER=$(echo "$PR_JSON" | grep -o '"number":[0-9]*' | cut -d':' -f2)
+            
+            log "PR #$PR_NUMBER: $PR_TITLE (base: $PR_BASE)"
+            
+            # Auto-detect output mode based on target branch
+            if [[ -z "$OUTPUT_MODE" ]]; then
+                if [[ "$PR_BASE" == "main" ]]; then
+                    OUTPUT_MODE="batch"
+                    log "Auto-detected: batch mode (PR targets main)"
+                else
+                    OUTPUT_MODE="immediate"
+                    log "Auto-detected: immediate mode (PR targets $PR_BASE)"
+                fi
+            fi
+            
+            # Auto-detect preview callout
+            if [[ -z "$ADD_PREVIEW_CALLOUT" ]]; then
+                if [[ "$PR_BASE" == "main" ]]; then
+                    ADD_PREVIEW_CALLOUT="true"
+                    log "Auto-detected: will add preview callout (new feature going to main)"
+                else
+                    # Cherry-pick to release branch - check if it's preview or stable
+                    ADD_PREVIEW_CALLOUT="false"
+                    log "Auto-detected: no preview callout (cherry-pick)"
+                fi
+            fi
+            
+            # Store metadata for batch mode
+            echo "$PR_NUMBER" > "$TMPDIR/pr_number"
+            echo "$PR_TITLE" > "$TMPDIR/pr_title"
+            echo "$PR_BASE" > "$TMPDIR/pr_base"
+            
+            log "Fetching PR #$TARGET diff..."
+            gh pr diff "$TARGET" > "$TMPDIR/changes.diff"
+            gh pr diff "$TARGET" --name-only > "$TMPDIR/changed_files.txt"
+            ;;
+        commit)
+            log "Getting commit $TARGET diff..."
+            git show "$TARGET" --format="" > "$TMPDIR/changes.diff"
+            git show "$TARGET" --format="" --name-only > "$TMPDIR/changed_files.txt"
+            
+            # Default to immediate for commits
+            OUTPUT_MODE="${OUTPUT_MODE:-immediate}"
+            ADD_PREVIEW_CALLOUT="${ADD_PREVIEW_CALLOUT:-false}"
+            ;;
+        diff)
+            if [[ ! -f "$TARGET" ]]; then
+                error "Diff file not found: $TARGET"
+            fi
+            log "Using provided diff file..."
+            cp "$TARGET" "$TMPDIR/changes.diff"
+            grep -E '^\+\+\+ b/' "$TARGET" | sed 's|^+++ b/||' > "$TMPDIR/changed_files.txt" || true
+            
+            OUTPUT_MODE="${OUTPUT_MODE:-immediate}"
+            ADD_PREVIEW_CALLOUT="${ADD_PREVIEW_CALLOUT:-false}"
+            ;;
+        staged)
+            log "Getting staged changes..."
+            git diff --cached > "$TMPDIR/changes.diff"
+            git diff --cached --name-only > "$TMPDIR/changed_files.txt"
+            
+            OUTPUT_MODE="${OUTPUT_MODE:-immediate}"
+            ADD_PREVIEW_CALLOUT="${ADD_PREVIEW_CALLOUT:-false}"
+            ;;
+    esac
+
+    if [[ ! -s "$TMPDIR/changes.diff" ]]; then
+        error "No changes found"
+    fi
+
+    log "Found $(wc -l < "$TMPDIR/changed_files.txt" | tr -d ' ') changed files"
+    log "Output mode: $OUTPUT_MODE, Preview callout: $ADD_PREVIEW_CALLOUT"
+}
+
+# ============================================================================
+# Step 2: Filter to relevant changes
+# ============================================================================
+
+filter_changes() {
+    log "Filtering to documentation-relevant changes..."
+    
+    # Keep only source code changes (not tests, not CI, not docs themselves)
+    grep -E '^crates/.*\.rs$' "$TMPDIR/changed_files.txt" | \
+        grep -v '_test\.rs$' | \
+        grep -v '/tests/' | \
+        grep -v '/test_' > "$TMPDIR/source_files.txt" || true
+    
+    # Also track if settings/keybindings changed
+    grep -E '(settings|keymap|actions)' "$TMPDIR/changed_files.txt" > "$TMPDIR/config_files.txt" || true
+    
+    local source_count=$(wc -l < "$TMPDIR/source_files.txt" | tr -d ' ')
+    local config_count=$(wc -l < "$TMPDIR/config_files.txt" | tr -d ' ')
+    
+    log "Relevant files: $source_count source, $config_count config"
+    
+    if [[ "$source_count" -eq 0 && "$config_count" -eq 0 ]]; then
+        echo "No documentation-relevant changes detected (only tests, CI, or docs modified)."
+        exit 0
+    fi
+}
+
+# ============================================================================
+# Step 3: Assemble context
+# ============================================================================
+
+assemble_context() {
+    log "Assembling context..."
+    
+    # Start the prompt
+    cat > "$TMPDIR/prompt.md" << 'PROMPT_HEADER'
+# Documentation Suggestion Request
+
+You are analyzing code changes to determine if documentation updates are needed.
+
+Before analysis, read and follow these rule files:
+- `.rules`
+- `docs/.rules`
+
+## Your Task
+
+1. Analyze the diff below for user-facing changes
+2. Determine if any documentation updates are warranted
+3. If yes, provide specific, actionable suggestions
+4. If no, explain why no updates are needed
+
+## Guidelines
+
+PROMPT_HEADER
+
+    # Add conventions
+    log "Adding documentation conventions..."
+    cat >> "$TMPDIR/prompt.md" << 'CONVENTIONS'
+### Documentation Conventions
+
+- **Voice**: Second person ("you"), present tense, direct and concise
+- **No hedging**: Avoid "simply", "just", "easily"
+- **Settings pattern**: Show Settings Editor UI first, then JSON as alternative
+- **Keybindings**: Use `{#kb action::Name}` syntax, not hardcoded keys
+- **Terminology**: "folder" not "directory", "project" not "workspace", "Settings Editor" not "settings UI"
+- **SEO keyword targeting**: For each docs page you suggest updating, choose one
+  primary keyword/intent phrase using the page's user intent
+- **SEO metadata**: Every updated/new docs page should include frontmatter with
+  `title` and `description` (single-line `key: value` entries)
+- **Metadata quality**: Titles should clearly state page intent (~50-60 chars),
+  descriptions should summarize the reader outcome (~140-160 chars)
+- **Keyword usage**: Use the primary keyword naturally in frontmatter and in page
+  body at least once; never keyword-stuff
+- **SEO structure**: Keep exactly one H1 and preserve logical H1→H2→H3
+  hierarchy
+- **Internal links minimum**: Non-reference pages should include at least 3
+  useful internal docs links; reference pages can include fewer when extra links
+  would be noise
+- **Marketing links**: For main feature pages, include a relevant `zed.dev`
+  marketing link alongside docs links
+
+### Brand Voice Rubric (Required)
+
+For suggested doc text, apply the brand rubric scoring exactly and only pass text
+that scores 4+ on every criterion:
+
+| Criterion            |
+| -------------------- |
+| Technical Grounding  |
+| Natural Syntax       |
+| Quiet Confidence     |
+| Developer Respect    |
+| Information Priority |
+| Specificity          |
+| Voice Consistency    |
+| Earned Claims        |
+
+Pass threshold: all criteria 4+ (minimum 32/40 total).
+
+Also reject suggestions containing obvious taboo phrasing (hype, emotional
+manipulation, or marketing-style superlatives).
+
+For every docs file you suggest changing, treat the entire file as in scope for
+brand review (not only the edited section). Include any additional full-file
+voice fixes needed to reach passing rubric scores.
+
+### What Requires Documentation
+
+- New user-facing features or commands
+- Changed keybindings or default behaviors
+- New or modified settings
+- Deprecated or removed functionality
+
+### What Does NOT Require Documentation
+
+- Internal refactoring without behavioral changes
+- Performance optimizations (unless user-visible)
+- Bug fixes that restore documented behavior
+- Test changes, CI changes
+CONVENTIONS
+
+    # Add preview callout instructions if needed
+    if [[ "$ADD_PREVIEW_CALLOUT" == "true" ]]; then
+        # Get current preview version for modification callouts
+        local preview_version
+        preview_version=$(gh release list --limit 5 2>/dev/null | grep -E '\-pre\s' | head -1 | grep -oE 'v[0-9]+\.[0-9]+' | head -1 || echo "v0.XXX")
+        preview_version="${preview_version#v}"  # Remove leading 'v'
+        
+        cat >> "$TMPDIR/prompt.md" << PREVIEW_INSTRUCTIONS
+
+### Preview Release Callouts
+
+This change is going into Zed Preview first. Use the appropriate callout based on the type of change:
+
+#### For NEW/ADDITIVE features (new commands, new settings, new UI elements):
+
+\`\`\`markdown
+> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
+\`\`\`
+
+#### For BEHAVIOR MODIFICATIONS (changed defaults, altered behavior of existing features):
+
+\`\`\`markdown
+> **Changed in Preview (v${preview_version}).** See [release notes](/releases#${preview_version}).
+\`\`\`
+
+**Guidelines:**
+- Use the "Preview" callout for entirely new features or sections
+- Use the "Changed in Preview" callout when modifying documentation of existing behavior
+- Place callouts immediately after the section heading, before any content
+- Both callout types will be stripped when the feature ships to Stable
+PREVIEW_INSTRUCTIONS
+    fi
+
+    echo "" >> "$TMPDIR/prompt.md"
+    echo "## Changed Files" >> "$TMPDIR/prompt.md"
+    echo "" >> "$TMPDIR/prompt.md"
+    echo '```' >> "$TMPDIR/prompt.md"
+    cat "$TMPDIR/changed_files.txt" >> "$TMPDIR/prompt.md"
+    echo '```' >> "$TMPDIR/prompt.md"
+    echo "" >> "$TMPDIR/prompt.md"
+    
+    # Add the diff (truncated if huge)
+    echo "## Code Diff" >> "$TMPDIR/prompt.md"
+    echo "" >> "$TMPDIR/prompt.md"
+    
+    local diff_lines=$(wc -l < "$TMPDIR/changes.diff" | tr -d ' ')
+    if [[ "$diff_lines" -gt 2000 ]]; then
+        warn "Diff is large ($diff_lines lines), truncating to 2000 lines"
+        echo '```diff' >> "$TMPDIR/prompt.md"
+        head -2000 "$TMPDIR/changes.diff" >> "$TMPDIR/prompt.md"
+        echo "" >> "$TMPDIR/prompt.md"
+        echo "[... truncated, $((diff_lines - 2000)) more lines ...]" >> "$TMPDIR/prompt.md"
+        echo '```' >> "$TMPDIR/prompt.md"
+    else
+        echo '```diff' >> "$TMPDIR/prompt.md"
+        cat "$TMPDIR/changes.diff" >> "$TMPDIR/prompt.md"
+        echo '```' >> "$TMPDIR/prompt.md"
+    fi
+    
+    # Add output format instructions
+    cat >> "$TMPDIR/prompt.md" << 'OUTPUT_FORMAT'
+
+## Output Format
+
+Respond with ONE of these formats:
+
+### If documentation updates ARE needed:
+
+```markdown
+## Documentation Suggestions
+
+### Summary
+[1-2 sentence summary of what changed and why docs need updating]
+
+### Suggested Changes
+
+#### 1. [docs/src/path/to/file.md]
+- **Section**: [existing section to update, or "New section"]
+- **Change**: [Add/Update/Remove]
+- **Target keyword**: [single keyword/intent phrase for this page]
+- **Frontmatter**:
+  ```yaml
+  ---
+  title: ...
+  description: ...
+  ---
+  ```
+- **Links**: [List at least 3 internal docs links for non-reference pages; if
+  this is a main feature page, include one relevant `zed.dev` marketing link]
+- **Suggestion**: [Specific text or description of what to add/change]
+- **Full-file brand pass**: [Required: yes. Note any additional voice edits
+  elsewhere in the same file needed to pass rubric across the entire file.]
+- **Brand voice scorecard**:
+
+  | Criterion            | Score | Notes |
+  | -------------------- | ----- | ----- |
+  | Technical Grounding  | /5    |       |
+  | Natural Syntax       | /5    |       |
+  | Quiet Confidence     | /5    |       |
+  | Developer Respect    | /5    |       |
+  | Information Priority | /5    |       |
+  | Specificity          | /5    |       |
+  | Voice Consistency    | /5    |       |
+  | Earned Claims        | /5    |       |
+  | **TOTAL**            | /40   |       |
+
+  Pass threshold: all criteria 4+.
+
+#### 2. [docs/src/another/file.md]
+...
+
+### Notes for Reviewer
+[Any context or uncertainty worth flagging]
+```
+
+### If NO documentation updates are needed:
+
+```markdown
+## No Documentation Updates Needed
+
+**Reason**: [Brief explanation - e.g., "Internal refactoring only", "Test changes", "Bug fix restoring existing behavior"]
+
+**Changes reviewed**:
+- [Brief summary of what the code changes do]
+- [Why they don't affect user-facing documentation]
+```
+
+Be conservative. Only suggest documentation changes when there's a clear user-facing impact.
+OUTPUT_FORMAT
+
+    log "Context assembled: $(wc -l < "$TMPDIR/prompt.md" | tr -d ' ') lines"
+}
+
+# ============================================================================
+# Step 4: Run the analysis
+# ============================================================================
+
+run_analysis() {
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "${GREEN}=== DRY RUN: Assembled Context ===${NC}"
+        echo ""
+        echo "Output mode: $OUTPUT_MODE"
+        echo "Preview callout: $ADD_PREVIEW_CALLOUT"
+        if [[ "$OUTPUT_MODE" == "batch" ]]; then
+            echo "Batch file: $BATCH_FILE"
+        fi
+        echo ""
+        cat "$TMPDIR/prompt.md"
+        echo ""
+        echo -e "${GREEN}=== End Context ===${NC}"
+        echo ""
+        echo "To run for real, remove --dry-run flag"
+        return
+    fi
+    
+    # Check for droid CLI
+    if ! command -v droid &> /dev/null; then
+        error "droid CLI required. Install from: https://app.factory.ai/cli"
+    fi
+    
+    log "Running analysis with model: $MODEL"
+    
+    # Run the LLM
+    local suggestions
+    suggestions=$(droid exec -m "$MODEL" -f "$TMPDIR/prompt.md")
+    
+    # Handle output based on mode
+    if [[ "$OUTPUT_MODE" == "batch" ]]; then
+        append_to_batch "$suggestions"
+    else
+        output_immediate "$suggestions"
+    fi
+}
+
+# ============================================================================
+# Output handlers
+# ============================================================================
+
+append_to_batch() {
+    local suggestions="$1"
+    
+    # Check if suggestions indicate no updates needed
+    if echo "$suggestions" | grep -q "No Documentation Updates Needed"; then
+        log "No documentation updates needed, skipping batch"
+        echo "$suggestions"
+        return
+    fi
+    
+    # Create batch directory if needed
+    mkdir -p "$BATCH_DIR"
+    
+    # Get PR info if available
+    local pr_number=""
+    local pr_title=""
+    if [[ -f "$TMPDIR/pr_number" ]]; then
+        pr_number=$(cat "$TMPDIR/pr_number")
+        pr_title=$(cat "$TMPDIR/pr_title")
+    fi
+    
+    # Initialize batch file if it doesn't exist
+    if [[ ! -f "$BATCH_FILE" ]]; then
+        cat > "$BATCH_FILE" << 'BATCH_HEADER'
+# Pending Documentation Suggestions
+
+This file contains batched documentation suggestions for the next Preview release.
+Run `script/docs-suggest-publish` to create a PR from these suggestions.
+
+---
+
+BATCH_HEADER
+    fi
+    
+    # Append suggestions with metadata
+    {
+        echo ""
+        echo "## PR #$pr_number: $pr_title"
+        echo ""
+        echo "_Added: $(date -u +%Y-%m-%dT%H:%M:%SZ)_"
+        echo ""
+        echo "$suggestions"
+        echo ""
+        echo "---"
+    } >> "$BATCH_FILE"
+    
+    echo -e "${GREEN}Suggestions batched to:${NC} $BATCH_FILE"
+    echo ""
+    echo "Batched suggestions for PR #$pr_number"
+    echo "Run 'script/docs-suggest-publish' when ready to create the docs PR."
+}
+
+output_immediate() {
+    local suggestions="$1"
+    
+    if [[ -n "$OUTPUT" ]]; then
+        echo "$suggestions" > "$OUTPUT"
+        echo "Suggestions written to: $OUTPUT"
+    else
+        echo "$suggestions"
+    fi
+}
+
+# ============================================================================
+# Main
+# ============================================================================
+
+main() {
+    get_diff
+    filter_changes
+    assemble_context
+    run_analysis
+}
+
+main

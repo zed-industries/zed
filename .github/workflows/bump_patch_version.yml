@@ -13,18 +13,18 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
-    - id: get-app-token
+    - id: generate-token
       name: steps::authenticate_as_zippy
-      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-    - name: steps::checkout_repo_with_token
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
-        token: ${{ steps.get-app-token.outputs.token }}
         ref: ${{ inputs.branch }}
+        token: ${{ steps.generate-token.outputs.token }}
     - name: bump_patch_version::run_bump_patch_version::bump_patch_version
       run: |
         channel="$(cat crates/zed/RELEASE_CHANNEL)"
@@ -51,7 +51,7 @@ jobs:
         GIT_COMMITTER_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
         GIT_AUTHOR_NAME: Zed Zippy
         GIT_AUTHOR_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
-        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
+        GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.branch }}
   cancel-in-progress: true

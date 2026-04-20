@@ -2,7 +2,9 @@
 //
 // These rules map LSP semantic token types to syntax theme styles.
 // To customize, add rules to "semantic_token_rules" in your settings.json.
-// User-defined rules are prepended to these defaults and take precedence.
+// User-defined rules are prepended and take highest precedence.
+// Extension language rules are applied next.
+// These built-in defaults are applied last.
 //
 // Each rule has the following properties:
 // - `token_type`: The LSP semantic token type to match. If omitted, matches all types.
@@ -119,6 +121,16 @@
   // References
   {
     "token_type": "parameter",
+    "token_modifiers": ["declaration"],
+    "style": ["variable.parameter"]
+  },
+  {
+    "token_type": "parameter",
+    "token_modifiers": ["definition"],
+    "style": ["variable.parameter"]
+  },
+  {
+    "token_type": "parameter",
     "token_modifiers": [],
     "style": ["variable"],
   },
@@ -198,6 +210,11 @@
     "token_type": "comment",
     "token_modifiers": [],
     "style": ["comment"],
+  },
+  {
+    "token_type": "string",
+    "token_modifiers": ["documentation"],
+    "style": ["string.doc"],
   },
   {
     "token_type": "string",

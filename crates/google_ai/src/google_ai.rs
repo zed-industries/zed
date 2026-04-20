@@ -3,8 +3,9 @@ use std::mem;
 use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+pub use language_model_core::ModelMode as GoogleModelMode;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-pub use settings::ModelMode as GoogleModelMode;
+pub mod completion;
 
 pub const API_URL: &str = "https://generativelanguage.googleapis.com";
 
@@ -510,14 +511,14 @@ pub enum Model {
         alias = "gemini-2.5-pro-preview-06-05"
     )]
     Gemini25Pro,
-    #[serde(rename = "gemini-3-pro-preview")]
-    Gemini3Pro,
     #[serde(rename = "gemini-3-flash-preview")]
     Gemini3Flash,
+    #[serde(rename = "gemini-3.1-pro-preview", alias = "gemini-3-pro-preview")]
+    Gemini31Pro,
     #[serde(rename = "custom")]
     Custom {
         name: String,
-        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        /// The name displayed in the UI, such as in the agent panel model dropdown menu.
         display_name: Option<String>,
         max_tokens: u64,
         #[serde(default)]
@@ -535,8 +536,8 @@ impl Model {
             Self::Gemini25FlashLite => "gemini-2.5-flash-lite",
             Self::Gemini25Flash => "gemini-2.5-flash",
             Self::Gemini25Pro => "gemini-2.5-pro",
-            Self::Gemini3Pro => "gemini-3-pro-preview",
             Self::Gemini3Flash => "gemini-3-flash-preview",
+            Self::Gemini31Pro => "gemini-3.1-pro-preview",
             Self::Custom { name, .. } => name,
         }
     }
@@ -545,8 +546,8 @@ impl Model {
             Self::Gemini25FlashLite => "gemini-2.5-flash-lite",
             Self::Gemini25Flash => "gemini-2.5-flash",
             Self::Gemini25Pro => "gemini-2.5-pro",
-            Self::Gemini3Pro => "gemini-3-pro-preview",
             Self::Gemini3Flash => "gemini-3-flash-preview",
+            Self::Gemini31Pro => "gemini-3.1-pro-preview",
             Self::Custom { name, .. } => name,
         }
     }
@@ -556,8 +557,8 @@ impl Model {
             Self::Gemini25FlashLite => "Gemini 2.5 Flash-Lite",
             Self::Gemini25Flash => "Gemini 2.5 Flash",
             Self::Gemini25Pro => "Gemini 2.5 Pro",
-            Self::Gemini3Pro => "Gemini 3 Pro",
             Self::Gemini3Flash => "Gemini 3 Flash",
+            Self::Gemini31Pro => "Gemini 3.1 Pro",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -569,8 +570,8 @@ impl Model {
             Self::Gemini25FlashLite
             | Self::Gemini25Flash
             | Self::Gemini25Pro
-            | Self::Gemini3Pro
-            | Self::Gemini3Flash => 1_048_576,
+            | Self::Gemini3Flash
+            | Self::Gemini31Pro => 1_048_576,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -580,8 +581,8 @@ impl Model {
             Model::Gemini25FlashLite
             | Model::Gemini25Flash
             | Model::Gemini25Pro
-            | Model::Gemini3Pro
-            | Model::Gemini3Flash => Some(65_536),
+            | Model::Gemini3Flash
+            | Model::Gemini31Pro => Some(65_536),
             Model::Custom { .. } => None,
         }
     }
@@ -596,10 +597,7 @@ impl Model {
 
     pub fn mode(&self) -> GoogleModelMode {
         match self {
-            Self::Gemini25FlashLite
-            | Self::Gemini25Flash
-            | Self::Gemini25Pro
-            | Self::Gemini3Pro => {
+            Self::Gemini25FlashLite | Self::Gemini25Flash | Self::Gemini25Pro => {
                 GoogleModelMode::Thinking {
                     // By default these models are set to "auto", so we preserve that behavior
                     // but indicate they are capable of thinking mode
@@ -607,6 +605,9 @@ impl Model {
                 }
             }
             Self::Gemini3Flash => GoogleModelMode::Default,
+            Self::Gemini31Pro => GoogleModelMode::Thinking {
+                budget_tokens: None,
+            },
             Self::Custom { mode, .. } => *mode,
         }
     }

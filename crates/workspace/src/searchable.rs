@@ -25,17 +25,10 @@ impl SearchToken {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum CollapseDirection {
-    Collapsed,
-    Expanded,
-}
-
 #[derive(Debug, Clone)]
 pub enum SearchEvent {
     MatchesInvalidated,
     ActiveMatchChanged,
-    ResultsCollapsedChanged(CollapseDirection),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -62,6 +55,7 @@ pub struct SearchOptions {
     /// Specifies whether the  supports search & replace.
     pub replacement: bool,
     pub selection: bool,
+    pub select_all: bool,
     pub find_in_results: bool,
 }
 
@@ -85,6 +79,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
             regex: true,
             replacement: true,
             selection: true,
+            select_all: true,
             find_in_results: false,
         }
     }

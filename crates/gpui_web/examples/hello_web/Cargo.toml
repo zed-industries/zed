@@ -1,0 +1,16 @@
+[workspace]
+
+[package]
+name = "hello_web"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "hello_web"
+path = "main.rs"
+
+[dependencies]
+gpui = { path = "../../../gpui" }
+gpui_platform = { path = "../../../gpui_platform" }
+web-time = "1"
