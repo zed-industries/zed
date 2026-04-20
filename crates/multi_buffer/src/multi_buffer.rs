@@ -3582,7 +3582,7 @@ impl MultiBufferSnapshot {
                     let Some(excerpt) = cursor.item() else {
                         break;
                     };
-                    if &excerpt.path_key != path {
+                    if excerpt.path_key != *path {
                         break;
                     }
                     let buffer_snapshot = excerpt.buffer_snapshot(self);
@@ -6357,9 +6357,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn buffer_for_path(&self, path: &PathKey) -> Option<&BufferSnapshot> {
-        let (_, _, excerpt) = self
-            .excerpts
-            .find::<ExcerptSummary, _>((), path, Bias::Left);
+        let (_, _, excerpt) = self.excerpts.find_exact::<PathKey, _>((), path, Bias::Left);
         Some(excerpt?.buffer_snapshot(self))
     }
 
@@ -6378,9 +6376,7 @@ impl MultiBufferSnapshot {
     }
 
     fn first_excerpt_for_path(&self, path_key: &PathKey) -> Option<&Excerpt> {
-        let (_, _, first_excerpt) =
-            self.excerpts
-                .find::<ExcerptSummary, _>((), path_key, Bias::Left);
+        let (_, _, first_excerpt) = self.excerpts.find::<PathKey, _>((), path_key, Bias::Left);
         first_excerpt
     }
 
@@ -7467,6 +7463,23 @@ impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarg
             }
             AnchorSeekTarget::Empty => Ordering::Greater,
         }
+    }
+}
+
+impl sum_tree::ContextLessSummary for PathKey {
+    fn zero() -> Self {
+        PathKey::min()
+    }
+
+    fn add_summary(&mut self, summary: &Self) {
+        debug_assert!(
+            summary >= self,
+            "Path keys must be in ascending order: {:?} > {:?}",
+            summary,
+            self
+        );
+
+        *self = summary.clone();
     }
 }
 

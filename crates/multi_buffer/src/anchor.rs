@@ -110,8 +110,9 @@ impl ExcerptAnchor {
             panic!("anchor's path was never added to multibuffer")
         };
 
-        if self_path_key.cmp(other_path_key) != Ordering::Equal {
-            return self_path_key.cmp(other_path_key);
+        match self_path_key.cmp(other_path_key) {
+            Ordering::Equal => (),
+            ordering => return ordering,
         }
 
         // in the case that you removed the buffer containing self,
