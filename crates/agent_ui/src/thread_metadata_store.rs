@@ -531,6 +531,10 @@ impl ThreadMetadataStore {
         cx.global::<GlobalThreadMetadataStore>().0.clone()
     }
 
+    pub fn reload_task(&self) -> Option<Shared<Task<()>>> {
+        self.reload_task.clone()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.threads.is_empty()
     }

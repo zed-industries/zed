@@ -800,6 +800,17 @@ impl AgentPanel {
                 .and_then(|p| p.last_active_thread.as_ref())
                 .is_some_and(|t| t.session_id.is_none());
 
+            if let Some(task) = cx
+                .update(|_window, cx| {
+                    ThreadMetadataStore::try_global(cx)
+                        .and_then(|store| store.read(cx).reload_task())
+                })
+                .ok()
+                .flatten()
+            {
+                task.await;
+            }
+
             let last_active_thread = if let Some(thread_info) = serialized_panel
                 .as_ref()
                 .and_then(|p| p.last_active_thread.as_ref())
