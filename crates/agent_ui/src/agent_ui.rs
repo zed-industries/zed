@@ -200,6 +200,16 @@ actions!(
     ]
 );
 
+actions!(
+    dev,
+    [
+        /// Shows metadata for the currently active thread.
+        ShowThreadMetadata,
+        /// Shows metadata for all threads in the sidebar.
+        ShowAllSidebarThreadMetadata,
+    ]
+);
+
 /// Action to authorize a tool call with a specific permission option.
 /// This is used by the permission granularity dropdown to authorize tool calls.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -723,7 +733,7 @@ mod tests {
             flexible: true,
             default_width: px(300.),
             default_height: px(600.),
-            max_content_width: px(850.),
+            max_content_width: Some(px(850.)),
             default_model: None,
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,

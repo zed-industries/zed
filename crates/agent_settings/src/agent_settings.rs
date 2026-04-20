@@ -142,7 +142,7 @@ pub struct AgentSettings {
     pub sidebar_side: SidebarDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
-    pub max_content_width: Pixels,
+    pub max_content_width: Option<Pixels>,
     pub default_model: Option<LanguageModelSelection>,
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub inline_assistant_use_streaming_tools: bool,
@@ -593,7 +593,11 @@ impl Settings for AgentSettings {
             sidebar_side: agent.sidebar_side.unwrap(),
             default_width: px(agent.default_width.unwrap()),
             default_height: px(agent.default_height.unwrap()),
-            max_content_width: px(agent.max_content_width.unwrap()),
+            max_content_width: if agent.limit_content_width.unwrap() {
+                Some(px(agent.max_content_width.unwrap()))
+            } else {
+                None
+            },
             flexible: agent.flexible.unwrap(),
             default_model: Some(agent.default_model.unwrap()),
             inline_assistant_model: agent.inline_assistant_model,

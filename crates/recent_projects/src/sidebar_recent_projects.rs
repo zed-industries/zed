@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, WeakEntity, Window,
@@ -194,7 +194,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let query = query.trim_start();
-        let smart_case = query.chars().any(|c| c.is_uppercase());
+        let case = fuzzy_nucleo::Case::smart_if_uppercase_in(query);
         let is_empty_query = query.is_empty();
 
         let current_workspace_id = self
@@ -234,22 +234,13 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 })
                 .collect();
         } else {
-            let mut matches = smol::block_on(fuzzy::match_strings(
+            self.filtered_workspaces = match_strings(
                 &candidates,
                 query,
-                smart_case,
-                true,
+                case,
+                fuzzy_nucleo::LengthPenalty::On,
                 100,
-                &Default::default(),
-                cx.background_executor().clone(),
-            ));
-            matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then_with(|| a.candidate_id.cmp(&b.candidate_id))
-            });
-            self.filtered_workspaces = matches;
+            );
         }
 
         self.selected_index = 0;
