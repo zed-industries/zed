@@ -670,8 +670,18 @@ impl MessageEditor {
         &self.editor
     }
 
+    /// True when there is nothing meaningful to send: no @-mentions and no
+    /// non-whitespace text (matches common chat UX where Space/Tab alone does
+    /// not enable Send).
     pub fn is_empty(&self, cx: &App) -> bool {
-        self.editor.read(cx).is_empty(cx)
+        if !self.mention_set.read(cx).mentions().is_empty() {
+            return false;
+        }
+        let editor = self.editor.read(cx);
+        if editor.is_empty(cx) {
+            return true;
+        }
+        editor.text(cx).trim().is_empty()
     }
 
     pub fn is_completions_menu_visible(&self, cx: &App) -> bool {
@@ -3412,6 +3422,61 @@ mod tests {
             .unwrap();
 
         assert_eq!(content, vec!["してhello world".into()]);
+    }
+
+    #[gpui::test]
+    async fn test_is_empty_whitespace_only(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file.rs": "fn main() {}"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let thread_store = Some(cx.new(|cx| ThreadStore::new(cx)));
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                MessageEditor::new(
+                    workspace.downgrade(),
+                    project.downgrade(),
+                    thread_store.clone(),
+                    None,
+                    None,
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        });
+        let editor = message_editor.update(cx, |message_editor, _| message_editor.editor.clone());
+
+        cx.run_until_parked();
+
+        for whitespace in ["", " ", "   ", "\t", " \t "] {
+            editor.update_in(cx, |editor, window, cx| {
+                editor.set_text(whitespace, window, cx);
+            });
+            assert!(
+                message_editor.update(cx, |me, cx| me.is_empty(cx)),
+                "expected is_empty for whitespace-only {whitespace:?}"
+            );
+        }
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("  hello", window, cx);
+        });
+        assert!(!message_editor.update(cx, |me, cx| me.is_empty(cx)));
     }
 
     #[gpui::test]
