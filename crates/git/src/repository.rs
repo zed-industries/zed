@@ -57,6 +57,38 @@ fn line_count_for_diff_stat(contents: &[u8]) -> u32 {
     u32::try_from(line_count).unwrap_or(u32::MAX)
 }
 
+async fn line_count_for_diff_stat_file(path: &Path) -> Result<u32> {
+    let file = smol::fs::File::open(path).await?;
+    let mut reader = BufReader::new(file);
+    let mut line_count = 0u32;
+    let mut line = Vec::new();
+
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line).await? == 0 {
+            break;
+        }
+        line_count = line_count.saturating_add(1);
+    }
+
+    Ok(line_count)
+}
+
+async fn untracked_path_diff_stat(full_path: &Path) -> Result<Option<crate::status::DiffStat>> {
+    let metadata = smol::fs::symlink_metadata(full_path).await?;
+    let file_type = metadata.file_type();
+    let added = if file_type.is_file() {
+        line_count_for_diff_stat_file(full_path).await?
+    } else if file_type.is_symlink() {
+        let target = smol::fs::read_link(full_path).await?;
+        line_count_for_diff_stat(target.to_string_lossy().as_bytes())
+    } else {
+        return Ok(None);
+    };
+
+    Ok(Some(crate::status::DiffStat { added, deleted: 0 }))
+}
+
 async fn untracked_diff_stat_entries(
     git_binary: &GitBinary,
     path_prefixes: &[RepoPath],
@@ -88,19 +120,14 @@ async fn untracked_diff_stat_entries(
         }
 
         let full_path = git_binary.working_directory.join(path.as_std_path());
-        match smol::fs::read(&full_path).await {
-            Ok(contents) => {
-                entries.push((
-                    path.clone(),
-                    crate::status::DiffStat {
-                        added: line_count_for_diff_stat(&contents),
-                        deleted: 0,
-                    },
-                ));
+        match untracked_path_diff_stat(&full_path).await {
+            Ok(Some(diff_stat)) => {
+                entries.push((path.clone(), diff_stat));
                 paths_with_stats.insert(path);
             }
+            Ok(None) => {}
             Err(err) => {
-                log::debug!("failed to read untracked file {full_path:?}: {err}");
+                log::debug!("failed to stat untracked file {full_path:?}: {err}");
             }
         }
     }
@@ -3910,21 +3937,53 @@ mod tests {
         .await
         .unwrap();
 
+        smol::fs::write(repo_dir.path().join("empty.txt"), "")
+            .await
+            .unwrap();
         smol::fs::write(repo_dir.path().join("new.txt"), "one\ntwo\n")
             .await
             .unwrap();
+        smol::fs::write(repo_dir.path().join("no_newline.txt"), "one")
+            .await
+            .unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("tracked.txt", repo_dir.path().join("link.txt")).unwrap();
 
         let diff_stat = repo.diff_stat(&[]).await.unwrap();
-        assert_eq!(
-            diff_stat.entries.as_ref(),
-            &[(
+        let mut expected_entries = vec![
+            (
+                repo_path("empty.txt"),
+                crate::status::DiffStat {
+                    added: 0,
+                    deleted: 0,
+                },
+            ),
+            (
                 repo_path("new.txt"),
                 crate::status::DiffStat {
                     added: 2,
-                    deleted: 0
-                }
-            )]
-        );
+                    deleted: 0,
+                },
+            ),
+            (
+                repo_path("no_newline.txt"),
+                crate::status::DiffStat {
+                    added: 1,
+                    deleted: 0,
+                },
+            ),
+        ];
+        #[cfg(unix)]
+        expected_entries.push((
+            repo_path("link.txt"),
+            crate::status::DiffStat {
+                added: 1,
+                deleted: 0,
+            },
+        ));
+        expected_entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+
+        assert_eq!(diff_stat.entries.as_ref(), expected_entries.as_slice());
     }
 
     #[gpui::test]
