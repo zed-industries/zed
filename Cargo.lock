@@ -353,6 +353,7 @@ dependencies = [
  "futures 0.3.32",
  "fuzzy",
  "git",
+ "git_ui",
  "gpui",
  "gpui_tokio",
  "heapless",
@@ -4872,6 +4873,7 @@ dependencies = [
 name = "diagnostics"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "collections",
  "component",
@@ -5336,6 +5338,7 @@ dependencies = [
  "language",
  "pretty_assertions",
  "serde",
+ "serde_json",
  "similar",
  "tree-sitter",
  "zeta_prompt",
@@ -7317,6 +7320,7 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "fs",
  "futures 0.3.32",
  "fuzzy",
  "git",

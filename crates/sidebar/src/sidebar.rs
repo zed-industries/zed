@@ -494,7 +494,7 @@ impl Sidebar {
             &multi_workspace,
             window,
             |this, _multi_workspace, event: &MultiWorkspaceEvent, window, cx| match event {
-                MultiWorkspaceEvent::ActiveWorkspaceChanged => {
+                MultiWorkspaceEvent::ActiveWorkspaceChanged { .. } => {
                     this.sync_active_entry_from_active_workspace(cx);
                     this.replace_archived_panel_thread(window, cx);
                     this.update_entries(cx);
@@ -1978,6 +1978,7 @@ impl Sidebar {
                                             .update(cx, |multi_workspace, cx| {
                                                 multi_workspace.activate(
                                                     activate_workspace.clone(),
+                                                    None,
                                                     window,
                                                     cx,
                                                 );
@@ -2464,7 +2465,7 @@ impl Sidebar {
         }
 
         multi_workspace.update(cx, |multi_workspace, cx| {
-            multi_workspace.activate(workspace.clone(), window, cx);
+            multi_workspace.activate(workspace.clone(), None, window, cx);
             if retain {
                 multi_workspace.retain_active_workspace(cx);
             }
@@ -2504,7 +2505,7 @@ impl Sidebar {
         let activated = target_window
             .update(cx, |multi_workspace, window, cx| {
                 window.activate_window();
-                multi_workspace.activate(workspace.clone(), window, cx);
+                multi_workspace.activate(workspace.clone(), None, window, cx);
                 Self::load_agent_thread_in_workspace(&workspace, &metadata, true, window, cx);
             })
             .log_err()
@@ -3526,7 +3527,7 @@ impl Sidebar {
     ) {
         if let Some(multi_workspace) = self.multi_workspace.upgrade() {
             multi_workspace.update(cx, |mw, cx| {
-                mw.activate(workspace.clone(), window, cx);
+                mw.activate(workspace.clone(), None, window, cx);
             });
         }
     }
@@ -3722,7 +3723,7 @@ impl Sidebar {
                 } => {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
                         mw.update(cx, |mw, cx| {
-                            mw.activate(workspace.clone(), window, cx);
+                            mw.activate(workspace.clone(), None, window, cx);
                         });
                     }
                     this.active_entry = Some(ActiveEntry {
@@ -3741,7 +3742,7 @@ impl Sidebar {
                 } => {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
                         mw.update(cx, |mw, cx| {
-                            mw.activate(workspace.clone(), window, cx);
+                            mw.activate(workspace.clone(), None, window, cx);
                             mw.retain_active_workspace(cx);
                         });
                     }
@@ -3759,7 +3760,7 @@ impl Sidebar {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
                         if let Some(original_ws) = &original_workspace {
                             mw.update(cx, |mw, cx| {
-                                mw.activate(original_ws.clone(), window, cx);
+                                mw.activate(original_ws.clone(), None, window, cx);
                             });
                         }
                     }
@@ -3816,7 +3817,7 @@ impl Sidebar {
         if let Some((metadata, workspace)) = initial_preview {
             if let Some(mw) = self.multi_workspace.upgrade() {
                 mw.update(cx, |mw, cx| {
-                    mw.activate(workspace.clone(), window, cx);
+                    mw.activate(workspace.clone(), None, window, cx);
                 });
             }
             self.active_entry = Some(ActiveEntry {
@@ -4063,7 +4064,7 @@ impl Sidebar {
         };
 
         multi_workspace.update(cx, |multi_workspace, cx| {
-            multi_workspace.activate(workspace.clone(), window, cx);
+            multi_workspace.activate(workspace.clone(), None, window, cx);
         });
 
         let draft_id = workspace.update(cx, |workspace, cx| {
@@ -4190,7 +4191,7 @@ impl Sidebar {
                 .workspace_for_paths(key.path_list(), key.host().as_ref(), cx)
         }) {
             multi_workspace.update(cx, |multi_workspace, cx| {
-                multi_workspace.activate(workspace, window, cx);
+                multi_workspace.activate(workspace, None, window, cx);
                 multi_workspace.retain_active_workspace(cx);
             });
         } else {
