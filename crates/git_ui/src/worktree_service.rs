@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::anyhow;
@@ -71,16 +71,12 @@ pub fn classify_worktrees(
     (git_repos, non_git_paths)
 }
 
-/// Resolves a branch target into (branch_to_checkout, base_ref).
-pub fn resolve_worktree_branch_target(
-    branch_target: &NewWorktreeBranchTarget,
-) -> (Option<String>, Option<String>) {
+/// Resolves a branch target into the ref the new worktree should be based on.
+/// Returns `None` for `CurrentBranch`, meaning "use the current HEAD".
+pub fn resolve_worktree_branch_target(branch_target: &NewWorktreeBranchTarget) -> Option<String> {
     match branch_target {
-        NewWorktreeBranchTarget::CurrentBranch => (None, None),
-        NewWorktreeBranchTarget::ExistingBranch { name } => (None, Some(name.clone())),
-        NewWorktreeBranchTarget::CreateBranch { name, from_ref } => {
-            (Some(name.clone()), from_ref.clone())
-        }
+        NewWorktreeBranchTarget::CurrentBranch => None,
+        NewWorktreeBranchTarget::ExistingBranch { name } => Some(name.clone()),
     }
 }
 
@@ -243,99 +239,6 @@ pub async fn await_and_rollback_on_failure(
     Err(anyhow!(error_message))
 }
 
-/// Attempts to check out a branch in a newly created worktree.
-/// First tries checking out an existing branch, then tries creating a new
-/// branch. If both fail, the worktree stays in detached HEAD state.
-async fn try_checkout_branch_in_worktree(
-    repo: &Entity<Repository>,
-    branch_name: &str,
-    worktree_path: &Path,
-    cx: &mut AsyncWindowContext,
-) {
-    let Ok(receiver) = cx.update(|_, cx| {
-        repo.update(cx, |repo, _cx| {
-            repo.checkout_branch_in_worktree(
-                branch_name.to_string(),
-                worktree_path.to_path_buf(),
-                false,
-            )
-        })
-    }) else {
-        log::warn!(
-            "Failed to check out branch {branch_name} for worktree at {}. \
-             Staying in detached HEAD state.",
-            worktree_path.display(),
-        );
-        return;
-    };
-
-    let Ok(result) = receiver.await else {
-        log::warn!(
-            "Branch checkout was canceled for worktree at {}. \
-             Staying in detached HEAD state.",
-            worktree_path.display()
-        );
-        return;
-    };
-
-    if let Err(err) = result {
-        log::info!(
-            "Failed to check out branch '{branch_name}' in worktree at {}, \
-                     will try creating it: {err}",
-            worktree_path.display()
-        );
-    } else {
-        log::info!(
-            "Checked out branch '{branch_name}' in worktree at {}",
-            worktree_path.display()
-        );
-        return;
-    }
-
-    // Checkout failed, so try creating the branch.
-    let create_result = cx.update(|_, cx| {
-        repo.update(cx, |repo, _cx| {
-            repo.checkout_branch_in_worktree(
-                branch_name.to_string(),
-                worktree_path.to_path_buf(),
-                true,
-            )
-        })
-    });
-
-    match create_result {
-        Ok(receiver) => match receiver.await {
-            Ok(Ok(())) => {
-                log::info!(
-                    "Created and checked out branch '{branch_name}' in worktree at {}",
-                    worktree_path.display()
-                );
-            }
-            Ok(Err(err)) => {
-                log::warn!(
-                    "Failed to create branch '{branch_name}' in worktree at {}: {err}. \
-                     Staying in detached HEAD state.",
-                    worktree_path.display()
-                );
-            }
-            Err(_) => {
-                log::warn!(
-                    "Branch creation was canceled for worktree at {}. \
-                     Staying in detached HEAD state.",
-                    worktree_path.display()
-                );
-            }
-        },
-        Err(err) => {
-            log::warn!(
-                "Failed to dispatch branch creation for worktree at {}: {err}. \
-                 Staying in detached HEAD state.",
-                worktree_path.display(),
-            );
-        }
-    }
-}
-
 /// Propagates worktree trust from the source workspace to the new workspace.
 /// If the source project's worktrees are all trusted, the new worktree paths
 /// will also be trusted automatically.
@@ -420,7 +323,7 @@ pub fn handle_create_worktree(
 
     if git_repos.is_empty() {
         show_error_toast(
-            workspace.weak_handle().upgrade().expect("workspace exists"),
+            cx.entity(),
             "worktree create",
             anyhow!("No git repositories found in the project"),
             cx,
@@ -435,7 +338,7 @@ pub fn handle_create_worktree(
             .is_some_and(|client| client.read(cx).is_disconnected());
         if is_disconnected {
             show_error_toast(
-                workspace.weak_handle().upgrade().expect("workspace exists"),
+                cx.entity(),
                 "worktree create",
                 anyhow!("Cannot create worktree: remote connection is not active"),
                 cx,
@@ -473,12 +376,7 @@ pub fn handle_create_worktree(
             workspace_handle
                 .update(cx, |workspace, cx| {
                     workspace.set_active_worktree_creation(None, false, cx);
-                    show_error_toast(
-                        workspace.weak_handle().upgrade().expect("workspace exists"),
-                        "worktree create",
-                        anyhow!("{err:#}"),
-                        cx,
-                    );
+                    show_error_toast(cx.entity(), "worktree create", anyhow!("{err:#}"), cx);
                 })
                 .ok();
         }
@@ -548,12 +446,7 @@ pub fn handle_switch_worktree(
             workspace_handle
                 .update(cx, |workspace, cx| {
                     workspace.set_active_worktree_creation(None, false, cx);
-                    show_error_toast(
-                        workspace.weak_handle().upgrade().expect("workspace exists"),
-                        "worktree switch",
-                        anyhow!("{err:#}"),
-                        cx,
-                    );
+                    show_error_toast(cx.entity(), "worktree switch", anyhow!("{err:#}"), cx);
                 })
                 .ok();
         }
@@ -614,7 +507,7 @@ async fn do_create_worktree(
 
     let mut rng = rand::rng();
 
-    let (branch_to_checkout, base_ref) = resolve_worktree_branch_target(&branch_target);
+    let base_ref = resolve_worktree_branch_target(&branch_target);
 
     let (creation_infos, path_remapping) = cx.update(|_, cx| {
         start_worktree_creations(
@@ -629,20 +522,9 @@ async fn do_create_worktree(
         )
     })??;
 
-    let repo_paths: Vec<(Entity<Repository>, PathBuf)> = creation_infos
-        .iter()
-        .map(|(repo, path, _)| (repo.clone(), path.clone()))
-        .collect();
-
     let fs = cx.update(|_, cx| <dyn Fs>::global(cx))?;
 
     let created_paths = await_and_rollback_on_failure(creation_infos, fs, cx).await?;
-
-    if let Some(ref branch_name) = branch_to_checkout {
-        for (repo, worktree_path) in &repo_paths {
-            try_checkout_branch_in_worktree(repo, branch_name, worktree_path, cx).await;
-        }
-    }
 
     let mut all_paths = created_paths;
     let has_non_git = !non_git_paths.is_empty();

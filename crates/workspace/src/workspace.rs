@@ -2246,17 +2246,9 @@ impl Workspace {
             .and_then(|item| item.project_path(cx))
             .and_then(|pp| self.project().read(cx).absolute_path(&pp, cx));
 
-        let focused_dock = [
-            (DockPosition::Left, &self.left_dock),
-            (DockPosition::Right, &self.right_dock),
-            (DockPosition::Bottom, &self.bottom_dock),
-        ]
-        .into_iter()
-        .find(|(_, dock)| {
-            dock.read(cx).is_open() && dock.focus_handle(cx).contains_focused(window, cx)
-        })
-        .map(|(position, _)| position)
-        .or(fallback_focused_dock);
+        let focused_dock = self
+            .focused_dock_position(window, cx)
+            .or(fallback_focused_dock);
 
         PreviousWorkspaceState {
             dock_structure,

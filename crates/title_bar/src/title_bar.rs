@@ -898,6 +898,9 @@ impl TitleBar {
             let workspace_handle = workspace.downgrade();
             PopoverMenu::new("worktree-picker-menu")
                 .menu(move |window, cx| {
+                    // When opened from the title bar, focus is on the trigger
+                    // button (not a dock), so `focused_dock` is `None`. That's
+                    // fine — there's no prior dock focus to restore.
                     Some(cx.new(|cx| {
                         WorktreePicker::new(project.clone(), workspace_handle.clone(), window, cx)
                     }))

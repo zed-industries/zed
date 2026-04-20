@@ -5289,35 +5289,16 @@ mod tests {
     #[gpui::test]
     fn test_resolve_worktree_branch_target() {
         let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
-            &NewWorktreeBranchTarget::CreateBranch {
-                name: "new-branch".to_string(),
-                from_ref: Some("main".to_string()),
-            },
-        );
-        assert_eq!(
-            resolved,
-            (Some("new-branch".to_string()), Some("main".to_string()))
-        );
-
-        let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
-            &NewWorktreeBranchTarget::CreateBranch {
-                name: "new-branch".to_string(),
-                from_ref: None,
-            },
-        );
-        assert_eq!(resolved, (Some("new-branch".to_string()), None));
-
-        let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
             &NewWorktreeBranchTarget::ExistingBranch {
                 name: "feature".to_string(),
             },
         );
-        assert_eq!(resolved, (None, Some("feature".to_string())));
+        assert_eq!(resolved, Some("feature".to_string()));
 
         let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
             &NewWorktreeBranchTarget::CurrentBranch,
         );
-        assert_eq!(resolved, (None, None));
+        assert_eq!(resolved, None);
     }
 
     #[gpui::test]

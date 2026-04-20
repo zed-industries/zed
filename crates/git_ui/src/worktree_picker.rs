@@ -67,22 +67,21 @@ impl WorktreePicker {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let project_worktree_paths: HashSet<PathBuf> = project
-            .read(cx)
+        let project_ref = project.read(cx);
+        let project_worktree_paths: HashSet<PathBuf> = project_ref
             .visible_worktrees(cx)
             .map(|wt| wt.read(cx).abs_path().to_path_buf())
             .collect();
 
-        let has_multiple_repositories = project.read(cx).repositories(cx).len() > 1;
+        let has_multiple_repositories = project_ref.repositories(cx).len() > 1;
+        let repository = project_ref.active_repository(cx);
 
-        let current_branch_name = project.read(cx).active_repository(cx).and_then(|repo| {
+        let current_branch_name = repository.as_ref().and_then(|repo| {
             repo.read(cx)
                 .branch
                 .as_ref()
                 .map(|branch| branch.name().to_string())
         });
-
-        let repository = project.read(cx).active_repository(cx);
 
         let all_worktrees_request = repository
             .clone()
@@ -229,7 +228,7 @@ impl Render for WorktreePicker {
 }
 
 #[derive(Clone)]
-pub enum WorktreeEntry {
+enum WorktreeEntry {
     CreateFromCurrentBranch,
     CreateFromDefaultBranch {
         default_branch_name: String,
@@ -246,7 +245,7 @@ pub enum WorktreeEntry {
     },
 }
 
-pub struct WorktreePickerDelegate {
+struct WorktreePickerDelegate {
     matches: Vec<WorktreeEntry>,
     all_worktrees: Vec<GitWorktree>,
     project_worktree_paths: HashSet<PathBuf>,
