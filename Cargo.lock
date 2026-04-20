@@ -17764,6 +17764,7 @@ dependencies = [
  "libc",
  "log",
  "parking_lot",
+ "percent-encoding",
  "rand 0.9.3",
  "regex",
  "release_channel",
