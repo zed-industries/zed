@@ -555,7 +555,7 @@ async fn test_close_workspace_prefers_already_loaded_neighboring_workspace(
     });
 
     multi_workspace.update_in(cx, |multi_workspace, window, cx| {
-        multi_workspace.activate(workspace_a.clone(), window, cx);
+        multi_workspace.activate(workspace_a.clone(), None, window, cx);
         multi_workspace.test_add_project_group(ProjectGroup {
             key: project_c_key.clone(),
             workspaces: Vec::new(),
