@@ -2077,34 +2077,34 @@ impl ProjectPanel {
 
         let directory_id;
         let new_entry_id = self.resolve_entry(entry_id);
-        if let Some((worktree, expanded_dir_ids)) = self
-            .project
-            .read(cx)
-            .worktree_for_id(worktree_id, cx)
-            .zip(self.state.expanded_dir_ids.get_mut(&worktree_id))
-        {
-            let worktree = worktree.read(cx);
-            if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
-                loop {
-                    if entry.is_dir() {
-                        if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
-                            expanded_dir_ids.insert(ix, entry.id);
-                        }
-                        directory_id = entry.id;
-                        break;
-                    } else {
-                        if let Some(parent_path) = entry.path.parent()
-                            && let Some(parent_entry) = worktree.entry_for_path(parent_path)
-                        {
-                            entry = parent_entry;
-                            continue;
-                        }
-                        return;
+        let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) else {
+            return;
+        };
+
+        let expanded_dir_ids = self
+            .state
+            .expanded_dir_ids
+            .entry(worktree_id)
+            .or_default();
+        let worktree = worktree.read(cx);
+        if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
+            loop {
+                if entry.is_dir() {
+                    if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
+                        expanded_dir_ids.insert(ix, entry.id);
                     }
+                    directory_id = entry.id;
+                    break;
+                } else {
+                    if let Some(parent_path) = entry.path.parent()
+                        && let Some(parent_entry) = worktree.entry_for_path(parent_path)
+                    {
+                        entry = parent_entry;
+                        continue;
+                    }
+                    return;
                 }
-            } else {
-                return;
-            };
+            }
         } else {
             return;
         };

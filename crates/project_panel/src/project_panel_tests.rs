@@ -9903,6 +9903,140 @@ async fn test_preserve_temporary_unfolded_active_index_on_blur_from_context_menu
     );
 }
 
+#[gpui::test]
+async fn test_new_file_in_empty_dir_with_hide_root(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({})).await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // With hide_root enabled the root folder row is not rendered.
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[] as &[&str],
+        "panel should show no entries for an empty directory with hide_root enabled"
+    );
+
+    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["  [EDITOR: '']  <== selected"],
+        "inline editor should appear inside the hidden root without a root folder row"
+    );
+
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("new_file.txt", window, cx);
+            });
+            panel.confirm_edit(true, window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert!(
+        fs.is_file(Path::new("/root/new_file.txt")).await,
+        "file should be created directly inside the project root"
+    );
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["  new_file.txt  <== selected  <== marked"],
+        "created file should be visible without a root folder row"
+    );
+}
+
+#[gpui::test]
+async fn test_new_directory_in_empty_dir_with_hide_root(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root", json!({})).await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // With hide_root enabled the root folder row is not rendered.
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[] as &[&str],
+        "panel should show no entries for an empty directory with hide_root enabled"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_directory(&NewDirectory, window, cx)
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> [EDITOR: '']  <== selected"],
+        "inline editor should appear inside the hidden root without a root folder row"
+    );
+
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("new_dir", window, cx);
+            });
+            panel.confirm_edit(true, window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert!(
+        fs.is_dir(Path::new("/root/new_dir")).await,
+        "directory should be created directly inside the project root"
+    );
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v new_dir  <== selected"],
+        "created directory should be visible without a root folder row"
+    );
+}
+
 async fn run_create_file_in_folded_path_case(
     case_name: &str,
     active_ancestor_path: &str,
