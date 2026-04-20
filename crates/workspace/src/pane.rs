@@ -1,7 +1,7 @@
 use crate::{
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
-    WorkspaceItemBuilder, ZoomIn, ZoomOut,
+    CloseWindow, NewCenterTerminal, NewFile, NewTerminal, OpenInTerminal, OpenOptions,
+    OpenTerminal, OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom,
+    Workspace, WorkspaceItemBuilder, ZoomIn, ZoomOut,
     focus_follows_mouse::FocusFollowsMouse as _,
     invalid_item_view::InvalidItemView,
     item::{
@@ -10,10 +10,7 @@ use crate::{
         TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
-    notifications::{
-        NotificationId, NotifyResultExt, show_app_notification,
-        simple_message_notification::MessageNotification,
-    },
+    notifications::NotifyResultExt,
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, FocusFollowsMouse, TabBarSettings, WorkspaceSettings},
 };
@@ -86,6 +83,8 @@ pub enum SaveIntent {
     /// write all files (even if unchanged)
     /// prompt before overwriting on-disk changes
     Save,
+    /// same as Save, but always formats regardless of the format_on_save setting
+    FormatAndSave,
     /// same as Save, but without auto formatting
     SaveWithoutFormat,
     /// write any files that have local changes
@@ -2270,7 +2269,10 @@ impl Pane {
         })?;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
-        if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
+        if save_intent == SaveIntent::Save
+            || save_intent == SaveIntent::FormatAndSave
+            || save_intent == SaveIntent::SaveWithoutFormat
+        {
             is_dirty = true;
         }
 
@@ -2285,6 +2287,7 @@ impl Pane {
         }
 
         let should_format = save_intent != SaveIntent::SaveWithoutFormat;
+        let force_format = save_intent == SaveIntent::FormatAndSave;
 
         if has_conflict && can_save {
             if has_deleted_file && is_singleton {
@@ -2304,6 +2307,7 @@ impl Pane {
                             item.save(
                                 SaveOptions {
                                     format: should_format,
+                                    force_format,
                                     autosave: false,
                                 },
                                 project,
@@ -2338,6 +2342,7 @@ impl Pane {
                             item.save(
                                 SaveOptions {
                                     format: should_format,
+                                    force_format,
                                     autosave: false,
                                 },
                                 project,
@@ -2419,6 +2424,7 @@ impl Pane {
                     item.save(
                         SaveOptions {
                             format: should_format,
+                            force_format,
                             autosave: false,
                         },
                         project,
@@ -2503,6 +2509,7 @@ impl Pane {
             item.save(
                 SaveOptions {
                     format,
+                    force_format: false,
                     autosave: true,
                 },
                 project,
@@ -4192,6 +4199,10 @@ fn default_render_tab_bar_buttons(
                             .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
                             .separator()
                             .action("New Terminal", NewTerminal::default().boxed_clone())
+                            .action(
+                                "New Center Terminal",
+                                NewCenterTerminal::default().boxed_clone(),
+                            )
                     }))
                 }),
         )
@@ -4393,68 +4404,37 @@ impl Render for Pane {
                         .detach_and_log_err(cx)
                 },
             ))
-            .on_action(
-                cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, _, cx| {
-                    let Some(active_item) = pane.active_item() else {
-                        return;
-                    };
-
-                    let entry_id = action
-                        .entry_id
-                        .map(ProjectEntryId::from_proto)
-                        .or_else(|| active_item.project_entry_ids(cx).first().copied());
-
-                    let show_reveal_error_toast = |display_name: &str, cx: &mut App| {
-                        let notification_id = NotificationId::unique::<RevealInProjectPanel>();
-                        let message = SharedString::from(format!(
-                            "\"{display_name}\" is not part of any open projects."
-                        ));
-
-                        show_app_notification(notification_id, cx, move |cx| {
-                            let message = message.clone();
-                            cx.new(|cx| MessageNotification::new(message, cx))
-                        });
-                    };
-
-                    let Some(entry_id) = entry_id else {
-                        // When working with an unsaved buffer, display a toast
-                        // informing the user that the buffer is not present in
-                        // any of the open projects and stop execution, as we
-                        // don't want to open the project panel.
-                        let display_name = active_item
-                            .tab_tooltip_text(cx)
-                            .unwrap_or_else(|| active_item.tab_content_text(0, cx));
-
-                        return show_reveal_error_toast(&display_name, cx);
-                    };
-
-                    // We'll now check whether the entry belongs to a visible
-                    // worktree and, if that's not the case, it means the user
-                    // is interacting with a file that does not belong to any of
-                    // the open projects, so we'll show a toast informing them
-                    // of this and stop execution.
-                    let display_name = pane
-                        .project
-                        .read_with(cx, |project, cx| {
-                            project
-                                .worktree_for_entry(entry_id, cx)
-                                .filter(|worktree| !worktree.read(cx).is_visible())
-                                .map(|worktree| worktree.read(cx).root_name_str().to_string())
-                        })
-                        .ok()
-                        .flatten();
-
-                    if let Some(display_name) = display_name {
-                        return show_reveal_error_toast(&display_name, cx);
-                    }
+            .on_action(cx.listener(
+                |pane: &mut Self, action: &RevealInProjectPanel, _window, cx| {
+                    let active_item = pane.active_item();
+                    let entry_id = active_item.as_ref().and_then(|item| {
+                        action
+                            .entry_id
+                            .map(ProjectEntryId::from_proto)
+                            .or_else(|| item.project_entry_ids(cx).first().copied())
+                    });
 
                     pane.project
-                        .update(cx, |_, cx| {
-                            cx.emit(project::Event::RevealInProjectPanel(entry_id))
+                        .update(cx, |project, cx| {
+                            if let Some(entry_id) = entry_id
+                                && project
+                                    .worktree_for_entry(entry_id, cx)
+                                    .is_some_and(|worktree| worktree.read(cx).is_visible())
+                            {
+                                return cx.emit(project::Event::RevealInProjectPanel(entry_id));
+                            }
+
+                            // When no entry is found, which is the case when
+                            // working with an unsaved buffer, or the worktree
+                            // is not visible, for example, a file that doesn't
+                            // belong to an open project, we can't reveal the
+                            // entry but we still want to activate the project
+                            // panel.
+                            cx.emit(project::Event::ActivateProjectPanel);
                         })
                         .log_err();
-                }),
-            )
+                },
+            ))
             .on_action(cx.listener(|_, _: &menu::Cancel, window, cx| {
                 if cx.stop_active_drag(window) {
                 } else {

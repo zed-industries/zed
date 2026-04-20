@@ -5264,12 +5264,11 @@ impl MultiBufferSnapshot {
 
     /// Creates a multibuffer anchor for the given buffer anchor, if it is contained in any excerpt.
     pub fn anchor_in_excerpt(&self, text_anchor: text::Anchor) -> Option<Anchor> {
-        for excerpt in {
-            let this = &self;
+        let excerpts = {
             let buffer_id = text_anchor.buffer_id;
-            if let Some(buffer_state) = this.buffers.get(&buffer_id) {
+            if let Some(buffer_state) = self.buffers.get(&buffer_id) {
                 let path_key = buffer_state.path_key.clone();
-                let mut cursor = this.excerpts.cursor::<PathKey>(());
+                let mut cursor = self.excerpts.cursor::<PathKey>(());
                 cursor.seek_forward(&path_key, Bias::Left);
                 Some(iter::from_fn(move || {
                     let excerpt = cursor.item()?;
@@ -5284,7 +5283,8 @@ impl MultiBufferSnapshot {
             }
             .into_iter()
             .flatten()
-        } {
+        };
+        for excerpt in excerpts {
             let buffer_snapshot = excerpt.buffer_snapshot(self);
             if excerpt.range.contains(&text_anchor, &buffer_snapshot) {
                 return Some(Anchor::in_buffer(excerpt.path_key_index, text_anchor));

@@ -112,6 +112,8 @@ pub enum Operator {
         /// Represents whether the opening bracket was used for the target
         /// object.
         opening: bool,
+        /// Computed anchors for the opening and closing bracket characters,
+        bracket_anchors: Vec<Option<(Anchor, Anchor)>>,
     },
     DeleteSurrounds,
     Mark,

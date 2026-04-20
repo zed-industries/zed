@@ -652,6 +652,7 @@ impl MistralEventMapper {
 
                 if let Some(tool_id) = tool_call.id.clone()
                     && !tool_id.is_empty()
+                    && tool_id != "null"
                 {
                     entry.id = tool_id;
                 }
@@ -904,6 +905,69 @@ impl Render for ConfigurationView {
 mod tests {
     use super::*;
     use language_model::{LanguageModelImage, LanguageModelRequestMessage, MessageContent};
+
+    fn tool_call_chunk(
+        id: Option<&str>,
+        name: Option<&str>,
+        arguments: Option<&str>,
+        finish_reason: Option<&str>,
+    ) -> mistral::StreamResponse {
+        mistral::StreamResponse {
+            id: "resp".into(),
+            object: "chat.completion.chunk".into(),
+            created: 0,
+            model: "test".into(),
+            choices: vec![mistral::StreamChoice {
+                index: 0,
+                delta: mistral::StreamDelta {
+                    role: None,
+                    content: None,
+                    tool_calls: if finish_reason.is_some() {
+                        None
+                    } else {
+                        Some(vec![mistral::ToolCallChunk {
+                            index: 0,
+                            id: id.map(Into::into),
+                            function: Some(mistral::FunctionChunk {
+                                name: name.map(Into::into),
+                                arguments: arguments.map(Into::into),
+                            }),
+                        }])
+                    },
+                },
+                finish_reason: finish_reason.map(Into::into),
+            }],
+            usage: None,
+        }
+    }
+
+    #[test]
+    fn test_streaming_tool_call_ignores_null_id() {
+        // Mistral's streaming API sometimes sends `"id": "null"` in continuation chunks.
+        let mut mapper = MistralEventMapper::new();
+
+        mapper.map_event(tool_call_chunk(
+            Some("real_id_123"),
+            Some("read_file"),
+            Some("{\"path\":"),
+            None,
+        ));
+        mapper.map_event(tool_call_chunk(
+            Some("null"),
+            None,
+            Some("\"a.txt\"}"),
+            None,
+        ));
+        let events = mapper.map_event(tool_call_chunk(None, None, None, Some("tool_calls")));
+
+        let Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) = &events[0] else {
+            panic!("Expected first event to be ToolUse, got: {:?}", events[0]);
+        };
+
+        assert_eq!(tool_use.id.to_string(), "real_id_123");
+        assert_eq!(tool_use.name.as_ref(), "read_file");
+        assert_eq!(tool_use.input, serde_json::json!({"path": "a.txt"}));
+    }
 
     #[test]
     fn test_into_mistral_basic_conversion() {

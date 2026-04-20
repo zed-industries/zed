@@ -109,7 +109,6 @@ impl Mercury {
                     - excerpt_offset_range.start,
                 cursor_path: full_path.clone(),
                 cursor_excerpt,
-                experiment: None,
                 excerpt_start_row: Some(excerpt_point_range.start.row),
                 excerpt_ranges,
                 syntax_ranges: Some(syntax_ranges),

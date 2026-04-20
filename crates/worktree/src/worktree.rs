@@ -165,6 +165,7 @@ pub struct RemoteWorktree {
     replica_id: ReplicaId,
     visible: bool,
     disconnected: bool,
+    received_initial_update: bool,
 }
 
 #[derive(Clone)]
@@ -370,7 +371,9 @@ struct UpdateObservationState {
 pub enum Event {
     UpdatedEntries(UpdatedEntriesSet),
     UpdatedGitRepositories(UpdatedGitRepositoriesSet),
-    UpdatedRootRepoCommonDir,
+    UpdatedRootRepoCommonDir {
+        old: Option<Arc<SanitizedPath>>,
+    },
     DeletedEntry(ProjectEntryId),
     /// The worktree root itself has been deleted (for single-file worktrees)
     Deleted,
@@ -550,6 +553,7 @@ impl Worktree {
                 snapshot_subscriptions: Default::default(),
                 visible: worktree.visible,
                 disconnected: false,
+                received_initial_update: false,
             };
 
             // Apply updates to a separate snapshot in a background task, then
@@ -574,9 +578,16 @@ impl Worktree {
             cx.spawn(async move |this, cx| {
                 while (snapshot_updated_rx.recv().await).is_some() {
                     this.update(cx, |this, cx| {
-                        let mut entries_changed = false;
                         let this = this.as_remote_mut().unwrap();
+
+                        // The watch channel delivers an initial signal before
+                        // any real updates arrive. Skip these spurious wakeups.
+                        if this.background_snapshot.lock().1.is_empty() {
+                            return;
+                        }
+
                         let old_root_repo_common_dir = this.snapshot.root_repo_common_dir.clone();
+                        let mut entries_changed = false;
                         {
                             let mut lock = this.background_snapshot.lock();
                             this.snapshot = lock.0.clone();
@@ -592,8 +603,14 @@ impl Worktree {
                         if entries_changed {
                             cx.emit(Event::UpdatedEntries(Arc::default()));
                         }
-                        if this.snapshot.root_repo_common_dir != old_root_repo_common_dir {
-                            cx.emit(Event::UpdatedRootRepoCommonDir);
+                        let is_first_update = !this.received_initial_update;
+                        this.received_initial_update = true;
+                        if this.snapshot.root_repo_common_dir != old_root_repo_common_dir
+                            || (is_first_update && this.snapshot.root_repo_common_dir.is_none())
+                        {
+                            cx.emit(Event::UpdatedRootRepoCommonDir {
+                                old: old_root_repo_common_dir,
+                            });
                         }
                         cx.notify();
                         while let Some((scan_id, _)) = this.snapshot_subscriptions.front() {
@@ -1221,8 +1238,9 @@ impl LocalWorktree {
             .local_repo_for_work_directory_path(RelPath::empty())
             .map(|repo| SanitizedPath::from_arc(repo.common_dir_abs_path.clone()));
 
-        let root_repo_common_dir_changed =
-            self.snapshot.root_repo_common_dir != new_snapshot.root_repo_common_dir;
+        let old_root_repo_common_dir = (self.snapshot.root_repo_common_dir
+            != new_snapshot.root_repo_common_dir)
+            .then(|| self.snapshot.root_repo_common_dir.clone());
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.update_observer.as_mut() {
@@ -1238,8 +1256,8 @@ impl LocalWorktree {
         if !repo_changes.is_empty() {
             cx.emit(Event::UpdatedGitRepositories(repo_changes));
         }
-        if root_repo_common_dir_changed {
-            cx.emit(Event::UpdatedRootRepoCommonDir);
+        if let Some(old) = old_root_repo_common_dir {
+            cx.emit(Event::UpdatedRootRepoCommonDir { old });
         }
 
         while let Some((scan_id, _)) = self.snapshot_subscriptions.front() {
@@ -3277,7 +3295,7 @@ impl BackgroundScannerState {
     }
 }
 
-async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
+async fn is_dot_git(path: &Path, fs: &dyn Fs) -> bool {
     if let Some(file_name) = path.file_name()
         && file_name == DOT_GIT
     {
@@ -4273,7 +4291,7 @@ impl BackgroundScanner {
                 let mut dot_git_paths = None;
 
                 for ancestor in abs_path.as_path().ancestors() {
-                    if is_git_dir(ancestor, self.fs.as_ref()).await {
+                    if is_dot_git(ancestor, self.fs.as_ref()).await {
                         let path_in_git_dir = abs_path
                             .as_path()
                             .strip_prefix(ancestor)
@@ -4294,15 +4312,7 @@ impl BackgroundScanner {
                     let is_dot_git_changed = {
                         path_in_git_dir == Path::new("")
                             && event.kind == Some(PathEventKind::Changed)
-                            && abs_path
-                                .strip_prefix(root_canonical_path)
-                                .ok()
-                                .and_then(|it| RelPath::new(it, PathStyle::local()).ok())
-                                .is_some_and(|it| {
-                                    snapshot
-                                        .entry_for_path(&it)
-                                        .is_some_and(|entry| entry.kind == EntryKind::Dir)
-                                })
+                            && self.fs.is_dir(abs_path.as_path()).await
                     };
                     let condition = skipped_files_in_dot_git.iter().any(|skipped| {
                         OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
@@ -5308,16 +5318,13 @@ impl BackgroundScanner {
             match existing_repository_entry {
                 None => {
                     let Ok(relative) = dot_git_dir.strip_prefix(state.snapshot.abs_path()) else {
-                        // This can happen legitimately when `.git` is a
-                        // gitfile (e.g. in a linked worktree or submodule)
-                        // pointing to a directory outside the worktree root.
-                        // Skip it — the repository was already registered
-                        // during the initial scan via `discover_git_paths`.
-                        debug_assert!(
-                            self.fs.is_file(&dot_git_dir).await,
-                            "update_git_repositories: .git path outside worktree root \
-                             is not a gitfile: {dot_git_dir:?}",
-                        );
+                        // A `.git` path outside the worktree root is not
+                        // ours to register. This happens legitimately when
+                        // `.git` is a gitfile pointing outside the worktree
+                        // (linked worktrees and submodules), and also when
+                        // a rescan of a linked worktree's commondir arrives
+                        // after the worktree's repository has already been
+                        // unregistered.
                         continue;
                     };
                     affected_repo_roots.push(dot_git_dir.parent().unwrap().into());

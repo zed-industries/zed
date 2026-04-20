@@ -20,7 +20,7 @@ pub(crate) fn thread_title(entry: &AgentSessionInfo) -> SharedString {
     entry
         .title
         .clone()
-        .filter(|title| !title.is_empty())
+        .and_then(|title| if title.is_empty() { None } else { Some(title) })
         .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into())
 }
 
@@ -74,7 +74,7 @@ impl ThreadHistoryView {
     ) -> Self {
         let search_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search threads...", window, cx);
+            editor.set_placeholder_text("Search all threads…", window, cx);
             editor
         });
 

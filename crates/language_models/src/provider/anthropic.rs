@@ -326,6 +326,10 @@ impl LanguageModel for AnthropicModel {
         self.model.supports_thinking()
     }
 
+    fn supports_fast_mode(&self) -> bool {
+        self.model.supports_speed()
+    }
+
     fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
         if self.model.supports_adaptive_thinking() {
             vec![
@@ -431,13 +435,16 @@ impl LanguageModel for AnthropicModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_anthropic(
+        let mut request = into_anthropic(
             request,
             self.model.request_id().into(),
             self.model.default_temperature(),
             self.model.max_output_tokens(),
             self.model.mode(),
         );
+        if !self.model.supports_speed() {
+            request.speed = None;
+        }
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;

@@ -31,6 +31,7 @@ credentials_provider.workspace = true
 db.workspace = true
 edit_prediction_types.workspace = true
 edit_prediction_context.workspace = true
+edit_prediction_metrics.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
