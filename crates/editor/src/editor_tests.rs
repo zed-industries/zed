@@ -29012,18 +29012,20 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
     let workspace = window
         .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
         .unwrap();
-    let buffer = cx.update(|cx| MultiBuffer::build_simple("Buffer Contents!", cx));
-    let buffer_id = buffer.read_with(cx, |buffer, _| {
-        *buffer
-            .all_buffer_ids()
-            .first()
-            .expect("Multibuffer has at least one buffer id")
+    let multi_buffer = cx.update(|cx| MultiBuffer::build_simple("Buffer Contents!", cx));
+    let buffer_id = multi_buffer.read_with(cx, |multi_buffer, cx| {
+        multi_buffer
+            .all_buffers_iter()
+            .next()
+            .expect("Should have at least one buffer")
+            .read(cx)
+            .remote_id()
     });
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let editor = cx.new_window_entity(|window, cx| {
         Editor::new(
             EditorMode::full(),
-            buffer,
+            multi_buffer,
             Some(project.clone()),
             window,
             cx,
