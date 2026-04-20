@@ -2616,10 +2616,7 @@ impl Sidebar {
             workspace: workspace.clone(),
         });
         self.record_thread_access(&metadata.thread_id);
-
-        if metadata.session_id.is_some() {
-            self.pending_thread_activation = Some(metadata.thread_id);
-        }
+        self.pending_thread_activation = Some(metadata.thread_id);
 
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace.clone(), window, cx);
@@ -2628,22 +2625,12 @@ impl Sidebar {
             }
         });
 
-        // Drafts (and other retained threads without a session_id) are
-        // already in memory — activate them directly instead of loading.
-        let thread_id = metadata.thread_id;
-        if metadata.session_id.is_none() {
-            workspace.update(cx, |ws, cx| {
-                if let Some(panel) = ws.panel::<AgentPanel>(cx) {
-                    panel.update(cx, |panel, cx| {
-                        panel.activate_retained_thread(thread_id, true, window, cx);
-                    });
-                }
-                ws.focus_panel::<AgentPanel>(window, cx);
-            });
-            self.pending_thread_activation = None;
-        } else {
-            Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
-        }
+        // `load_agent_thread` handles both the in-memory fast path
+        // (reuses an existing `ConversationView` from `draft_thread` or
+        // `retained_threads`) and the disk path (creates a fresh view
+        // from metadata + kvp). Routing drafts through it too means
+        // drafts restored from disk after restart activate correctly.
+        Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
 
         self.update_entries(cx);
     }
@@ -4043,12 +4030,23 @@ impl Sidebar {
             cx.flag_value::<AgentThreadWorktreeLabelFlag>(),
         );
 
+        let icon = if is_draft {
+            IconName::Plus
+        } else {
+            thread.icon
+        };
+        let icon_svg = if is_draft {
+            None
+        } else {
+            thread.icon_from_external_svg.clone()
+        };
+
         ThreadItem::new(id, title)
             .base_bg(sidebar_bg)
-            .icon(thread.icon)
+            .icon(icon)
             .status(thread.status)
             .is_remote(is_remote)
-            .when_some(thread.icon_from_external_svg.clone(), |this, svg| {
+            .when_some(icon_svg, |this, svg| {
                 this.custom_icon_from_external_svg(svg)
             })
             .worktrees(worktrees)

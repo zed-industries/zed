@@ -1249,13 +1249,7 @@ impl AgentPanel {
         let old_view = std::mem::replace(&mut self.base_view, BaseView::Uninitialized);
         self.retain_running_thread(old_view, cx);
         self.clear_overlay_state();
-        if self.is_active {
-            self.activate_draft(false, window, cx);
-        } else {
-            self._thread_view_subscription = None;
-            self._active_thread_focus_subscription = None;
-            self._base_view_observation = None;
-        }
+        self.activate_draft(false, window, cx);
         self.serialize(cx);
         cx.emit(AgentPanelEvent::ActiveViewChanged);
         cx.notify();
@@ -1391,6 +1385,7 @@ impl AgentPanel {
             self.selected_agent.clone()
         };
         if let Some(draft) = &self.draft_thread {
+            let draft_entity = draft.entity_id();
             let agent_matches = *draft.read(cx).agent_key() == desired_agent;
             let has_editor_content = draft.read(cx).root_thread_view().is_some_and(|tv| {
                 !tv.read(cx)
@@ -1400,7 +1395,19 @@ impl AgentPanel {
                     .trim()
                     .is_empty()
             });
-            if agent_matches || has_editor_content {
+            // Only retarget the empty draft when the user is actively
+            // viewing it — that's the case where switching agents in the
+            // toolbar should replace the draft with one bound to the
+            // newly-selected agent. When the draft is parked in its slot
+            // while the user is viewing a real thread, `selected_agent`
+            // reflects that real thread's agent and must not be allowed
+            // to silently rebuild the draft.
+            let draft_is_active = matches!(
+                &self.base_view,
+                BaseView::AgentThread { conversation_view }
+                    if conversation_view.entity_id() == draft_entity
+            );
+            if agent_matches || has_editor_content || !draft_is_active {
                 return draft.clone();
             }
             self.draft_thread = None;
@@ -1506,14 +1513,7 @@ impl AgentPanel {
 
         if self.active_thread_id(cx) == Some(id) {
             self.clear_overlay_state();
-            if self.is_active {
-                self.activate_draft(false, window, cx);
-            } else {
-                self.base_view = BaseView::Uninitialized;
-                self._thread_view_subscription = None;
-                self._active_thread_focus_subscription = None;
-                self._base_view_observation = None;
-            }
+            self.activate_draft(false, window, cx);
             self.serialize(cx);
             cx.emit(AgentPanelEvent::ActiveViewChanged);
             cx.notify();

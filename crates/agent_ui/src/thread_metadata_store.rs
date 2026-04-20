@@ -25,7 +25,7 @@ pub use project::WorktreePaths;
 use project::{AgentId, linked_worktree_short_name};
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::{App, Context, SharedString, ThreadItemWorktreeInfo, WorktreeKind};
-use util::{ResultExt as _, debug_panic};
+use util::ResultExt as _;
 use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
 
 use crate::DEFAULT_THREAD_TITLE;
@@ -1355,7 +1355,6 @@ impl ThreadMetadataDb {
     pub fn list_ids(&self) -> anyhow::Result<Vec<ThreadId>> {
         self.select::<ThreadId>(
             "SELECT thread_id FROM sidebar_threads \
-             WHERE session_id IS NOT NULL \
              ORDER BY updated_at DESC",
         )?()
     }
@@ -1364,7 +1363,6 @@ impl ThreadMetadataDb {
         created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, \
         main_worktree_paths_order, remote_connection \
         FROM sidebar_threads \
-        WHERE session_id IS NOT NULL \
         ORDER BY updated_at DESC";
 
     /// List all sidebar thread metadata, ordered by updated_at descending.
@@ -1375,12 +1373,11 @@ impl ThreadMetadataDb {
     }
 
     /// Upsert metadata for a thread.
+    ///
+    /// Drafts are persisted with `session_id = None`. They get a real
+    /// session_id on promotion (when the first message is sent) and
+    /// then flow through this same upsert path.
     pub async fn save(&self, row: ThreadMetadata) -> anyhow::Result<()> {
-        anyhow::ensure!(
-            row.session_id.is_some(),
-            "refusing to persist thread metadata without a session_id"
-        );
-
         let session_id = row.session_id.as_ref().map(|s| s.0.clone());
         let agent_id = if row.agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
             None
