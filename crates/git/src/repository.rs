@@ -57,6 +57,57 @@ fn line_count_for_diff_stat(contents: &[u8]) -> u32 {
     u32::try_from(line_count).unwrap_or(u32::MAX)
 }
 
+async fn untracked_diff_stat_entries(
+    git_binary: &GitBinary,
+    path_prefixes: &[RepoPath],
+    paths_with_stats: &mut HashSet<RepoPath>,
+) -> Result<Vec<(RepoPath, crate::status::DiffStat)>> {
+    let mut args: Vec<OsString> = vec![
+        "ls-files".into(),
+        "--others".into(),
+        "--exclude-standard".into(),
+        "-z".into(),
+    ];
+    if !path_prefixes.is_empty() {
+        args.push("--".into());
+        args.extend(
+            path_prefixes
+                .iter()
+                .map(|p| p.as_std_path().as_os_str().to_os_string()),
+        );
+    }
+    let output = git_binary.run_raw(&args).await?;
+    let mut entries = Vec::new();
+
+    for path_str in output.split_terminator('\0') {
+        let Ok(path) = RepoPath::new(path_str) else {
+            continue;
+        };
+        if paths_with_stats.contains(&path) {
+            continue;
+        }
+
+        let full_path = git_binary.working_directory.join(path.as_std_path());
+        match smol::fs::read(&full_path).await {
+            Ok(contents) => {
+                entries.push((
+                    path.clone(),
+                    crate::status::DiffStat {
+                        added: line_count_for_diff_stat(&contents),
+                        deleted: 0,
+                    },
+                ));
+                paths_with_stats.insert(path);
+            }
+            Err(err) => {
+                log::debug!("failed to read untracked file {full_path:?}: {err}");
+            }
+        }
+    }
+
+    Ok(entries)
+}
+
 /// Format string used in graph log to get initial data for the git graph
 /// %H - Full commit hash
 /// %P - Parent hashes
@@ -2138,47 +2189,10 @@ impl GitRepository for RealGitRepository {
                     .map(|(path, _)| path.clone())
                     .collect::<HashSet<_>>();
 
-                let mut untracked_args: Vec<OsString> = vec![
-                    "ls-files".into(),
-                    "--others".into(),
-                    "--exclude-standard".into(),
-                    "-z".into(),
-                ];
-                if !path_prefixes.is_empty() {
-                    untracked_args.push("--".into());
-                    untracked_args.extend(
-                        path_prefixes
-                            .iter()
-                            .map(|p| p.as_std_path().as_os_str().to_os_string()),
-                    );
-                }
-                let untracked_output = git_binary.run_raw(&untracked_args).await?;
-
-                for path_str in untracked_output.split_terminator('\0') {
-                    let Ok(path) = RepoPath::new(path_str) else {
-                        continue;
-                    };
-                    if paths_with_stats.contains(&path) {
-                        continue;
-                    }
-
-                    let full_path = git_binary.working_directory.join(path.as_std_path());
-                    match smol::fs::read(&full_path).await {
-                        Ok(contents) => {
-                            entries.push((
-                                path.clone(),
-                                crate::status::DiffStat {
-                                    added: line_count_for_diff_stat(&contents),
-                                    deleted: 0,
-                                },
-                            ));
-                            paths_with_stats.insert(path);
-                        }
-                        Err(err) => {
-                            log::debug!("failed to read untracked file {full_path:?}: {err}");
-                        }
-                    }
-                }
+                entries.extend(
+                    untracked_diff_stat_entries(&git_binary, &path_prefixes, &mut paths_with_stats)
+                        .await?,
+                );
 
                 entries.sort_by(|(a, _), (b, _)| a.cmp(b));
                 entries.dedup_by(|(a, _), (b, _)| a == b);
@@ -3741,15 +3755,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_line_count_for_diff_stat() {
-        assert_eq!(line_count_for_diff_stat(b""), 0);
-        assert_eq!(line_count_for_diff_stat(b"one"), 1);
-        assert_eq!(line_count_for_diff_stat(b"one\n"), 1);
-        assert_eq!(line_count_for_diff_stat(b"one\ntwo"), 2);
-        assert_eq!(line_count_for_diff_stat(b"one\ntwo\n"), 2);
-    }
-
     #[gpui::test]
     async fn test_build_command_untrusted_includes_both_safety_args(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
@@ -3869,6 +3874,56 @@ mod tests {
         assert_eq!(
             path,
             git_directory.join(format!("index-{}.tmp", Uuid::nil()))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_diff_stat_includes_untracked_files(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+        smol::fs::write(repo_dir.path().join("tracked.txt"), "tracked\n")
+            .await
+            .unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(vec![repo_path("tracked.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("new.txt"), "one\ntwo\n")
+            .await
+            .unwrap();
+
+        let diff_stat = repo.diff_stat(&[]).await.unwrap();
+        assert_eq!(
+            diff_stat.entries.as_ref(),
+            &[(
+                repo_path("new.txt"),
+                crate::status::DiffStat {
+                    added: 2,
+                    deleted: 0
+                }
+            )]
         );
     }
 
