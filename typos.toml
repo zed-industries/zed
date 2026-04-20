@@ -94,6 +94,8 @@ extend-ignore-re = [
     # "noet" is a vim variable (ideally to ignore locally)
     "noet",
     # Yarn Plug'n'Play
-    "PnP"
+    "PnP",
+    # `image` crate method: Delay::from_numer_denom_ms
+    "numer"
 ]
 check-filename = true

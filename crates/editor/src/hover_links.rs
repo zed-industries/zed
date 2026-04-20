@@ -1166,7 +1166,7 @@ mod tests {
         });
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
-        assert!(requests.try_next().is_err());
+        assert!(requests.try_recv().is_err());
         cx.assert_editor_text_highlights(
             HighlightKey::HoveredLinkState,
             indoc! {"

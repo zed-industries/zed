@@ -769,6 +769,17 @@ impl ProjectSearchView {
         }
     }
 
+    fn set_search_option_enabled(
+        &mut self,
+        option: SearchOptions,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.search_options.contains(option) != enabled {
+            self.toggle_search_option(option, cx);
+        }
+    }
+
     fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut Context<Self>) {
         self.search_options.toggle(option);
         ActiveSettings::update_global(cx, |settings, cx| {
@@ -928,6 +939,7 @@ impl ProjectSearchView {
             let mut editor = Editor::auto_height(1, 4, window, cx);
             editor.set_placeholder_text("Search all files…", window, cx);
             editor.set_use_autoclose(false);
+            editor.set_use_selection_highlight(false);
             editor.set_text(query_text, window, cx);
             editor
         });
@@ -1153,7 +1165,7 @@ impl ProjectSearchView {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::existing_or_new_search(workspace, None, &DeploySearch::find(), window, cx)
+        Self::existing_or_new_search(workspace, None, &DeploySearch::default(), window, cx)
     }
 
     fn existing_or_new_search(
@@ -1203,8 +1215,29 @@ impl ProjectSearchView {
 
         search.update(cx, |search, cx| {
             search.replace_enabled |= action.replace_enabled;
+            if let Some(regex) = action.regex {
+                search.set_search_option_enabled(SearchOptions::REGEX, regex, cx);
+            }
+            if let Some(case_sensitive) = action.case_sensitive {
+                search.set_search_option_enabled(SearchOptions::CASE_SENSITIVE, case_sensitive, cx);
+            }
+            if let Some(whole_word) = action.whole_word {
+                search.set_search_option_enabled(SearchOptions::WHOLE_WORD, whole_word, cx);
+            }
+            if let Some(include_ignored) = action.include_ignored {
+                search.set_search_option_enabled(
+                    SearchOptions::INCLUDE_IGNORED,
+                    include_ignored,
+                    cx,
+                );
+            }
+            let query = action
+                .query
+                .as_deref()
+                .filter(|q| !q.is_empty())
+                .or(query.as_deref());
             if let Some(query) = query {
-                search.set_query(&query, window, cx);
+                search.set_query(query, window, cx);
             }
             if let Some(included_files) = action.included_files.as_deref() {
                 search
@@ -1265,6 +1298,7 @@ impl ProjectSearchView {
                         this.save(
                             SaveOptions {
                                 format: true,
+                                force_format: false,
                                 autosave: false,
                             },
                             project,
@@ -3101,7 +3135,7 @@ pub mod tests {
 
             ProjectSearchView::deploy_search(
                 workspace,
-                &workspace::DeploySearch::find(),
+                &workspace::DeploySearch::default(),
                 window,
                 cx,
             )
@@ -3252,7 +3286,7 @@ pub mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             ProjectSearchView::deploy_search(
                 workspace,
-                &workspace::DeploySearch::find(),
+                &workspace::DeploySearch::default(),
                 window,
                 cx,
             )
@@ -3325,7 +3359,7 @@ pub mod tests {
 
             ProjectSearchView::deploy_search(
                 workspace,
-                &workspace::DeploySearch::find(),
+                &workspace::DeploySearch::default(),
                 window,
                 cx,
             )
@@ -4560,7 +4594,7 @@ pub mod tests {
         });
 
         // Deploy a new search
-        cx.dispatch_action(DeploySearch::find());
+        cx.dispatch_action(DeploySearch::default());
 
         // Both panes should now have a project search in them
         workspace.update_in(cx, |workspace, window, cx| {
@@ -4585,7 +4619,7 @@ pub mod tests {
             .unwrap();
 
         // Deploy a new search
-        cx.dispatch_action(DeploySearch::find());
+        cx.dispatch_action(DeploySearch::default());
 
         // The project search view should now be focused in the second pane
         // And the number of items should be unchanged.
@@ -4823,7 +4857,7 @@ pub mod tests {
             assert!(workspace.has_active_modal(window, cx));
         });
 
-        cx.dispatch_action(DeploySearch::find());
+        cx.dispatch_action(DeploySearch::default());
 
         workspace.update_in(cx, |workspace, window, cx| {
             assert!(!workspace.has_active_modal(window, cx));
@@ -5134,6 +5168,271 @@ pub mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_deploy_search_applies_and_resets_options(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.panes()[0].update(cx, |pane, cx| {
+                pane.toolbar()
+                    .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+            });
+
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch {
+                    regex: Some(true),
+                    case_sensitive: Some(true),
+                    whole_word: Some(true),
+                    include_ignored: Some(true),
+                    query: Some("Test_Query".into()),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+
+        let search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("Search view should be active after deploy");
+
+        search_view.update_in(cx, |search_view, _window, cx| {
+            assert!(
+                search_view.search_options.contains(SearchOptions::REGEX),
+                "Regex option should be enabled"
+            );
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::CASE_SENSITIVE),
+                "Case sensitive option should be enabled"
+            );
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::WHOLE_WORD),
+                "Whole word option should be enabled"
+            );
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::INCLUDE_IGNORED),
+                "Include ignored option should be enabled"
+            );
+            let query_text = search_view.query_editor.read(cx).text(cx);
+            assert_eq!(
+                query_text, "Test_Query",
+                "Query should be set from the action"
+            );
+        });
+
+        // Redeploy with only regex - unspecified options should be preserved.
+        cx.dispatch_action(menu::Cancel);
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch {
+                    regex: Some(true),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+
+        search_view.update_in(cx, |search_view, _window, _cx| {
+            assert!(
+                search_view.search_options.contains(SearchOptions::REGEX),
+                "Regex should still be enabled"
+            );
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::CASE_SENSITIVE),
+                "Case sensitive should be preserved from previous deploy"
+            );
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::WHOLE_WORD),
+                "Whole word should be preserved from previous deploy"
+            );
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::INCLUDE_IGNORED),
+                "Include ignored should be preserved from previous deploy"
+            );
+        });
+
+        // Redeploy explicitly turning off options.
+        cx.dispatch_action(menu::Cancel);
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch {
+                    regex: Some(true),
+                    case_sensitive: Some(false),
+                    whole_word: Some(false),
+                    include_ignored: Some(false),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+
+        search_view.update_in(cx, |search_view, _window, _cx| {
+            assert_eq!(
+                search_view.search_options,
+                SearchOptions::REGEX,
+                "Explicit Some(false) should turn off options"
+            );
+        });
+
+        // Redeploy with an empty query - should not overwrite the existing query.
+        cx.dispatch_action(menu::Cancel);
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch {
+                    query: Some("".into()),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+
+        search_view.update_in(cx, |search_view, _window, cx| {
+            let query_text = search_view.query_editor.read(cx).text(cx);
+            assert_eq!(
+                query_text, "Test_Query",
+                "Empty query string should not overwrite the existing query"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_smartcase_overrides_explicit_case_sensitive(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_default_settings(cx, |settings| {
+                    settings.editor.use_smartcase_search = Some(true);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.panes()[0].update(cx, |pane, cx| {
+                pane.toolbar()
+                    .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
+            });
+
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch {
+                    case_sensitive: Some(true),
+                    query: Some("lowercase_query".into()),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+
+        let search_view = cx
+            .read(|cx| {
+                workspace
+                    .read(cx)
+                    .active_pane()
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("Search view should be active after deploy");
+
+        // Smartcase should override the explicit case_sensitive flag
+        // because the query is all lowercase.
+        search_view.update_in(cx, |search_view, _window, cx| {
+            assert!(
+                !search_view
+                    .search_options
+                    .contains(SearchOptions::CASE_SENSITIVE),
+                "Smartcase should disable case sensitivity for a lowercase query, \
+                 even when case_sensitive was explicitly set in the action"
+            );
+            let query_text = search_view.query_editor.read(cx).text(cx);
+            assert_eq!(query_text, "lowercase_query");
+        });
+
+        // Now deploy with an uppercase query - smartcase should enable case sensitivity.
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch {
+                    query: Some("Uppercase_Query".into()),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+
+        search_view.update_in(cx, |search_view, _window, cx| {
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::CASE_SENSITIVE),
+                "Smartcase should enable case sensitivity for a query containing uppercase"
+            );
+            let query_text = search_view.query_editor.read(cx).text(cx);
+            assert_eq!(query_text, "Uppercase_Query");
+        });
     }
 
     fn init_test(cx: &mut TestAppContext) {

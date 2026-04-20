@@ -72,6 +72,8 @@ actions!(
         OpenPerformanceProfiler,
         /// Opens the onboarding view.
         OpenOnboarding,
+        /// Shows the auto-update notification for testing.
+        ShowUpdateNotification,
     ]
 );
 
@@ -448,8 +450,6 @@ pub mod agent {
             OpenSettings,
             /// Opens the agent onboarding modal.
             OpenOnboardingModal,
-            /// Opens the ACP onboarding modal.
-            OpenAcpOnboardingModal,
             /// Resets the agent onboarding state.
             ResetOnboarding,
             /// Starts a chat conversation with the agent.
@@ -520,7 +520,8 @@ pub mod assistant {
             /// Toggles the agent panel.
             Toggle,
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
-            ToggleFocus
+            ToggleFocus,
+            FocusAgent,
         ]
     );
 
@@ -785,8 +786,6 @@ pub mod agents_sidebar {
         [
             /// Moves focus to the sidebar's search/filter editor.
             FocusSidebarFilter,
-            /// Moves the active workspace to a new window.
-            MoveWorkspaceToNewWindow,
         ]
     );
 }
@@ -797,10 +796,36 @@ pub mod notebook {
     actions!(
         notebook,
         [
-            /// Move to down in cells
+            /// Opens a Jupyter notebook file.
+            OpenNotebook,
+            /// Runs all cells in the notebook.
+            RunAll,
+            /// Runs the current cell and stays on it.
+            Run,
+            /// Runs the current cell and advances to the next cell.
+            RunAndAdvance,
+            /// Clears all cell outputs.
+            ClearOutputs,
+            /// Moves the current cell up.
+            MoveCellUp,
+            /// Moves the current cell down.
+            MoveCellDown,
+            /// Adds a new markdown cell.
+            AddMarkdownBlock,
+            /// Adds a new code cell.
+            AddCodeBlock,
+            /// Restarts the kernel.
+            RestartKernel,
+            /// Interrupts the current execution.
+            InterruptKernel,
+            /// Move down in cells.
             NotebookMoveDown,
-            /// Move to up in cells
+            /// Move up in cells.
             NotebookMoveUp,
+            /// Enters the current cell's editor (edit mode).
+            EnterEditMode,
+            /// Exits the cell editor and returns to cell command mode.
+            EnterCommandMode,
         ]
     );
 }
