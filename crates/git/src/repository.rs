@@ -4523,6 +4523,67 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_initial_graph_data_ref_set(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let git = repo.git_binary();
+
+        let graph_commits = async || {
+            let (tx, rx) = smol::channel::unbounded();
+            repo.initial_graph_data(LogSource::All, LogOrder::DateOrder, tx)
+                .await
+                .unwrap();
+            let mut commits = std::collections::HashSet::new();
+            while let Ok(chunk) = rx.try_recv() {
+                for commit in chunk {
+                    commits.insert(commit.sha);
+                }
+            }
+            commits
+        };
+
+        smol::fs::write(repo_dir.path().join("file1"), "1")
+            .await
+            .unwrap();
+        let branch_sha = repo.checkpoint().await.unwrap().commit_sha;
+        repo.update_ref("refs/heads/main".into(), branch_sha.to_string())
+            .await
+            .unwrap();
+
+        smol::fs::write(repo_dir.path().join("file2"), "2")
+            .await
+            .unwrap();
+        let hidden_sha = repo.checkpoint().await.unwrap().commit_sha;
+        repo.update_ref("refs/custom/hidden".into(), hidden_sha.to_string())
+            .await
+            .unwrap();
+
+        let graph = graph_commits().await;
+        assert!(graph.contains(&branch_sha));
+        assert!(!graph.contains(&hidden_sha));
+
+        git.build_command(&["update-ref", "--no-deref", "HEAD", &hidden_sha.to_string()])
+            .output()
+            .await
+            .unwrap();
+
+        let graph = graph_commits().await;
+        assert!(graph.contains(&branch_sha));
+        assert!(graph.contains(&hidden_sha));
+    }
+
     #[test]
     fn test_original_repo_path_from_common_dir() {
         // Normal repo: common_dir is <work_dir>/.git
