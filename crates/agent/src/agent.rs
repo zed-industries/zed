@@ -47,7 +47,7 @@ use prompt_store::{
     WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, update_settings_file};
+use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 use std::any::Any;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -1423,16 +1423,49 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
         };
 
-        // We want to reset the effort level when switching models, as the currently-selected effort level may
-        // not be compatible.
-        let effort = model
-            .default_effort_level()
-            .map(|effort_level| effort_level.value.to_string());
+        let favorite = agent_settings::AgentSettings::get_global(cx)
+            .favorite_models
+            .iter()
+            .find(|favorite| {
+                favorite.provider.0 == model.provider_id().0.as_ref()
+                    && favorite.model == model.id().0.as_ref()
+            })
+            .cloned();
+
+        let effort = match favorite
+            .as_ref()
+            .and_then(|favorite| favorite.effort.as_ref())
+        {
+            Some(favorite_effort)
+                if model
+                    .supported_effort_levels()
+                    .iter()
+                    .any(|level| level.value.as_ref() == favorite_effort.as_str()) =>
+            {
+                Some(favorite_effort.clone())
+            }
+            _ => model
+                .default_effort_level()
+                .map(|effort_level| effort_level.value.to_string()),
+        };
+
+        let enable_thinking = match favorite.as_ref() {
+            Some(favorite) => favorite.enable_thinking && model.supports_thinking(),
+            None => model.supports_thinking(),
+        };
+
+        let speed = favorite
+            .as_ref()
+            .and_then(|favorite| favorite.speed)
+            .filter(|_| model.supports_fast_mode());
 
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
             thread.set_thinking_effort(effort.clone(), cx);
-            thread.set_thinking_enabled(model.supports_thinking(), cx);
+            thread.set_thinking_enabled(enable_thinking, cx);
+            if let Some(speed) = speed {
+                thread.set_speed(speed, cx);
+            }
         });
 
         update_settings_file(
