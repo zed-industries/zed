@@ -192,7 +192,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("metal", &["metal"]),
     ("nim", &["nim", "nims", "nimble"]),
     ("nix", &["nix"]),
-    ("ocaml", &["ml", "mli"]),
+    ("ocaml", &["ml", "mli", "mlx"]),
     ("odin", &["odin"]),
     ("php", &["php"]),
     (
