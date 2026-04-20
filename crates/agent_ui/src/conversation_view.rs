@@ -397,6 +397,7 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         AcpThreadEvent::NewEntry
         | AcpThreadEvent::TitleUpdated
         | AcpThreadEvent::ToolAuthorizationRequested(_)
+        | AcpThreadEvent::ToolAuthorizationReceived(_)
         | AcpThreadEvent::Stopped(_)
         | AcpThreadEvent::Error
         | AcpThreadEvent::LoadError(_)
@@ -405,7 +406,6 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         // --
         AcpThreadEvent::EntryUpdated(_)
         | AcpThreadEvent::EntriesRemoved(_)
-        | AcpThreadEvent::ToolAuthorizationReceived(_)
         | AcpThreadEvent::Retry(_)
         | AcpThreadEvent::TokenUsageUpdated
         | AcpThreadEvent::PromptCapabilitiesUpdated
