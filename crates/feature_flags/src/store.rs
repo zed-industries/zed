@@ -70,6 +70,7 @@ macro_rules! register_feature_flag {
 pub struct FeatureFlagStore {
     staff: bool,
     server_flags: HashMap<String, String>,
+    server_flags_received: bool,
 
     _settings_subscription: Option<Subscription>,
 }
@@ -95,12 +96,17 @@ impl FeatureFlagStore {
         self.staff
     }
 
+    pub fn server_flags_received(&self) -> bool {
+        self.server_flags_received
+    }
+
     pub fn set_staff(&mut self, staff: bool) {
         self.staff = staff;
     }
 
     pub fn update_server_flags(&mut self, staff: bool, flags: Vec<String>) {
         self.staff = staff;
+        self.server_flags_received = true;
         self.server_flags.clear();
         for flag in flags {
             self.server_flags.insert(flag.clone(), flag);
@@ -370,5 +376,48 @@ mod tests {
         let store = FeatureFlagStore::default();
         assert_eq!(store.try_flag_value::<DemoFlag>(cx), None);
         assert_eq!(PresenceFlag::default(), PresenceFlag::Off);
+    }
+
+    #[gpui::test]
+    fn on_flags_ready_waits_for_server_flags(cx: &mut gpui::TestAppContext) {
+        use crate::FeatureFlagAppExt;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        cx.update(|cx| {
+            init_settings_store(cx);
+            FeatureFlagStore::init(cx);
+        });
+
+        let fired: Rc<RefCell<Vec<bool>>> = Rc::new(RefCell::new(vec![]));
+        cx.update({
+            let fired = fired.clone();
+            |cx| {
+                cx.on_flags_ready(move |state, _| {
+                    fired.borrow_mut().push(state.is_staff);
+                })
+                .detach();
+            }
+        });
+
+        // Simulate a settings-triggered no-op touch (what FeatureFlagStore::init's
+        // SettingsStore subscription does on every settings file load).
+        cx.update(|cx| {
+            cx.update_default_global::<FeatureFlagStore, _>(|_, _| {});
+        });
+        cx.run_until_parked();
+        assert!(
+            fired.borrow().is_empty(),
+            "on_flags_ready must not fire before server flags are received"
+        );
+
+        // Now simulate the server responding with staff = true.
+        cx.update(|cx| cx.update_flags(true, vec![]));
+        cx.run_until_parked();
+        assert_eq!(
+            *fired.borrow(),
+            vec![true],
+            "on_flags_ready must fire exactly once after server flags arrive"
+        );
     }
 }
