@@ -2289,7 +2289,8 @@ impl ThreadView {
             .justify_center()
             .child(
                 v_flex()
-                    .flex_basis(max_content_width)
+                    .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
+                    .when(max_content_width.is_none(), |this| this.w_full())
                     .flex_shrink()
                     .flex_grow_0()
                     .max_w_full()
@@ -3195,8 +3196,7 @@ impl ThreadView {
                 .child(
                     h_flex()
                         .size_full()
-                        .max_w(max_content_width)
-                        .mx_auto()
+                        .when_some(max_content_width, |this, max_w| this.max_w(max_w).mx_auto())
                         .pl_2()
                         .pr_1()
                         .flex_shrink_0()
@@ -3293,7 +3293,8 @@ impl ThreadView {
             })
             .child(
                 v_flex()
-                    .flex_basis(max_content_width)
+                    .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
+                    .when(max_content_width.is_none(), |this| this.w_full())
                     .flex_shrink()
                     .flex_grow_0()
                     .when(fills_container, |this| this.h_full())
@@ -4481,10 +4482,12 @@ impl ThreadView {
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let centered_container = move |content: AnyElement| {
-            h_flex()
-                .w_full()
-                .justify_center()
-                .child(div().max_w(max_content_width).w_full().child(content))
+            h_flex().w_full().justify_center().child(
+                div()
+                    .when_some(max_content_width, |this, max_w| this.max_w(max_w))
+                    .w_full()
+                    .child(content),
+            )
         };
 
         list(
