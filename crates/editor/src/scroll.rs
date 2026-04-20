@@ -882,10 +882,8 @@ impl Editor {
         // configure the editor to only display a certain number of columns. If
         // that ever happens, this could probably be removed.
         let settings = AllLanguageSettings::get_global(cx);
-        if matches!(
-            settings.defaults.soft_wrap,
-            SoftWrap::PreferredLineLength | SoftWrap::Bounded
-        ) && (settings.defaults.preferred_line_length as f64) < visible_column_count
+        if matches!(settings.defaults.soft_wrap, SoftWrap::Bounded)
+            && (settings.defaults.preferred_line_length as f64) < visible_column_count
         {
             visible_column_count = settings.defaults.preferred_line_length as f64;
         }

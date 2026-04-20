@@ -275,7 +275,6 @@
       "cmd-shift-j": "agent::ToggleNavigationMenu",
       "cmd-alt-m": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
-      "cmd-shift-t": "agent::CycleStartThreadIn",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd->": "agent::AddSelectionToThread",
       "cmd-shift-e": "project_panel::ToggleFocus",
@@ -380,6 +379,24 @@
     },
   },
   {
+    "context": "AcpThread > Editor && start_of_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "pageup": "agent::ScrollOutputPageUp",
+      "ctrl-pageup": "agent::ScrollOutputPageUp",
+      "ctrl-home": "agent::ScrollOutputToTop",
+    },
+  },
+  {
+    "context": "AcpThread > Editor && end_of_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-end": "agent::ScrollOutputToBottom",
+    },
+  },
+  {
     "context": "AcpThread > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
@@ -411,6 +428,12 @@
     "context": "ThreadHistory > Editor",
     "bindings": {
       "shift-backspace": "agent::RemoveSelectedThread",
+    },
+  },
+  {
+    "context": "ThreadsArchiveView",
+    "bindings": {
+      "backspace": "agent::ArchiveSelectedThread",
     },
   },
   {
@@ -459,13 +482,6 @@
     "bindings": {
       "up": "search::PreviousHistoryQuery",
       "down": "search::NextHistoryQuery",
-    },
-  },
-  {
-    "context": "BufferSearchBar || ProjectSearchBar",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-enter": "editor::Newline",
     },
   },
   {
@@ -674,6 +690,7 @@
       "ctrl-cmd-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true, "create_new_window": false }],
       "cmd-ctrl-b": "branches::OpenRecent",
+      "cmd-ctrl-w": "git::Worktree",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
@@ -765,7 +782,7 @@
       "right": "menu::SelectChild",
       "enter": "menu::Confirm",
       "cmd-f": "agents_sidebar::FocusSidebarFilter",
-      "cmd-g": "agents_sidebar::ToggleArchive",
+      "cmd-g": "agents_sidebar::ToggleThreadHistory",
       "shift-backspace": "agent::RemoveSelectedThread",
       "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
       "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
@@ -1441,6 +1458,7 @@
     "context": "Welcome",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-n": "workspace::NewFile",
       "cmd-=": ["zed::IncreaseUiFontSize", { "persist": false }],
       "cmd-+": ["zed::IncreaseUiFontSize", { "persist": false }],
       "cmd--": ["zed::DecreaseUiFontSize", { "persist": false }],
@@ -1457,15 +1475,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-enter": "workspace::OpenWithSystem",
-    },
-  },
-  {
-    "context": "GitWorktreeSelector || (GitWorktreeSelector > Picker > Editor)",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-shift-space": "git::WorktreeFromDefaultOnWindow",
-      "ctrl-space": "git::WorktreeFromDefault",
-      "cmd-shift-backspace": "git::DeleteWorktree",
     },
   },
   {
@@ -1567,9 +1576,15 @@
   {
     "context": "GitPicker",
     "bindings": {
-      "cmd-1": "git_picker::ActivateWorktreesTab",
-      "cmd-2": "git_picker::ActivateBranchesTab",
-      "cmd-3": "git_picker::ActivateStashTab",
+      "cmd-1": "git_picker::ActivateBranchesTab",
+      "cmd-2": "git_picker::ActivateStashTab",
+    },
+  },
+  {
+    "context": "WorktreePicker || (WorktreePicker > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-shift-backspace": "worktree_picker::DeleteWorktree",
     },
   },
   {

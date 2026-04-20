@@ -141,12 +141,12 @@ pub(crate) struct ZedCustomization {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ContainerBuild {
     pub(crate) dockerfile: String,
-    context: Option<String>,
+    pub(crate) context: Option<String>,
     pub(crate) args: Option<HashMap<String, String>>,
-    options: Option<Vec<String>>,
+    pub(crate) options: Option<Vec<String>>,
     pub(crate) target: Option<String>,
     #[serde(default, deserialize_with = "deserialize_string_or_array")]
-    cache_from: Option<Vec<String>>,
+    pub(crate) cache_from: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
@@ -228,7 +228,7 @@ pub(crate) struct DevContainer {
     #[serde(default, deserialize_with = "deserialize_mount_definition")]
     pub(crate) workspace_mount: Option<MountDefinition>,
     pub(crate) workspace_folder: Option<String>,
-    run_args: Option<Vec<String>>,
+    pub(crate) run_args: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_string_or_array")]
     pub(crate) docker_compose_file: Option<Vec<String>>,
     pub(crate) service: Option<String>,
@@ -263,6 +263,32 @@ impl DevContainer {
             DevContainerBuildType::Dockerfile(build.clone())
         } else {
             DevContainerBuildType::None
+        }
+    }
+
+    pub(crate) fn validate_devcontainer_contents(&self) -> Result<(), DevContainerError> {
+        match self.build_type() {
+            DevContainerBuildType::Image(_) => Ok(()),
+            DevContainerBuildType::Dockerfile(_) => {
+                if (self.workspace_folder.is_some() && self.workspace_mount.is_none())
+                    || (self.workspace_folder.is_none() && self.workspace_mount.is_some())
+                {
+                    return Err(DevContainerError::DevContainerValidationFailed(
+                        "workspaceMount and workspaceFolder must both be defined, or neither defined"
+                            .to_string(),
+                    ));
+                }
+                Ok(())
+            }
+            DevContainerBuildType::DockerCompose => {
+                if self.service.is_none() {
+                    return Err(DevContainerError::DevContainerValidationFailed(
+                        "must specify a connecting service for docker-compose".to_string(),
+                    ));
+                }
+                Ok(())
+            }
+            DevContainerBuildType::None => Ok(()),
         }
     }
 }
@@ -1536,5 +1562,112 @@ mod test {
         assert_eq!(attrs.on_auto_forward, OnAutoForward::Notify);
         assert_eq!(attrs.elevate_if_needed, false);
         assert_eq!(attrs.require_local_port, false);
+    }
+
+    #[test]
+    fn should_fail_validation_with_workspace_mount_only() {
+        let given_image_container_json = r#"
+            // These are some external comments. serde_lenient should handle them
+            {
+                // These are some internal comments
+                "build": {
+                    "dockerfile": "Dockerfile",
+                },
+                "name": "myDevContainer",
+                "workspaceMount": "source=/app,target=/workspaces/app,type=bind,consistency=cached",
+                "customizations": {
+                    "vscode": {
+                        // Just confirm that this can be included and ignored
+                    },
+                    "zed": {
+                        "extensions": [
+                            "html"
+                        ]
+                    }
+                }
+            }
+            "#;
+
+        let result = deserialize_devcontainer_json(given_image_container_json);
+
+        assert!(result.is_ok());
+        let devcontainer = result.expect("ok");
+
+        assert_eq!(
+            devcontainer.validate_devcontainer_contents(),
+            Err(DevContainerError::DevContainerValidationFailed(
+                "workspaceMount and workspaceFolder must both be defined, or neither defined"
+                    .to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn should_fail_validation_with_workspace_folder_only() {
+        let given_image_container_json = r#"
+            // These are some external comments. serde_lenient should handle them
+            {
+                // These are some internal comments
+                "build": {
+                    "dockerfile": "Dockerfile",
+                },
+                "name": "myDevContainer",
+                "workspaceFolder": "/workspaces",
+                "customizations": {
+                    "vscode": {
+                        // Just confirm that this can be included and ignored
+                    },
+                    "zed": {
+                        "extensions": [
+                            "html"
+                        ]
+                    }
+                }
+            }
+            "#;
+
+        let result = deserialize_devcontainer_json(given_image_container_json);
+
+        assert!(result.is_ok());
+        let devcontainer = result.expect("ok");
+
+        assert_eq!(
+            devcontainer.validate_devcontainer_contents(),
+            Err(DevContainerError::DevContainerValidationFailed(
+                "workspaceMount and workspaceFolder must both be defined, or neither defined"
+                    .to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn should_pass_validation_with_workspace_folder_for_docker_compose() {
+        let given_image_container_json = r#"
+            // These are some external comments. serde_lenient should handle them
+            {
+                // These are some internal comments
+                "dockerComposeFile": "docker-compose-plain.yml",
+                "service": "app",
+                "name": "myDevContainer",
+                "workspaceFolder": "/workspaces",
+                "customizations": {
+                    "vscode": {
+                        // Just confirm that this can be included and ignored
+                    },
+                    "zed": {
+                        "extensions": [
+                            "html"
+                        ]
+                    }
+                }
+            }
+            "#;
+
+        let result = deserialize_devcontainer_json(given_image_container_json);
+
+        assert!(result.is_ok());
+        let devcontainer = result.expect("ok");
+
+        assert!(devcontainer.validate_devcontainer_contents().is_ok());
     }
 }

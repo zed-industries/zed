@@ -6,6 +6,7 @@ use std::sync::{Arc, LazyLock};
 use agent_client_protocol::ModelId;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
+use futures::channel::oneshot;
 use gpui::{App, Pixels, px};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
@@ -15,7 +16,7 @@ use settings::{
     DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection, NewThreadLocation,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file,
+    update_settings_file, update_settings_file_with_completion,
 };
 
 pub use crate::agent_profile::*;
@@ -141,7 +142,7 @@ pub struct AgentSettings {
     pub sidebar_side: SidebarDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
-    pub max_content_width: Pixels,
+    pub max_content_width: Option<Pixels>,
     pub default_model: Option<LanguageModelSelection>,
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub inline_assistant_use_streaming_tools: bool,
@@ -242,26 +243,30 @@ impl AgentSettings {
         });
     }
 
-    pub fn set_layout(layout: WindowLayout, fs: Arc<dyn Fs>, cx: &App) {
+    pub fn set_layout(
+        layout: WindowLayout,
+        fs: Arc<dyn Fs>,
+        cx: &App,
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
         let merged = PanelLayout::read_from(cx.global::<SettingsStore>().merged_settings());
 
         match layout {
             WindowLayout::Agent(None) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     PanelLayout::AGENT.write_diff_to(&merged, settings);
-                });
+                })
             }
             WindowLayout::Editor(None) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     PanelLayout::EDITOR.write_diff_to(&merged, settings);
-                });
+                })
             }
             WindowLayout::Agent(Some(saved))
             | WindowLayout::Editor(Some(saved))
             | WindowLayout::Custom(saved) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     saved.write_to(settings);
-                });
+                })
             }
         }
     }
@@ -588,7 +593,11 @@ impl Settings for AgentSettings {
             sidebar_side: agent.sidebar_side.unwrap(),
             default_width: px(agent.default_width.unwrap()),
             default_height: px(agent.default_height.unwrap()),
-            max_content_width: px(agent.max_content_width.unwrap()),
+            max_content_width: if agent.limit_content_width.unwrap() {
+                Some(px(agent.max_content_width.unwrap()))
+            } else {
+                None
+            },
             flexible: agent.flexible.unwrap(),
             default_model: Some(agent.default_model.unwrap()),
             inline_assistant_model: agent.inline_assistant_model,
@@ -1356,8 +1365,10 @@ mod tests {
             let layout = AgentSettings::get_layout(cx);
             assert!(matches!(layout, WindowLayout::Custom(_)));
 
-            AgentSettings::set_layout(WindowLayout::agent(), fs.clone(), cx);
-        });
+            AgentSettings::set_layout(WindowLayout::agent(), fs.clone(), cx)
+        })
+        .await
+        .ok();
 
         cx.run_until_parked();
 

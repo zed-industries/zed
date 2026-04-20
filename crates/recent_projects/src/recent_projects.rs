@@ -22,7 +22,7 @@ pub use remote_connection::{RemoteConnectionModal, connect};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, WeakEntity, Window, actions, px,
@@ -32,16 +32,17 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
-use project::{ProjectGroupKey, Worktree, git_store::Repository};
+use project::{Worktree, git_store::Repository};
 pub use remote_connections::RemoteSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::{Settings, WorktreeId};
 use ui_input::ErasedEditor;
+use workspace::ProjectGroupKey;
 
 use dev_container::{DevContainerContext, find_devcontainer_configs};
 use ui::{
-    ContextMenu, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, PopoverMenu,
-    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    ButtonLike, ContextMenu, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
+    ListSubHeader, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, paths::PathExt};
 use workspace::{
@@ -380,7 +381,7 @@ pub fn init(cx: &mut App) {
                     multi_workspace
                         .update(cx, |multi_workspace, window, cx| {
                             let window_project_groups: Vec<ProjectGroupKey> =
-                                multi_workspace.project_group_keys().cloned().collect();
+                                multi_workspace.project_group_keys();
 
                             let workspace = multi_workspace.workspace().clone();
                             workspace.update(cx, |workspace, cx| {
@@ -936,7 +937,7 @@ impl PickerDelegate for RecentProjectsDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> gpui::Task<()> {
         let query = query.trim_start();
-        let smart_case = query.chars().any(|c| c.is_uppercase());
+        let case = fuzzy_nucleo::Case::smart_if_uppercase_in(query);
         let is_empty_query = query.is_empty();
 
         let folder_matches = if self.open_folders.is_empty() {
@@ -949,15 +950,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .map(|(id, folder)| StringMatchCandidate::new(id, folder.name.as_ref()))
                 .collect();
 
-            smol::block_on(fuzzy::match_strings(
+            match_strings(
                 &candidates,
                 query,
-                smart_case,
-                true,
+                case,
+                fuzzy_nucleo::LengthPenalty::On,
                 100,
-                &Default::default(),
-                cx.background_executor().clone(),
-            ))
+            )
         };
 
         let project_group_candidates: Vec<_> = self
@@ -975,21 +974,13 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .collect();
 
-        let mut project_group_matches = smol::block_on(fuzzy::match_strings(
+        let project_group_matches = match_strings(
             &project_group_candidates,
             query,
-            smart_case,
-            true,
+            case,
+            fuzzy_nucleo::LengthPenalty::On,
             100,
-            &Default::default(),
-            cx.background_executor().clone(),
-        ));
-        project_group_matches.sort_unstable_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.candidate_id.cmp(&b.candidate_id))
-        });
+        );
 
         // Build candidates for recent projects (not current, not sibling, not open folder)
         let recent_candidates: Vec<_> = self
@@ -1007,21 +998,13 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .collect();
 
-        let mut recent_matches = smol::block_on(fuzzy::match_strings(
+        let recent_matches = match_strings(
             &recent_candidates,
             query,
-            smart_case,
-            true,
+            case,
+            fuzzy_nucleo::LengthPenalty::On,
             100,
-            &Default::default(),
-            cx.background_executor().clone(),
-        ));
-        recent_matches.sort_unstable_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.candidate_id.cmp(&b.candidate_id))
-        });
+        );
 
         let mut entries = Vec::new();
 
@@ -1057,7 +1040,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         candidate_id: id,
                         score: 0.0,
                         positions: Vec::new(),
-                        string: String::new(),
+                        string: Default::default(),
                     }));
                 }
             } else {
@@ -1083,7 +1066,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             candidate_id: id,
                             score: 0.0,
                             positions: Vec::new(),
-                            string: String::new(),
+                            string: Default::default(),
                         }));
                     }
                 }
@@ -1129,13 +1112,21 @@ impl PickerDelegate for RecentProjectsDelegate {
                     return;
                 };
 
+                let key = key.clone();
                 let path_list = key.path_list().clone();
                 if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
                     cx.defer(move |cx| {
                         if let Some(task) = handle
                             .update(cx, |multi_workspace, window, cx| {
-                                multi_workspace
-                                    .find_or_create_local_workspace(path_list, window, cx)
+                                multi_workspace.find_or_create_local_workspace(
+                                    path_list,
+                                    Some(key.clone()),
+                                    &[],
+                                    None,
+                                    OpenMode::Activate,
+                                    window,
+                                    cx,
+                                )
                             })
                             .log_err()
                         {
@@ -1312,6 +1303,9 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                 let icon = icon_for_remote_connection(self.project_connection_options.as_ref());
 
+                let tooltip_path: SharedString = path.to_string_lossy().to_string().into();
+                let tooltip_branch = branch.clone();
+
                 Some(
                     ListItem::new(ix)
                         .toggle_state(selected)
@@ -1321,26 +1315,28 @@ impl PickerDelegate for RecentProjectsDelegate {
                             h_flex()
                                 .id("open_folder_item")
                                 .gap_3()
-                                .flex_grow()
+                                .w_full()
+                                .overflow_hidden()
                                 .when(self.has_any_non_local_projects, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
                                 })
                                 .child(
                                     v_flex()
+                                        .flex_1()
                                         .child(
                                             h_flex()
+                                                .min_w_0()
                                                 .gap_1()
-                                                .child({
-                                                    let highlighted = HighlightedMatch {
-                                                        text: name.to_string(),
-                                                        highlight_positions: positions,
-                                                        color: Color::Default,
-                                                    };
-                                                    highlighted.render(window, cx)
-                                                })
+                                                .child(HighlightedLabel::new(
+                                                    name.to_string(),
+                                                    positions,
+                                                ))
                                                 .when_some(branch, |this, branch| {
                                                     this.child(
-                                                        Label::new(branch).color(Color::Muted),
+                                                        Label::new(branch)
+                                                            .color(Color::Muted)
+                                                            .truncate()
+                                                            .flex_1(),
                                                     )
                                                 })
                                                 .when(is_active, |this| {
@@ -1360,7 +1356,18 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         }),
                                 )
                                 .when(!show_path, |this| {
-                                    this.tooltip(Tooltip::text(path.to_string_lossy().to_string()))
+                                    this.tooltip(move |_, cx| {
+                                        if let Some(branch) = tooltip_branch.clone() {
+                                            Tooltip::with_meta(
+                                                branch,
+                                                None,
+                                                tooltip_path.clone(),
+                                                cx,
+                                            )
+                                        } else {
+                                            Tooltip::simple(tooltip_path.clone(), cx)
+                                        }
+                                    })
                                 }),
                         )
                         .end_slot(secondary_actions)
@@ -1613,22 +1620,50 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
                     .child({
-                        let open_action = workspace::Open::default();
-                        Button::new("open_local_folder", "Open Local Project")
-                            .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
-                            .on_click(move |_, window, cx| {
-                                window.dispatch_action(open_action.boxed_clone(), cx)
+                        ButtonLike::new("open_local_folder")
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_1()
+                                    .justify_between()
+                                    .child(Label::new("Open Local Folders"))
+                                    .child(KeyBinding::for_action_in(
+                                        &workspace::Open {
+                                            create_new_window: self.create_new_window,
+                                        },
+                                        &focus_handle,
+                                        cx,
+                                    )),
+                            )
+                            .on_click({
+                                let workspace = self.workspace.clone();
+                                let create_new_window = self.create_new_window;
+                                move |_, window, cx| {
+                                    open_local_project(
+                                        workspace.clone(),
+                                        create_new_window,
+                                        window,
+                                        cx,
+                                    );
+                                }
                             })
                     })
                     .child(
-                        Button::new("open_remote_folder", "Open Remote Project")
-                            .key_binding(KeyBinding::for_action(
-                                &OpenRemote {
-                                    from_existing_connection: false,
-                                    create_new_window: false,
-                                },
-                                cx,
-                            ))
+                        ButtonLike::new("open_remote_folder")
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_1()
+                                    .justify_between()
+                                    .child(Label::new("Open Remote Folder"))
+                                    .child(KeyBinding::for_action(
+                                        &OpenRemote {
+                                            from_existing_connection: false,
+                                            create_new_window: false,
+                                        },
+                                        cx,
+                                    )),
+                            )
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(
                                     OpenRemote {
@@ -1764,6 +1799,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                         )
                         .menu({
                             let focus_handle = focus_handle.clone();
+                            let workspace_handle = self.workspace.clone();
+                            let create_new_window = self.create_new_window;
+                            let open_action = workspace::Open { create_new_window };
                             let show_add_to_workspace = match selected_entry {
                                 Some(ProjectPickerEntry::RecentProject(hit)) => self
                                     .workspaces
@@ -1778,6 +1816,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                             move |window, cx| {
                                 Some(ContextMenu::build(window, cx, {
                                     let focus_handle = focus_handle.clone();
+                                    let workspace_handle = workspace_handle.clone();
+                                    let open_action = open_action.clone();
                                     move |menu, _, _| {
                                         menu.context(focus_handle)
                                             .when(show_add_to_workspace, |menu| {
@@ -1787,12 +1827,23 @@ impl PickerDelegate for RecentProjectsDelegate {
                                                 )
                                                 .separator()
                                             })
-                                            .action(
-                                                "Open Local Project",
-                                                workspace::Open::default().boxed_clone(),
+                                            .entry(
+                                                "Open Local Folders",
+                                                Some(open_action.boxed_clone()),
+                                                {
+                                                    let workspace_handle = workspace_handle.clone();
+                                                    move |window, cx| {
+                                                        open_local_project(
+                                                            workspace_handle.clone(),
+                                                            create_new_window,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+                                                },
                                             )
                                             .action(
-                                                "Open Remote Project",
+                                                "Open Remote Folder",
                                                 OpenRemote {
                                                     from_existing_connection: false,
                                                     create_new_window: false,
@@ -1869,6 +1920,67 @@ pub(crate) fn highlights_for_path(
         },
     )
 }
+fn open_local_project(
+    workspace: WeakEntity<Workspace>,
+    create_new_window: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    use gpui::PathPromptOptions;
+    use project::DirectoryLister;
+
+    let Some(workspace) = workspace.upgrade() else {
+        return;
+    };
+
+    let paths = workspace.update(cx, |workspace, cx| {
+        workspace.prompt_for_open_path(
+            PathPromptOptions {
+                files: true,
+                directories: true,
+                multiple: true,
+                prompt: None,
+            },
+            DirectoryLister::Local(
+                workspace.project().clone(),
+                workspace.app_state().fs.clone(),
+            ),
+            window,
+            cx,
+        )
+    });
+
+    let multi_workspace_handle = window.window_handle().downcast::<MultiWorkspace>();
+    window
+        .spawn(cx, async move |cx| {
+            let Some(paths) = paths.await.log_err().flatten() else {
+                return;
+            };
+            if !create_new_window {
+                if let Some(handle) = multi_workspace_handle {
+                    if let Some(task) = handle
+                        .update(cx, |multi_workspace, window, cx| {
+                            multi_workspace.open_project(paths, OpenMode::Activate, window, cx)
+                        })
+                        .log_err()
+                    {
+                        task.await.log_err();
+                    }
+                    return;
+                }
+            }
+            if let Some(task) = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.open_workspace_for_paths(OpenMode::NewWindow, paths, window, cx)
+                })
+                .log_err()
+            {
+                task.await.log_err();
+            }
+        })
+        .detach();
+}
+
 impl RecentProjectsDelegate {
     fn add_project_to_workspace(
         &mut self,
@@ -2032,9 +2144,10 @@ impl RecentProjectsDelegate {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{TestAppContext, UpdateGlobal};
 
     use serde_json::json;
+    use settings::SettingsStore;
     use util::path;
     use workspace::{AppState, open_paths};
 
@@ -2106,71 +2219,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_dev_container_modal_not_dismissed_on_backdrop_click(cx: &mut TestAppContext) {
-        let app_state = init_test(cx);
-
-        app_state
-            .fs
-            .as_fake()
-            .insert_tree(
-                path!("/project"),
-                json!({
-                    ".devcontainer": {
-                        "devcontainer.json": "{}"
-                    },
-                    "src": {
-                        "main.rs": "fn main() {}"
-                    }
-                }),
-            )
-            .await;
-
-        cx.update(|cx| {
-            open_paths(
-                &[PathBuf::from(path!("/project"))],
-                app_state,
-                workspace::OpenOptions::default(),
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-
-        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
-
-        cx.run_until_parked();
-
-        cx.dispatch_action(*multi_workspace, OpenDevContainer);
-
-        multi_workspace
-            .update(cx, |multi_workspace, _, cx| {
-                assert!(
-                    multi_workspace
-                        .active_modal::<RemoteServerProjects>(cx)
-                        .is_some(),
-                    "Dev container modal should be open"
-                );
-            })
-            .unwrap();
-
-        // Click outside the modal (on the backdrop) to try to dismiss it
-        let mut vcx = VisualTestContext::from_window(*multi_workspace, cx);
-        vcx.simulate_click(gpui::point(px(1.0), px(1.0)), gpui::Modifiers::default());
-
-        multi_workspace
-            .update(cx, |multi_workspace, _, cx| {
-                assert!(
-                    multi_workspace
-                        .active_modal::<RemoteServerProjects>(cx)
-                        .is_some(),
-                    "Dev container modal should remain open during creation"
-                );
-            })
-            .unwrap();
-    }
-
-    #[gpui::test]
     async fn test_open_dev_container_action_with_multiple_configs(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
@@ -2225,6 +2273,159 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_open_local_project_reuses_multi_workspace_window(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        // Disable system path prompts so the injected mock is used.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.use_system_path_prompts = Some(false);
+                });
+            });
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/initial-project"),
+                json!({ "src": { "main.rs": "" } }),
+            )
+            .await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/new-project"), json!({ "lib": { "mod.rs": "" } }))
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/initial-project"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let initial_window_count = cx.update(|cx| cx.windows().len());
+        assert_eq!(initial_window_count, 1);
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        cx.run_until_parked();
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        // Set up the prompt mock to return the new project path.
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+                let (tx, rx) = futures::channel::oneshot::channel();
+                tx.send(Some(vec![PathBuf::from(path!("/new-project"))]))
+                    .ok();
+                rx
+            }));
+        });
+
+        // Call open_local_project with create_new_window: false.
+        let weak_workspace = workspace.downgrade();
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                open_local_project(weak_workspace, false, window, cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // Should NOT have opened a new window.
+        let final_window_count = cx.update(|cx| cx.windows().len());
+        assert_eq!(
+            final_window_count, initial_window_count,
+            "open_local_project with create_new_window=false should reuse the current multi-workspace window"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_open_local_project_new_window_creates_new_window(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        // Disable system path prompts so the injected mock is used.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.use_system_path_prompts = Some(false);
+                });
+            });
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/initial-project"),
+                json!({ "src": { "main.rs": "" } }),
+            )
+            .await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/new-project"), json!({ "lib": { "mod.rs": "" } }))
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/initial-project"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let initial_window_count = cx.update(|cx| cx.windows().len());
+        assert_eq!(initial_window_count, 1);
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        cx.run_until_parked();
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        // Set up the prompt mock to return the new project path.
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+                let (tx, rx) = futures::channel::oneshot::channel();
+                tx.send(Some(vec![PathBuf::from(path!("/new-project"))]))
+                    .ok();
+                rx
+            }));
+        });
+
+        // Call open_local_project with create_new_window: true.
+        let weak_workspace = workspace.downgrade();
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                open_local_project(weak_workspace, true, window, cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // Should have opened a new window.
+        let final_window_count = cx.update(|cx| cx.windows().len());
+        assert_eq!(
+            final_window_count,
+            initial_window_count + 1,
+            "open_local_project with create_new_window=true should open a new window"
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {

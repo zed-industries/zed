@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, WeakEntity, Window,
@@ -10,15 +10,14 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
-use project::ProjectGroupKey;
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    MultiWorkspace, OpenMode, OpenOptions, PathList, SerializedWorkspaceLocation, Workspace,
-    WorkspaceDb, WorkspaceId, notifications::DetachAndPromptErr,
+    MultiWorkspace, OpenMode, OpenOptions, PathList, ProjectGroupKey, SerializedWorkspaceLocation,
+    Workspace, WorkspaceDb, WorkspaceId, notifications::DetachAndPromptErr,
 };
 
 use zed_actions::OpenRemote;
@@ -195,7 +194,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let query = query.trim_start();
-        let smart_case = query.chars().any(|c| c.is_uppercase());
+        let case = fuzzy_nucleo::Case::smart_if_uppercase_in(query);
         let is_empty_query = query.is_empty();
 
         let current_workspace_id = self
@@ -235,22 +234,13 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 })
                 .collect();
         } else {
-            let mut matches = smol::block_on(fuzzy::match_strings(
+            self.filtered_workspaces = match_strings(
                 &candidates,
                 query,
-                smart_case,
-                true,
+                case,
+                fuzzy_nucleo::LengthPenalty::On,
                 100,
-                &Default::default(),
-                cx.background_executor().clone(),
-            ));
-            matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then_with(|| a.candidate_id.cmp(&b.candidate_id))
-            });
-            self.filtered_workspaces = matches;
+            );
         }
 
         self.selected_index = 0;
@@ -427,7 +417,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         create_new_window: false,
                     };
 
-                    Button::new("open_local_folder", "Add Local Project")
+                    Button::new("open_local_folder", "Add Local Folders")
                         .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
                         .on_click(cx.listener(move |_, _, window, cx| {
                             window.dispatch_action(open_action.boxed_clone(), cx);
@@ -435,7 +425,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         }))
                 })
                 .child(
-                    Button::new("open_remote_folder", "Add Remote Project")
+                    Button::new("open_remote_folder", "Add Remote Folder")
                         .key_binding(KeyBinding::for_action(
                             &OpenRemote {
                                 from_existing_connection: false,

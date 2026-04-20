@@ -68,8 +68,8 @@ pub fn init(cx: &mut App) {
     }
 
     cx.observe_flag::<NotebookFeatureFlag, _>({
-        move |is_enabled, cx| {
-            if is_enabled {
+        move |flag, cx| {
+            if *flag {
                 workspace::register_project_item::<NotebookEditor>(cx);
             } else {
                 // todo: there is no way to unregister a project item, so if the feature flag

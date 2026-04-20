@@ -19,6 +19,7 @@ client.workspace = true
 db.workspace = true
 fs.workspace = true
 editor.workspace = true
+notifications.workspace = true
 gpui.workspace = true
 markdown_preview.workspace = true
 release_channel.workspace = true
