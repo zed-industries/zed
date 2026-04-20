@@ -29,8 +29,8 @@ jobs:
     - name: publish_extension_cli::publish_job::upload_binary
       run: script/upload-extension-cli "$GITHUB_SHA"
       env:
-        DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-        DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+        DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_EXTENSION_CLI_ACCESS_KEY }}
+        DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_EXTENSION_CLI_SECRET_KEY }}
   update_sha_in_zed:
     needs:
     - publish_job

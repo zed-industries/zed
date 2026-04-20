@@ -30,11 +30,11 @@ fn publish_job() -> NamedJob {
         named::bash(r#"script/upload-extension-cli "$GITHUB_SHA""#)
             .add_env((
                 "DIGITALOCEAN_SPACES_ACCESS_KEY",
-                vars::DIGITALOCEAN_SPACES_ACCESS_KEY,
+                vars::DIGITALOCEAN_SPACES_EXTENSION_CLI_ACCESS_KEY,
             ))
             .add_env((
                 "DIGITALOCEAN_SPACES_SECRET_KEY",
-                vars::DIGITALOCEAN_SPACES_SECRET_KEY,
+                vars::DIGITALOCEAN_SPACES_EXTENSION_CLI_SECRET_KEY,
             ))
     }
 

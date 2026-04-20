@@ -116,11 +116,11 @@ fn update_nightly_tag_job(bundle: &ReleaseBundleJobs) -> NamedJob {
                 steps::script("./script/upload-nightly")
                     .add_env((
                         "DIGITALOCEAN_SPACES_ACCESS_KEY",
-                        vars::DIGITALOCEAN_SPACES_ACCESS_KEY,
+                        vars::DIGITALOCEAN_SPACES_NIGHTLY_ACCESS_KEY,
                     ))
                     .add_env((
                         "DIGITALOCEAN_SPACES_SECRET_KEY",
-                        vars::DIGITALOCEAN_SPACES_SECRET_KEY,
+                        vars::DIGITALOCEAN_SPACES_NIGHTLY_SECRET_KEY,
                     )),
             )
             .add_step(update_nightly_tag())

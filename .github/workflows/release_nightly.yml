@@ -517,8 +517,8 @@ jobs:
     - name: ./script/upload-nightly
       run: ./script/upload-nightly
       env:
-        DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-        DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+        DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_NIGHTLY_ACCESS_KEY }}
+        DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_NIGHTLY_SECRET_KEY }}
     - name: release_nightly::update_nightly_tag_job::update_nightly_tag
       run: |
         if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
