@@ -721,14 +721,20 @@ pub enum LogSource {
 }
 
 impl LogSource {
-    fn get_arg(&self) -> Result<&str> {
+    fn get_args(&self) -> Result<Vec<&str>> {
         match self {
-            LogSource::All => Ok("--all"),
-            LogSource::Branch(branch) => Ok(branch.as_str()),
-            LogSource::Sha(oid) => {
-                str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
-            }
-            LogSource::Path(_) => Ok("--follow"),
+            LogSource::All => Ok(vec![
+                "--ignore-missing", // needed in case of unborn HEAD
+                "--branches",
+                "--remotes",
+                "--tags",
+                "HEAD",
+            ]),
+            LogSource::Branch(branch) => Ok(vec![branch.as_str()]),
+            LogSource::Sha(oid) => Ok(vec![
+                str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")?,
+            ]),
+            LogSource::Path(path) => Ok(vec!["--follow", "--", path.as_unix_str()]),
         }
     }
 }
@@ -2958,17 +2964,8 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
 
         async move {
-            let mut git_log_command = vec![
-                "log",
-                GRAPH_COMMIT_FORMAT,
-                log_order.as_arg(),
-                log_source.get_arg()?,
-            ];
-
-            if let LogSource::Path(path) = &log_source {
-                git_log_command.extend(["--", path.as_unix_str()]);
-            }
-
+            let mut git_log_command = vec!["log", GRAPH_COMMIT_FORMAT, log_order.as_arg()];
+            git_log_command.extend(log_source.get_args()?);
             let mut command = git.build_command(&git_log_command);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
@@ -3038,7 +3035,7 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
 
         async move {
-            let mut args = vec!["log", SEARCH_COMMIT_FORMAT, log_source.get_arg()?];
+            let mut args = vec!["log", SEARCH_COMMIT_FORMAT];
 
             args.push("--fixed-strings");
 
@@ -3049,10 +3046,7 @@ impl GitRepository for RealGitRepository {
             args.push("--grep");
             args.push(search_args.query.as_str());
 
-            if let LogSource::Path(path) = &log_source {
-                args.extend(["--", path.as_unix_str()]);
-            }
-
+            args.extend(log_source.get_args()?);
             let mut command = git.build_command(&args);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::null());
