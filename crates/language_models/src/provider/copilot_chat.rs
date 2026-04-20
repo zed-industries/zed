@@ -262,52 +262,26 @@ impl LanguageModel for CopilotChatLanguageModel {
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         let levels = self.model.reasoning_effort_levels();
-        if !levels.is_empty() {
-            return levels
-                .iter()
-                .map(|level| {
-                    let name = match level.as_str() {
-                        "low" => "Low".into(),
-                        "medium" => "Medium".into(),
-                        "high" => "High".into(),
-                        "xhigh" => "Extra High".into(),
-                        _ => language_model::SharedString::from(level.clone()),
-                    };
-                    LanguageModelEffortLevel {
-                        name,
-                        value: language_model::SharedString::from(level.clone()),
-                        is_default: level == "high",
-                    }
-                })
-                .collect();
+        if levels.is_empty() {
+            return vec![];
         }
-
-        if self.model.supports_adaptive_thinking() {
-            vec![
+        levels
+            .iter()
+            .map(|level| {
+                let name = match level.as_str() {
+                    "low" => "Low".into(),
+                    "medium" => "Medium".into(),
+                    "high" => "High".into(),
+                    "xhigh" => "Extra High".into(),
+                    _ => language_model::SharedString::from(level.clone()),
+                };
                 LanguageModelEffortLevel {
-                    name: "Low".into(),
-                    value: "low".into(),
-                    is_default: false,
-                },
-                LanguageModelEffortLevel {
-                    name: "Medium".into(),
-                    value: "medium".into(),
-                    is_default: false,
-                },
-                LanguageModelEffortLevel {
-                    name: "High".into(),
-                    value: "high".into(),
-                    is_default: true,
-                },
-                LanguageModelEffortLevel {
-                    name: "Max".into(),
-                    value: "max".into(),
-                    is_default: false,
-                },
-            ]
-        } else {
-            vec![]
-        }
+                    name,
+                    value: language_model::SharedString::from(level.clone()),
+                    is_default: level == "high",
+                }
+            })
+            .collect()
     }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
