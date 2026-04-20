@@ -725,6 +725,25 @@ impl WindowsWindowInner {
     fn handle_activate_msg(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
         let activated = wparam.loword() > 0;
         let this = self.clone();
+
+        // When the window is activated (gains focus), reset the modifier tracking state.
+        // This fixes the issue where Alt-Tab away and back leaves stale modifier state
+        // (especially the Alt key) because Windows doesn't always send key-up events to
+        // windows that have lost focus.
+        if activated {
+            this.state.last_reported_modifiers.set(None);
+            this.state.last_reported_capslock.set(None);
+
+            if let Some(mut func) = this.state.callbacks.input.take() {
+                let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                    modifiers: current_modifiers(),
+                    capslock: current_capslock(),
+                });
+                func(input);
+                this.state.callbacks.input.set(Some(func));
+            }
+        }
+
         self.executor
             .spawn(async move {
                 if let Some(mut func) = this.state.callbacks.active_status_change.take() {

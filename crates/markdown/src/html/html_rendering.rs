@@ -79,9 +79,20 @@ impl MarkdownElement {
 
         match element {
             ParsedHtmlElement::Paragraph(paragraph) => {
-                self.push_markdown_paragraph(builder, &source_range, markdown_end);
-                self.render_html_paragraph(paragraph, source_allocator, builder, cx, markdown_end);
-                builder.pop_div();
+                self.push_markdown_paragraph(
+                    builder,
+                    &source_range,
+                    markdown_end,
+                    paragraph.text_align,
+                );
+                self.render_html_paragraph(
+                    &paragraph.contents,
+                    source_allocator,
+                    builder,
+                    cx,
+                    markdown_end,
+                );
+                self.pop_markdown_paragraph(builder);
             }
             ParsedHtmlElement::Heading(heading) => {
                 self.push_markdown_heading(
@@ -89,6 +100,7 @@ impl MarkdownElement {
                     heading.level,
                     &heading.source_range,
                     markdown_end,
+                    heading.text_align,
                 );
                 self.render_html_paragraph(
                     &heading.contents,
@@ -497,7 +509,10 @@ mod tests {
     use gpui::{TestAppContext, size};
     use ui::prelude::*;
 
-    use crate::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownOptions, MarkdownStyle};
+    use crate::{
+        CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions,
+        MarkdownStyle,
+    };
 
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -530,8 +545,7 @@ mod tests {
             |_window, _cx| {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -591,8 +605,7 @@ mod tests {
             |_window, _cx| {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     },
                 )

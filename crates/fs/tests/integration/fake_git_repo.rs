@@ -24,9 +24,11 @@ async fn test_fake_worktree_lifecycle(cx: &mut TestAppContext) {
     // Create a worktree
     let worktree_1_dir = worktrees_dir.join("feature-branch");
     repo.create_worktree(
-        "feature-branch".to_string(),
+        git::repository::CreateWorktreeTarget::NewBranch {
+            branch_name: "feature-branch".to_string(),
+            base_sha: Some("abc123".to_string()),
+        },
         worktree_1_dir.clone(),
-        Some("abc123".to_string()),
     )
     .await
     .unwrap();
@@ -47,9 +49,15 @@ async fn test_fake_worktree_lifecycle(cx: &mut TestAppContext) {
 
     // Create a second worktree (without explicit commit)
     let worktree_2_dir = worktrees_dir.join("bugfix-branch");
-    repo.create_worktree("bugfix-branch".to_string(), worktree_2_dir.clone(), None)
-        .await
-        .unwrap();
+    repo.create_worktree(
+        git::repository::CreateWorktreeTarget::NewBranch {
+            branch_name: "bugfix-branch".to_string(),
+            base_sha: None,
+        },
+        worktree_2_dir.clone(),
+    )
+    .await
+    .unwrap();
 
     let worktrees = repo.worktrees().await.unwrap();
     assert_eq!(worktrees.len(), 3);
@@ -155,7 +163,10 @@ async fn test_checkpoints(executor: BackgroundExecutor) {
             .unwrap()
     );
 
-    repository.restore_checkpoint(checkpoint_1).await.unwrap();
+    repository
+        .restore_checkpoint(checkpoint_1.clone())
+        .await
+        .unwrap();
     assert_eq!(
         fs.files_with_contents(Path::new("")),
         [
@@ -164,4 +175,22 @@ async fn test_checkpoints(executor: BackgroundExecutor) {
             (Path::new(path!("/foo/b")).into(), b"ipsum".into())
         ]
     );
+
+    // diff_checkpoints: identical checkpoints produce empty diff
+    let diff = repository
+        .diff_checkpoints(checkpoint_2.clone(), checkpoint_3.clone())
+        .await
+        .unwrap();
+    assert!(
+        diff.is_empty(),
+        "identical checkpoints should produce empty diff"
+    );
+
+    // diff_checkpoints: different checkpoints produce non-empty diff
+    let diff = repository
+        .diff_checkpoints(checkpoint_1.clone(), checkpoint_2.clone())
+        .await
+        .unwrap();
+    assert!(diff.contains("b"), "diff should mention changed file 'b'");
+    assert!(diff.contains("c"), "diff should mention added file 'c'");
 }

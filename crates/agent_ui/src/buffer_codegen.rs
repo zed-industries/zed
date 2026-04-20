@@ -18,6 +18,9 @@ use language_model::{
     LanguageModelRequestTool, LanguageModelTextStream, LanguageModelToolChoice,
     LanguageModelToolUse, Role, TokenUsage,
 };
+use language_models::provider::anthropic::telemetry::{
+    AnthropicCompletionType, AnthropicEventData, AnthropicEventReporter, AnthropicEventType,
+};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use prompt_store::PromptBuilder;
@@ -300,7 +303,7 @@ impl CodegenAlternative {
         let snapshot = buffer.read(cx).snapshot(cx);
 
         let (old_buffer, _, _) = snapshot
-            .range_to_buffer_ranges(range.start..=range.end)
+            .range_to_buffer_ranges(range.start..range.end)
             .pop()
             .unwrap();
         let old_buffer = cx.new(|cx| {
@@ -637,7 +640,7 @@ impl CodegenAlternative {
         stream: impl 'static + Future<Output = Result<LanguageModelTextStream>>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
-        let anthropic_reporter = language_model::AnthropicEventReporter::new(&model, cx);
+        let anthropic_reporter = AnthropicEventReporter::new(&model, cx);
         let session_id = self.session_id;
         let model_telemetry_id = model.telemetry_id();
         let model_provider_id = model.provider_id().to_string();
@@ -681,7 +684,7 @@ impl CodegenAlternative {
         let language_name = {
             let multibuffer = self.buffer.read(cx);
             let snapshot = multibuffer.snapshot(cx);
-            let ranges = snapshot.range_to_buffer_ranges(self.range.start..=self.range.end);
+            let ranges = snapshot.range_to_buffer_ranges(self.range.start..self.range.end);
             ranges
                 .first()
                 .and_then(|(buffer, _, _)| buffer.language())
@@ -830,9 +833,9 @@ impl CodegenAlternative {
                             error_message = error_message.as_deref(),
                         );
 
-                        anthropic_reporter.report(language_model::AnthropicEventData {
-                            completion_type: language_model::AnthropicCompletionType::Editor,
-                            event: language_model::AnthropicEventType::Response,
+                        anthropic_reporter.report(AnthropicEventData {
+                            completion_type: AnthropicCompletionType::Editor,
+                            event: AnthropicEventType::Response,
                             language_name: language_name.map(|n| n.to_string()),
                             message_id,
                         });

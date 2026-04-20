@@ -11,7 +11,7 @@ use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, Render, Task, Window,
 };
-use language::{self, Buffer, Point};
+use language::{self, Buffer, OffsetRangeExt, Point};
 use project::Project;
 use settings::Settings;
 use std::{
@@ -52,36 +52,26 @@ impl TextDiffView {
 
         let selection_data = source_editor.update(cx, |editor, cx| {
             let multibuffer = editor.buffer();
-            let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
-            let first_selection = selections.first()?;
+            let multibuffer_snapshot = multibuffer.read(cx).snapshot(cx);
+            let first_selection = editor.selections.newest_anchor();
 
-            let (source_buffer, buffer_start, start_excerpt) = multibuffer
-                .read(cx)
-                .point_to_buffer_point(first_selection.start, cx)?;
-            let buffer_end = multibuffer
-                .read(cx)
-                .point_to_buffer_point(first_selection.end, cx)
-                .and_then(|(buf, pt, end_excerpt)| {
-                    (buf.read(cx).remote_id() == source_buffer.read(cx).remote_id()
-                        && end_excerpt == start_excerpt)
-                        .then_some(pt)
-                })
-                .unwrap_or(buffer_start);
+            let (source_buffer, buffer_range) = multibuffer_snapshot
+                .anchor_range_to_buffer_anchor_range(first_selection.range())?;
+            let max_point = source_buffer.max_point();
+            let buffer_range = buffer_range.to_point(source_buffer);
+            let source_buffer = multibuffer.read(cx).buffer(source_buffer.remote_id())?;
 
-            let buffer_snapshot = source_buffer.read(cx);
-            let max_point = buffer_snapshot.max_point();
-
-            if first_selection.is_empty() {
+            if buffer_range.is_empty() {
                 let full_range = Point::new(0, 0)..max_point;
                 return Some((source_buffer, full_range));
             }
 
-            let expanded_start = Point::new(buffer_start.row, 0);
-            let expanded_end = if buffer_end.column > 0 {
-                let next_row = buffer_end.row + 1;
+            let expanded_start = Point::new(buffer_range.start.row, 0);
+            let expanded_end = if buffer_range.end.column > 0 {
+                let next_row = buffer_range.end.row + 1;
                 cmp::min(max_point, Point::new(next_row, 0))
             } else {
-                buffer_end
+                buffer_range.end
             };
             Some((source_buffer, expanded_start..expanded_end))
         });

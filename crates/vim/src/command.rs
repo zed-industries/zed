@@ -1348,7 +1348,7 @@ impl Position {
         let snapshot = editor.snapshot(window, cx);
         let target = match self {
             Position::Line { row, offset } => {
-                if let Some(anchor) = editor.active_excerpt(cx).and_then(|(_, buffer, _)| {
+                if let Some(anchor) = editor.active_buffer(cx).and_then(|buffer| {
                     editor.buffer().read(cx).buffer_point_to_anchor(
                         &buffer,
                         Point::new(row.saturating_sub(1), 0),
@@ -1782,7 +1782,6 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("te", "rm"), "terminal_panel::Toggle"),
         VimCommand::str(("T", "erm"), "terminal_panel::Toggle"),
         VimCommand::str(("C", "ollab"), "collab_panel::ToggleFocus"),
-        VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
         VimCommand::str(("A", "I"), "agent::ToggleFocus"),
         VimCommand::str(("G", "it"), "git_panel::ToggleFocus"),
         VimCommand::str(("D", "ebug"), "debug_panel::ToggleFocus"),
@@ -2336,7 +2335,7 @@ impl Vim {
             match c {
                 '%' => {
                     self.update_editor(cx, |_, editor, cx| {
-                        if let Some((_, buffer, _)) = editor.active_excerpt(cx)
+                        if let Some(buffer) = editor.active_buffer(cx)
                             && let Some(file) = buffer.read(cx).file()
                             && let Some(local) = file.as_local()
                         {
