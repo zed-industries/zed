@@ -184,6 +184,13 @@ impl AgentTool for ReadFileTool {
                 anyhow::Ok(())
             }).map_err(tool_content_err)?;
 
+            if fs.is_dir(&abs_path).await {
+                return Err(tool_content_err(format!(
+                    "{} is a directory, not a file. Use the list_directory tool to explore directory contents.",
+                    &input.path
+                )));
+            }
+
             if let Some(canonical_target) = &symlink_canonical_target {
                 let authorize = cx.update(|cx| {
                     authorize_symlink_access(
@@ -195,13 +202,6 @@ impl AgentTool for ReadFileTool {
                     )
                 });
                 authorize.await.map_err(tool_content_err)?;
-            }
-
-            if fs.is_dir(&abs_path).await {
-                return Err(tool_content_err(format!(
-                    "{} is a directory, not a file. Use the list_directory tool to explore directory contents.",
-                    &input.path
-                )));
             }
 
             let file_path = input.path.clone();
