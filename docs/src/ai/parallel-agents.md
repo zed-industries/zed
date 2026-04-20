@@ -51,7 +51,14 @@ Each thread can use a different agent. Click the new thread menu in the Agent Pa
 
 The Threads Sidebar can hold multiple projects at once. Each project gets its own group with its own threads and conversation history.
 
-Within a project, you can add multiple folders from a local or remote project. Use {#action workspace::AddFolderToProject} from the command palette, or select **Add Folder to Project** from the project header menu in the sidebar. Agents can then read and write across all of those folders in a single thread.
+To add another project to the sidebar, click the **Add Project** button (open-folder icon) in the sidebar bottom bar. The popover that opens lists your recent projects and also provides **Add Local Folders** and **Add Remote Folder** buttons at the bottom.
+
+### Multi-Root Folder Projects {#multi-root-folder-projects}
+
+A single project can contain multiple folders (a multi-root folder project). Agents can then read and write across all of those folders in a single thread. There are two ways to set one up:
+
+- **From the sidebar:** Click the **Add Project** button, choose **Add Local Folders**, and select multiple folders in the file picker. They open together as one multi-root project.
+- **From the title bar:** Click the project picker (the leftmost project name). For any local entry in the recent projects list, hover it and click the folder-with-plus icon (**Add Project to this Workspace**) to merge that project's folders into the current workspace.
 
 ## Worktree Isolation {#worktree-isolation}
 
