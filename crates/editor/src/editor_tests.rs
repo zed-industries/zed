@@ -8758,6 +8758,54 @@ async fn test_clipboard_line_numbers_from_multibuffer(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_copy_file_location_uses_buffer_lines_in_multibuffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(
+        path!("/file.txt"),
+        "first line\nsecond line\nthird line\nfourth line\nfifth line\n".into(),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/file.txt").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer,
+            [Point::new(2, 0)..Point::new(5, 0)],
+            0,
+            cx,
+        );
+        multibuffer
+    });
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
+        });
+        editor.copy_file_location(&CopyFileLocation, window, cx);
+    });
+
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("file.txt:3".to_string())
+    );
+}
+
+#[gpui::test]
 async fn test_paste_multiline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
