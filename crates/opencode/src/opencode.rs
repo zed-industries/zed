@@ -358,7 +358,7 @@ impl Model {
             Self::KimiK2_5 => 262_144,
             Self::MimoV2Pro => 1_048_576,
             Self::MimoV2Omni => 262_144,
-            Self::Qwen3_6Plus | Self::Qwen3_5Plus => 131_072,
+            Self::Qwen3_6Plus | Self::Qwen3_5Plus => 1_000_000,
             Self::BigPickle => 200_000,
             Self::Nemotron3SuperFree => 262_144,
 
