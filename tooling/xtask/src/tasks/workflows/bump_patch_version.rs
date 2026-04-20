@@ -52,7 +52,11 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
         .id("bump-version")
     }
 
-    fn commit_changes(version: &StepOutput, token: &StepOutput) -> Step<Use> {
+    fn commit_changes(
+        version: &StepOutput,
+        token: &StepOutput,
+        branch: &WorkflowInput,
+    ) -> Step<Use> {
         named::uses(
             "IAreKyleW00t",
             "verified-bot-commit",
@@ -63,6 +67,7 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
             "message",
             format!("Bump to {version} for @${{{{ github.actor }}}}"),
         ))
+        .add_with(("ref", format!("refs/heads/{branch}")))
         .add_with(("files", "**"))
         .add_with(("token", token.to_string()))
     }
@@ -99,7 +104,7 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
     let bump_version_step = bump_version();
     let version = StepOutput::new(&bump_version_step, "version");
     let tag_suffix = StepOutput::new(&bump_version_step, "tag_suffix");
-    let commit_step = commit_changes(&version, &token);
+    let commit_step = commit_changes(&version, &token, branch);
     let commit_sha = StepOutput::new_unchecked(&commit_step, "commit");
 
     named::job(

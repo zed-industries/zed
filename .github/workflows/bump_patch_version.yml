@@ -51,6 +51,7 @@ jobs:
       uses: IAreKyleW00t/verified-bot-commit@126a6a11889ab05bcff72ec2403c326cd249b84c
       with:
         message: Bump to ${{ steps.bump-version.outputs.version }} for @${{ github.actor }}
+        ref: refs/heads/${{ inputs.branch }}
         files: '**'
         token: ${{ steps.generate-token.outputs.token }}
     - name: bump_patch_version::run_bump_patch_version::create_version_tag
