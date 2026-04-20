@@ -1641,8 +1641,21 @@ impl PickerDelegate for RecentProjectsDelegate {
                         let open_action = workspace::Open {
                             create_new_window: self.create_new_window,
                         };
-                        Button::new("open_local_folder", "Open Local Folders")
-                            .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
+                        ListItem::new("open_local_folder")
+                            .inset(true)
+                            .spacing(ListItemSpacing::Sparse)
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(Label::new("Open Local Folders"))
+                                    .child(KeyBinding::for_action_in(
+                                        &open_action,
+                                        &focus_handle,
+                                        cx,
+                                    )),
+                            )
                             .on_click({
                                 let workspace = self.workspace.clone();
                                 let create_new_window = self.create_new_window;
@@ -1657,14 +1670,23 @@ impl PickerDelegate for RecentProjectsDelegate {
                             })
                     })
                     .child(
-                        Button::new("open_remote_folder", "Open Remote Folder")
-                            .key_binding(KeyBinding::for_action(
-                                &OpenRemote {
-                                    from_existing_connection: false,
-                                    create_new_window: false,
-                                },
-                                cx,
-                            ))
+                        ListItem::new("open_remote_folder")
+                            .inset(true)
+                            .spacing(ListItemSpacing::Sparse)
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(Label::new("Open Remote Folder"))
+                                    .child(KeyBinding::for_action(
+                                        &OpenRemote {
+                                            from_existing_connection: false,
+                                            create_new_window: false,
+                                        },
+                                        cx,
+                                    )),
+                            )
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(
                                     OpenRemote {
