@@ -94,6 +94,7 @@ impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(Self::deploy_branch_diff);
+        workspace.register_action(Self::deploy_branch_compare);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -144,10 +145,136 @@ impl ProjectDiff {
             .detach_and_notify_err(workspace_weak, window, cx);
     }
 
+    pub fn deploy_branch_compare(
+        workspace: &mut Workspace,
+        _: &zed_actions::git::BranchCompare,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        telemetry::event!("Git Branch Compare Opened");
+        let project = workspace.project().clone();
+        let repository = project.read(cx).active_repository(cx);
+        let workspace_handle = cx.entity();
+        let workspace_weak = workspace_handle.downgrade();
+
+        let (compare_sender, compare_receiver) = smol::channel::bounded::<SharedString>(1);
+        let (base_sender, base_receiver) = smol::channel::bounded::<SharedString>(1);
+
+        // Step 1: Show picker for compare branch
+        let on_compare_selected: Arc<dyn Fn(SharedString, &mut App) + Send + Sync> =
+            Arc::new(move |branch_name: SharedString, _cx: &mut App| {
+                compare_sender.try_send(branch_name).log_err();
+            });
+
+        workspace.toggle_modal(window, cx, |window, cx| {
+            crate::branch_picker::create_modal_select_only(
+                workspace_weak.clone(),
+                repository.clone(),
+                on_compare_selected,
+                "Select compare branch…".into(),
+                rems(34.),
+                window,
+                cx,
+            )
+        });
+
+        // Async task: wait for compare selection, then open base picker, then open tab
+        let repository_clone = repository.clone();
+        window
+            .spawn(cx, {
+                let workspace = workspace_handle.clone();
+                let workspace_weak = workspace_weak.clone();
+                async move |cx| {
+                    let Ok(compare_ref) = compare_receiver.recv().await else {
+                        return;
+                    };
+
+                    // Step 2: Show picker for base branch
+                    let on_base_selected: Arc<dyn Fn(SharedString, &mut App) + Send + Sync> =
+                        Arc::new(move |branch_name: SharedString, _cx: &mut App| {
+                            base_sender.try_send(branch_name).log_err();
+                        });
+
+                    if workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                crate::branch_picker::create_modal_select_only(
+                                    workspace_weak.clone(),
+                                    repository_clone,
+                                    on_base_selected,
+                                    "Select base branch…".into(),
+                                    rems(34.),
+                                    window,
+                                    cx,
+                                )
+                            });
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+
+                    let Ok(base_ref) = base_receiver.recv().await else {
+                        return;
+                    };
+
+                    // Step 3: Open the compare tab
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            // Deduplicate
+                            let existing = workspace.items_of_type::<Self>(cx).find(|item| {
+                                matches!(
+                                    item.read(cx).diff_base(cx),
+                                    DiffBase::Compare { base_ref: b, compare_ref: c }
+                                        if *b == base_ref && *c == compare_ref
+                                )
+                            });
+                            if let Some(existing) = existing {
+                                workspace.activate_item(&existing, true, true, window, cx);
+                                return;
+                            }
+
+                            let workspace_handle = cx.entity();
+                            let branch_diff = cx.new(|cx| {
+                                branch_diff::BranchDiff::new(
+                                    DiffBase::Compare {
+                                        base_ref,
+                                        compare_ref,
+                                    },
+                                    project.clone(),
+                                    window,
+                                    cx,
+                                )
+                            });
+                            let project_diff = cx.new(|cx| {
+                                Self::new_impl(
+                                    branch_diff,
+                                    project,
+                                    workspace_handle,
+                                    window,
+                                    cx,
+                                )
+                            });
+                            workspace.add_item_to_active_pane(
+                                Box::new(project_diff),
+                                None,
+                                true,
+                                window,
+                                cx,
+                            );
+                        })
+                        .log_err();
+                }
+            })
+            .detach();
+    }
+
     fn review_diff(&mut self, _: &ReviewDiff, window: &mut Window, cx: &mut Context<Self>) {
         let diff_base = self.diff_base(cx).clone();
-        let DiffBase::Merge { base_ref } = diff_base else {
-            return;
+        let base_ref = match &diff_base {
+            DiffBase::Merge { base_ref } => base_ref.clone(),
+            DiffBase::Compare { base_ref, .. } => base_ref.clone(),
+            DiffBase::Head => return,
         };
 
         let Some(repo) = self.branch_diff.read(cx).repo().cloned() else {
@@ -359,10 +486,11 @@ impl ProjectDiff {
             );
             match branch_diff.read(cx).diff_base() {
                 DiffBase::Head => {}
-                DiffBase::Merge { .. } => diff_display_editor.set_render_diff_hunk_controls(
-                    Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                    cx,
-                ),
+                DiffBase::Merge { .. } | DiffBase::Compare { .. } => diff_display_editor
+                    .set_render_diff_hunk_controls(
+                        Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
+                        cx,
+                    ),
             }
             diff_display_editor.rhs_editor().update(cx, |editor, cx| {
                 editor.disable_diagnostics(cx);
@@ -374,7 +502,7 @@ impl ProjectDiff {
                             workspace: workspace.downgrade(),
                         });
                     }
-                    DiffBase::Merge { .. } => {
+                    DiffBase::Merge { .. } | DiffBase::Compare { .. } => {
                         editor.register_addon(BranchDiffAddon {
                             branch_diff: branch_diff.clone(),
                         });
@@ -960,6 +1088,9 @@ impl Item for ProjectDiff {
         match self.diff_base(cx) {
             DiffBase::Head => Some("Project Diff".into()),
             DiffBase::Merge { .. } => Some("Branch Diff".into()),
+            DiffBase::Compare { base_ref, compare_ref } => {
+                Some(format!("Compare: {}..{}", base_ref, compare_ref).into())
+            }
         }
     }
 
@@ -977,6 +1108,9 @@ impl Item for ProjectDiff {
         match self.branch_diff.read(cx).diff_base() {
             DiffBase::Head => "Uncommitted Changes".into(),
             DiffBase::Merge { base_ref } => format!("Changes since {}", base_ref).into(),
+            DiffBase::Compare { base_ref, compare_ref } => {
+                format!("{}..{}", base_ref, compare_ref).into()
+            }
         }
     }
 
@@ -1115,7 +1249,16 @@ impl Item for ProjectDiff {
 impl Render for ProjectDiff {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
-        let is_branch_diff_view = matches!(self.diff_base(cx), DiffBase::Merge { .. });
+        let diff_base = self.diff_base(cx).clone();
+        let is_branch_diff_view = matches!(diff_base, DiffBase::Merge { .. } | DiffBase::Compare { .. });
+
+        let empty_message = match &diff_base {
+            DiffBase::Head => "No uncommitted changes".to_string(),
+            DiffBase::Merge { base_ref } => format!("No changes since {}", base_ref),
+            DiffBase::Compare { base_ref, compare_ref } => {
+                format!("No differences between {} and {}", base_ref, compare_ref)
+            }
+        };
 
         div()
             .track_focus(&self.focus_handle)
@@ -1129,12 +1272,11 @@ impl Render for ProjectDiff {
             .justify_center()
             .size_full()
             .when(is_empty, |el| {
-                let remote_button = if let Some(panel) = self
-                    .workspace
-                    .upgrade()
-                    .and_then(|workspace| workspace.read(cx).panel::<GitPanel>(cx))
-                {
-                    panel.update(cx, |panel, cx| panel.render_remote_button(cx))
+                let remote_button = if matches!(diff_base, DiffBase::Head) {
+                    self.workspace
+                        .upgrade()
+                        .and_then(|workspace| workspace.read(cx).panel::<GitPanel>(cx))
+                        .and_then(|panel| panel.update(cx, |panel, cx| panel.render_remote_button(cx)))
                 } else {
                     None
                 };
@@ -1145,7 +1287,7 @@ impl Render for ProjectDiff {
                         .child(
                             h_flex()
                                 .justify_around()
-                                .child(Label::new("No uncommitted changes")),
+                                .child(Label::new(empty_message)),
                         )
                         .map(|el| match remote_button {
                             Some(button) => el.child(h_flex().justify_around().child(button)),
@@ -1158,7 +1300,6 @@ impl Render for ProjectDiff {
                         .child(
                             h_flex().justify_around().mt_1().child(
                                 Button::new("project-diff-close-button", "Close")
-                                    // .style(ButtonStyle::Transparent)
                                     .key_binding(KeyBinding::for_action_in(
                                         &CloseActiveItem::default(),
                                         &keybinding_focus_handle,
@@ -1622,7 +1763,7 @@ impl ToolbarItemView for BranchDiffToolbar {
     ) -> ToolbarItemLocation {
         self.project_diff = active_pane_item
             .and_then(|item| item.act_as::<ProjectDiff>(cx))
-            .filter(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }))
+            .filter(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. } | DiffBase::Compare { .. }))
             .map(|entity| entity.downgrade());
         if self.project_diff.is_some() {
             ToolbarItemLocation::PrimaryRight

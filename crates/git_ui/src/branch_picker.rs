@@ -103,6 +103,42 @@ pub fn create_embedded(
     BranchList::new_embedded(workspace, repository, width, window, cx)
 }
 
+/// Creates an embedded branch list that only selects (does not checkout).
+/// The `on_select` callback is called with the selected branch ref_name.
+pub fn create_select_only(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    on_select: Arc<dyn Fn(SharedString, &mut App) + Send + Sync>,
+    width: Rems,
+    window: &mut Window,
+    cx: &mut Context<BranchList>,
+) -> BranchList {
+    let list = BranchList::new_embedded(workspace, repository, width, window, cx);
+    list.picker.update(cx, |picker, _| {
+        picker.delegate.on_select = Some(on_select);
+    });
+    list
+}
+
+/// Creates a modal branch list that only selects (does not checkout).
+/// Shows as a modal dialog with custom placeholder text.
+pub fn create_modal_select_only(
+    workspace: WeakEntity<Workspace>,
+    repository: Option<Entity<Repository>>,
+    on_select: Arc<dyn Fn(SharedString, &mut App) + Send + Sync>,
+    placeholder: Arc<str>,
+    width: Rems,
+    window: &mut Window,
+    cx: &mut Context<BranchList>,
+) -> BranchList {
+    let list = BranchList::new(workspace, repository, BranchListStyle::Modal, width, window, cx);
+    list.picker.update(cx, |picker, _| {
+        picker.delegate.on_select = Some(on_select);
+        picker.delegate.custom_placeholder = Some(placeholder);
+    });
+    list
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum BranchListStyle {
     Modal,
@@ -386,6 +422,8 @@ pub struct BranchListDelegate {
     state: PickerState,
     focus_handle: FocusHandle,
     restore_selected_branch: Option<SharedString>,
+    on_select: Option<Arc<dyn Fn(SharedString, &mut App) + Send + Sync>>,
+    custom_placeholder: Option<Arc<str>>,
 }
 
 #[derive(Debug)]
@@ -452,6 +490,8 @@ impl BranchListDelegate {
             state: PickerState::List,
             focus_handle: cx.focus_handle(),
             restore_selected_branch: None,
+            on_select: None,
+            custom_placeholder: None,
         }
     }
 
@@ -590,6 +630,9 @@ impl PickerDelegate for BranchListDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        if let Some(placeholder) = &self.custom_placeholder {
+            return placeholder.clone();
+        }
         match self.state {
             PickerState::List | PickerState::NewRemote | PickerState::NewBranch => {
                 match self.branch_filter {
@@ -664,6 +707,25 @@ impl PickerDelegate for BranchListDelegate {
                 self.editor_position() == PickerEditorPosition::Start,
                 |this| this.child(Divider::horizontal()),
             )
+    }
+
+    fn render_header(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let placeholder = self.custom_placeholder.as_ref()?;
+        Some(
+            h_flex()
+                .px_2p5()
+                .py_1()
+                .child(
+                    Label::new(placeholder.to_string())
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .into_any_element(),
+        )
     }
 
     fn editor_position(&self) -> PickerEditorPosition {
@@ -823,6 +885,14 @@ impl PickerDelegate for BranchListDelegate {
 
         match entry {
             Entry::Branch { branch, .. } => {
+                // If on_select callback is set, just call it without checking out
+                if let Some(on_select) = &self.on_select {
+                    let branch_name: SharedString = branch.ref_name.clone();
+                    on_select(branch_name, cx);
+                    cx.emit(DismissEvent);
+                    return;
+                }
+
                 let current_branch = self.repo.as_ref().map(|repo| {
                     repo.read_with(cx, |repo, _| {
                         repo.branch.as_ref().map(|branch| branch.ref_name.clone())
