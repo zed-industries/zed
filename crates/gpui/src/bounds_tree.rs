@@ -156,6 +156,8 @@ where
         let mut max_found = 0u32;
 
         while let Some(node) = self.search_stack.pop() {
+            // SAFETY: `node` is guaranteed to be valid as the `nodes` stack is unmodified in this function
+            // and the `search_stack` only contains pointers from this function call.
             let node = unsafe { node.as_ref() };
 
             // Pruning: skip if this subtree can't improve our result

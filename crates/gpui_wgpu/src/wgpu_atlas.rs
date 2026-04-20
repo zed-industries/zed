@@ -103,7 +103,7 @@ impl PlatformAtlas for WgpuAtlas {
     ) -> Result<Option<AtlasTile>> {
         let mut lock = self.0.lock();
         if let Some(tile) = lock.tiles_by_key.get(key) {
-            Ok(Some(tile.clone()))
+            Ok(Some(*tile))
         } else {
             profiling::scope!("new tile");
             let Some((size, bytes)) = build()? else {
@@ -113,7 +113,7 @@ impl PlatformAtlas for WgpuAtlas {
                 .allocate(size, key.texture_kind())
                 .context("failed to allocate")?;
             lock.upload_texture(tile.texture_id, tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile.clone());
+            lock.tiles_by_key.insert(key.clone(), tile);
             Ok(Some(tile))
         }
     }
