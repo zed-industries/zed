@@ -201,7 +201,7 @@ impl LanguageModels {
             .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
             .collect::<Vec<_>>();
 
-        cx.background_spawn(async move {
+        cx.spawn(async move |cx| {
             for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
                 if let Err(err) = authenticate_task.await {
                     match err {
@@ -244,6 +244,8 @@ impl LanguageModels {
                     }
                 }
             }
+
+            cx.update(language_models::update_environment_fallback_model);
         })
     }
 }
@@ -365,7 +367,7 @@ impl NativeAgent {
         });
 
         let registry = LanguageModelRegistry::read_global(cx);
-        let summarization_model = registry.thread_summary_model().map(|c| c.model);
+        let summarization_model = registry.thread_summary_model(cx).map(|c| c.model);
 
         let weak = cx.weak_entity();
         let weak_thread = thread_handle.downgrade();
@@ -749,13 +751,14 @@ impl NativeAgent {
 
         let registry = LanguageModelRegistry::read_global(cx);
         let default_model = registry.default_model().map(|m| m.model);
-        let summarization_model = registry.thread_summary_model().map(|m| m.model);
+        let summarization_model = registry.thread_summary_model(cx).map(|m| m.model);
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
-                if thread.model().is_none()
-                    && let Some(model) = default_model.clone()
-                {
+                let should_update_model = thread.model().is_none()
+                    || (thread.is_empty()
+                        && matches!(event, language_model::Event::DefaultModelChanged));
+                if should_update_model && let Some(model) = default_model.clone() {
                     thread.set_model(model, cx);
                     cx.notify();
                 }
@@ -910,7 +913,7 @@ impl NativeAgent {
                     .get(&project_id)
                     .context("project state not found")?;
                 let summarization_model = LanguageModelRegistry::read_global(cx)
-                    .thread_summary_model()
+                    .thread_summary_model(cx)
                     .map(|c| c.model);
 
                 Ok(cx.new(|cx| {

@@ -51,9 +51,6 @@ pub struct ZetaPromptInput {
     /// instead of `excerpt_ranges`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub syntax_ranges: Option<Vec<Range<usize>>>,
-    /// The name of the edit prediction model experiment to use.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub experiment: Option<String>,
     #[serde(default)]
     pub in_open_source_repo: bool,
     #[serde(default)]
@@ -4503,7 +4500,6 @@ mod tests {
                 ..Default::default()
             },
             syntax_ranges: None,
-            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
             repo_url: None,
@@ -4534,7 +4530,6 @@ mod tests {
                 ..Default::default()
             },
             syntax_ranges: None,
-            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
             repo_url: None,
@@ -5163,7 +5158,6 @@ mod tests {
                 ..Default::default()
             },
             syntax_ranges: None,
-            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
             repo_url: None,
@@ -5228,7 +5222,6 @@ mod tests {
                 ..Default::default()
             },
             syntax_ranges: None,
-            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
             repo_url: None,
@@ -5288,7 +5281,6 @@ mod tests {
                 ..Default::default()
             },
             syntax_ranges: None,
-            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
             repo_url: None,

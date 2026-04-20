@@ -3794,6 +3794,35 @@ ENV DOCKER_BUILDKIT=1
     }
 
     #[gpui::test]
+    async fn test_dockerfile_location_with_compose_context_parent(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+
+        let given_devcontainer_contents = r#"
+            {
+              "name": "Test",
+              "dockerComposeFile": "docker-compose-context-parent.yml",
+              "service": "app",
+              "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}"
+            }
+            "#;
+        let (_, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let expected = PathBuf::from(TEST_PROJECT_PATH)
+            .join(".devcontainer")
+            .join("Dockerfile");
+        assert_eq!(
+            devcontainer_manifest.dockerfile_location().await,
+            Some(expected)
+        );
+    }
+
+    #[gpui::test]
     async fn test_spawns_devcontainer_with_docker_compose_and_no_update_uid(
         cx: &mut TestAppContext,
     ) {
@@ -5084,9 +5113,11 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
             }
             if config_files.len() == 1
                 && config_files.get(0)
-                    == Some(&PathBuf::from(
-                        "/path/to/local/project/.devcontainer/docker-compose-context-parent.yml",
-                    ))
+                    == Some(
+                        &project_path
+                            .join(".devcontainer")
+                            .join("docker-compose-context-parent.yml"),
+                    )
             {
                 return Ok(Some(DockerComposeConfig {
                     name: None,
@@ -5095,7 +5126,12 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
                         DockerComposeService {
                             build: Some(DockerComposeServiceBuild {
                                 context: Some("..".to_string()),
-                                dockerfile: Some(".devcontainer/Dockerfile".to_string()),
+                                dockerfile: Some(
+                                    PathBuf::from(".devcontainer")
+                                        .join("Dockerfile")
+                                        .display()
+                                        .to_string(),
+                                ),
                                 args: None,
                                 additional_contexts: None,
                                 target: None,
@@ -5108,9 +5144,11 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
             }
             if config_files.len() == 1
                 && config_files.get(0)
-                    == Some(&PathBuf::from(
-                        "/path/to/local/project/.devcontainer/docker-compose-plain.yml",
-                    ))
+                    == Some(
+                        &project_path
+                            .join(".devcontainer")
+                            .join("docker-compose-plain.yml"),
+                    )
             {
                 return Ok(Some(DockerComposeConfig {
                     name: None,

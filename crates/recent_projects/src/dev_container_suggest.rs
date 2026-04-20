@@ -3,6 +3,7 @@ use dev_container::find_configs_in_snapshot;
 use gpui::{SharedString, Window};
 use project::{Project, WorktreeId};
 use std::sync::LazyLock;
+use ui::Tooltip;
 use ui::prelude::*;
 use util::ResultExt;
 use util::rel_path::RelPath;
@@ -91,6 +92,7 @@ pub fn suggest_on_worktree_updated(
 
     let abs_path = worktree.abs_path();
     let project_path = abs_path.to_string_lossy().to_string();
+    let worktree_name = worktree.root_name_str().to_string();
     let key_for_dismiss = project_devcontainer_key(&project_path);
 
     let already_dismissed = KeyValueStore::global(cx)
@@ -112,10 +114,18 @@ pub fn suggest_on_worktree_updated(
 
         workspace.show_notification(notification_id, cx, |cx| {
             cx.new(move |cx| {
-                MessageNotification::new(
-                    "This project contains a Dev Container configuration file. Would you like to re-open it in a container?",
-                    cx,
+                let message: SharedString = format!(
+                    "{worktree_name} contains a Dev Container configuration file. Would you like to re-open it in a container?"
                 )
+                .into();
+                let tooltip_text: SharedString = project_path.clone().into();
+                MessageNotification::new_from_builder(cx, move |_window, _cx| {
+                    div()
+                        .id("dev-container-suggest-message")
+                        .child(Label::new(message.clone()))
+                        .tooltip(Tooltip::text(tooltip_text.clone()))
+                        .into_any_element()
+                })
                 .primary_message("Yes, Open in Container")
                 .primary_icon(IconName::Check)
                 .primary_icon_color(Color::Success)

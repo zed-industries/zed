@@ -2688,7 +2688,7 @@ impl GitPanel {
         }
 
         let Some(ConfiguredModel { provider, model }) =
-            LanguageModelRegistry::read_global(cx).commit_message_model()
+            LanguageModelRegistry::read_global(cx).commit_message_model(cx)
         else {
             return;
         };
@@ -4056,7 +4056,7 @@ impl GitPanel {
 
         let model_registry = LanguageModelRegistry::read_global(cx);
         let has_commit_model_configuration_error = model_registry
-            .configuration_error(model_registry.commit_message_model(), cx)
+            .configuration_error(model_registry.commit_message_model(cx), cx)
             .is_some();
         let can_commit = self.can_commit();
 

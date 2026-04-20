@@ -1521,6 +1521,17 @@ impl SettingsWindow {
         })
         .detach();
 
+        use feature_flags::FeatureFlagAppExt as _;
+        let mut last_is_staff = cx.is_staff();
+        cx.observe_global_in::<feature_flags::FeatureFlagStore>(window, move |this, window, cx| {
+            let is_staff = cx.is_staff();
+            if is_staff != last_is_staff {
+                last_is_staff = is_staff;
+                this.rebuild_pages(window, cx);
+            }
+        })
+        .detach();
+
         cx.on_window_closed(|cx, _window_id| {
             if let Some(existing_window) = cx
                 .windows()
@@ -2141,6 +2152,15 @@ impl SettingsWindow {
         self.update_matches(cx);
 
         cx.notify();
+    }
+
+    fn rebuild_pages(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
+        self.pages.clear();
+        self.navbar_entries.clear();
+        self.navbar_focus_subscriptions.clear();
+        self.content_handles.clear();
+        self.build_ui(window, cx);
+        self.build_search_index();
     }
 
     #[track_caller]

@@ -41,6 +41,7 @@ use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
     FakeFs, Project,
+    bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::LspSettings,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
@@ -27570,107 +27571,554 @@ async fn test_breakpoint_enabling_and_disabling(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-async fn test_breakpoint_phantom_indicator_collision_on_toggle(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
+struct BookmarkTestContext {
+    project: Entity<Project>,
+    editor: Entity<Editor>,
+    cx: VisualTestContext,
+}
 
-    let sample_text = "First line\nSecond line\nThird line\nFourth line".to_string();
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": sample_text,
-        }),
+impl BookmarkTestContext {
+    async fn new(sample_text: &str, cx: &mut TestAppContext) -> BookmarkTestContext {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "main.rs": sample_text,
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let mut visual_cx = VisualTestContext::from_window(*window, cx);
+        let worktree_id = workspace.update_in(&mut visual_cx, |workspace, _window, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+
+        let buffer = project
+            .update(&mut visual_cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+            })
+            .await
+            .unwrap();
+
+        let (editor, editor_cx) = cx.add_window_view(|window, cx| {
+            Editor::new(
+                EditorMode::full(),
+                MultiBuffer::build_from_buffer(buffer, cx),
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        });
+        let cx = editor_cx.clone();
+
+        BookmarkTestContext {
+            project,
+            editor,
+            cx,
+        }
+    }
+
+    fn abs_path(&self) -> Arc<Path> {
+        let project_path = self
+            .editor
+            .read_with(&self.cx, |editor, cx| editor.project_path(cx).unwrap());
+        self.project.read_with(&self.cx, |project, cx| {
+            project
+                .absolute_path(&project_path, cx)
+                .map(Arc::from)
+                .unwrap()
+        })
+    }
+
+    fn all_bookmarks(&self) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
+        self.project.read_with(&self.cx, |project, cx| {
+            project
+                .bookmark_store()
+                .read(cx)
+                .all_serialized_bookmarks(cx)
+        })
+    }
+
+    fn assert_bookmark_rows(&self, expected_rows: Vec<u32>) {
+        let abs_path = self.abs_path();
+        let bookmarks = self.all_bookmarks();
+        if expected_rows.is_empty() {
+            assert!(
+                !bookmarks.contains_key(&abs_path),
+                "Expected no bookmarks for {}",
+                abs_path.display()
+            );
+        } else {
+            let mut rows: Vec<u32> = bookmarks
+                .get(&abs_path)
+                .unwrap()
+                .iter()
+                .map(|b| b.0)
+                .collect();
+            rows.sort();
+            assert_eq!(expected_rows, rows);
+        }
+    }
+
+    fn cursor_row(&mut self) -> u32 {
+        self.editor.update(&mut self.cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            editor.selections.newest::<Point>(&snapshot).head().row
+        })
+    }
+
+    fn cursor_point(&mut self) -> Point {
+        self.editor.update(&mut self.cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            editor.selections.newest::<Point>(&snapshot).head()
+        })
+    }
+
+    fn move_to_row(&mut self, row: u32) {
+        self.editor
+            .update_in(&mut self.cx, |editor: &mut Editor, window, cx| {
+                editor.move_to_beginning(&MoveToBeginning, window, cx);
+                for _ in 0..row {
+                    editor.move_down(&MoveDown, window, cx);
+                }
+            });
+    }
+
+    fn toggle_bookmark(&mut self) {
+        self.editor
+            .update_in(&mut self.cx, |editor: &mut Editor, window, cx| {
+                editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+            });
+    }
+
+    fn toggle_bookmarks_at_rows(&mut self, rows: &[u32]) {
+        for &row in rows {
+            self.move_to_row(row);
+            self.toggle_bookmark();
+        }
+    }
+
+    fn go_to_next_bookmark(&mut self) {
+        self.editor
+            .update_in(&mut self.cx, |editor: &mut Editor, window, cx| {
+                editor.go_to_next_bookmark(&actions::GoToNextBookmark, window, cx);
+            });
+    }
+
+    fn go_to_previous_bookmark(&mut self) {
+        self.editor
+            .update_in(&mut self.cx, |editor: &mut Editor, window, cx| {
+                editor.go_to_previous_bookmark(&actions::GoToPreviousBookmark, window, cx);
+            });
+    }
+}
+
+#[gpui::test]
+async fn test_bookmark_toggling(cx: &mut TestAppContext) {
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+            editor.move_to_end(&MoveToEnd, window, cx);
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
+
+    assert_eq!(1, ctx.all_bookmarks().len());
+    ctx.assert_bookmark_rows(vec![0, 3]);
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
+
+    assert_eq!(1, ctx.all_bookmarks().len());
+    ctx.assert_bookmark_rows(vec![3]);
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
+
+    assert_eq!(0, ctx.all_bookmarks().len());
+    ctx.assert_bookmark_rows(vec![]);
+}
+
+#[gpui::test]
+async fn test_bookmark_toggling_with_multiple_selections(cx: &mut TestAppContext) {
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.add_selection_below(&Default::default(), window, cx);
+            editor.add_selection_below(&Default::default(), window, cx);
+            editor.add_selection_below(&Default::default(), window, cx);
+        });
+
+    ctx.toggle_bookmark();
+
+    assert_eq!(1, ctx.all_bookmarks().len());
+    ctx.assert_bookmark_rows(vec![0, 1, 2, 3]);
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.add_selection_below(&Default::default(), window, cx);
+            editor.add_selection_below(&Default::default(), window, cx);
+            editor.add_selection_below(&Default::default(), window, cx);
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
+
+    assert_eq!(0, ctx.all_bookmarks().len());
+    ctx.assert_bookmark_rows(vec![]);
+}
+
+#[gpui::test]
+async fn test_bookmark_toggle_deduplicates_by_row(cx: &mut TestAppContext) {
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
+
+    ctx.assert_bookmark_rows(vec![0]);
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_end_of_line(
+                &MoveToEndOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                window,
+                cx,
+            );
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
+
+    ctx.assert_bookmark_rows(vec![]);
+}
+
+#[gpui::test]
+async fn test_bookmark_survives_edits(cx: &mut TestAppContext) {
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
+
+    ctx.move_to_row(2);
+    ctx.toggle_bookmark();
+    ctx.assert_bookmark_rows(vec![2]);
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.newline(&Newline, window, cx);
+        });
+
+    ctx.assert_bookmark_rows(vec![3]);
+
+    ctx.move_to_row(3);
+    ctx.toggle_bookmark();
+    ctx.assert_bookmark_rows(vec![]);
+}
+
+#[gpui::test]
+async fn test_active_bookmarks(cx: &mut TestAppContext) {
+    let mut ctx = BookmarkTestContext::new(
+        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9",
+        cx,
     )
     .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .unwrap();
-    let cx = &mut VisualTestContext::from_window(*window, cx);
-    let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project.worktrees(cx).next().unwrap().read(cx).id()
-        })
-    });
 
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
+    ctx.toggle_bookmarks_at_rows(&[1, 3, 5, 8]);
 
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
-
-    // Simulate hovering over row 0 with no existing breakpoint.
-    editor.update(cx, |editor, _cx| {
-        editor.gutter_breakpoint_indicator.0 = Some(PhantomBreakpointIndicator {
-            display_row: DisplayRow(0),
-            is_active: true,
-            collides_with_existing_breakpoint: false,
+    let active = ctx
+        .editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.active_bookmarks(DisplayRow(0)..DisplayRow(10), window, cx)
         });
-    });
+    assert!(active.contains(&DisplayRow(1)));
+    assert!(active.contains(&DisplayRow(3)));
+    assert!(active.contains(&DisplayRow(5)));
+    assert!(active.contains(&DisplayRow(8)));
+    assert!(!active.contains(&DisplayRow(0)));
+    assert!(!active.contains(&DisplayRow(2)));
+    assert!(!active.contains(&DisplayRow(9)));
 
-    // Toggle breakpoint on the same row (row 0) — collision should flip to true.
-    editor.update_in(cx, |editor, window, cx| {
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-    });
-    editor.update(cx, |editor, _cx| {
-        let indicator = editor.gutter_breakpoint_indicator.0.unwrap();
-        assert!(
-            indicator.collides_with_existing_breakpoint,
-            "Adding a breakpoint on the hovered row should set collision to true"
-        );
-    });
-
-    // Toggle again on the same row — breakpoint is removed, collision should flip back to false.
-    editor.update_in(cx, |editor, window, cx| {
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-    });
-    editor.update(cx, |editor, _cx| {
-        let indicator = editor.gutter_breakpoint_indicator.0.unwrap();
-        assert!(
-            !indicator.collides_with_existing_breakpoint,
-            "Removing a breakpoint on the hovered row should set collision to false"
-        );
-    });
-
-    // Now move cursor to row 2 while phantom indicator stays on row 0.
-    editor.update_in(cx, |editor, window, cx| {
-        editor.move_down(&MoveDown, window, cx);
-        editor.move_down(&MoveDown, window, cx);
-    });
-
-    // Ensure phantom indicator is still on row 0, not colliding.
-    editor.update(cx, |editor, _cx| {
-        editor.gutter_breakpoint_indicator.0 = Some(PhantomBreakpointIndicator {
-            display_row: DisplayRow(0),
-            is_active: true,
-            collides_with_existing_breakpoint: false,
+    let active = ctx
+        .editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.active_bookmarks(DisplayRow(2)..DisplayRow(6), window, cx)
         });
-    });
+    assert!(active.contains(&DisplayRow(3)));
+    assert!(active.contains(&DisplayRow(5)));
+    assert!(!active.contains(&DisplayRow(1)));
+    assert!(!active.contains(&DisplayRow(8)));
+}
 
-    // Toggle breakpoint on row 2 (cursor row) — phantom on row 0 should NOT be affected.
-    editor.update_in(cx, |editor, window, cx| {
-        editor.toggle_breakpoint(&actions::ToggleBreakpoint, window, cx);
-    });
+#[gpui::test]
+async fn test_bookmark_not_available_in_single_line_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, _cx) = cx.add_window_view(|window, cx| Editor::single_line(window, cx));
+
     editor.update(cx, |editor, _cx| {
-        let indicator = editor.gutter_breakpoint_indicator.0.unwrap();
         assert!(
-            !indicator.collides_with_existing_breakpoint,
-            "Toggling a breakpoint on a different row should not affect the phantom indicator"
+            editor.bookmark_store.is_none(),
+            "Single-line editors should not have a bookmark store"
         );
     });
+}
+
+#[gpui::test]
+async fn test_bookmark_navigation_lands_at_column_zero(cx: &mut TestAppContext) {
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.move_down(&MoveDown, window, cx);
+            editor.move_to_end_of_line(
+                &MoveToEndOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                window,
+                cx,
+            );
+        });
+
+    let column_before_toggle = ctx.cursor_point().column;
+    assert_eq!(
+        column_before_toggle, 11,
+        "Cursor should be at the 11th column before toggling bookmark, got column {column_before_toggle}"
+    );
+
+    ctx.toggle_bookmark();
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+        });
+
+    ctx.go_to_next_bookmark();
+
+    let cursor = ctx.cursor_point();
+    assert_eq!(cursor.row, 1, "Should navigate to the bookmarked row");
+    assert_eq!(
+        cursor.column, 0,
+        "Bookmark navigation should always land at column 0"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmark_set_from_nonzero_column_toggles_off_from_column_zero(
+    cx: &mut TestAppContext,
+) {
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning(&MoveToBeginning, window, cx);
+            editor.move_down(&MoveDown, window, cx);
+            editor.move_to_end_of_line(
+                &MoveToEndOfLine {
+                    stop_at_soft_wraps: true,
+                },
+                window,
+                cx,
+            );
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
+
+    ctx.assert_bookmark_rows(vec![1]);
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_beginning_of_line(
+                &MoveToBeginningOfLine {
+                    stop_at_soft_wraps: true,
+                    stop_at_indent: false,
+                },
+                window,
+                cx,
+            );
+            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        });
+
+    ctx.assert_bookmark_rows(vec![]);
+}
+
+#[gpui::test]
+async fn test_go_to_next_bookmark(cx: &mut TestAppContext) {
+    let mut ctx = BookmarkTestContext::new(
+        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9",
+        cx,
+    )
+    .await;
+
+    ctx.toggle_bookmarks_at_rows(&[2, 5, 8]);
+
+    ctx.move_to_row(0);
+
+    ctx.go_to_next_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        2,
+        "First next-bookmark should go to row 2"
+    );
+
+    ctx.go_to_next_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        5,
+        "Second next-bookmark should go to row 5"
+    );
+
+    ctx.go_to_next_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        8,
+        "Third next-bookmark should go to row 8"
+    );
+
+    ctx.go_to_next_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        2,
+        "Next-bookmark should wrap around to row 2"
+    );
+}
+
+#[gpui::test]
+async fn test_go_to_previous_bookmark(cx: &mut TestAppContext) {
+    let mut ctx = BookmarkTestContext::new(
+        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9",
+        cx,
+    )
+    .await;
+
+    ctx.toggle_bookmarks_at_rows(&[2, 5, 8]);
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.move_to_end(&MoveToEnd, window, cx);
+        });
+
+    ctx.go_to_previous_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        8,
+        "First prev-bookmark should go to row 8"
+    );
+
+    ctx.go_to_previous_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        5,
+        "Second prev-bookmark should go to row 5"
+    );
+
+    ctx.go_to_previous_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        2,
+        "Third prev-bookmark should go to row 2"
+    );
+
+    ctx.go_to_previous_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        8,
+        "Prev-bookmark should wrap around to row 8"
+    );
+}
+
+#[gpui::test]
+async fn test_go_to_bookmark_when_cursor_on_bookmarked_line(cx: &mut TestAppContext) {
+    let mut ctx = BookmarkTestContext::new(
+        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9",
+        cx,
+    )
+    .await;
+
+    ctx.toggle_bookmarks_at_rows(&[3, 7]);
+
+    ctx.move_to_row(3);
+
+    ctx.go_to_next_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        7,
+        "Next from bookmarked row 3 should go to row 7"
+    );
+
+    ctx.go_to_previous_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        3,
+        "Previous from bookmarked row 7 should go to row 3"
+    );
+
+    ctx.go_to_next_bookmark();
+    assert_eq!(ctx.cursor_row(), 7, "Next from row 3 should go to row 7");
+
+    ctx.go_to_next_bookmark();
+    assert_eq!(ctx.cursor_row(), 3, "Next from row 7 should wrap to row 3");
+}
+
+#[gpui::test]
+async fn test_go_to_bookmark_with_out_of_order_bookmarks(cx: &mut TestAppContext) {
+    let mut ctx = BookmarkTestContext::new(
+        "Line 0\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9",
+        cx,
+    )
+    .await;
+
+    ctx.toggle_bookmarks_at_rows(&[8, 1, 5]);
+
+    ctx.move_to_row(0);
+
+    ctx.go_to_next_bookmark();
+    assert_eq!(ctx.cursor_row(), 1, "First next should go to row 1");
+
+    ctx.go_to_next_bookmark();
+    assert_eq!(ctx.cursor_row(), 5, "Second next should go to row 5");
+
+    ctx.go_to_next_bookmark();
+    assert_eq!(ctx.cursor_row(), 8, "Third next should go to row 8");
+
+    ctx.go_to_next_bookmark();
+    assert_eq!(ctx.cursor_row(), 1, "Fourth next should wrap to row 1");
+
+    ctx.go_to_previous_bookmark();
+    assert_eq!(
+        ctx.cursor_row(),
+        8,
+        "Prev from row 1 should wrap around to row 8"
+    );
+
+    ctx.go_to_previous_bookmark();
+    assert_eq!(ctx.cursor_row(), 5, "Prev from row 8 should go to row 5");
+
+    ctx.go_to_previous_bookmark();
+    assert_eq!(ctx.cursor_row(), 1, "Prev from row 5 should go to row 1");
 }
 
 #[gpui::test]
