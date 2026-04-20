@@ -506,13 +506,13 @@ impl Vim {
                 let search_bar = search_bar.downgrade();
                 cx.spawn_in(window, async move |_, cx| {
                     search.await?;
-                    vim.update(cx, |vim, cx| {
+                    vim.update_in(cx, |vim, window, cx| {
                         vim.reset_cmd_f_search(window, cx);
-                    });
+                    })?;
                     search_bar.update_in(cx, |search_bar, window, cx| {
                         search_bar.select_match(direction, count, window, cx);
 
-                        vim.update(cx, |vim, cx| {
+                        vim.update_in(cx, |vim, window, cx| {
                             let new_selections = vim.editor_selections(window, cx);
                             vim.search_motion(
                                 Motion::ZedSearchResult {
@@ -522,7 +522,7 @@ impl Vim {
                                 window,
                                 cx,
                             )
-                        });
+                        })
                     })?;
                     anyhow::Ok(())
                 })
