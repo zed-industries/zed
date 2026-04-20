@@ -23,7 +23,7 @@ use project::DirectoryLister;
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Banner, Chip, ContextMenu, Divider, PopoverMenu, ScrollableHandle, Switch, ToggleButtonGroup,
     ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar,
@@ -69,10 +69,6 @@ pub fn init(cx: &mut App) {
                             ExtensionProvides::ContextServers
                         }
                         ExtensionCategoryFilter::AgentServers => ExtensionProvides::AgentServers,
-                        ExtensionCategoryFilter::SlashCommands => ExtensionProvides::SlashCommands,
-                        ExtensionCategoryFilter::IndexedDocsProviders => {
-                            ExtensionProvides::IndexedDocsProviders
-                        }
                         ExtensionCategoryFilter::Snippets => ExtensionProvides::Snippets,
                         ExtensionCategoryFilter::DebugAdapters => ExtensionProvides::DebugAdapters,
                     });

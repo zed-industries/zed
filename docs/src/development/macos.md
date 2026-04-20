@@ -118,7 +118,8 @@ xcrun: error: unable to find utility "metal", not a developer tool or in PATH
 
 Try `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer`
 
-If you're on macOS 26, try `xcodebuild -downloadComponent MetalToolchain`
+If you're on macOS 26, try `xcodebuild -downloadComponent MetalToolchain`.
+If that command fails, run `xcodebuild -runFirstLaunch` and try downloading the toolchain again.
 
 ### Cargo errors claiming that a dependency is using unstable features
 

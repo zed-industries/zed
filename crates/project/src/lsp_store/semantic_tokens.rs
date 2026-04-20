@@ -585,7 +585,7 @@ async fn raw_to_buffer_semantic_tokens(
                     }
 
                     Some(BufferSemanticToken {
-                        range: buffer_snapshot.anchor_range_around(start..end),
+                        range: buffer_snapshot.anchor_range_inside(start..end),
                         token_type: token.token_type,
                         token_modifiers: token.token_modifiers,
                     })

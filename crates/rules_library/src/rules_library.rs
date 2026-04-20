@@ -1,11 +1,11 @@
 use anyhow::Result;
 use collections::{HashMap, HashSet};
-use editor::{CompletionProvider, SelectionEffects};
+use editor::SelectionEffects;
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
-    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, MouseButton,
-    PromptLevel, Subscription, Task, TextStyle, Tiling, TitlebarOptions, WindowBounds,
-    WindowHandle, WindowOptions, actions, point, size, transparent_black,
+    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, PromptLevel,
+    Subscription, Task, TextStyle, Tiling, TitlebarOptions, WindowBounds, WindowHandle,
+    WindowOptions, actions, point, size, transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use language_model::{
@@ -15,12 +15,11 @@ use picker::{Picker, PickerDelegate};
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
 use rope::Rope;
-use settings::Settings;
-use std::rc::Rc;
+use settings::{ActionSequence, Settings};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Divider, ListItem, ListItemSpacing, ListSubHeader, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, TryFutureExt};
@@ -76,7 +75,6 @@ pub trait InlineAssistDelegate {
 pub fn open_rules_library(
     language_registry: Arc<LanguageRegistry>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
-    make_completion_provider: Rc<dyn Fn() -> Rc<dyn CompletionProvider>>,
     prompt_to_select: Option<PromptId>,
     cx: &mut App,
 ) -> Task<Result<WindowHandle<RulesLibrary>>> {
@@ -133,7 +131,6 @@ pub fn open_rules_library(
                     window_decorations: Some(window_decorations),
                     window_min_size: Some(DEFAULT_ADDITIONAL_WINDOW_SIZE),
                     kind: gpui::WindowKind::Floating,
-                    is_movable: !cfg!(target_os = "macos"),
                     ..Default::default()
                 },
                 |window, cx| {
@@ -142,7 +139,6 @@ pub fn open_rules_library(
                             store,
                             language_registry,
                             inline_assist_delegate,
-                            make_completion_provider,
                             prompt_to_select,
                             window,
                             cx,
@@ -163,7 +159,6 @@ pub struct RulesLibrary {
     picker: Entity<Picker<RulePickerDelegate>>,
     pending_load: Task<()>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
-    make_completion_provider: Rc<dyn Fn() -> Rc<dyn CompletionProvider>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -228,6 +223,10 @@ impl PickerDelegate for RulePickerDelegate {
             Some(RulePickerEntry::Rule(_)) => true,
             Some(RulePickerEntry::Header(_)) | Some(RulePickerEntry::Separator) | None => false,
         }
+    }
+
+    fn select_on_hover(&self) -> bool {
+        false
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
@@ -394,7 +393,7 @@ impl PickerDelegate for RulePickerDelegate {
                                 }))
                         }))
                         .when(!prompt_id.is_built_in(), |this| {
-                            this.end_hover_slot(
+                            this.end_slot_on_hover(
                                 h_flex()
                                     .child(
                                         IconButton::new("delete-rule", IconName::Trash)
@@ -472,7 +471,6 @@ impl RulesLibrary {
         store: Entity<PromptStore>,
         language_registry: Arc<LanguageRegistry>,
         inline_assist_delegate: Box<dyn InlineAssistDelegate>,
-        make_completion_provider: Rc<dyn Fn() -> Rc<dyn CompletionProvider>>,
         rule_to_select: Option<PromptId>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -504,14 +502,17 @@ impl RulesLibrary {
         });
 
         Self {
-            title_bar: Some(cx.new(|cx| PlatformTitleBar::new("rules-library-title-bar", cx))),
+            title_bar: if !cfg!(target_os = "macos") {
+                Some(cx.new(|cx| PlatformTitleBar::new("rules-library-title-bar", cx)))
+            } else {
+                None
+            },
             store,
             language_registry,
             rule_editors: HashMap::default(),
             active_rule_id: None,
             pending_load: Task::ready(()),
             inline_assist_delegate,
-            make_completion_provider,
             _subscriptions: vec![cx.subscribe_in(&picker, window, Self::handle_picker_event)],
             picker,
         }
@@ -718,7 +719,6 @@ impl RulesLibrary {
         } else if let Some(rule_metadata) = self.store.read(cx).metadata(prompt_id) {
             let language_registry = self.language_registry.clone();
             let rule = self.store.read(cx).load(prompt_id, cx);
-            let make_completion_provider = self.make_completion_provider.clone();
             self.pending_load = cx.spawn_in(window, async move |this, cx| {
                 let rule = rule.await;
                 let markdown = language_registry.language_for_name("Markdown").await;
@@ -753,7 +753,6 @@ impl RulesLibrary {
                             editor.set_show_indent_guides(false, cx);
                             editor.set_use_modal_editing(true);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
-                            editor.set_completion_provider(Some(make_completion_provider()));
                             if focus {
                                 window.focus(&editor.focus_handle(cx), cx);
                             }
@@ -1126,44 +1125,30 @@ impl RulesLibrary {
         v_flex()
             .id("rule-list")
             .capture_action(cx.listener(Self::focus_active_rule))
+            .px_1p5()
             .h_full()
             .w_64()
             .overflow_x_hidden()
             .bg(cx.theme().colors().panel_background)
-            .when(!cfg!(target_os = "macos"), |this| this.px_1p5())
             .map(|this| {
                 if cfg!(target_os = "macos") {
-                    let Some(title_bar) = self.title_bar.as_ref() else {
-                        return this;
-                    };
-                    let button_padding = DynamicSpacing::Base08.rems(cx);
-                    let panel_background = cx.theme().colors().panel_background;
-                    title_bar.update(cx, |title_bar, _cx| {
-                        title_bar.set_background_color(Some(panel_background));
-                        title_bar.set_children(Some(
-                            h_flex()
-                                .w_full()
-                                .pr(button_padding)
-                                .justify_end()
-                                .child(
-                                    div()
-                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                            cx.stop_propagation();
-                                        })
-                                        .child(
-                                            IconButton::new("new-rule", IconName::Plus)
-                                                .tooltip(move |_window, cx| {
-                                                    Tooltip::for_action("New Rule", &NewRule, cx)
-                                                })
-                                                .on_click(|_, window, cx| {
-                                                    window.dispatch_action(Box::new(NewRule), cx);
-                                                }),
-                                        ),
-                                )
-                                .into_any_element(),
-                        ));
-                    });
-                    this.child(title_bar.clone())
+                    this.child(
+                        h_flex()
+                            .p(DynamicSpacing::Base04.rems(cx))
+                            .h_9()
+                            .w_full()
+                            .flex_none()
+                            .justify_end()
+                            .child(
+                                IconButton::new("new-rule", IconName::Plus)
+                                    .tooltip(move |_window, cx| {
+                                        Tooltip::for_action("New Rule", &NewRule, cx)
+                                    })
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(Box::new(NewRule), cx);
+                                    }),
+                            ),
+                    )
                 } else {
                     this.child(
                         h_flex().p_1().w_full().child(
@@ -1182,12 +1167,7 @@ impl RulesLibrary {
                     )
                 }
             })
-            .child(
-                div()
-                    .flex_grow()
-                    .when(cfg!(target_os = "macos"), |this| this.px_1p5())
-                    .child(self.picker.clone()),
-            )
+            .child(div().flex_grow().child(self.picker.clone()))
     }
 
     fn render_active_rule_editor(
@@ -1408,13 +1388,20 @@ impl RulesLibrary {
 
 impl Render for RulesLibrary {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
         let theme = cx.theme().clone();
 
         client_side_decorations(
             v_flex()
                 .id("rules-library")
                 .key_context("RulesLibrary")
+                .on_action(
+                    |action_sequence: &ActionSequence, window: &mut Window, cx: &mut App| {
+                        for action in &action_sequence.0 {
+                            window.dispatch_action(action.boxed_clone(), cx);
+                        }
+                    },
+                )
                 .on_action(cx.listener(|this, &NewRule, window, cx| this.new_rule(window, cx)))
                 .on_action(
                     cx.listener(|this, &DeleteRule, window, cx| {
@@ -1434,9 +1421,7 @@ impl Render for RulesLibrary {
                 .overflow_hidden()
                 .font(ui_font)
                 .text_color(theme.colors().text)
-                .when(!cfg!(target_os = "macos"), |this| {
-                    this.children(self.title_bar.clone())
-                })
+                .children(self.title_bar.clone())
                 .bg(theme.colors().background)
                 .child(
                     h_flex()
