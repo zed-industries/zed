@@ -54,7 +54,7 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::{
-    AppState, ModalView, MultiWorkspace, OpenLog, OpenOptions, Toast, Workspace,
+    AppState, DismissDecision, ModalView, MultiWorkspace, OpenLog, OpenOptions, Toast, Workspace,
     notifications::{DetachAndPromptErr, NotificationId},
     open_remote_project_with_existing_connection,
 };
@@ -69,6 +69,7 @@ pub struct RemoteServerProjects {
     create_new_window: bool,
     dev_container_picker: Option<Entity<Picker<DevContainerPickerDelegate>>>,
     _subscription: Subscription,
+    allow_dismissal: bool,
 }
 
 struct CreateRemoteServer {
@@ -487,21 +488,24 @@ impl ProjectPicker {
                     })
                     .log_err();
 
-                    let options = cx
-                        .update(|_, cx| (app_state.build_window_options)(None, cx))
-                        .log_err()?;
-                    let window = cx
-                        .open_window(options, |window, cx| {
+                    let window = if create_new_window {
+                        let options = cx
+                            .update(|_, cx| (app_state.build_window_options)(None, cx))
+                            .log_err()?;
+                        cx.open_window(options, |window, cx| {
                             let workspace = cx.new(|cx| {
                                 telemetry::event!("SSH Project Created");
                                 Workspace::new(None, project.clone(), app_state.clone(), window, cx)
                             });
                             cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                         })
-                        .log_err()?;
+                        .log_err()
+                    } else {
+                        cx.window_handle().downcast::<MultiWorkspace>()
+                    }?;
 
                     let items = open_remote_project_with_existing_connection(
-                        connection, project, paths, app_state, window, cx,
+                        connection, project, paths, app_state, window, None, None, cx,
                     )
                     .await
                     .log_err();
@@ -920,6 +924,7 @@ impl RemoteServerProjects {
             create_new_window,
             dev_container_picker: None,
             _subscription,
+            allow_dismissal: true,
         }
     }
 
@@ -1140,6 +1145,7 @@ impl RemoteServerProjects {
     }
 
     fn view_in_progress_dev_container(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.allow_dismissal = false;
         self.mode = Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(
             DevContainerCreationProgress::Creating,
             cx,
@@ -1309,6 +1315,7 @@ impl RemoteServerProjects {
                 cx.emit(DismissEvent);
             }
             _ => {
+                self.allow_dismissal = true;
                 self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
                 self.focus_handle(cx).focus(window, cx);
                 cx.notify();
@@ -1875,6 +1882,7 @@ impl RemoteServerProjects {
                         .ok();
                         entity
                             .update_in(cx, |remote_server_projects, window, cx| {
+                                remote_server_projects.allow_dismissal = true;
                                 remote_server_projects.mode =
                                     Mode::CreateRemoteDevContainer(CreateRemoteDevContainer::new(
                                         DevContainerCreationProgress::Error(format!("{e}")),
@@ -1897,7 +1905,8 @@ impl RemoteServerProjects {
             .log_err();
 
             entity
-                .update(cx, |_, cx| {
+                .update(cx, |this, cx| {
+                    this.allow_dismissal = true;
                     cx.emit(DismissEvent);
                 })
                 .log_err();
@@ -2948,7 +2957,15 @@ fn get_text(element: &Entity<Editor>, cx: &mut App) -> String {
     element.read(cx).text(cx).trim().to_string()
 }
 
-impl ModalView for RemoteServerProjects {}
+impl ModalView for RemoteServerProjects {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> DismissDecision {
+        DismissDecision::Dismiss(self.allow_dismissal)
+    }
+}
 
 impl Focusable for RemoteServerProjects {
     fn focus_handle(&self, cx: &App) -> FocusHandle {

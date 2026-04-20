@@ -1,7 +1,7 @@
 use buffer_diff::BufferDiff;
 use edit_prediction::{EditPrediction, EditPredictionRating, EditPredictionStore};
 use editor::{Editor, Inlay, MultiBuffer};
-use feature_flags::FeatureFlag;
+use feature_flags::{FeatureFlag, PresenceFlag, register_feature_flag};
 use gpui::{
     App, BorderStyle, DismissEvent, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
     Length, StyleRefinement, TextStyleRefinement, Window, actions, prelude::*,
@@ -43,7 +43,9 @@ pub struct PredictEditsRatePredictionsFeatureFlag;
 
 impl FeatureFlag for PredictEditsRatePredictionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";
+    type Value = PresenceFlag;
 }
+register_feature_flag!(PredictEditsRatePredictionsFeatureFlag);
 
 pub struct RatePredictionsModal {
     ep_store: Entity<EditPredictionStore>,
@@ -439,6 +441,7 @@ impl RatePredictionsModal {
                     editor.set_show_git_diff_gutter(false, cx);
                     editor.set_show_code_actions(false, cx);
                     editor.set_show_runnables(false, cx);
+                    editor.set_show_bookmarks(false, cx);
                     editor.set_show_breakpoints(false, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_indent_guides(false, cx);

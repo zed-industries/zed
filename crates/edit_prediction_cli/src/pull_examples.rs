@@ -1674,7 +1674,7 @@ fn build_rejected_example(
     example.spec.rejected_patch = Some(rejected_patch);
     example.prompt = prompt.map(|prompt| ExamplePrompt {
         input: prompt,
-        expected_output: String::new(),
+        expected_output: None,
         rejected_output: Some(output),
         prefill: None,
         provider: PredictionProvider::default(),

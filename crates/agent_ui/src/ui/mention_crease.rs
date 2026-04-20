@@ -184,7 +184,7 @@ fn open_mention_uri(
         MentionUri::Fetch { url } => {
             cx.open_url(url.as_str());
         }
-        MentionUri::PastedImage
+        MentionUri::PastedImage { .. }
         | MentionUri::Selection { abs_path: None, .. }
         | MentionUri::Diagnostics { .. }
         | MentionUri::TerminalSelection { .. }
@@ -284,6 +284,7 @@ fn open_thread(
             None,
             Some(name.into()),
             true,
+            "agent_panel",
             window,
             cx,
         )

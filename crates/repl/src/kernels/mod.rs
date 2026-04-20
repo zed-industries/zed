@@ -177,6 +177,13 @@ impl PythonEnvKernelSpecification {
             kernelspec: self.kernelspec.clone(),
         }
     }
+
+    pub fn is_uv(&self) -> bool {
+        matches!(
+            self.environment_kind.as_deref(),
+            Some("uv" | "uv (Workspace)")
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
