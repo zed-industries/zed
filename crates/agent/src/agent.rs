@@ -1432,32 +1432,11 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             })
             .cloned();
 
-        let effort = match favorite
-            .as_ref()
-            .and_then(|favorite| favorite.effort.as_ref())
-        {
-            Some(favorite_effort)
-                if model
-                    .supported_effort_levels()
-                    .iter()
-                    .any(|level| level.value.as_ref() == favorite_effort.as_str()) =>
-            {
-                Some(favorite_effort.clone())
-            }
-            _ => model
-                .default_effort_level()
-                .map(|effort_level| effort_level.value.to_string()),
-        };
-
-        let enable_thinking = match favorite.as_ref() {
-            Some(favorite) => favorite.enable_thinking && model.supports_thinking(),
-            None => model.supports_thinking(),
-        };
-
-        let speed = favorite
-            .as_ref()
-            .and_then(|favorite| favorite.speed)
-            .filter(|_| model.supports_fast_mode());
+        let agent_settings::ModelPreferences {
+            enable_thinking,
+            effort,
+            speed,
+        } = agent_settings::resolve_model_preferences(&model, favorite.as_ref());
 
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);

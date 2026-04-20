@@ -8,7 +8,7 @@ use collections::{HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::oneshot;
 use gpui::{App, Pixels, px};
-use language_model::LanguageModel;
+use language_model::{LanguageModel, Speed};
 use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -212,22 +212,21 @@ impl AgentSettings {
     }
 }
 
-pub fn favorite_selection_for_model(
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelPreferences {
+    pub enable_thinking: bool,
+    pub effort: Option<String>,
+    pub speed: Option<Speed>,
+}
+
+pub fn resolve_model_preferences(
     model: &Arc<dyn LanguageModel>,
-    cx: &App,
-) -> LanguageModelSelection {
-    let provider_id = model.provider_id().0.to_string();
-    let model_id = model.id().0.to_string();
-
-    let current_selection = AgentSettings::get_global(cx)
-        .default_model
-        .as_ref()
-        .filter(|selection| selection.provider.0 == provider_id && selection.model == model_id);
-
-    let (enable_thinking, effort, speed) = match current_selection {
-        Some(current) => (
-            current.enable_thinking && model.supports_thinking(),
-            current
+    override_selection: Option<&LanguageModelSelection>,
+) -> ModelPreferences {
+    match override_selection {
+        Some(current) => ModelPreferences {
+            enable_thinking: current.enable_thinking && model.supports_thinking(),
+            effort: current
                 .effort
                 .clone()
                 .filter(|value| {
@@ -241,16 +240,35 @@ pub fn favorite_selection_for_model(
                         .default_effort_level()
                         .map(|effort| effort.value.to_string())
                 }),
-            current.speed.filter(|_| model.supports_fast_mode()),
-        ),
-        None => (
-            model.supports_thinking(),
-            model
+            speed: current.speed.filter(|_| model.supports_fast_mode()),
+        },
+        None => ModelPreferences {
+            enable_thinking: model.supports_thinking(),
+            effort: model
                 .default_effort_level()
                 .map(|effort| effort.value.to_string()),
-            None,
-        ),
-    };
+            speed: None,
+        },
+    }
+}
+
+pub fn favorite_selection_for_model(
+    model: &Arc<dyn LanguageModel>,
+    cx: &App,
+) -> LanguageModelSelection {
+    let provider_id = model.provider_id().0.to_string();
+    let model_id = model.id().0.to_string();
+
+    let current_user_selection = AgentSettings::get_global(cx)
+        .default_model
+        .as_ref()
+        .filter(|selection| selection.provider.0 == provider_id && selection.model == model_id);
+
+    let ModelPreferences {
+        enable_thinking,
+        effort,
+        speed,
+    } = resolve_model_preferences(model, current_user_selection);
 
     LanguageModelSelection {
         provider: provider_id.into(),
