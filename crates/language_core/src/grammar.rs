@@ -21,7 +21,7 @@ impl GrammarId {
     }
 }
 
-impl Deault for GrammarId {
+impl Default for GrammarId {
     fn default() -> Self {
         Self::new()
     }
