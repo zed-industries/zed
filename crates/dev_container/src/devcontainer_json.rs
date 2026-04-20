@@ -259,6 +259,32 @@ impl DevContainer {
             DevContainerBuildType::None
         }
     }
+
+    pub(crate) fn validate_devcontainer_contents(&self) -> Result<(), DevContainerError> {
+        match self.build_type() {
+            DevContainerBuildType::Image(_) => Ok(()),
+            DevContainerBuildType::Dockerfile(_) => {
+                if (self.workspace_folder.is_some() && self.workspace_mount.is_none())
+                    || (self.workspace_folder.is_none() && self.workspace_mount.is_some())
+                {
+                    return Err(DevContainerError::DevContainerValidationFailed(
+                        "workspaceMount and workspaceFolder must both be defined, or neither defined"
+                            .to_string(),
+                    ));
+                }
+                Ok(())
+            }
+            DevContainerBuildType::DockerCompose => {
+                if self.service.is_none() {
+                    return Err(DevContainerError::DevContainerValidationFailed(
+                        "must specify a connecting service for docker-compose".to_string(),
+                    ));
+                }
+                Ok(())
+            }
+            DevContainerBuildType::None => Ok(()),
+        }
+    }
 }
 
 // Custom deserializer that parses the entire customizations object as a
@@ -1476,5 +1502,111 @@ mod test {
         let rendered = mount.to_string();
 
         assert_eq!(rendered, "type=tmpfs,target=/tmp,consistency=cached");
+    }
+
+    #[test]
+    fn should_fail_validation_with_workspace_mount_only() {
+        let given_image_container_json = r#"
+            // These are some external comments. serde_lenient should handle them
+            {
+                // These are some internal comments
+                "build": {
+                    "dockerfile": "Dockerfile",
+                },
+                "name": "myDevContainer",
+                "workspaceMount": "source=/app,target=/workspaces/app,type=bind,consistency=cached",
+                "customizations": {
+                    "vscode": {
+                        // Just confirm that this can be included and ignored
+                    },
+                    "zed": {
+                        "extensions": [
+                            "html"
+                        ]
+                    }
+                }
+            }
+            "#;
+
+        let result = deserialize_devcontainer_json(given_image_container_json);
+
+        assert!(result.is_ok());
+        let devcontainer = result.expect("ok");
+
+        assert_eq!(
+            devcontainer.validate_devcontainer_contents(),
+            Err(DevContainerError::DevContainerValidationFailed(
+                "workspaceMount and workspaceFolder must both be defined, or neither defined"
+                    .to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn should_fail_validation_with_workspace_folder_only() {
+        let given_image_container_json = r#"
+            // These are some external comments. serde_lenient should handle them
+            {
+                // These are some internal comments
+                "build": {
+                    "dockerfile": "Dockerfile",
+                },
+                "name": "myDevContainer",
+                "workspaceFolder": "/workspaces",
+                "customizations": {
+                    "vscode": {
+                        // Just confirm that this can be included and ignored
+                    },
+                    "zed": {
+                        "extensions": [
+                            "html"
+                        ]
+                    }
+                }
+            }
+            "#;
+
+        let result = deserialize_devcontainer_json(given_image_container_json);
+
+        assert!(result.is_ok());
+        let devcontainer = result.expect("ok");
+
+        assert_eq!(
+            devcontainer.validate_devcontainer_contents(),
+            Err(DevContainerError::DevContainerValidationFailed(
+                "workspaceMount and workspaceFolder must both be defined, or neither defined"
+                    .to_string()
+            ))
+        );
+    }
+    #[test]
+    fn should_pass_validation_with_workspace_folder_for_docker_compose() {
+        let given_image_container_json = r#"
+            // These are some external comments. serde_lenient should handle them
+            {
+                // These are some internal comments
+                "dockerComposeFile": "docker-compose-plain.yml",
+                "service": "app",
+                "name": "myDevContainer",
+                "workspaceFolder": "/workspaces",
+                "customizations": {
+                    "vscode": {
+                        // Just confirm that this can be included and ignored
+                    },
+                    "zed": {
+                        "extensions": [
+                            "html"
+                        ]
+                    }
+                }
+            }
+            "#;
+
+        let result = deserialize_devcontainer_json(given_image_container_json);
+
+        assert!(result.is_ok());
+        let devcontainer = result.expect("ok");
+
+        assert!(devcontainer.validate_devcontainer_contents().is_ok());
     }
 }

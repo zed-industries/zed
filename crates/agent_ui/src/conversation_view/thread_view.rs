@@ -885,8 +885,49 @@ impl ThreadView {
         if let Some(usage) = self.thread.read(cx).token_usage() {
             if let Some(tokens) = &mut self.turn_fields.turn_tokens {
                 *tokens += usage.output_tokens;
+                self.emit_token_limit_telemetry_if_needed(cx);
             }
         }
+    }
+
+    fn emit_token_limit_telemetry_if_needed(&mut self, cx: &App) {
+        let (ratio, agent_telemetry_id, session_id) = {
+            let thread_data = self.thread.read(cx);
+            let Some(token_usage) = thread_data.token_usage() else {
+                return;
+            };
+            (
+                token_usage.ratio(),
+                thread_data.connection().telemetry_id(),
+                thread_data.session_id().clone(),
+            )
+        };
+
+        let kind = match ratio {
+            acp_thread::TokenUsageRatio::Normal => {
+                self.last_token_limit_telemetry = None;
+                return;
+            }
+            acp_thread::TokenUsageRatio::Warning => "warning",
+            acp_thread::TokenUsageRatio::Exceeded => "exceeded",
+        };
+
+        let should_skip = self
+            .last_token_limit_telemetry
+            .as_ref()
+            .is_some_and(|last| *last >= ratio);
+        if should_skip {
+            return;
+        }
+
+        self.last_token_limit_telemetry = Some(ratio);
+
+        telemetry::event!(
+            "Agent Token Limit Warning",
+            agent = agent_telemetry_id,
+            session_id = session_id,
+            kind = kind,
+        );
     }
 
     // sending
@@ -2244,13 +2285,14 @@ impl ThreadView {
 
         h_flex()
             .w_full()
+            .px_2()
             .justify_center()
             .child(
                 v_flex()
                     .flex_basis(max_content_width)
                     .flex_shrink()
                     .flex_grow_0()
-                    .mx_2()
+                    .max_w_full()
                     .bg(self.activity_bar_bg(cx))
                     .border_1()
                     .border_b_0()
@@ -2803,7 +2845,7 @@ impl ThreadView {
                 IconButton::new("dismiss-plan", IconName::Close)
                     .icon_size(IconSize::XSmall)
                     .shape(ui::IconButtonShape::Square)
-                    .tooltip(Tooltip::text("Clear plan"))
+                    .tooltip(Tooltip::text("Clear Plan"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.thread.update(cx, |thread, cx| thread.clear_plan(cx));
                         cx.stop_propagation();
@@ -2827,51 +2869,64 @@ impl ThreadView {
             .max_h_40()
             .overflow_y_scroll()
             .children(plan.entries.iter().enumerate().flat_map(|(index, entry)| {
-                let element = h_flex()
-                    .py_1()
-                    .px_2()
-                    .gap_2()
-                    .justify_between()
-                    .bg(cx.theme().colors().editor_background)
-                    .when(index < plan.entries.len() - 1, |parent| {
-                        parent.border_color(cx.theme().colors().border).border_b_1()
-                    })
-                    .child(
-                        h_flex()
-                            .id(("plan_entry", index))
-                            .gap_1p5()
-                            .max_w_full()
-                            .overflow_x_scroll()
-                            .text_xs()
-                            .text_color(cx.theme().colors().text_muted)
-                            .child(match entry.status {
-                                acp::PlanEntryStatus::InProgress => {
-                                    Icon::new(IconName::TodoProgress)
-                                        .size(IconSize::Small)
-                                        .color(Color::Accent)
-                                        .with_rotate_animation(2)
-                                        .into_any_element()
-                                }
-                                acp::PlanEntryStatus::Completed => {
-                                    Icon::new(IconName::TodoComplete)
-                                        .size(IconSize::Small)
-                                        .color(Color::Success)
-                                        .into_any_element()
-                                }
-                                acp::PlanEntryStatus::Pending | _ => {
-                                    Icon::new(IconName::TodoPending)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted)
-                                        .into_any_element()
-                                }
-                            })
-                            .child(MarkdownElement::new(
-                                entry.content.clone(),
-                                plan_label_markdown_style(&entry.status, window, cx),
-                            )),
-                    );
+                let entry_bg = cx.theme().colors().editor_background;
+                let tooltip_text: SharedString = entry.content.read(cx).source().to_string().into();
 
-                Some(element)
+                Some(
+                    h_flex()
+                        .id(("plan_entry_row", index))
+                        .py_1()
+                        .px_2()
+                        .gap_2()
+                        .justify_between()
+                        .relative()
+                        .bg(entry_bg)
+                        .when(index < plan.entries.len() - 1, |parent| {
+                            parent.border_color(cx.theme().colors().border).border_b_1()
+                        })
+                        .overflow_hidden()
+                        .child(
+                            h_flex()
+                                .id(("plan_entry", index))
+                                .gap_1p5()
+                                .min_w_0()
+                                .text_xs()
+                                .text_color(cx.theme().colors().text_muted)
+                                .child(match entry.status {
+                                    acp::PlanEntryStatus::InProgress => {
+                                        Icon::new(IconName::TodoProgress)
+                                            .size(IconSize::Small)
+                                            .color(Color::Accent)
+                                            .with_rotate_animation(2)
+                                            .into_any_element()
+                                    }
+                                    acp::PlanEntryStatus::Completed => {
+                                        Icon::new(IconName::TodoComplete)
+                                            .size(IconSize::Small)
+                                            .color(Color::Success)
+                                            .into_any_element()
+                                    }
+                                    acp::PlanEntryStatus::Pending | _ => {
+                                        Icon::new(IconName::TodoPending)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted)
+                                            .into_any_element()
+                                    }
+                                })
+                                .child(MarkdownElement::new(
+                                    entry.content.clone(),
+                                    plan_label_markdown_style(&entry.status, window, cx),
+                                )),
+                        )
+                        .child(div().absolute().top_0().right_0().h_full().w_8().bg(
+                            linear_gradient(
+                                90.,
+                                linear_color_stop(entry_bg, 1.),
+                                linear_color_stop(entry_bg.opacity(0.), 0.),
+                            ),
+                        ))
+                        .tooltip(Tooltip::text(tooltip_text)),
+                )
             }))
             .into_any_element()
     }
@@ -3096,7 +3151,7 @@ impl ThreadView {
 
         self.server_view
             .upgrade()
-            .and_then(|sv| sv.read(cx).thread_view(parent_session_id, cx))
+            .and_then(|sv| sv.read(cx).thread_view(parent_session_id))
             .is_some_and(|parent_view| {
                 parent_view
                     .read(cx)
@@ -4719,8 +4774,8 @@ impl ThreadView {
                         .into_any()
                 }
             }
-            AgentThreadEntry::ToolCall(tool_call) => self
-                .render_any_tool_call(
+            AgentThreadEntry::ToolCall(tool_call) => {
+                let tool_call = self.render_any_tool_call(
                     self.thread.read(cx).session_id(),
                     entry_ix,
                     tool_call,
@@ -4728,8 +4783,19 @@ impl ThreadView {
                     false,
                     window,
                     cx,
-                )
-                .into_any(),
+                );
+
+                if let Some(handle) = self
+                    .entry_view_state
+                    .read(cx)
+                    .entry(entry_ix)
+                    .and_then(|entry| entry.focus_handle(cx))
+                {
+                    tool_call.track_focus(&handle).into_any()
+                } else {
+                    tool_call.into_any()
+                }
+            }
             AgentThreadEntry::CompletedPlan(entries) => {
                 self.render_completed_plan(entries, window, cx)
             }
@@ -8719,7 +8785,7 @@ impl ThreadView {
     }
 
     fn render_token_limit_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
-        if self.token_limit_callout_dismissed {
+        if self.token_limit_callout_dismissed || self.as_native_thread(cx).is_none() {
             return None;
         }
 

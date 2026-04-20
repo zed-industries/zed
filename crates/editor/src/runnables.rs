@@ -9,11 +9,7 @@ use gpui::{
 use language::{Buffer, BufferRow, Runnable};
 use lsp::LanguageServerName;
 use multi_buffer::{Anchor, BufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
-use project::{
-    Location, Project, TaskSourceKind,
-    debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
-    project_settings::ProjectSettings,
-};
+use project::{Location, Project, TaskSourceKind, project_settings::ProjectSettings};
 use settings::Settings as _;
 use smallvec::SmallVec;
 use task::{ResolvedTask, RunnableTag, TaskContext, TaskTemplate, TaskVariables, VariableName};
@@ -519,12 +515,11 @@ impl Editor {
         &self,
         _style: &EditorStyle,
         is_active: bool,
+        active_breakpoint: Option<Anchor>,
         row: DisplayRow,
-        breakpoint: Option<(Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         cx: &mut Context<Self>,
     ) -> IconButton {
         let color = Color::Muted;
-        let position = breakpoint.as_ref().map(|(anchor, _, _)| *anchor);
 
         IconButton::new(
             ("run_indicator", row.0 as usize),
@@ -551,7 +546,7 @@ impl Editor {
             );
         }))
         .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-            editor.set_breakpoint_context_menu(row, position, event.position(), window, cx);
+            editor.set_gutter_context_menu(row, active_breakpoint, event.position(), window, cx);
         }))
     }
 

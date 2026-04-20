@@ -112,6 +112,8 @@ actions!(
         OpenHistory,
         /// Adds a context server to the configuration.
         AddContextServer,
+        /// Archives the currently selected thread.
+        ArchiveSelectedThread,
         /// Removes the currently selected thread.
         RemoveSelectedThread,
         /// Starts a chat conversation with follow-up enabled.

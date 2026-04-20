@@ -374,7 +374,7 @@ impl Render for EditPredictionButton {
                     let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
                         "Choose a Plan"
                     } else {
-                        "Sign In To Use"
+                        "Configure a Provider"
                     };
 
                     return div().child(
@@ -442,7 +442,7 @@ impl Render for EditPredictionButton {
                                 if show_editor_predictions {
                                     tooltip_meta
                                 } else if user.is_none() {
-                                    "Sign In To Use"
+                                    "Sign In Or Configure a Provider"
                                 } else {
                                     "Hidden For This File"
                                 }

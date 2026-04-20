@@ -6,6 +6,7 @@ pub mod pending_op;
 use crate::{
     ProjectEnvironment, ProjectItem, ProjectPath,
     buffer_store::{BufferStore, BufferStoreEvent},
+    project_settings::ProjectSettings,
     trusted_worktrees::{
         PathTrust, TrustedWorktrees, TrustedWorktreesEvent, TrustedWorktreesStore,
     },
@@ -17,7 +18,7 @@ use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
-use fs::Fs;
+use fs::{Fs, RemoveOptions};
 use futures::{
     FutureExt, StreamExt,
     channel::{
@@ -33,9 +34,10 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, CreateWorktreeTarget,
-        DiffType, FetchOptions, GitRepository, GitRepositoryCheckpoint, GraphCommitData,
-        InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
-        RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree,
+        DiffType, FetchOptions, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
+        GraphCommitData, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
+        RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
+        Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -59,7 +61,7 @@ use rpc::{
     proto::{self, git_reset, split_repository_update},
 };
 use serde::Deserialize;
-use settings::WorktreeId;
+use settings::{Settings, WorktreeId};
 use smol::future::yield_now;
 use std::{
     cmp::Ordering,
@@ -6345,12 +6347,62 @@ impl Repository {
 
     pub fn remove_worktree(&mut self, path: PathBuf, force: bool) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
+        let original_repo_abs_path = self.snapshot.original_repo_abs_path.clone();
         self.send_job(
             Some(format!("git worktree remove: {}", path.display()).into()),
-            move |repo, _cx| async move {
+            move |repo, cx| async move {
                 match repo {
-                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                        backend.remove_worktree(path, force).await
+                    RepositoryState::Local(LocalRepositoryState { backend, fs, .. }) => {
+                        // When forcing, delete the worktree directory ourselves before
+                        // invoking git. `git worktree remove` can remove the admin
+                        // metadata in `.git/worktrees/<name>` but fail to delete the
+                        // working directory (it continues past directory-removal errors),
+                        // leaving an orphaned folder on disk. Deleting first guarantees
+                        // the directory is gone, and `git worktree remove --force`
+                        // tolerates a missing working tree while cleaning up the admin
+                        // entry. We keep this inside the `Local` arm so that for remote
+                        // projects the deletion runs on the remote machine (where the
+                        // `GitRemoveWorktree` RPC is handled against the local repo on
+                        // the headless server) using its own filesystem.
+                        //
+                        // After a successful removal, also delete any empty ancestor
+                        // directories between the worktree path and the configured
+                        // base directory used when creating linked worktrees.
+                        //
+                        // Non-force removals are left untouched before git runs:
+                        // `git worktree remove` must see the dirty working tree to
+                        // refuse the operation.
+                        if force {
+                            fs.remove_dir(
+                                &path,
+                                RemoveOptions {
+                                    recursive: true,
+                                    ignore_if_not_exists: true,
+                                },
+                            )
+                            .await
+                            .with_context(|| {
+                                format!("failed to delete worktree directory '{}'", path.display())
+                            })?;
+                        }
+
+                        backend.remove_worktree(path.clone(), force).await?;
+
+                        let managed_worktree_base = cx.update(|cx| {
+                            let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
+                            worktrees_directory_for_repo(&original_repo_abs_path, setting).log_err()
+                        });
+
+                        if let Some(managed_worktree_base) = managed_worktree_base {
+                            remove_empty_managed_worktree_ancestors(
+                                fs.as_ref(),
+                                &path,
+                                &managed_worktree_base,
+                            )
+                            .await;
+                        }
+
+                        Ok(())
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
@@ -7060,6 +7112,19 @@ impl Repository {
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
+    pub fn load_commit_template_text(
+        &mut self,
+    ) -> oneshot::Receiver<Result<Option<GitCommitTemplate>>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.load_commit_template().await
+                }
+                RepositoryState::Remote(_) => Ok(None),
+            }
+        })
+    }
+
     fn load_blob_content(&mut self, oid: Oid, cx: &App) -> Task<Result<String>> {
         let repository_id = self.snapshot.id;
         let rx = self.send_job(None, move |state, _| async move {
@@ -7360,6 +7425,46 @@ pub fn worktrees_directory_for_repo(
     }
 
     Ok(resolved)
+}
+
+async fn remove_empty_managed_worktree_ancestors(fs: &dyn Fs, child_path: &Path, base_path: &Path) {
+    let mut current = child_path;
+    while let Some(parent) = current.parent() {
+        if parent == base_path {
+            break;
+        }
+        if !parent.starts_with(base_path) {
+            break;
+        }
+
+        let result = fs
+            .remove_dir(
+                parent,
+                RemoveOptions {
+                    recursive: false,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await;
+
+        match result {
+            Ok(()) => {
+                log::info!(
+                    "Removed empty managed worktree directory: {}",
+                    parent.display()
+                );
+            }
+            Err(error) => {
+                log::debug!(
+                    "Stopped removing managed worktree parent directories at {}: {error}",
+                    parent.display()
+                );
+                break;
+            }
+        }
+
+        current = parent;
+    }
 }
 
 /// Returns a short name for a linked worktree suitable for UI display

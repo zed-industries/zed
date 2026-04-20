@@ -1148,11 +1148,11 @@ fn run_breakpoint_hover_visual_tests(
     //
     // The breakpoint hover requires multiple steps:
     // 1. Draw to register mouse listeners
-    // 2. Mouse move to trigger gutter_hovered and create PhantomBreakpointIndicator
+    // 2. Mouse move to trigger gutter_hovered and create GutterHoverButton
     // 3. Wait 200ms for is_active to become true
     // 4. Draw again to render the indicator
     //
-    // The gutter_position should be in the gutter area to trigger the phantom breakpoint.
+    // The gutter_position should be in the gutter area to trigger the gutter hover button.
     // The button_position should be directly over the breakpoint icon button for tooltip hover.
     // Based on debug output: button is at origin=(3.12, 66.5) with size=(14, 16)
     let gutter_position = point(px(30.0), px(85.0));
@@ -2914,7 +2914,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .icon(IconName::AiClaude)
                         .timestamp("5m")
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "jade-glen".into(),
+                            worktree_name: Some("jade-glen".into()),
                             full_path: "/worktrees/jade-glen/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
@@ -2931,7 +2931,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .icon(IconName::AiClaude)
                         .timestamp("1h")
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "focal-arrow".into(),
+                            worktree_name: Some("focal-arrow".into()),
                             full_path: "/worktrees/focal-arrow/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
@@ -2939,16 +2939,14 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         }]),
                 ),
             )
-            .child(section_label(
-                "Main worktree with branch (branch only, no icon)",
-            ))
+            .child(section_label("Main worktree with branch (nothing shown)"))
             .child(
                 container().child(
                     ThreadItem::new("ti-main-branch", "Request for Long Classic Poem")
                         .icon(IconName::ZedAgent)
                         .timestamp("2d")
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "zed".into(),
+                            worktree_name: Some("zed".into()),
                             full_path: "/projects/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Main,
@@ -2965,7 +2963,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .icon(IconName::ZedAgent)
                         .timestamp("3d")
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "zed".into(),
+                            worktree_name: Some("zed".into()),
                             full_path: "/projects/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Main,
@@ -2980,7 +2978,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .icon(IconName::AiClaude)
                         .timestamp("6d")
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "stoic-reed".into(),
+                            worktree_name: Some("stoic-reed".into()),
                             full_path: "/worktrees/stoic-reed/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
@@ -2997,7 +2995,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .icon(IconName::ZedAgent)
                         .timestamp("40m")
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "focal-arrow".into(),
+                            worktree_name: Some("focal-arrow".into()),
                             full_path: "/worktrees/focal-arrow/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
@@ -3016,7 +3014,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .added(42)
                         .removed(17)
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "jade-glen".into(),
+                            worktree_name: Some("jade-glen".into()),
                             full_path: "/worktrees/jade-glen/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
@@ -3033,7 +3031,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .added(108)
                         .removed(53)
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "my-project".into(),
+                            worktree_name: Some("my-project".into()),
                             full_path: "/worktrees/my-project/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
@@ -3043,7 +3041,9 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         }]),
                 ),
             )
-            .child(section_label("Main branch + diff stats + timestamp"))
+            .child(section_label(
+                "Main worktree with branch + diff stats + timestamp (branch hidden)",
+            ))
             .child(
                 container().child(
                     ThreadItem::new("ti-main-full", "Main worktree with everything")
@@ -3052,7 +3052,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         .added(23)
                         .removed(8)
                         .worktrees(vec![ThreadItemWorktreeInfo {
-                            name: "zed".into(),
+                            worktree_name: Some("zed".into()),
                             full_path: "/projects/zed".into(),
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Main,

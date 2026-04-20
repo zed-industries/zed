@@ -167,7 +167,7 @@ Anthropic models on Bedrock support a 1M token extended context window through t
 }
 ```
 
-Zed enables extended context for supported models (Claude Sonnet 4.5 and Claude Opus 4.6). Extended context usage may increase API costs—refer to AWS Bedrock pricing for details.
+Zed enables extended context for supported models (Claude Sonnet 4.5, Claude Opus 4.6, and Claude Opus 4.7). Extended context usage may increase API costs—refer to AWS Bedrock pricing for details.
 
 #### Image Support {#bedrock-image-support}
 

@@ -391,7 +391,7 @@ impl Render for ThreadImportModal {
                             .headline("Import External Agent Threads")
                             .description(
                                 "Import threads from agents like Claude Agent, Codex, and more, whether started in Zed or another client. \
-                                Choose which agents to include, and their threads will appear in your list."
+                                Choose which agents to include, and their threads will appear in your thread history."
                             )
                             .show_dismiss_button(true),
 
@@ -565,17 +565,16 @@ fn collect_importable_threads(
             let Some(folder_paths) = session.work_dirs else {
                 continue;
             };
-            let updated_at = session.updated_at.unwrap_or_else(|| Utc::now());
             to_insert.push(ThreadMetadata {
                 thread_id: ThreadId::new(),
                 session_id: Some(session.session_id),
                 agent_id: agent_id.clone(),
                 title: session.title,
-                updated_at,
+                updated_at: session.updated_at.unwrap_or_else(|| Utc::now()),
                 created_at: session.created_at,
+                interacted_at: None,
                 worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
                 remote_connection: remote_connection.clone(),
-                last_user_interaction: updated_at,
                 archived: true,
             });
         }
@@ -910,19 +909,12 @@ mod tests {
         let thread_id = uuid::Uuid::new_v4();
         let session_id = uuid::Uuid::new_v4().to_string();
         connection
-            .exec_bound::<(uuid::Uuid, &str, &str, &str, bool, &str)>(
+            .exec_bound::<(uuid::Uuid, &str, &str, &str, bool)>(
                 "INSERT INTO sidebar_threads \
-                 (thread_id, session_id, title, updated_at, archived, last_user_interaction) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                 (thread_id, session_id, title, updated_at, archived) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
             )
-            .unwrap()((
-            thread_id,
-            session_id.as_str(),
-            title,
-            updated_at,
-            archived,
-            updated_at,
-        ))
+            .unwrap()((thread_id, session_id.as_str(), title, updated_at, archived))
         .unwrap();
     }
 

@@ -9,14 +9,15 @@ use cloud_llm_client::predict_edits_v3::{
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection,
     MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
-    PredictEditsRequestTrigger, RejectEditPredictionsBodyRef, ZED_VERSION_HEADER_NAME,
+    PREFERRED_EXPERIMENT_HEADER_NAME, PredictEditsRequestTrigger, RejectEditPredictionsBodyRef,
+    ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet};
 use copilot::{Copilot, Reinstall, SignIn, SignOut};
 use credentials_provider::CredentialsProvider;
 use db::kvp::{Dismissable, KeyValueStore};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use futures::{
     AsyncReadExt as _, FutureExt as _, StreamExt as _,
     channel::mpsc::{self, UnboundedReceiver},
@@ -119,7 +120,9 @@ pub struct EditPredictionJumpsFeatureFlag;
 
 impl FeatureFlag for EditPredictionJumpsFeatureFlag {
     const NAME: &'static str = "edit_prediction_jumps";
+    type Value = PresenceFlag;
 }
+register_feature_flag!(EditPredictionJumpsFeatureFlag);
 
 #[derive(Clone)]
 struct EditPredictionStoreGlobal(Entity<EditPredictionStore>);
@@ -2586,6 +2589,7 @@ impl EditPredictionStore {
 
     pub(crate) async fn send_v3_request(
         input: ZetaPromptInput,
+        preferred_experiment: Option<String>,
         client: Arc<Client>,
         llm_token: LlmApiToken,
         organization_id: Option<OrganizationId>,
@@ -2604,11 +2608,16 @@ impl EditPredictionStore {
 
         Self::send_api_request(
             |builder| {
-                let req = builder
+                let builder = builder
                     .uri(url.as_ref())
                     .header("Content-Encoding", "zstd")
-                    .header(PREDICT_EDITS_MODE_HEADER_NAME, mode.as_ref())
-                    .body(compressed.clone().into());
+                    .header(PREDICT_EDITS_MODE_HEADER_NAME, mode.as_ref());
+                let builder = if let Some(preferred_experiment) = preferred_experiment.as_deref() {
+                    builder.header(PREFERRED_EXPERIMENT_HEADER_NAME, preferred_experiment)
+                } else {
+                    builder
+                };
+                let req = builder.body(compressed.clone().into());
                 Ok(req?)
             },
             client,

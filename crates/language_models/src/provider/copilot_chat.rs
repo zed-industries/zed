@@ -405,7 +405,10 @@ impl LanguageModel for CopilotChatLanguageModel {
                 if model.supports_adaptive_thinking() {
                     if anthropic_request.thinking.is_some() {
                         anthropic_request.thinking = Some(anthropic::Thinking::Adaptive);
-                        anthropic_request.output_config = Some(anthropic::OutputConfig { effort });
+                        anthropic_request.output_config =
+                            effort.map(|effort| anthropic::OutputConfig {
+                                effort: Some(effort),
+                            });
                     }
                 }
 
