@@ -12,7 +12,7 @@ use picker::{
 };
 use remote::RemoteConnectionOptions;
 use settings::Settings;
-use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{ButtonLike, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathExt};
 use workspace::{
@@ -417,12 +417,11 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         create_new_window: false,
                     };
 
-                    ListItem::new("open_local_folder")
-                        .inset(true)
-                        .spacing(ListItemSpacing::Sparse)
+                    ButtonLike::new("open_local_folder")
                         .child(
                             h_flex()
                                 .w_full()
+                                .gap_1()
                                 .justify_between()
                                 .items_center()
                                 .child(Label::new("Add Local Folders"))
@@ -434,12 +433,11 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         }))
                 })
                 .child(
-                    ListItem::new("open_remote_folder")
-                        .inset(true)
-                        .spacing(ListItemSpacing::Sparse)
+                    ButtonLike::new("open_remote_folder")
                         .child(
                             h_flex()
                                 .w_full()
+                                .gap_1()
                                 .justify_between()
                                 .items_center()
                                 .child(Label::new("Add Remote Folder"))
