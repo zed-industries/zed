@@ -105,6 +105,15 @@ fn model_id_to_selection(model_id: &acp::ModelId, cx: &App) -> LanguageModelSele
                 .find(|m| m.id() == model_id_typed)
         });
 
+    let current_user_selection =
+        AgentSettings::get_global(cx)
+            .default_model
+            .as_ref()
+            .filter(|selection| {
+                selection.provider.0 == model.provider_id().0.as_ref()
+                    && selection.model == model.id().0.as_ref()
+            });
+
     match resolved {
         Some(model) => language_model_to_selection(&model, cx),
         None => LanguageModelSelection {

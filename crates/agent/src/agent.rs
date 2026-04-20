@@ -1432,11 +1432,12 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             })
             .cloned();
 
-        let agent_settings::ModelPreferences {
+        let LanguageModelSelection {
             enable_thinking,
             effort,
             speed,
-        } = agent_settings::resolve_model_preferences(&model, favorite.as_ref());
+            ..
+        } = agent_settings::language_model_to_selection(&model, favorite.as_ref());
 
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);

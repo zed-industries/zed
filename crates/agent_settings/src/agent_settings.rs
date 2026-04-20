@@ -8,7 +8,7 @@ use collections::{HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::oneshot;
 use gpui::{App, Pixels, px};
-use language_model::{LanguageModel, Speed};
+use language_model::LanguageModel;
 use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -212,19 +212,16 @@ impl AgentSettings {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct ModelPreferences {
-    pub enable_thinking: bool,
-    pub effort: Option<String>,
-    pub speed: Option<Speed>,
-}
-
-pub fn resolve_model_preferences(
+pub fn language_model_to_selection(
     model: &Arc<dyn LanguageModel>,
     override_selection: Option<&LanguageModelSelection>,
-) -> ModelPreferences {
+) -> LanguageModelSelection {
+    let provider = model.provider_id().0.to_string().into();
+    let model_name = model.id().0.to_string();
     match override_selection {
-        Some(current) => ModelPreferences {
+        Some(current) => LanguageModelSelection {
+            provider,
+            model: model_name,
             enable_thinking: current.enable_thinking && model.supports_thinking(),
             effort: current
                 .effort
@@ -242,40 +239,15 @@ pub fn resolve_model_preferences(
                 }),
             speed: current.speed.filter(|_| model.supports_fast_mode()),
         },
-        None => ModelPreferences {
+        None => LanguageModelSelection {
+            provider,
+            model: model_name,
             enable_thinking: model.supports_thinking(),
             effort: model
                 .default_effort_level()
                 .map(|effort| effort.value.to_string()),
             speed: None,
         },
-    }
-}
-
-pub fn language_model_to_selection(
-    model: &Arc<dyn LanguageModel>,
-    cx: &App,
-) -> LanguageModelSelection {
-    let provider_id = model.provider_id().0.to_string();
-    let model_id = model.id().0.to_string();
-
-    let current_user_selection = AgentSettings::get_global(cx)
-        .default_model
-        .as_ref()
-        .filter(|selection| selection.provider.0 == provider_id && selection.model == model_id);
-
-    let ModelPreferences {
-        enable_thinking,
-        effort,
-        speed,
-    } = resolve_model_preferences(model, current_user_selection);
-
-    LanguageModelSelection {
-        provider: provider_id.into(),
-        model: model_id,
-        enable_thinking,
-        effort,
-        speed,
     }
 }
 
