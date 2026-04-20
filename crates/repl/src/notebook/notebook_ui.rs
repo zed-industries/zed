@@ -232,10 +232,7 @@ impl NotebookEditor {
             store.refresh_python_kernelspecs(worktree_id, &project, cx)
         });
 
-        cx.spawn(async move |_this, _cx| {
-            refresh_task.await.ok();
-        })
-        .detach();
+        cx.background_spawn(refresh_task).detach_and_log_err(cx);
     }
 
     fn refresh_language(&mut self, cx: &mut Context<Self>) {
