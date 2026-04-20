@@ -3028,10 +3028,10 @@ mod tests {
         let window_is_edited = |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
             cx.update(|cx| window.read(cx).unwrap().workspace().read(cx).is_edited())
         };
-        let workspace_database_id =
-            |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
-                cx.update(|cx| window.read(cx).unwrap().workspace().read(cx).database_id())
-            };
+        let workspace_database_id = |window: WindowHandle<MultiWorkspace>,
+                                     cx: &mut TestAppContext| {
+            cx.update(|cx| window.read(cx).unwrap().workspace().read(cx).database_id())
+        };
 
         let editor = window
             .read_with(cx, |multi_workspace, cx| {
