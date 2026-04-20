@@ -1903,6 +1903,7 @@ impl Sidebar {
                             menu
                         } else {
                             let mut menu = menu.separator().header("Open Workspaces");
+                            let has_multiple_workspaces = open_workspaces.len() > 1;
 
                             for (
                                 workspace_index,
@@ -1955,33 +1956,42 @@ impl Sidebar {
                                                     },
                                                 ),
                                             ))
-                                            .child(
-                                                IconButton::new(
-                                                    ("close-workspace", workspace_index),
-                                                    IconName::Close,
+                                            .when(has_multiple_workspaces, |this| {
+                                                let close_multi_workspace =
+                                                    close_multi_workspace.clone();
+                                                let close_weak_menu = close_weak_menu.clone();
+                                                let close_workspace = close_workspace.clone();
+
+                                                this.child(
+                                                    IconButton::new(
+                                                        ("close-workspace", workspace_index),
+                                                        IconName::Close,
+                                                    )
+                                                    .icon_size(IconSize::Small)
+                                                    .visible_on_hover(&row_group_name)
+                                                    .tooltip(Tooltip::text("Close Workspace"))
+                                                    .on_click(move |_, window, cx| {
+                                                        cx.stop_propagation();
+                                                        window.prevent_default();
+                                                        close_multi_workspace
+                                                            .update(cx, |multi_workspace, cx| {
+                                                                multi_workspace
+                                                                    .close_workspace(
+                                                                        &close_workspace,
+                                                                        window,
+                                                                        cx,
+                                                                    )
+                                                                    .detach_and_log_err(cx);
+                                                            })
+                                                            .ok();
+                                                        close_weak_menu
+                                                            .update(cx, |_, cx| {
+                                                                cx.emit(DismissEvent)
+                                                            })
+                                                            .ok();
+                                                    }),
                                                 )
-                                                .shape(ui::IconButtonShape::Square)
-                                                .visible_on_hover(&row_group_name)
-                                                .tooltip(Tooltip::text("Close Workspace"))
-                                                .on_click(move |_, window, cx| {
-                                                    cx.stop_propagation();
-                                                    window.prevent_default();
-                                                    close_multi_workspace
-                                                        .update(cx, |multi_workspace, cx| {
-                                                            multi_workspace
-                                                                .close_workspace(
-                                                                    &close_workspace,
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                                .detach_and_log_err(cx);
-                                                        })
-                                                        .ok();
-                                                    close_weak_menu
-                                                        .update(cx, |_, cx| cx.emit(DismissEvent))
-                                                        .ok();
-                                                }),
-                                            )
+                                            })
                                             .into_any_element()
                                     },
                                     move |window, cx| {
