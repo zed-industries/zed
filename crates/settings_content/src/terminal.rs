@@ -129,6 +129,10 @@ pub struct TerminalSettingsContent {
     /// Default: true
     pub button: Option<bool>,
     pub dock: Option<TerminalDockPosition>,
+    /// Whether the terminal panel should use flexible (proportional) sizing.
+    ///
+    /// Default: true
+    pub flexible: Option<bool>,
     /// Default width when the terminal is docked to the left or right.
     ///
     /// Default: 640

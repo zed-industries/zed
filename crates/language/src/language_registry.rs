@@ -319,6 +319,8 @@ impl LanguageRegistry {
         state
             .all_lsp_adapters
             .insert(cached.name.clone(), cached.clone());
+        state.version += 1;
+        *state.subscription.0.borrow_mut() = ();
     }
 
     /// Register a fake language server and adapter
@@ -354,6 +356,8 @@ impl LanguageRegistry {
         state
             .all_lsp_adapters
             .insert(cached_adapter.name(), cached_adapter);
+        state.version += 1;
+        *state.subscription.0.borrow_mut() = ();
     }
 
     /// Register a fake language server (without the adapter)

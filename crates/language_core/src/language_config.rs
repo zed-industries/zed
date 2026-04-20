@@ -1,6 +1,6 @@
 use crate::LanguageName;
 use collections::{HashMap, HashSet, IndexSet};
-use gpui::SharedString;
+use gpui_shared_string::SharedString;
 use lsp::LanguageServerName;
 use regex::Regex;
 use schemars::{JsonSchema, SchemaGenerator, json_schema};
@@ -19,9 +19,8 @@ pub enum SoftWrap {
     PreferLine,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
-    /// Soft wrap lines at the preferred line length.
-    PreferredLineLength,
     /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
+    #[serde(alias = "preferred_line_length")]
     Bounded,
 }
 
@@ -148,15 +147,6 @@ pub struct LanguageConfig {
     /// A list of preferred debuggers for this language.
     #[serde(default)]
     pub debuggers: IndexSet<SharedString>,
-    /// A list of import namespace segments that aren't expected to appear in file paths. For
-    /// example, "super" and "crate" in Rust.
-    #[serde(default)]
-    pub ignored_import_segments: HashSet<Arc<str>>,
-    /// Regular expression that matches substrings to omit from import paths, to make the paths more
-    /// similar to how they are specified when imported. For example, "/mod\.rs$" or "/__init__\.py$".
-    #[serde(default, deserialize_with = "deserialize_regex")]
-    #[schemars(schema_with = "regex_json_schema")]
-    pub import_path_strip_regex: Option<Regex>,
 }
 
 impl LanguageConfig {
@@ -204,8 +194,6 @@ impl Default for LanguageConfig {
             completion_query_characters: Default::default(),
             linked_edit_characters: Default::default(),
             debuggers: Default::default(),
-            ignored_import_segments: Default::default(),
-            import_path_strip_regex: None,
         }
     }
 }

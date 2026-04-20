@@ -49,8 +49,6 @@ extend-exclude = [
     "docs/theme/c15t@*.js",
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
     "script/danger/dangerfile.ts",
-    # Eval examples for prompts and criteria
-    "crates/eval/src/examples/",
     # File type extensions are not typos
     "crates/zed/resources/windows/zed.iss",
     # typos-cli doesn't understand our `vˇariable` markup
@@ -65,6 +63,7 @@ extend-exclude = [
     "crates/gpui_macos/src/dispatcher.rs",
     # Tests contain partially incomplete words (by design)
     "crates/edit_prediction_cli/src/split_commit.rs",
+    "crates/edit_prediction_metrics/src/kept_rate.rs",
     # Eval examples contain intentionally partial words (e.g. "secur" for "secure")
     "crates/edit_prediction_cli/evals/",
     # Tests contain `baˇr` that cause `"ba" should be "by" or "be".`-like false-positives
@@ -96,6 +95,8 @@ extend-ignore-re = [
     # "noet" is a vim variable (ideally to ignore locally)
     "noet",
     # Yarn Plug'n'Play
-    "PnP"
+    "PnP",
+    # `image` crate method: Delay::from_numer_denom_ms
+    "numer"
 ]
 check-filename = true

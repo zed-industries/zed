@@ -417,6 +417,7 @@ impl TerminalBuilder {
                 window_id,
             },
             child_exited: None,
+            keyboard_input_sent: false,
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
             path_style,
@@ -650,6 +651,7 @@ impl TerminalBuilder {
                     window_id,
                 },
                 child_exited: None,
+                keyboard_input_sent: false,
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
@@ -876,6 +878,7 @@ pub struct Terminal {
     template: CopyTemplate,
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
+    keyboard_input_sent: bool,
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
@@ -1462,6 +1465,7 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
+        self.keyboard_input_sent = true;
         let input = input.into();
         #[cfg(any(test, feature = "test-support"))]
         self.input_log.push(input.to_vec());
@@ -1945,7 +1949,7 @@ impl Terminal {
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
                         let text = item.text().unwrap_or_default();
-                        self.input(text.into_bytes());
+                        self.paste(&text);
                     }
                 }
                 _ => {}
@@ -2245,7 +2249,17 @@ impl Terminal {
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
+                // For interactive shells (no task), we need to differentiate:
+                // 1. User-initiated exits (typed "exit", Ctrl+D, etc.) - always close,
+                //    even if the shell exits with a non-zero code (e.g. after `false`).
+                // 2. Shell spawn failures (bad $SHELL) - don't close, so the user sees
+                //    the error. Spawn failures never receive keyboard input.
+                let should_close = if self.keyboard_input_sent {
+                    true
+                } else {
+                    self.child_exited.is_none_or(|e| e.code() == Some(0))
+                };
+                if should_close {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2560,12 +2574,12 @@ mod tests {
     use smol::channel::Receiver;
     use task::{Shell, ShellBuilder};
 
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "windows"))]
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
     }
 
@@ -2792,6 +2806,68 @@ mod tests {
         assert!(
             all_events.contains(&Event::CloseTerminal),
             "EOF command sequence should have triggered a TTY terminal exit, but got events: {all_events:?}",
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test(iterations = 10)]
+    async fn test_terminal_closes_after_nonzero_exit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.executor().allow_parking();
+
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::System,
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    None,
+                    cx,
+                    Vec::new(),
+                    PathStyle::local(),
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+
+        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
+        cx.update(|cx| {
+            cx.subscribe(&terminal, move |_, e, _| {
+                event_tx.send_blocking(e.clone()).unwrap();
+            })
+        })
+        .detach();
+
+        let first_event = event_rx.recv().await.expect("No wakeup event received");
+
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"false\r".to_vec());
+        });
+        cx.executor().timer(Duration::from_millis(500)).await;
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"exit\r".to_vec());
+        });
+
+        let mut all_events = vec![first_event];
+        while let Ok(new_event) = event_rx.recv().await {
+            all_events.push(new_event.clone());
+            if new_event == Event::CloseTerminal {
+                break;
+            }
+        }
+        assert!(
+            all_events.contains(&Event::CloseTerminal),
+            "Shell exiting after `false && exit` should close terminal, but got events: {all_events:?}",
         );
     }
 

@@ -21,14 +21,14 @@ use lsp::{LanguageServerId, LanguageServerName};
 use paths::{debug_task_file_name, task_file_name};
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
-    DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskId, TaskTemplate,
+    DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskHook, TaskId, TaskTemplate,
     TaskTemplates, TaskVariables, VariableName,
 };
 use text::{BufferId, Point, ToPoint};
 use util::{NumericPrefixWithSuffix, ResultExt as _, post_inc, rel_path::RelPath};
 use worktree::WorktreeId;
 
-use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
+use crate::{git_store::GitStore, task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
 #[derive(Clone, Debug, Default)]
 pub struct DebugScenarioContext {
@@ -644,6 +644,19 @@ impl Inventory {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
     }
 
+    /// Returns all task templates (worktree and global) that have at least one
+    /// hook in the provided set.
+    pub fn templates_with_hooks(
+        &self,
+        hooks: &HashSet<TaskHook>,
+        worktree: WorktreeId,
+    ) -> Vec<(TaskSourceKind, TaskTemplate)> {
+        self.worktree_templates_from_settings(worktree)
+            .chain(self.global_templates_from_settings())
+            .filter(|(_, template)| !template.hooks.is_disjoint(hooks))
+            .collect()
+    }
+
     fn global_templates_from_settings(
         &self,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
@@ -918,11 +931,15 @@ fn task_variables_preference(task: &ResolvedTask) -> Reverse<usize> {
 /// Applied as a base for every custom [`ContextProvider`] unless explicitly oped out.
 pub struct BasicContextProvider {
     worktree_store: Entity<WorktreeStore>,
+    git_store: Entity<GitStore>,
 }
 
 impl BasicContextProvider {
-    pub fn new(worktree_store: Entity<WorktreeStore>) -> Self {
-        Self { worktree_store }
+    pub fn new(worktree_store: Entity<WorktreeStore>, git_store: Entity<GitStore>) -> Self {
+        Self {
+            worktree_store,
+            git_store,
+        }
     }
 }
 
@@ -999,6 +1016,19 @@ impl ContextProvider for BasicContextProvider {
                         },
                     );
                 }
+            }
+        }
+
+        if let Some(worktree_id) = location.buffer.read(cx).file().map(|f| f.worktree_id(cx)) {
+            if let Some(path) = self
+                .git_store
+                .read(cx)
+                .original_repo_path_for_worktree(worktree_id, cx)
+            {
+                task_variables.insert(
+                    VariableName::MainGitWorktree,
+                    path.to_string_lossy().into_owned(),
+                );
             }
         }
 

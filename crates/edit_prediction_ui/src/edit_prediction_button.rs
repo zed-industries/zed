@@ -374,7 +374,7 @@ impl Render for EditPredictionButton {
                     let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
                         "Choose a Plan"
                     } else {
-                        "Sign In To Use"
+                        "Configure a Provider"
                     };
 
                     return div().child(
@@ -442,7 +442,7 @@ impl Render for EditPredictionButton {
                                 if show_editor_predictions {
                                     tooltip_meta
                                 } else if user.is_none() {
-                                    "Sign In To Use"
+                                    "Sign In Or Configure a Provider"
                                 } else {
                                     "Hidden For This File"
                                 }
@@ -573,6 +573,14 @@ impl EditPredictionButton {
         current_provider: EditPredictionProvider,
         cx: &mut App,
     ) -> ContextMenu {
+        let organization_configuration = self
+            .user_store
+            .read(cx)
+            .current_organization_configuration();
+
+        let is_zed_provider_disabled = organization_configuration
+            .is_some_and(|configuration| !configuration.edit_prediction.is_enabled);
+
         let available_providers = get_available_providers(cx);
 
         let providers: Vec<_> = available_providers
@@ -592,7 +600,26 @@ impl EditPredictionButton {
 
                 menu = menu.item(
                     ContextMenuEntry::new(name)
-                        .toggleable(IconPosition::Start, is_current)
+                        .toggleable(
+                            IconPosition::Start,
+                            is_current
+                                && (provider == EditPredictionProvider::Zed
+                                    && !is_zed_provider_disabled),
+                        )
+                        .disabled(
+                            provider == EditPredictionProvider::Zed && is_zed_provider_disabled,
+                        )
+                        .when(
+                            provider == EditPredictionProvider::Zed && is_zed_provider_disabled,
+                            |item| {
+                                item.documentation_aside(DocumentationSide::Left, move |_cx| {
+                                    Label::new(
+                                        "Edit predictions are disabled for this organization.",
+                                    )
+                                    .into_any_element()
+                                })
+                            },
+                        )
                         .handler(move |_, cx| {
                             set_completion_provider(fs.clone(), cx, provider);
                         }),
@@ -790,7 +817,7 @@ impl EditPredictionButton {
                             .toggleable(IconPosition::Start, data_collection.is_enabled())
                             .icon(icon_name)
                             .icon_color(icon_color)
-                            .disabled(cx.is_staff())
+                            .disabled(!provider.can_toggle_data_collection(cx))
                             .documentation_aside(DocumentationSide::Left, move |cx| {
                                 let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                     (true, true) => (
@@ -1357,14 +1384,19 @@ async fn open_disabled_globs_setting_in_editor(
             let settings = cx.global::<SettingsStore>();
 
             // Ensure that we always have "edit_predictions { "disabled_globs": [] }"
-            let edits = settings.edits_for_update(&text, |file| {
-                file.project
-                    .all_languages
-                    .edit_predictions
-                    .get_or_insert_with(Default::default)
-                    .disabled_globs
-                    .get_or_insert_with(Vec::new);
-            });
+            let Some(edits) = settings
+                .edits_for_update(&text, |file| {
+                    file.project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_with(Default::default)
+                        .disabled_globs
+                        .get_or_insert_with(Vec::new);
+                })
+                .log_err()
+            else {
+                return;
+            };
 
             if !edits.is_empty() {
                 item.edit(
@@ -1418,9 +1450,9 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
 
     providers.push(EditPredictionProvider::Zed);
 
-    if let Some(app_state) = workspace::AppState::global(cx).upgrade()
-        && copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
-            .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
+    let app_state = workspace::AppState::global(cx);
+    if copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+        .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
     {
         providers.push(EditPredictionProvider::Copilot);
     };

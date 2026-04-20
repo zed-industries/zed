@@ -3247,7 +3247,7 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
 async fn test_preview_edits(cx: &mut TestAppContext) {
     cx.update(|cx| {
         init_settings(cx, |_| {});
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
     });
 
     let insertion_style = HighlightStyle {
@@ -4102,7 +4102,13 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
     let snapshot = buffer.read(cx).snapshot();
 
     // Get all chunks and verify their bitmaps
-    let chunks = snapshot.chunks(0..snapshot.len(), false);
+    let chunks = snapshot.chunks(
+        0..snapshot.len(),
+        LanguageAwareStyling {
+            tree_sitter: false,
+            diagnostics: false,
+        },
+    );
 
     for chunk in chunks {
         let chunk_text = chunk.text;

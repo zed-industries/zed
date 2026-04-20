@@ -16,7 +16,7 @@ use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings as _;
 use terminal_view::TerminalView;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Context, TextSize};
 use workspace::Workspace;
 
@@ -72,6 +72,7 @@ impl EntryViewState {
 
         match thread_entry {
             AgentThreadEntry::UserMessage(message) => {
+                let can_rewind = thread.read(cx).supports_truncate(cx);
                 let has_id = message.id.is_some();
                 let is_subagent = thread.read(cx).parent_session_id().is_some();
                 let chunks = message.chunks.clone();
@@ -101,7 +102,7 @@ impl EntryViewState {
                             window,
                             cx,
                         );
-                        if !has_id || is_subagent {
+                        if !can_rewind || !has_id || is_subagent {
                             editor.set_read_only(true, cx);
                         }
                         editor.set_message(chunks, window, cx);
@@ -129,6 +130,7 @@ impl EntryViewState {
                         index,
                         Entry::ToolCall(ToolCallEntry {
                             content: HashMap::default(),
+                            focus_handle: cx.focus_handle(),
                         }),
                     );
                     let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) else {
@@ -235,6 +237,11 @@ impl EntryViewState {
                 };
                 entry.sync(message);
             }
+            AgentThreadEntry::CompletedPlan(_) => {
+                if !matches!(self.entries.get(index), Some(Entry::CompletedPlan)) {
+                    self.set_entry(index, Entry::CompletedPlan);
+                }
+            }
         };
     }
 
@@ -253,8 +260,10 @@ impl EntryViewState {
     pub fn agent_ui_font_size_changed(&mut self, cx: &mut App) {
         for entry in self.entries.iter() {
             match entry {
-                Entry::UserMessage { .. } | Entry::AssistantMessage { .. } => {}
-                Entry::ToolCall(ToolCallEntry { content }) => {
+                Entry::UserMessage { .. }
+                | Entry::AssistantMessage { .. }
+                | Entry::CompletedPlan => {}
+                Entry::ToolCall(ToolCallEntry { content, .. }) => {
                     for view in content.values() {
                         if let Ok(diff_editor) = view.clone().downcast::<Editor>() {
                             diff_editor.update(cx, |diff_editor, cx| {
@@ -313,6 +322,7 @@ impl AssistantMessageEntry {
 #[derive(Debug)]
 pub struct ToolCallEntry {
     content: HashMap<EntityId, AnyEntity>,
+    focus_handle: FocusHandle,
 }
 
 #[derive(Debug)]
@@ -320,6 +330,7 @@ pub enum Entry {
     UserMessage(Entity<MessageEditor>),
     AssistantMessage(AssistantMessageEntry),
     ToolCall(ToolCallEntry),
+    CompletedPlan,
 }
 
 impl Entry {
@@ -327,14 +338,15 @@ impl Entry {
         match self {
             Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
             Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
-            Self::ToolCall(_) => None,
+            Self::ToolCall(tool_call) => Some(tool_call.focus_handle.clone()),
+            Self::CompletedPlan => None,
         }
     }
 
     pub fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match self {
             Self::UserMessage(editor) => Some(editor),
-            Self::AssistantMessage(_) | Self::ToolCall(_) => None,
+            Self::AssistantMessage(_) | Self::ToolCall(_) | Self::CompletedPlan => None,
         }
     }
 
@@ -361,13 +373,13 @@ impl Entry {
     ) -> Option<ScrollHandle> {
         match self {
             Self::AssistantMessage(message) => message.scroll_handle_for_chunk(chunk_ix),
-            Self::UserMessage(_) | Self::ToolCall(_) => None,
+            Self::UserMessage(_) | Self::ToolCall(_) | Self::CompletedPlan => None,
         }
     }
 
     fn content_map(&self) -> Option<&HashMap<EntityId, AnyEntity>> {
         match self {
-            Self::ToolCall(ToolCallEntry { content }) => Some(content),
+            Self::ToolCall(ToolCallEntry { content, .. }) => Some(content),
             _ => None,
         }
     }
@@ -375,8 +387,25 @@ impl Entry {
     #[cfg(test)]
     pub fn has_content(&self) -> bool {
         match self {
-            Self::ToolCall(ToolCallEntry { content }) => !content.is_empty(),
-            Self::UserMessage(_) | Self::AssistantMessage(_) => false,
+            Self::ToolCall(ToolCallEntry { content, .. }) => !content.is_empty(),
+            Self::UserMessage(_) | Self::AssistantMessage(_) | Self::CompletedPlan => false,
+        }
+    }
+}
+
+impl Focusable for ToolCallEntry {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Focusable for Entry {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        match self {
+            Self::UserMessage(editor) => editor.read(cx).focus_handle(cx),
+            Self::AssistantMessage(message) => message.focus_handle.clone(),
+            Self::ToolCall(tool_call) => tool_call.focus_handle.clone(),
+            Self::CompletedPlan => cx.focus_handle(),
         }
     }
 }
@@ -429,6 +458,7 @@ fn create_editor_diff(
         editor.set_show_indent_guides(false, cx);
         editor.set_read_only(true);
         editor.set_delegate_open_excerpts(true);
+        editor.set_show_bookmarks(false, cx);
         editor.set_show_breakpoints(false, cx);
         editor.set_show_code_actions(false, cx);
         editor.set_show_git_diff_gutter(false, cx);
@@ -586,7 +616,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
     }
