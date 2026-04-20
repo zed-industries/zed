@@ -4722,10 +4722,10 @@ impl OutlinePanel {
     }
 
     fn render_filter_footer(&mut self, pinned: bool, cx: &mut Context<Self>) -> Div {
-        let (icon, icon_tooltip) = if pinned {
-            (IconName::Unpin, "Unpin Outline")
+        let (pin_button_id, icon, icon_tooltip) = if pinned {
+            ("unpin_button", IconName::Unpin, "Unpin Outline")
         } else {
-            (IconName::Pin, "Pin Active Outline")
+            ("pin_button", IconName::Pin, "Pin Active Outline")
         };
 
         let has_query = self.query(cx).is_some();
@@ -4763,7 +4763,7 @@ impl OutlinePanel {
                         )
                     })
                     .child(
-                        IconButton::new("pin_button", icon)
+                        IconButton::new(pin_button_id, icon)
                             .tooltip(Tooltip::text(icon_tooltip))
                             .shape(IconButtonShape::Square)
                             .on_click(cx.listener(|outline_panel, _, window, cx| {
