@@ -27920,38 +27920,31 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            ".git": {},
-            "file.rs": "one\ntwo\nthree\n",
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs, ["/root".as_ref()], cx).await;
+    let project = Project::test(fs, [], cx).await;
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
         .unwrap();
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer("/root/file.rs", cx)
-        })
-        .await
-        .unwrap();
-    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
-
+    let buffer = cx.update(|cx| MultiBuffer::build_simple("Buffer Contents!", cx));
+    let buffer_id = buffer.read_with(cx, |buffer, _| {
+        *buffer
+            .all_buffer_ids()
+            .first()
+            .expect("Multibuffer has at least one buffer id")
+    });
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let editor = cx.new_window_entity(|window, cx| {
-        let editor = build_editor_with_project(
-            project.clone(),
-            MultiBuffer::build_from_buffer(buffer.clone(), cx),
+        Editor::new(
+            EditorMode::full(),
+            buffer,
+            Some(project.clone()),
             window,
             cx,
-        );
-        window.focus(&editor.focus_handle(cx), cx);
-        editor
+        )
+    });
+
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
     });
 
     editor.update_in(cx, |editor, _, cx| {
@@ -27974,20 +27967,12 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
         assert!(editor.inline_blame_popover.is_none());
     });
 
-    editor.update_in(cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-            selections.select_ranges([MultiBufferOffset(1)..MultiBufferOffset(1)]);
-        });
-    });
     workspace.update_in(cx, |workspace, window, cx| {
         workspace.toggle_modal(window, cx, |_, cx| EmptyModalView::new(cx));
     });
 
-    let hover_popover_delay = cx.read(|cx| EditorSettings::get_global(cx).hover_popover_delay.0);
-    cx.background_executor
-        .advance_clock(Duration::from_millis(hover_popover_delay + 100));
-    cx.executor().run_until_parked();
-
+    // Toggling a modal while the blame popover task is still pending should
+    // clear both the task and any rendered popover.
     editor.update_in(cx, |editor, _, _| {
         assert!(editor.inline_blame_popover.is_none());
         assert!(editor.inline_blame_popover_show_task.is_none());

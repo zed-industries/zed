@@ -7518,23 +7518,36 @@ impl Editor {
         self.mouse_context_menu.is_some()
     }
 
+    /// Hides the inline blame popover element, in case it's already visible, or
+    /// interrupts the task meant to show it, in case the task is running.
+    ///
+    /// When `ignore_timeout` is set to `true`, the popover is hidden
+    /// immediately, otherwise it'll be hidden after a short delay.
+    ///
+    /// Returns `true` if the popover was visible and was hidden, `false`
+    /// otherwise.
     pub fn hide_blame_popover(&mut self, ignore_timeout: bool, cx: &mut Context<Self>) -> bool {
         self.inline_blame_popover_show_task.take();
+
         if let Some(state) = &mut self.inline_blame_popover {
-            let hide_task = cx.spawn(async move |editor, cx| {
-                if !ignore_timeout {
+            if ignore_timeout {
+                self.inline_blame_popover.take();
+                cx.notify();
+            } else {
+                state.hide_task = Some(cx.spawn(async move |editor, cx| {
                     cx.background_executor()
                         .timer(std::time::Duration::from_millis(100))
                         .await;
-                }
-                editor
-                    .update(cx, |editor, cx| {
-                        editor.inline_blame_popover.take();
-                        cx.notify();
-                    })
-                    .ok();
-            });
-            state.hide_task = Some(hide_task);
+
+                    editor
+                        .update(cx, |editor, cx| {
+                            editor.inline_blame_popover.take();
+                            cx.notify();
+                        })
+                        .ok();
+                }));
+            }
+
             true
         } else {
             false
