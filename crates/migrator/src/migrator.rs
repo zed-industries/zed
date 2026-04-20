@@ -249,6 +249,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         ),
         MigrationType::Json(migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum),
         MigrationType::Json(migrations::m_2026_04_01::restructure_profiles_with_settings_key),
+        MigrationType::Json(migrations::m_2026_04_10::rename_web_search_to_search_web),
     ];
     run_migrations(text, migrations)
 }
@@ -4680,6 +4681,349 @@ mod tests {
             "#
             .unindent(),
             None,
+        );
+    }
+
+    #[test]
+    fn test_rename_web_search_to_search_web_in_tool_permissions() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_04_10::rename_web_search_to_search_web,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "tool_permissions": {
+                        "tools": {
+                            "web_search": {
+                                "allow": true
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "tools": {
+                                "search_web": {
+                                    "allow": true
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_web_search_to_search_web_in_profiles() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_04_10::rename_web_search_to_search_web,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "profiles": {
+                        "write": {
+                            "tools": {
+                                "web_search": false
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "profiles": {
+                            "write": {
+                                "tools": {
+                                    "search_web": false
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_web_search_to_search_web_no_change_when_already_migrated() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_04_10::rename_web_search_to_search_web,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "tool_permissions": {
+                        "tools": {
+                            "search_web": {
+                                "allow": true
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_rename_web_search_to_search_web_no_clobber() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_04_10::rename_web_search_to_search_web,
+            )],
+            &r#"
+            {
+                "agent": {
+                    "tool_permissions": {
+                        "tools": {
+                            "web_search": {
+                                "allow": false
+                            },
+                            "search_web": {
+                                "allow": true
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "tools": {
+                                "search_web": {
+                                    "allow": false
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_web_search_to_search_web_platform_override() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_04_10::rename_web_search_to_search_web,
+            )],
+            &r#"
+            {
+                "linux": {
+                    "agent": {
+                        "tool_permissions": {
+                            "tools": {
+                                "web_search": {
+                                    "allow": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "linux": {
+                        "agent": {
+                            "tool_permissions": {
+                                "tools": {
+                                    "search_web": {
+                                        "allow": true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_web_search_to_search_web_release_channel_override() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_04_10::rename_web_search_to_search_web,
+            )],
+            &r#"
+            {
+                "nightly": {
+                    "agent": {
+                        "tool_permissions": {
+                            "tools": {
+                                "web_search": {
+                                    "default": "allow"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "nightly": {
+                        "agent": {
+                            "tool_permissions": {
+                                "tools": {
+                                    "search_web": {
+                                        "default": "allow"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_web_search_to_search_web_no_agent() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_04_10::rename_web_search_to_search_web,
+            )],
+            &r#"
+            {
+                "buffer_font_size": 14
+            }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_rename_web_search_to_search_web_root_level_profile() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_04_10::rename_web_search_to_search_web,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "Work": {
+                        "settings": {
+                            "agent": {
+                                "tool_permissions": {
+                                    "tools": {
+                                        "web_search": {
+                                            "default": "allow"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "Work": {
+                            "settings": {
+                                "agent": {
+                                    "tool_permissions": {
+                                        "tools": {
+                                            "search_web": {
+                                                "default": "allow"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_mcp_settings_migration_adds_settings_to_extension_servers() {
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "extension_server": {},
+        "stdio_server": {
+            "command": "npx",
+            "args": ["-y", "some-server"]
+        },
+        "http_server": {
+            "url": "https://example.com/mcp"
+        },
+        "http_server_with_headers": {
+            "url": "https://example.com/mcp",
+            "headers": {
+                "Authorization": "Bearer token"
+            }
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "extension_server": {
+            "settings": {}
+        },
+        "stdio_server": {
+            "command": "npx",
+            "args": ["-y", "some-server"]
+        },
+        "http_server": {
+            "url": "https://example.com/mcp"
+        },
+        "http_server_with_headers": {
+            "url": "https://example.com/mcp",
+            "headers": {
+                "Authorization": "Bearer token"
+            }
+        }
+    }
+}"#,
+            ),
         );
     }
 }

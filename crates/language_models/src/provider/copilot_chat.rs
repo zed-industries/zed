@@ -32,7 +32,7 @@ use ui::prelude::*;
 use util::debug_panic;
 
 use crate::provider::anthropic::{AnthropicEventMapper, into_anthropic};
-use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
+use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
 const PROVIDER_NAME: LanguageModelProviderName =
@@ -268,15 +268,15 @@ impl LanguageModel for CopilotChatLanguageModel {
         levels
             .iter()
             .map(|level| {
-                let name: SharedString = match level.as_str() {
+                let name = match level.as_str() {
                     "low" => "Low".into(),
                     "medium" => "Medium".into(),
                     "high" => "High".into(),
-                    _ => SharedString::from(level.clone()),
+                    _ => language_model::SharedString::from(level.clone()),
                 };
                 LanguageModelEffortLevel {
                     name,
-                    value: SharedString::from(level.clone()),
+                    value: language_model::SharedString::from(level.clone()),
                     is_default: level == "high",
                 }
             })
@@ -405,7 +405,10 @@ impl LanguageModel for CopilotChatLanguageModel {
                 if model.supports_adaptive_thinking() {
                     if anthropic_request.thinking.is_some() {
                         anthropic_request.thinking = Some(anthropic::Thinking::Adaptive);
-                        anthropic_request.output_config = Some(anthropic::OutputConfig { effort });
+                        anthropic_request.output_config =
+                            effort.map(|effort| anthropic::OutputConfig {
+                                effort: Some(effort),
+                            });
                     }
                 }
 

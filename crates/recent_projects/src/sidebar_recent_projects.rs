@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -17,8 +16,8 @@ use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    MultiWorkspace, OpenMode, OpenOptions, PathList, SerializedWorkspaceLocation, Workspace,
-    WorkspaceDb, WorkspaceId, notifications::DetachAndPromptErr,
+    MultiWorkspace, OpenMode, OpenOptions, PathList, ProjectGroupKey, SerializedWorkspaceLocation,
+    Workspace, WorkspaceDb, WorkspaceId, notifications::DetachAndPromptErr,
 };
 
 use zed_actions::OpenRemote;
@@ -33,7 +32,7 @@ pub struct SidebarRecentProjects {
 impl SidebarRecentProjects {
     pub fn popover(
         workspace: WeakEntity<Workspace>,
-        sibling_workspace_ids: HashSet<WorkspaceId>,
+        window_project_groups: Vec<ProjectGroupKey>,
         _focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut App,
@@ -45,7 +44,7 @@ impl SidebarRecentProjects {
         cx.new(|cx| {
             let delegate = SidebarRecentProjectsDelegate {
                 workspace,
-                sibling_workspace_ids,
+                window_project_groups,
                 workspaces: Vec::new(),
                 filtered_workspaces: Vec::new(),
                 selected_index: 0,
@@ -116,7 +115,7 @@ impl Render for SidebarRecentProjects {
 
 pub struct SidebarRecentProjectsDelegate {
     workspace: WeakEntity<Workspace>,
-    sibling_workspace_ids: HashSet<WorkspaceId>,
+    window_project_groups: Vec<ProjectGroupKey>,
     workspaces: Vec<(
         WorkspaceId,
         SerializedWorkspaceLocation,
@@ -207,8 +206,12 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, (id, _, _, _))| {
-                Some(*id) != current_workspace_id && !self.sibling_workspace_ids.contains(id)
+            .filter(|(_, (id, _, paths, _))| {
+                Some(*id) != current_workspace_id
+                    && !self
+                        .window_project_groups
+                        .iter()
+                        .any(|key| key.path_list() == paths)
             })
             .map(|(id, (_, _, paths, _))| {
                 let combined_string = paths
@@ -374,6 +377,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             prefix,
             match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
             paths: Vec::new(),
+            active: false,
         };
 
         let icon = icon_for_remote_connection(match location {
@@ -395,7 +399,14 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         })
                         .child(highlighted_match.render(window, cx)),
                 )
-                .tooltip(Tooltip::text(tooltip_path))
+                .tooltip(move |_, cx| {
+                    Tooltip::with_meta(
+                        "Open Project in This Window",
+                        None,
+                        tooltip_path.clone(),
+                        cx,
+                    )
+                })
                 .into_any_element(),
         )
     }
@@ -411,15 +422,19 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child({
-                    let open_action = workspace::Open::default();
-                    Button::new("open_local_folder", "Add Local Project")
+                    let open_action = workspace::Open {
+                        create_new_window: false,
+                    };
+
+                    Button::new("open_local_folder", "Add Local Folders")
                         .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
-                        .on_click(move |_, window, cx| {
-                            window.dispatch_action(open_action.boxed_clone(), cx)
-                        })
+                        .on_click(cx.listener(move |_, _, window, cx| {
+                            window.dispatch_action(open_action.boxed_clone(), cx);
+                            cx.emit(DismissEvent);
+                        }))
                 })
                 .child(
-                    Button::new("open_remote_folder", "Add Remote Project")
+                    Button::new("open_remote_folder", "Add Remote Folder")
                         .key_binding(KeyBinding::for_action(
                             &OpenRemote {
                                 from_existing_connection: false,
@@ -427,7 +442,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                             },
                             cx,
                         ))
-                        .on_click(|_, window, cx| {
+                        .on_click(cx.listener(|_, _, window, cx| {
                             window.dispatch_action(
                                 OpenRemote {
                                     from_existing_connection: false,
@@ -435,8 +450,9 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                                 }
                                 .boxed_clone(),
                                 cx,
-                            )
-                        }),
+                            );
+                            cx.emit(DismissEvent);
+                        })),
                 )
                 .into_any(),
         )

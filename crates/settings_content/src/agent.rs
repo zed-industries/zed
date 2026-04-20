@@ -33,7 +33,7 @@ pub enum NewThreadLocation {
     NewWorktree,
 }
 
-/// Where to position the sidebar.
+/// Where to position the threads sidebar.
 #[derive(
     Clone,
     Copy,
@@ -114,7 +114,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub flexible: Option<bool>,
-    /// Where to position the sidebar.
+    /// Where to position the threads sidebar.
     ///
     /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
@@ -128,6 +128,12 @@ pub struct AgentSettingsContent {
     /// Default: 320
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_height: Option<f32>,
+    /// Maximum content width in pixels for the agent panel. Content will be
+    /// centered when the panel is wider than this value.
+    ///
+    /// Default: 850
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub max_content_width: Option<f32>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
     /// Favorite models to show at the top of the model selector.
@@ -209,6 +215,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub show_turn_stats: Option<bool>,
+    /// Whether to show the merge conflict indicator in the status bar
+    /// that offers to resolve conflicts using the agent.
+    ///
+    /// Default: true
+    pub show_merge_conflict_indicator: Option<bool>,
     /// Per-tool permission rules for granular control over which tool actions
     /// require confirmation.
     ///
@@ -245,6 +256,7 @@ impl AgentSettingsContent {
             model,
             enable_thinking: false,
             effort: None,
+            speed: None,
         });
     }
 
@@ -386,6 +398,7 @@ pub struct LanguageModelSelection {
     #[serde(default)]
     pub enable_thinking: bool,
     pub effort: Option<String>,
+    pub speed: Option<language_model_core::Speed>,
 }
 
 #[with_fallible_options]

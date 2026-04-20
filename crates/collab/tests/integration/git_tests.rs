@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::{self, Path, PathBuf};
 
 use call::ActiveCall;
 use client::RECEIVE_TIMEOUT;
@@ -16,6 +16,61 @@ use util::{path, rel_path::rel_path};
 use workspace::{MultiWorkspace, Workspace};
 
 use crate::TestServer;
+
+#[gpui::test]
+async fn test_root_repo_common_dir_sync(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    // Set up a project whose root IS a git repository.
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    executor.run_until_parked();
+
+    // Host should see root_repo_common_dir pointing to .git at the root.
+    let host_common_dir = project_a.read_with(cx_a, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap();
+        worktree.read(cx).snapshot().root_repo_common_dir().cloned()
+    });
+    assert_eq!(
+        host_common_dir.as_deref(),
+        Some(path::Path::new(path!("/project/.git"))),
+    );
+
+    // Share the project and have client B join.
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    // Guest should see the same root_repo_common_dir as the host.
+    let guest_common_dir = project_b.read_with(cx_b, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap();
+        worktree.read(cx).snapshot().root_repo_common_dir().cloned()
+    });
+    assert_eq!(
+        guest_common_dir, host_common_dir,
+        "guest should see the same root_repo_common_dir as host",
+    );
+}
 
 fn collect_diff_stats<C: gpui::AppContext>(
     panel: &gpui::Entity<GitPanel>,
@@ -214,9 +269,11 @@ async fn test_remote_git_worktrees(
     cx_b.update(|cx| {
         repo_b.update(cx, |repository, _| {
             repository.create_worktree(
-                "feature-branch".to_string(),
+                git::repository::CreateWorktreeTarget::NewBranch {
+                    branch_name: "feature-branch".to_string(),
+                    base_sha: Some("abc123".to_string()),
+                },
                 worktree_directory.join("feature-branch"),
-                Some("abc123".to_string()),
             )
         })
     })
@@ -268,9 +325,11 @@ async fn test_remote_git_worktrees(
     cx_b.update(|cx| {
         repo_b.update(cx, |repository, _| {
             repository.create_worktree(
-                "bugfix-branch".to_string(),
+                git::repository::CreateWorktreeTarget::NewBranch {
+                    branch_name: "bugfix-branch".to_string(),
+                    base_sha: None,
+                },
                 worktree_directory.join("bugfix-branch"),
-                None,
             )
         })
     })
@@ -370,6 +429,58 @@ async fn test_remote_git_worktrees(
 }
 
 #[gpui::test]
+async fn test_remote_git_head_sha(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+    let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
+    let local_head_sha = cx_a.update(|cx| {
+        project_a
+            .read(cx)
+            .active_repository(cx)
+            .unwrap()
+            .update(cx, |repository, _| repository.head_sha())
+    });
+    let local_head_sha = local_head_sha.await.unwrap().unwrap();
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    executor.run_until_parked();
+
+    let remote_head_sha = cx_b.update(|cx| {
+        project_b
+            .read(cx)
+            .active_repository(cx)
+            .unwrap()
+            .update(cx, |repository, _| repository.head_sha())
+    });
+    let remote_head_sha = remote_head_sha.await.unwrap();
+
+    assert_eq!(remote_head_sha.unwrap(), local_head_sha);
+}
+
+#[gpui::test]
 async fn test_linked_worktrees_sync(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
@@ -403,6 +514,7 @@ async fn test_linked_worktrees_sync(
             ref_name: Some("refs/heads/feature-branch".into()),
             sha: "bbb222".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -414,6 +526,7 @@ async fn test_linked_worktrees_sync(
             ref_name: Some("refs/heads/bugfix-branch".into()),
             sha: "ccc333".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -486,6 +599,7 @@ async fn test_linked_worktrees_sync(
                 ref_name: Some("refs/heads/hotfix-branch".into()),
                 sha: "ddd444".into(),
                 is_main: false,
+                is_bare: false,
             },
         )
         .await;

@@ -75,6 +75,7 @@ pub enum DevContainerError {
     DevContainerUpFailed(String),
     DevContainerNotFound,
     DevContainerParseFailed,
+    DevContainerValidationFailed(String),
     FilesystemError,
     ResourceFetchFailed,
     NotInValidProject,
@@ -110,6 +111,7 @@ impl Display for DevContainerError {
                     "Error downloading resources locally".to_string(),
                 DevContainerError::ResourceFetchFailed =>
                     "Failed to fetch resources from template or feature repository".to_string(),
+                DevContainerError::DevContainerValidationFailed(failure) => failure.to_string(),
             }
         )
     }
