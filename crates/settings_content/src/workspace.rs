@@ -130,6 +130,16 @@ pub struct WorkspaceSettingsContent {
     /// Whether the focused panel follows the mouse location
     /// Default: false
     pub focus_follows_mouse: Option<FocusFollowsMouse>,
+    /// Whether Go-To-Definition/Find-References prefers the use of a new tab or not.
+    /// When enabled, `Ctrl+Click` and `Ctrl+Alt+Click` behaviours are swapped.
+    ///
+    /// Default: false
+    pub new_tab_on_gotos: Option<bool>,
+    /// Whether actions that would open in an adjacent pane should look for a left pane to use
+    /// before opening a new pane on the right or not.
+    ///
+    /// Default: false
+    pub prefer_left_pane_to_new_panes: Option<bool>,
 }
 
 #[with_fallible_options]

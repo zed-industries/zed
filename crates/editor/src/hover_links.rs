@@ -15,6 +15,7 @@ use std::{ops::Range, sync::LazyLock};
 use text::OffsetRangeExt;
 use theme::ActiveTheme as _;
 use util::{ResultExt, TryFutureExt as _, maybe};
+use workspace::WorkspaceSettings;
 
 #[derive(Debug)]
 pub struct HoveredLinkState {
@@ -216,6 +217,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<anyhow::Result<Navigated>> {
+        let split = Self::is_alt_pressed(&modifiers, cx)
+            ^ WorkspaceSettings::get_global(cx).new_tab_on_gotos;
+
         if let Some(hovered_link_state) = self.hovered_link_state.take() {
             self.hide_hovered_link(cx);
             if !hovered_link_state.links.is_empty() {
@@ -254,7 +258,6 @@ impl Editor {
                     })
                     .collect();
                 let nav_entry = self.navigation_entry(mb_anchor, cx);
-                let split = Self::is_alt_pressed(&modifiers, cx);
                 let navigate_task =
                     self.navigate_to_hover_links(None, links, nav_entry, split, window, cx);
                 self.select(SelectPhase::End, window, cx);
@@ -275,7 +278,6 @@ impl Editor {
         );
 
         let navigate_task = if point.as_valid().is_some() {
-            let split = Self::is_alt_pressed(&modifiers, cx);
             match (modifiers.shift, split) {
                 (true, true) => {
                     self.go_to_type_definition_split(&GoToTypeDefinitionSplit, window, cx)

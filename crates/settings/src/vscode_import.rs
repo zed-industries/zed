@@ -1016,6 +1016,9 @@ impl VsCodeSettings {
             }),
             zoomed_padding: None,
             focus_follows_mouse: None,
+            new_tab_on_gotos: self.read_bool("workspace.editor.new_tab_on_gotos.enabled"),
+            prefer_left_pane_to_new_panes: self
+                .read_bool("workspace.editor.prefer_left_pane_to_new_panes"),
         }
     }
 
