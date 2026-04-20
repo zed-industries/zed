@@ -10,7 +10,7 @@ use crate::{
     inlays::{Inlay, InlayContent},
 };
 use collections::BTreeSet;
-use language::{Chunk, Edit, Point, TextSummary};
+use language::{Chunk, Edit, LanguageAwareStyling, Point, TextSummary};
 use multi_buffer::{
     MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot,
     RowInfo, ToOffset,
@@ -1200,7 +1200,7 @@ impl InlaySnapshot {
     pub(crate) fn chunks<'a>(
         &'a self,
         range: Range<InlayOffset>,
-        language_aware: bool,
+        language_aware: LanguageAwareStyling,
         highlights: Highlights<'a>,
     ) -> InlayChunks<'a> {
         let mut cursor = self
@@ -1234,9 +1234,16 @@ impl InlaySnapshot {
     #[cfg(test)]
     #[ztracing::instrument(skip_all)]
     pub fn text(&self) -> String {
-        self.chunks(Default::default()..self.len(), false, Highlights::default())
-            .map(|chunk| chunk.chunk.text)
-            .collect()
+        self.chunks(
+            Default::default()..self.len(),
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
+            Highlights::default(),
+        )
+        .map(|chunk| chunk.chunk.text)
+        .collect()
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1979,7 +1986,10 @@ mod tests {
                 let actual_text = inlay_snapshot
                     .chunks(
                         range,
-                        false,
+                        LanguageAwareStyling {
+                            tree_sitter: false,
+                            diagnostics: false,
+                        },
                         Highlights {
                             text_highlights: Some(&text_highlights),
                             inlay_highlights: Some(&inlay_highlights),
@@ -2158,7 +2168,10 @@ mod tests {
         // Get all chunks and verify their bitmaps
         let chunks = snapshot.chunks(
             InlayOffset(MultiBufferOffset(0))..snapshot.len(),
-            false,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
             Highlights::default(),
         );
 
@@ -2293,7 +2306,10 @@ mod tests {
         let chunks: Vec<_> = inlay_snapshot
             .chunks(
                 InlayOffset(MultiBufferOffset(0))..inlay_snapshot.len(),
-                false,
+                LanguageAwareStyling {
+                    tree_sitter: false,
+                    diagnostics: false,
+                },
                 highlights,
             )
             .collect();
@@ -2408,7 +2424,10 @@ mod tests {
             let chunks: Vec<_> = inlay_snapshot
                 .chunks(
                     InlayOffset(MultiBufferOffset(0))..inlay_snapshot.len(),
-                    false,
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: false,
+                    },
                     highlights,
                 )
                 .collect();

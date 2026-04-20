@@ -1,7 +1,7 @@
 use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
     Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
-    path_list::PathList,
+    multi_workspace::SerializedProjectGroupState, path_list::PathList,
 };
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
@@ -13,7 +13,10 @@ use db::sqlez::{
 use gpui::{AsyncWindowContext, Entity, WeakEntity, WindowId};
 
 use language::{Toolchain, ToolchainScope};
-use project::{Project, ProjectGroupKey, debugger::breakpoint_store::SourceBreakpoint};
+use project::{
+    Project, ProjectGroupKey, bookmark_store::SerializedBookmark,
+    debugger::breakpoint_store::SourceBreakpoint,
+};
 use remote::RemoteConnectionOptions;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -60,20 +63,45 @@ pub struct SessionWorkspace {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SerializedProjectGroupKey {
+pub struct SerializedProjectGroup {
     pub path_list: SerializedPathList,
     pub(crate) location: SerializedWorkspaceLocation,
+    #[serde(default = "default_expanded")]
+    pub expanded: bool,
 }
 
-impl From<ProjectGroupKey> for SerializedProjectGroupKey {
-    fn from(value: ProjectGroupKey) -> Self {
-        SerializedProjectGroupKey {
-            path_list: value.path_list().serialize(),
-            location: match value.host() {
+fn default_expanded() -> bool {
+    true
+}
+
+impl SerializedProjectGroup {
+    pub fn from_group(key: &ProjectGroupKey, expanded: bool) -> Self {
+        Self {
+            path_list: key.path_list().serialize(),
+            location: match key.host() {
                 Some(host) => SerializedWorkspaceLocation::Remote(host),
                 None => SerializedWorkspaceLocation::Local,
             },
+            expanded,
         }
+    }
+
+    pub fn into_restored_state(self) -> SerializedProjectGroupState {
+        let path_list = PathList::deserialize(&self.path_list);
+        let host = match self.location {
+            SerializedWorkspaceLocation::Local => None,
+            SerializedWorkspaceLocation::Remote(opts) => Some(opts),
+        };
+        SerializedProjectGroupState {
+            key: ProjectGroupKey::new(host, path_list),
+            expanded: self.expanded,
+        }
+    }
+}
+
+impl From<SerializedProjectGroup> for ProjectGroupKey {
+    fn from(value: SerializedProjectGroup) -> Self {
+        value.into_restored_state().key
     }
 }
 
@@ -82,17 +110,18 @@ impl From<ProjectGroupKey> for SerializedProjectGroupKey {
 pub struct MultiWorkspaceState {
     pub active_workspace_id: Option<WorkspaceId>,
     pub sidebar_open: bool,
-    pub project_group_keys: Vec<SerializedProjectGroupKey>,
+    #[serde(alias = "project_group_keys")]
+    pub project_groups: Vec<SerializedProjectGroup>,
     #[serde(default)]
     pub sidebar_state: Option<String>,
 }
 
 /// The serialized state of a single MultiWorkspace window from a previous session:
-/// all workspaces that shared the window, which one was active, and whether the
-/// sidebar was open.
+/// the active workspace to restore plus window-level state (project group keys,
+/// sidebar).
 #[derive(Debug, Clone)]
 pub struct SerializedMultiWorkspace {
-    pub workspaces: Vec<SessionWorkspace>,
+    pub active_workspace: SessionWorkspace,
     pub state: MultiWorkspaceState,
 }
 
@@ -107,6 +136,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
+    pub(crate) bookmarks: BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
     pub(crate) breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     pub(crate) user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     pub(crate) window_id: Option<u64>,

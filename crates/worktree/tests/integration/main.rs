@@ -9,6 +9,7 @@ use parking_lot::Mutex;
 use postage::stream::Stream;
 use pretty_assertions::assert_eq;
 use rand::prelude::*;
+use rpc::{AnyProtoClient, NoopProtoClient, proto};
 use worktree::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
 
 use serde_json::json;
@@ -2207,7 +2208,14 @@ fn randomly_mutate_worktree(
     match rng.random_range(0_u32..100) {
         0..=33 if entry.path.as_ref() != RelPath::empty() => {
             log::info!("deleting entry {:?} ({})", entry.path, entry.id.to_usize());
-            worktree.delete_entry(entry.id, false, cx).unwrap()
+            let task = worktree
+                .delete_entry(entry.id, false, cx)
+                .unwrap_or_else(|| Task::ready(Ok(None)));
+
+            cx.background_spawn(async move {
+                task.await?;
+                Ok(())
+            })
         }
         _ => {
             if entry.is_dir() {
@@ -2761,6 +2769,7 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
             ref_name: Some("refs/heads/feature".into()),
             sha: "abc123".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -2800,7 +2809,7 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
         let event_count = event_count.clone();
         |_, cx| {
             cx.subscribe(&cx.entity(), move |_, _, event, _| {
-                if matches!(event, Event::UpdatedRootRepoCommonDir) {
+                if matches!(event, Event::UpdatedRootRepoCommonDir { .. }) {
                     event_count.set(event_count.get() + 1);
                 }
             })
@@ -2825,6 +2834,83 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
         1,
         "should have emitted UpdatedRootRepoCommonDir on removal"
     );
+}
+
+#[gpui::test]
+async fn test_linked_worktree_git_file_event_does_not_panic(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // Regression test: in a linked worktree, `.git` is a file (containing
+    // "gitdir: ..."), not a directory. When the background scanner receives
+    // a filesystem event for a path inside the main repo's `.git` directory
+    // (which it watches via the commondir), the ancestor-walking code in
+    // `process_events` calls `is_git_dir` on each ancestor. If `is_git_dir`
+    // treats `.git` files the same as `.git` directories, it incorrectly
+    // identifies the gitfile as a git dir, adds it to `dot_git_abs_paths`,
+    // and `update_git_repositories` panics because the path is outside the
+    // worktree root.
+    init_test(cx);
+
+    use git::repository::Worktree as GitWorktree;
+
+    let fs = FakeFs::new(executor);
+
+    fs.insert_tree(
+        path!("/main_repo"),
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/main_repo/.git")),
+        false,
+        GitWorktree {
+            path: PathBuf::from(path!("/linked_worktree")),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    fs.write(
+        path!("/linked_worktree/file.txt").as_ref(),
+        "content".as_bytes(),
+    )
+    .await
+    .unwrap();
+
+    let tree = Worktree::local(
+        path!("/linked_worktree").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    // Trigger a filesystem event inside the main repo's .git directory
+    // (which the linked worktree scanner watches via the commondir). This
+    // uses the sentinel-file helper to ensure the event goes through the
+    // real watcher path, exactly as it would in production.
+    tree.flush_fs_events_in_root_git_repository(cx).await;
+
+    // The worktree should still be intact.
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.snapshot().root_repo_common_dir().map(|p| p.as_ref()),
+            Some(Path::new(path!("/main_repo/.git"))),
+        );
+    });
 }
 
 fn init_test(cx: &mut gpui::TestAppContext) {
@@ -3260,5 +3346,195 @@ async fn test_single_file_worktree_deleted(cx: &mut TestAppContext) {
     assert!(
         deleted_event_received.get(),
         "Should receive Deleted event when single-file worktree root is deleted"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_update(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+    });
+
+    let client = AnyProtoClient::new(NoopProtoClient::new());
+
+    let worktree = cx.update(|cx| {
+        Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 1,
+                root_name: "project".to_string(),
+                visible: true,
+                abs_path: "/home/user/project".to_string(),
+                root_repo_common_dir: None,
+            },
+            client,
+            PathStyle::Posix,
+            cx,
+        )
+    });
+
+    let events: Arc<std::sync::Mutex<Vec<&'static str>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let events_clone = events.clone();
+    cx.update(|cx| {
+        cx.subscribe(&worktree, move |_, event, _cx| {
+            if matches!(event, Event::UpdatedRootRepoCommonDir { .. }) {
+                events_clone
+                    .lock()
+                    .unwrap()
+                    .push("UpdatedRootRepoCommonDir");
+            }
+            if matches!(event, Event::UpdatedEntries(_)) {
+                events_clone.lock().unwrap().push("UpdatedEntries");
+            }
+        })
+        .detach();
+    });
+
+    // Send an update with entries but no repo info (plain directory).
+    worktree.update(cx, |worktree, _cx| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(proto::UpdateWorktree {
+                project_id: 1,
+                worktree_id: 1,
+                abs_path: "/home/user/project".to_string(),
+                root_name: "project".to_string(),
+                updated_entries: vec![proto::Entry {
+                    id: 1,
+                    is_dir: true,
+                    path: "".to_string(),
+                    inode: 1,
+                    mtime: Some(proto::Timestamp {
+                        seconds: 0,
+                        nanos: 0,
+                    }),
+                    is_ignored: false,
+                    is_hidden: false,
+                    is_external: false,
+                    is_fifo: false,
+                    size: None,
+                    canonical_path: None,
+                }],
+                removed_entries: vec![],
+                scan_id: 1,
+                is_last_update: true,
+                updated_repositories: vec![],
+                removed_repositories: vec![],
+                root_repo_common_dir: None,
+            });
+    });
+
+    cx.run_until_parked();
+
+    let fired = events.lock().unwrap();
+    assert!(
+        fired.contains(&"UpdatedEntries"),
+        "UpdatedEntries should fire after remote update"
+    );
+    assert!(
+        fired.contains(&"UpdatedRootRepoCommonDir"),
+        "UpdatedRootRepoCommonDir should fire after first remote update even when \
+         root_repo_common_dir is None, to signal that repo state is now known"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arrives(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+    });
+
+    let client = AnyProtoClient::new(NoopProtoClient::new());
+
+    let worktree = cx.update(|cx| {
+        Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 1,
+                root_name: "project".to_string(),
+                visible: true,
+                abs_path: "/home/user/project".to_string(),
+                root_repo_common_dir: None,
+            },
+            client,
+            PathStyle::Posix,
+            cx,
+        )
+    });
+
+    let events: Arc<std::sync::Mutex<Vec<&'static str>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let events_clone = events.clone();
+    cx.update(|cx| {
+        cx.subscribe(&worktree, move |_, event, _cx| {
+            if matches!(event, Event::UpdatedRootRepoCommonDir { .. }) {
+                events_clone
+                    .lock()
+                    .unwrap()
+                    .push("UpdatedRootRepoCommonDir");
+            }
+        })
+        .detach();
+    });
+
+    // Send an update where repo info arrives (None -> Some).
+    worktree.update(cx, |worktree, _cx| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(proto::UpdateWorktree {
+                project_id: 1,
+                worktree_id: 1,
+                abs_path: "/home/user/project".to_string(),
+                root_name: "project".to_string(),
+                updated_entries: vec![proto::Entry {
+                    id: 1,
+                    is_dir: true,
+                    path: "".to_string(),
+                    inode: 1,
+                    mtime: Some(proto::Timestamp {
+                        seconds: 0,
+                        nanos: 0,
+                    }),
+                    is_ignored: false,
+                    is_hidden: false,
+                    is_external: false,
+                    is_fifo: false,
+                    size: None,
+                    canonical_path: None,
+                }],
+                removed_entries: vec![],
+                scan_id: 1,
+                is_last_update: true,
+                updated_repositories: vec![],
+                removed_repositories: vec![],
+                root_repo_common_dir: Some("/home/user/project/.git".to_string()),
+            });
+    });
+
+    cx.run_until_parked();
+
+    let fired = events.lock().unwrap();
+    assert!(
+        fired.contains(&"UpdatedRootRepoCommonDir"),
+        "UpdatedRootRepoCommonDir should fire when repo info arrives (None -> Some)"
+    );
+    assert_eq!(
+        fired
+            .iter()
+            .filter(|e| **e == "UpdatedRootRepoCommonDir")
+            .count(),
+        1,
+        "should fire exactly once, not duplicate"
     );
 }

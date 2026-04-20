@@ -360,17 +360,17 @@ impl AgentServer for CustomAgentServer {
                     let agent = store.get_external_agent(&agent_id).with_context(|| {
                         format!("Custom agent server `{}` is not registered", agent_id)
                     })?;
-                    anyhow::Ok(agent.get_command(
-                        extra_env,
-                        delegate.new_version_available,
-                        &mut cx.to_async(),
-                    ))
+                    if let Some(new_version_available_tx) = delegate.new_version_available {
+                        agent.set_new_version_available_tx(new_version_available_tx);
+                    }
+                    anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
                 })??
                 .await?;
             let connection = crate::acp::connect(
                 agent_id,
                 project,
                 command,
+                store.clone(),
                 default_mode,
                 default_model,
                 default_config_options,

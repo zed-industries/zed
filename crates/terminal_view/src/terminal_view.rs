@@ -507,6 +507,10 @@ impl TerminalView {
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal::default()))
+                .action(
+                    "New Center Terminal",
+                    Box::new(NewCenterTerminal::default()),
+                )
                 .separator()
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
@@ -850,6 +854,7 @@ impl TerminalView {
 
     fn send_text(&mut self, text: &SendText, _: &mut Window, cx: &mut Context<Self>) {
         self.clear_bell(cx);
+        self.blink_manager.update(cx, BlinkManager::pause_blinking);
         self.terminal.update(cx, |term, _| {
             term.input(text.0.to_string().into_bytes());
         });
@@ -858,6 +863,7 @@ impl TerminalView {
     fn send_keystroke(&mut self, text: &SendKeystroke, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
             self.clear_bell(cx);
+            self.blink_manager.update(cx, BlinkManager::pause_blinking);
             self.process_keystroke(&keystroke, cx);
         }
     }
@@ -1354,7 +1360,9 @@ impl Item for TerminalView {
         h_flex()
             .gap_1()
             .group("term-tab-icon")
-            .track_focus(&self.focus_handle)
+            .when(!params.selected, |this| {
+                this.track_focus(&self.focus_handle)
+            })
             .on_action(move |action: &RenameTerminal, window, cx| {
                 self_handle
                     .update(cx, |this, cx| this.rename_terminal(action, window, cx))
@@ -1820,6 +1828,7 @@ impl SearchableItem for TerminalView {
             regex: true,
             replacement: false,
             selection: false,
+            select_all: false,
             find_in_results: false,
         }
     }

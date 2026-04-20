@@ -31,7 +31,7 @@ use gpui::{
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
@@ -47,16 +47,16 @@ use settings::{
     update_settings_file,
 };
 use smallvec::SmallVec;
-use std::ops::Neg;
-use std::{any::TypeId, time::Instant};
 use std::{
+    any::TypeId,
     cell::OnceCell,
     cmp,
     collections::HashSet,
+    ops::Neg,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use theme_settings::ThemeSettings;
 use ui::{
@@ -84,7 +84,7 @@ use zed_actions::{
 
 use crate::{
     project_panel_settings::ProjectPanelScrollbarProxy,
-    undo::{ProjectPanelOperation, UndoManager},
+    undo::{Change, UndoManager},
 };
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
@@ -401,6 +401,8 @@ actions!(
         CompareMarkedFiles,
         /// Undoes the last file operation.
         Undo,
+        /// Redoes the last undone file operation.
+        Redo,
     ]
 );
 
@@ -847,6 +849,9 @@ impl ProjectPanel {
                     if project_panel_settings.sort_mode != new_settings.sort_mode {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
+                    if project_panel_settings.sort_order != new_settings.sort_order {
+                        this.update_visible_entries(None, false, false, window, cx);
+                    }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
                         this.sticky_items_count = 0;
                     }
@@ -858,6 +863,7 @@ impl ProjectPanel {
             .detach();
 
             let scroll_handle = UniformListScrollHandle::new();
+            let weak_project_panel = cx.weak_entity();
             let mut this = Self {
                 project: project.clone(),
                 hover_scroll_task: None,
@@ -893,7 +899,7 @@ impl ProjectPanel {
                     unfolded_dir_ids: Default::default(),
                 },
                 update_visible_entries_task: Default::default(),
-                undo_manager: UndoManager::new(workspace.weak_handle()),
+                undo_manager: UndoManager::new(workspace.weak_handle(), weak_project_panel, &cx),
             };
             this.update_visible_entries(None, false, false, window, cx);
 
@@ -1172,6 +1178,11 @@ impl ProjectPanel {
                                     !self.undo_manager.can_undo(),
                                     "Undo",
                                     Box::new(Undo),
+                                )
+                                .action_disabled_when(
+                                    !self.undo_manager.can_redo(),
+                                    "Redo",
+                                    Box::new(Redo),
                                 )
                             })
                             .when(is_remote, |menu| {
@@ -1871,16 +1882,12 @@ impl ProjectPanel {
                 // Record the operation if the edit was applied
                 if new_entry.is_ok() {
                     let operation = if let Some(old_entry) = edited_entry {
-                        ProjectPanelOperation::Rename {
-                            old_path: (worktree_id, old_entry.path).into(),
-                            new_path: new_project_path,
-                        }
+                        Change::Renamed((worktree_id, old_entry.path).into(), new_project_path)
                     } else {
-                        ProjectPanelOperation::Create {
-                            project_path: new_project_path,
-                        }
+                        Change::Created(new_project_path)
                     };
-                    project_panel.undo_manager.record(operation);
+
+                    project_panel.undo_manager.record([operation]).log_err();
                 }
 
                 cx.notify();
@@ -2133,9 +2140,12 @@ impl ProjectPanel {
         }
     }
 
-    pub fn undo(&mut self, _: &Undo, _window: &mut Window, cx: &mut Context<Self>) {
-        self.undo_manager.undo(cx);
-        cx.notify();
+    pub fn undo(&mut self, _: &Undo, _window: &mut Window, _cx: &mut Context<Self>) {
+        self.undo_manager.undo().log_err();
+    }
+
+    pub fn redo(&mut self, _: &Redo, _window: &mut Window, _cx: &mut Context<Self>) {
+        self.undo_manager.redo().log_err();
     }
 
     fn rename_impl(
@@ -2265,8 +2275,12 @@ impl ProjectPanel {
                         .update(cx, |panel, cx| {
                             let message = format!("Failed to restore {}: {}", file_name, e);
                             let toast = StatusToast::new(message, cx, |this, _| {
-                                this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                                    .dismiss_button(true)
+                                this.icon(
+                                    Icon::new(IconName::XCircle)
+                                        .size(IconSize::Small)
+                                        .color(Color::Error),
+                                )
+                                .dismiss_button(true)
                             });
                             panel
                                 .workspace
@@ -2328,6 +2342,7 @@ impl ProjectPanel {
 
                     Some((
                         selection.entry_id,
+                        selection.worktree_id,
                         project_path.path.file_name()?.to_string(),
                     ))
                 })
@@ -2343,7 +2358,7 @@ impl ProjectPanel {
                     "Are you sure you want to permanently delete"
                 };
                 let prompt = match file_paths.first() {
-                    Some((_, path)) if file_paths.len() == 1 => {
+                    Some((_, _, path)) if file_paths.len() == 1 => {
                         let unsaved_warning = if dirty_buffers > 0 {
                             "\n\nIt has unsaved changes, which will be lost."
                         } else {
@@ -2358,7 +2373,7 @@ impl ProjectPanel {
                             let truncated_path_counts = file_paths.len() - CUTOFF_POINT;
                             let mut paths = file_paths
                                 .iter()
-                                .map(|(_, path)| path.clone())
+                                .map(|(_, _, path)| path.clone())
                                 .take(CUTOFF_POINT)
                                 .collect::<Vec<_>>();
                             paths.truncate(CUTOFF_POINT);
@@ -2369,7 +2384,7 @@ impl ProjectPanel {
                             }
                             paths
                         } else {
-                            file_paths.iter().map(|(_, path)| path.clone()).collect()
+                            file_paths.iter().map(|(_, _, path)| path.clone()).collect()
                         };
                         let unsaved_warning = if dirty_buffers == 0 {
                             String::new()
@@ -2406,8 +2421,11 @@ impl ProjectPanel {
                 {
                     return anyhow::Ok(());
                 }
-                for (entry_id, _) in file_paths {
-                    panel
+
+                let mut changes = Vec::new();
+
+                for (entry_id, worktree_id, _) in file_paths {
+                    let trashed_entry = panel
                         .update(cx, |panel, cx| {
                             panel
                                 .project
@@ -2415,8 +2433,19 @@ impl ProjectPanel {
                                 .context("no such entry")
                         })??
                         .await?;
+
+                    // Keep track of trashed change so that we can then record
+                    // all of the changes at once, such that undoing and redoing
+                    // restores or trashes all files in batch.
+                    if trash && let Some(trashed_entry) = trashed_entry {
+                        changes.push(Change::Trashed(worktree_id, trashed_entry));
+                    }
                 }
                 panel.update_in(cx, |panel, window, cx| {
+                    if trash {
+                        panel.undo_manager.record(changes).log_err();
+                    }
+
                     if let Some(next_selection) = next_selection {
                         panel.update_visible_entries(
                             Some((next_selection.worktree_id, next_selection.entry_id)),
@@ -2491,8 +2520,9 @@ impl ProjectPanel {
                 .map(|entry| entry.to_owned())
                 .collect();
 
-        let mode = ProjectPanelSettings::get_global(cx).sort_mode;
-        sort_worktree_entries_with_mode(&mut siblings, mode);
+        let sort_mode = ProjectPanelSettings::get_global(cx).sort_mode;
+        let sort_order = ProjectPanelSettings::get_global(cx).sort_order;
+        sort_worktree_entries(&mut siblings, sort_mode, sort_order);
         let sibling_entry_index = siblings
             .iter()
             .position(|sibling| sibling.id == latest_entry.id)?;
@@ -3036,7 +3066,7 @@ impl ProjectPanel {
 
                 new_path.push(RelPath::unix(&new_file_name).unwrap());
 
-                disambiguation_range = Some(file_name_len..(file_name_len + disambiguation_len));
+                disambiguation_range = Some(0..(file_name_len + disambiguation_len));
                 ix += 1;
             }
         }
@@ -3067,8 +3097,8 @@ impl ProjectPanel {
             enum PasteTask {
                 Rename {
                     task: Task<Result<CreatedEntry>>,
-                    old_path: ProjectPath,
-                    new_path: ProjectPath,
+                    from: ProjectPath,
+                    to: ProjectPath,
                 },
                 Copy {
                     task: Task<Result<Option<Entry>>>,
@@ -3085,14 +3115,14 @@ impl ProjectPanel {
                 let clip_entry_id = clipboard_entry.entry_id;
                 let destination: ProjectPath = (worktree_id, new_path).into();
                 let task = if clipboard_entries.is_cut() {
-                    let old_path = self.project.read(cx).path_for_entry(clip_entry_id, cx)?;
+                    let original_path = self.project.read(cx).path_for_entry(clip_entry_id, cx)?;
                     let task = self.project.update(cx, |project, cx| {
                         project.rename_entry(clip_entry_id, destination.clone(), cx)
                     });
                     PasteTask::Rename {
                         task,
-                        old_path,
-                        new_path: destination,
+                        from: original_path,
+                        to: destination,
                     }
                 } else {
                     let task = self.project.update(cx, |project, cx| {
@@ -3109,21 +3139,16 @@ impl ProjectPanel {
 
             cx.spawn_in(window, async move |project_panel, mut cx| {
                 let mut last_succeed = None;
-                let mut operations = Vec::new();
+                let mut changes = Vec::new();
 
                 for task in paste_tasks {
                     match task {
-                        PasteTask::Rename {
-                            task,
-                            old_path,
-                            new_path,
-                        } => {
+                        PasteTask::Rename { task, from, to } => {
                             if let Some(CreatedEntry::Included(entry)) = task
                                 .await
                                 .notify_workspace_async_err(workspace.clone(), &mut cx)
                             {
-                                operations
-                                    .push(ProjectPanelOperation::Rename { old_path, new_path });
+                                changes.push(Change::Renamed(from, to));
                                 last_succeed = Some(entry);
                             }
                         }
@@ -3132,9 +3157,7 @@ impl ProjectPanel {
                                 .await
                                 .notify_workspace_async_err(workspace.clone(), &mut cx)
                             {
-                                operations.push(ProjectPanelOperation::Create {
-                                    project_path: destination,
-                                });
+                                changes.push(Change::Created(destination));
                                 last_succeed = Some(entry);
                             }
                         }
@@ -3143,7 +3166,7 @@ impl ProjectPanel {
 
                 project_panel
                     .update(cx, |this, _| {
-                        this.undo_manager.record_batch(operations);
+                        this.undo_manager.record(changes).log_err();
                     })
                     .ok();
 
@@ -3921,6 +3944,7 @@ impl ProjectPanel {
         let auto_collapse_dirs = settings.auto_fold_dirs;
         let hide_gitignore = settings.hide_gitignore;
         let sort_mode = settings.sort_mode;
+        let sort_order = settings.sort_order;
         let project = self.project.read(cx);
         let repo_snapshots = project.git_store().read(cx).repo_snapshots(cx);
 
@@ -4152,9 +4176,10 @@ impl ProjectPanel {
                             entry_iter.advance();
                         }
 
-                        par_sort_worktree_entries_with_mode(
+                        par_sort_worktree_entries(
                             &mut visible_worktree_entries,
                             sort_mode,
+                            sort_order,
                         );
                         new_state.visible_entries.push(VisibleEntriesForWorktree {
                             worktree_id,
@@ -4365,6 +4390,20 @@ impl ProjectPanel {
                         this.marked_entries.clear();
                         this.update_visible_entries(new_selection, false, false, window, cx);
                     }
+
+                    let changes: Vec<Change> = opened_entries
+                        .iter()
+                        .filter_map(|entry_id| {
+                            worktree.read(cx).entry_for_id(*entry_id).map(|entry| {
+                                Change::Created(ProjectPath {
+                                    worktree_id,
+                                    path: entry.path.clone(),
+                                })
+                            })
+                        })
+                        .collect();
+
+                    this.undo_manager.record(changes).log_err();
                 })
             }
             .log_err()
@@ -4443,33 +4482,30 @@ impl ProjectPanel {
 
                 cx.spawn_in(window, async move |project_panel, cx| {
                     let mut last_succeed = None;
-                    let mut operations = Vec::new();
+                    let mut changes = Vec::new();
                     for task in copy_tasks.into_iter() {
                         if let Some(Some(entry)) = task.await.log_err() {
                             last_succeed = Some(entry.id);
-                            operations.push(ProjectPanelOperation::Create {
-                                project_path: (worktree_id, entry.path).into(),
-                            });
+                            changes.push(Change::Created((worktree_id, entry.path).into()));
                         }
                     }
                     // update selection
                     if let Some(entry_id) = last_succeed {
-                        project_panel
-                            .update_in(cx, |project_panel, window, cx| {
-                                project_panel.selection = Some(SelectedEntry {
-                                    worktree_id,
-                                    entry_id,
-                                });
+                        project_panel.update_in(cx, |project_panel, window, cx| {
+                            project_panel.selection = Some(SelectedEntry {
+                                worktree_id,
+                                entry_id,
+                            });
+                            // if only one entry was dragged and it was disambiguated, open the rename editor
+                            if item_count == 1 && disambiguation_range.is_some() {
+                                project_panel.rename_impl(disambiguation_range, window, cx);
+                            }
 
-                                project_panel.undo_manager.record_batch(operations);
-
-                                // if only one entry was dragged and it was disambiguated, open the rename editor
-                                if item_count == 1 && disambiguation_range.is_some() {
-                                    project_panel.rename_impl(disambiguation_range, window, cx);
-                                }
-                            })
-                            .ok();
+                            project_panel.undo_manager.record(changes)
+                        })??;
                     }
+
+                    std::result::Result::Ok::<(), anyhow::Error>(())
                 })
                 .detach();
                 Some(())
@@ -4545,7 +4581,7 @@ impl ProjectPanel {
             let workspace = self.workspace.clone();
             if folded_selection_info.is_empty() {
                 cx.spawn_in(window, async move |project_panel, mut cx| {
-                    let mut operations = Vec::new();
+                    let mut changes = Vec::new();
                     for (entry_id, task) in move_tasks {
                         if let Some(CreatedEntry::Included(new_entry)) = task
                             .await
@@ -4554,16 +4590,16 @@ impl ProjectPanel {
                             if let (Some(old_path), Some(worktree_id)) =
                                 (old_paths.get(&entry_id), destination_worktree_id)
                             {
-                                operations.push(ProjectPanelOperation::Rename {
-                                    old_path: old_path.clone(),
-                                    new_path: (worktree_id, new_entry.path).into(),
-                                });
+                                changes.push(Change::Renamed(
+                                    old_path.clone(),
+                                    (worktree_id, new_entry.path).into(),
+                                ));
                             }
                         }
                     }
                     project_panel
                         .update(cx, |this, _| {
-                            this.undo_manager.record_batch(operations);
+                            this.undo_manager.record(changes).log_err();
                         })
                         .ok();
                 })
@@ -4581,10 +4617,10 @@ impl ProjectPanel {
                             if let (Some(old_path), Some(worktree_id)) =
                                 (old_paths.get(&entry_id), destination_worktree_id)
                             {
-                                operations.push(ProjectPanelOperation::Rename {
-                                    old_path: old_path.clone(),
-                                    new_path: (worktree_id, new_entry.path.clone()).into(),
-                                });
+                                operations.push(Change::Renamed(
+                                    old_path.clone(),
+                                    (worktree_id, new_entry.path.clone()).into(),
+                                ));
                             }
                             move_results.push((entry_id, new_entry));
                         }
@@ -4596,7 +4632,7 @@ impl ProjectPanel {
 
                     project_panel
                         .update(cx, |this, _| {
-                            this.undo_manager.record_batch(operations);
+                            this.undo_manager.record(operations).log_err();
                         })
                         .ok();
 
@@ -6634,6 +6670,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::compare_marked_files))
                 .when(cx.has_flag::<ProjectPanelUndoRedoFeatureFlag>(), |el| {
                     el.on_action(cx.listener(Self::undo))
+                        .on_action(cx.listener(Self::redo))
                 })
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
@@ -7273,41 +7310,31 @@ impl ClipboardEntry {
 }
 
 #[inline]
-fn cmp_directories_first(a: &Entry, b: &Entry) -> cmp::Ordering {
-    util::paths::compare_rel_paths((&a.path, a.is_file()), (&b.path, b.is_file()))
+fn cmp_worktree_entries(
+    a: &Entry,
+    b: &Entry,
+    mode: &settings::ProjectPanelSortMode,
+    order: &settings::ProjectPanelSortOrder,
+) -> cmp::Ordering {
+    let a = (&*a.path, a.is_file());
+    let b = (&*b.path, b.is_file());
+    util::paths::compare_rel_paths_by(a, b, (*mode).into(), (*order).into())
 }
 
-#[inline]
-fn cmp_mixed(a: &Entry, b: &Entry) -> cmp::Ordering {
-    util::paths::compare_rel_paths_mixed((&a.path, a.is_file()), (&b.path, b.is_file()))
-}
-
-#[inline]
-fn cmp_files_first(a: &Entry, b: &Entry) -> cmp::Ordering {
-    util::paths::compare_rel_paths_files_first((&a.path, a.is_file()), (&b.path, b.is_file()))
-}
-
-#[inline]
-fn cmp_with_mode(a: &Entry, b: &Entry, mode: &settings::ProjectPanelSortMode) -> cmp::Ordering {
-    match mode {
-        settings::ProjectPanelSortMode::DirectoriesFirst => cmp_directories_first(a, b),
-        settings::ProjectPanelSortMode::Mixed => cmp_mixed(a, b),
-        settings::ProjectPanelSortMode::FilesFirst => cmp_files_first(a, b),
-    }
-}
-
-pub fn sort_worktree_entries_with_mode(
+pub fn sort_worktree_entries(
     entries: &mut [impl AsRef<Entry>],
     mode: settings::ProjectPanelSortMode,
+    order: settings::ProjectPanelSortOrder,
 ) {
-    entries.sort_by(|lhs, rhs| cmp_with_mode(lhs.as_ref(), rhs.as_ref(), &mode));
+    entries.sort_by(|lhs, rhs| cmp_worktree_entries(lhs.as_ref(), rhs.as_ref(), &mode, &order));
 }
 
-pub fn par_sort_worktree_entries_with_mode(
+pub fn par_sort_worktree_entries(
     entries: &mut Vec<GitEntry>,
     mode: settings::ProjectPanelSortMode,
+    order: settings::ProjectPanelSortOrder,
 ) {
-    entries.par_sort_by(|lhs, rhs| cmp_with_mode(lhs, rhs, &mode));
+    entries.par_sort_by(|lhs, rhs| cmp_worktree_entries(lhs, rhs, &mode, &order));
 }
 
 fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)> {
@@ -7337,3 +7364,4 @@ fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)>
 
 #[cfg(test)]
 mod project_panel_tests;
+mod tests;

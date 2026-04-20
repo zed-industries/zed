@@ -223,6 +223,7 @@ struct StashEntryMatch {
     entry: StashEntry,
     positions: Vec<usize>,
     formatted_timestamp: String,
+    formatted_absolute_timestamp: String,
 }
 
 pub struct StashListDelegate {
@@ -264,6 +265,17 @@ impl StashListDelegate {
     }
 
     fn format_timestamp(timestamp: i64, timezone: UtcOffset) -> String {
+        let timestamp =
+            OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or(OffsetDateTime::now_utc());
+        time_format::format_localized_timestamp(
+            timestamp,
+            OffsetDateTime::now_utc(),
+            timezone,
+            time_format::TimestampFormat::Relative,
+        )
+    }
+
+    fn format_absolute_timestamp(timestamp: i64, timezone: UtcOffset) -> String {
         let timestamp =
             OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or(OffsetDateTime::now_utc());
         time_format::format_localized_timestamp(
@@ -388,11 +400,14 @@ impl PickerDelegate for StashListDelegate {
                     .into_iter()
                     .map(|entry| {
                         let formatted_timestamp = Self::format_timestamp(entry.timestamp, timezone);
+                        let formatted_absolute_timestamp =
+                            Self::format_absolute_timestamp(entry.timestamp, timezone);
 
                         StashEntryMatch {
                             entry,
                             positions: Vec::new(),
                             formatted_timestamp,
+                            formatted_absolute_timestamp,
                         }
                     })
                     .collect()
@@ -421,11 +436,14 @@ impl PickerDelegate for StashListDelegate {
                 .map(|candidate| {
                     let entry = all_stash_entries[candidate.candidate_id].clone();
                     let formatted_timestamp = Self::format_timestamp(entry.timestamp, timezone);
+                    let formatted_absolute_timestamp =
+                        Self::format_absolute_timestamp(entry.timestamp, timezone);
 
                     StashEntryMatch {
                         entry,
                         positions: candidate.positions,
                         formatted_timestamp,
+                        formatted_absolute_timestamp,
                     }
                 })
                 .collect()
@@ -544,6 +562,7 @@ impl PickerDelegate for StashListDelegate {
                 .toggle_state(selected)
                 .child(
                     h_flex()
+                        .min_w_0()
                         .w_full()
                         .gap_2p5()
                         .child(
@@ -551,7 +570,33 @@ impl PickerDelegate for StashListDelegate {
                                 .size(IconSize::Small)
                                 .color(Color::Muted),
                         )
-                        .child(div().w_full().child(stash_label).child(branch_info)),
+                        .child(
+                            v_flex()
+                                .id(format!("stash-tooltip-{ix}"))
+                                .min_w_0()
+                                .w_full()
+                                .child(stash_label)
+                                .child(branch_info)
+                                .tooltip({
+                                    let stash_message = Self::format_message(
+                                        entry_match.entry.index,
+                                        &entry_match.entry.message,
+                                    );
+                                    let absolute_timestamp =
+                                        entry_match.formatted_absolute_timestamp.clone();
+
+                                    Tooltip::element(move |_, _| {
+                                        v_flex()
+                                            .child(Label::new(stash_message.clone()))
+                                            .child(
+                                                Label::new(absolute_timestamp.clone())
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                            .into_any_element()
+                                    })
+                                }),
+                        ),
                 )
                 .end_slot(
                     h_flex()

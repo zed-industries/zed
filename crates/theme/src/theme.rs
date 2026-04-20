@@ -22,7 +22,6 @@ mod ui_density;
 
 use std::sync::Arc;
 
-use derive_more::{Deref, DerefMut};
 use gpui::BorrowAppContext;
 use gpui::Global;
 use gpui::{
@@ -129,8 +128,16 @@ impl ActiveTheme for App {
 }
 
 /// The appearance of the system.
-#[derive(Debug, Clone, Copy, Deref)]
+#[derive(Debug, Clone, Copy)]
 pub struct SystemAppearance(pub Appearance);
+
+impl std::ops::Deref for SystemAppearance {
+    type Target = Appearance;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl Default for SystemAppearance {
     fn default() -> Self {
@@ -138,8 +145,22 @@ impl Default for SystemAppearance {
     }
 }
 
-#[derive(Deref, DerefMut, Default)]
+#[derive(Default)]
 struct GlobalSystemAppearance(SystemAppearance);
+
+impl std::ops::DerefMut for GlobalSystemAppearance {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl std::ops::Deref for GlobalSystemAppearance {
+    type Target = SystemAppearance;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl Global for GlobalSystemAppearance {}
 

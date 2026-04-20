@@ -227,5 +227,13 @@ pub fn update_settings_file(
     cx: &App,
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) {
-    SettingsStore::global(cx).update_settings_file(fs, update);
+    SettingsStore::global(cx).update_settings_file(fs, update)
+}
+
+pub fn update_settings_file_with_completion(
+    fs: Arc<dyn Fs>,
+    cx: &App,
+    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
+) -> futures::channel::oneshot::Receiver<anyhow::Result<()>> {
+    SettingsStore::global(cx).update_settings_file_with_completion(fs, update)
 }
