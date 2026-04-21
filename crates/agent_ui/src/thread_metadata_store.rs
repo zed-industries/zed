@@ -1176,7 +1176,9 @@ impl ThreadMetadataStore {
             .and_then(|t| t.created_at)
             .unwrap_or_else(|| updated_at);
 
-        let interacted_at = existing_thread.and_then(|t| t.interacted_at);
+        let interacted_at = existing_thread
+            .map(|t| t.interacted_at)
+            .unwrap_or(Some(updated_at));
 
         let agent_id = thread_ref.connection().agent_id();
 

@@ -1,5 +1,6 @@
 use ai_onboarding::YoungAccountBanner;
 use anyhow::Result;
+use client::Status;
 use client::{Client, RefreshLlmTokenListener, UserStore, global_llm_token, zed_urls};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::OrganizationId;
@@ -249,11 +250,21 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn is_authenticated(&self, cx: &App) -> bool {
         let state = self.state.read(cx);
-        !state.is_signed_out(cx)
+        let status = *state.client.status().borrow();
+        matches!(status, Status::Authenticated | Status::Connected { .. })
     }
 
-    fn authenticate(&self, _cx: &mut App) -> Task<Result<(), AuthenticateError>> {
-        Task::ready(Ok(()))
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        let mut status = self.state.read(cx).client.status();
+        if !status.borrow().is_signing_in() {
+            return Task::ready(Ok(()));
+        }
+        cx.background_spawn(async move {
+            while status.borrow().is_signing_in() {
+                status.next().await;
+            }
+            Ok(())
+        })
     }
 
     fn configuration_view(
@@ -275,6 +286,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 struct ZedAiConfiguration {
     is_connected: bool,
     plan: Option<Plan>,
+    is_zed_model_provider_enabled: bool,
     eligible_for_trial: bool,
     account_too_young: bool,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
@@ -296,7 +308,11 @@ impl RenderOnce for ZedAiConfiguration {
                 true,
             ),
             Some(Plan::ZedBusiness) => (
-                "You have access to Zed's hosted models through your Organization.",
+                if self.is_zed_model_provider_enabled {
+                    "You have access to Zed's hosted models through your organization."
+                } else {
+                    "Zed's hosted models are disabled by your organization's configuration."
+                },
                 true,
             ),
             Some(Plan::ZedFree) | None => (
@@ -390,9 +406,14 @@ impl Render for ConfigurationView {
         let state = self.state.read(cx);
         let user_store = state.user_store.read(cx);
 
+        let is_zed_model_provider_enabled = user_store
+            .current_organization_configuration()
+            .map_or(true, |config| config.is_zed_model_provider_enabled);
+
         ZedAiConfiguration {
             is_connected: !state.is_signed_out(cx),
             plan: user_store.plan(),
+            is_zed_model_provider_enabled,
             eligible_for_trial: user_store.trial_started_at().is_none(),
             account_too_young: user_store.account_too_young(),
             sign_in_callback: self.sign_in_callback.clone(),
@@ -414,51 +435,110 @@ impl Component for ZedAiConfiguration {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        fn configuration(
-            is_connected: bool,
+        struct PreviewConfiguration {
             plan: Option<Plan>,
+            is_connected: bool,
+            is_zed_model_provider_enabled: bool,
             eligible_for_trial: bool,
-            account_too_young: bool,
-        ) -> AnyElement {
+        }
+
+        let configuration = |config: PreviewConfiguration| -> AnyElement {
             ZedAiConfiguration {
-                is_connected,
-                plan,
-                eligible_for_trial,
-                account_too_young,
+                is_connected: config.is_connected,
+                plan: config.plan,
+                is_zed_model_provider_enabled: config.is_zed_model_provider_enabled,
+                eligible_for_trial: config.eligible_for_trial,
+                account_too_young: false,
                 sign_in_callback: Arc::new(|_, _| {}),
             }
             .into_any_element()
-        }
+        };
 
         Some(
             v_flex()
                 .p_4()
                 .gap_4()
                 .children(vec![
-                    single_example("Not connected", configuration(false, None, false, false)),
+                    single_example(
+                        "Not connected",
+                        configuration(PreviewConfiguration {
+                            plan: None,
+                            is_connected: false,
+                            is_zed_model_provider_enabled: true,
+                            eligible_for_trial: false,
+                        }),
+                    ),
                     single_example(
                         "Accept Terms of Service",
-                        configuration(true, None, true, false),
+                        configuration(PreviewConfiguration {
+                            plan: None,
+                            is_connected: true,
+                            is_zed_model_provider_enabled: true,
+                            eligible_for_trial: true,
+                        }),
                     ),
                     single_example(
                         "No Plan - Not eligible for trial",
-                        configuration(true, None, false, false),
+                        configuration(PreviewConfiguration {
+                            plan: None,
+                            is_connected: true,
+                            is_zed_model_provider_enabled: true,
+                            eligible_for_trial: false,
+                        }),
                     ),
                     single_example(
                         "No Plan - Eligible for trial",
-                        configuration(true, None, true, false),
+                        configuration(PreviewConfiguration {
+                            plan: None,
+                            is_connected: true,
+                            is_zed_model_provider_enabled: true,
+                            eligible_for_trial: true,
+                        }),
                     ),
                     single_example(
                         "Free Plan",
-                        configuration(true, Some(Plan::ZedFree), true, false),
+                        configuration(PreviewConfiguration {
+                            plan: Some(Plan::ZedFree),
+                            is_connected: true,
+                            is_zed_model_provider_enabled: true,
+                            eligible_for_trial: true,
+                        }),
                     ),
                     single_example(
                         "Zed Pro Trial Plan",
-                        configuration(true, Some(Plan::ZedProTrial), true, false),
+                        configuration(PreviewConfiguration {
+                            plan: Some(Plan::ZedProTrial),
+                            is_connected: true,
+                            is_zed_model_provider_enabled: true,
+                            eligible_for_trial: true,
+                        }),
                     ),
                     single_example(
                         "Zed Pro Plan",
-                        configuration(true, Some(Plan::ZedPro), true, false),
+                        configuration(PreviewConfiguration {
+                            plan: Some(Plan::ZedPro),
+                            is_connected: true,
+                            is_zed_model_provider_enabled: true,
+                            eligible_for_trial: true,
+                        }),
+                    ),
+                    single_example(
+                        "Business Plan - Zed models enabled",
+                        configuration(PreviewConfiguration {
+                            plan: Some(Plan::ZedBusiness),
+                            is_connected: true,
+                            is_zed_model_provider_enabled: true,
+                            eligible_for_trial: false,
+                        }),
+                    ),
+                    single_example(
+                        "Business Plan - Zed models disabled",
+                        configuration(PreviewConfiguration {
+                            plan: Some(Plan::ZedBusiness),
+                            is_connected: true,
+                            is_zed_model_provider_enabled: false,
+                            eligible_for_trial: false,
+                        }),
                     ),
                 ])
                 .into_any_element(),

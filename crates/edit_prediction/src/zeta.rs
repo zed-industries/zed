@@ -102,7 +102,6 @@ pub fn request_prediction_with_zeta(
         edits: Vec<(Range<Anchor>, Arc<str>)>,
         cursor_position: Option<PredictedCursorPosition>,
         editable_range_in_buffer: Range<usize>,
-        model_version: Option<String>,
     }
 
     let request_task = cx.background_spawn({
@@ -305,7 +304,7 @@ pub fn request_prediction_with_zeta(
                 cursor_offset_in_new_editable_region: cursor_offset_in_output,
             }) = output
             else {
-                return Ok((Some((request_id, None)), None));
+                return Ok((Some((request_id, None, model_version)), None));
             };
 
             let editable_range_in_buffer = editable_range_in_excerpt.start
@@ -343,26 +342,23 @@ pub fn request_prediction_with_zeta(
                 &snapshot,
             );
 
-            anyhow::Ok((
-                Some((
-                    request_id,
-                    Some(Prediction {
-                        prompt_input,
-                        buffer,
-                        snapshot: snapshot.clone(),
-                        edits,
-                        cursor_position,
-                        editable_range_in_buffer,
-                        model_version,
-                    }),
-                )),
-                usage,
-            ))
+            let prediction = Some(Prediction {
+                prompt_input,
+                buffer,
+                snapshot: snapshot.clone(),
+                edits,
+                cursor_position,
+                editable_range_in_buffer,
+            });
+
+            anyhow::Ok((Some((request_id, prediction, model_version)), usage))
         }
     });
 
     cx.spawn(async move |this, cx| {
-        let Some((id, prediction)) = handle_api_response(&this, request_task.await, cx)? else {
+        let Some((id, prediction, model_version)) =
+            handle_api_response(&this, request_task.await, cx)?
+        else {
             return Ok(None);
         };
         let request_duration = cx.background_executor().now() - request_start;
@@ -374,13 +370,14 @@ pub fn request_prediction_with_zeta(
             edits,
             cursor_position,
             editable_range_in_buffer,
-            model_version,
+            ..
         }) = prediction
         else {
             return Ok(Some(EditPredictionResult {
                 id,
-                e2e_latency: request_duration,
                 prediction: Err(EditPredictionRejectReason::Empty),
+                model_version,
+                e2e_latency: request_duration,
             }));
         };
 

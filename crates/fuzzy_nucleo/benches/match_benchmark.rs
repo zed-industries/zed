@@ -1,5 +1,6 @@
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use fuzzy::CharBag;
+use std::sync::atomic::AtomicBool;
 use util::{paths::PathStyle, rel_path::RelPath};
 
 const DIRS: &[&str] = &[
@@ -129,6 +130,92 @@ fn generate_queries(count: usize) -> (Vec<String>, Vec<String>, Vec<String>) {
     (n_word(1), n_word(2), n_word(4))
 }
 
+fn generate_candidates(count: usize) -> Vec<fuzzy_nucleo::StringMatchCandidate> {
+    (0..count)
+        .map(|id| {
+            let dir = DIRS[id % DIRS.len()];
+            let file = FILENAMES[id / DIRS.len() % FILENAMES.len()];
+            fuzzy_nucleo::StringMatchCandidate::new(id, &format!("{dir}/{file}"))
+        })
+        .collect()
+}
+
+fn to_fuzzy_candidates(
+    candidates: &[fuzzy_nucleo::StringMatchCandidate],
+) -> Vec<fuzzy::StringMatchCandidate> {
+    candidates
+        .iter()
+        .map(|c| fuzzy::StringMatchCandidate::new(c.id, c.string.as_ref()))
+        .collect()
+}
+
+fn bench_string_matching(criterion: &mut Criterion) {
+    let cancel = AtomicBool::new(false);
+
+    let dispatcher = std::sync::Arc::new(gpui::TestDispatcher::new(0));
+    let background_executor = gpui::BackgroundExecutor::new(dispatcher.clone());
+    let foreground_executor = gpui::ForegroundExecutor::new(dispatcher);
+
+    let sizes = [100, 1000, 10_000];
+    let query_count = 200;
+    let (q1, q2, q4) = generate_queries(query_count);
+
+    for (label, queries) in [("1-word", &q1), ("2-word", &q2), ("4-word", &q4)] {
+        let mut group = criterion.benchmark_group(label);
+        for size in sizes {
+            let candidates = generate_candidates(size);
+            let fuzzy_candidates = to_fuzzy_candidates(&candidates);
+
+            let mut query_idx = 0usize;
+            group.bench_function(BenchmarkId::new("nucleo", size), |b| {
+                b.iter_batched(
+                    || {
+                        let query = queries[query_idx % queries.len()].as_str();
+                        query_idx += 1;
+                        query
+                    },
+                    |query| {
+                        foreground_executor.block_on(fuzzy_nucleo::match_strings_async(
+                            &candidates,
+                            query,
+                            fuzzy_nucleo::Case::Ignore,
+                            fuzzy_nucleo::LengthPenalty::On,
+                            size,
+                            &cancel,
+                            background_executor.clone(),
+                        ))
+                    },
+                    BatchSize::SmallInput,
+                )
+            });
+
+            let mut query_idx = 0usize;
+            group.bench_function(BenchmarkId::new("fuzzy", size), |b| {
+                b.iter_batched(
+                    || {
+                        let query = queries[query_idx % queries.len()].as_str();
+                        query_idx += 1;
+                        query
+                    },
+                    |query| {
+                        foreground_executor.block_on(fuzzy::match_strings(
+                            &fuzzy_candidates,
+                            query,
+                            false,
+                            true,
+                            size,
+                            &cancel,
+                            background_executor.clone(),
+                        ))
+                    },
+                    BatchSize::SmallInput,
+                )
+            });
+        }
+        group.finish();
+    }
+}
+
 fn generate_path_strings(count: usize) -> &'static [String] {
     let paths: Box<[String]> = (0..count)
         .map(|id| {
@@ -249,5 +336,5 @@ fn bench_path_matching(criterion: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, bench_path_matching);
+criterion_group!(benches, bench_string_matching, bench_path_matching);
 criterion_main!(benches);
