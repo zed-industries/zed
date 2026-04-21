@@ -290,60 +290,64 @@ impl Render for Onboarding {
             }))
             .child(
                 div()
-                    .max_w(Rems(48.0))
                     .size_full()
-                    .mx_auto()
                     .child(
-                        v_flex()
-                            .id("page-content")
-                            .m_auto()
-                            .p_12()
+                        div()
+                            .max_w(Rems(48.0))
                             .size_full()
-                            .max_w_full()
-                            .min_w_0()
-                            .gap_6()
-                            .overflow_y_scroll()
+                            .mx_auto()
                             .child(
-                                h_flex()
-                                    .w_full()
-                                    .gap_4()
-                                    .justify_between()
+                                v_flex()
+                                    .id("page-content")
+                                    .m_auto()
+                                    .p_12()
+                                    .size_full()
+                                    .max_w_full()
+                                    .min_w_0()
+                                    .gap_6()
+                                    .overflow_y_scroll()
                                     .child(
                                         h_flex()
+                                            .w_full()
                                             .gap_4()
-                                            .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
+                                            .justify_between()
                                             .child(
-                                                v_flex()
+                                                h_flex()
+                                                    .gap_4()
+                                                    .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
                                                     .child(
-                                                        Headline::new("Welcome to Zed")
-                                                            .size(HeadlineSize::Small),
-                                                    )
-                                                    .child(
-                                                        Label::new("The editor for what's next")
-                                                            .color(Color::Muted)
-                                                            .size(LabelSize::Small)
-                                                            .italic(),
+                                                        v_flex()
+                                                            .child(
+                                                                Headline::new("Welcome to Zed")
+                                                                    .size(HeadlineSize::Small),
+                                                            )
+                                                            .child(
+                                                                Label::new("The editor for what's next")
+                                                                    .color(Color::Muted)
+                                                                    .size(LabelSize::Small)
+                                                                    .italic(),
+                                                            ),
                                                     ),
-                                            ),
+                                            )
+                                            .child({
+                                                Button::new("finish_setup", "Finish Setup")
+                                                    .style(ButtonStyle::Filled)
+                                                    .size(ButtonSize::Medium)
+                                                    .width(rems_from_px(200.))
+                                                    .key_binding(KeyBinding::for_action_in(
+                                                        &Finish,
+                                                        &self.focus_handle,
+                                                        cx,
+                                                    ))
+                                                    .on_click(|_, window, cx| {
+                                                        window.dispatch_action(Finish.boxed_clone(), cx);
+                                                    })
+                                            }),
                                     )
-                                    .child({
-                                        Button::new("finish_setup", "Finish Setup")
-                                            .style(ButtonStyle::Filled)
-                                            .size(ButtonSize::Medium)
-                                            .width(rems_from_px(200.))
-                                            .key_binding(KeyBinding::for_action_in(
-                                                &Finish,
-                                                &self.focus_handle,
-                                                cx,
-                                            ))
-                                            .on_click(|_, window, cx| {
-                                                window.dispatch_action(Finish.boxed_clone(), cx);
-                                            })
-                                    }),
-                            )
-                            .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
-                            .child(self.render_page(cx))
-                            .track_scroll(&self.scroll_handle),
+                                    .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
+                                    .child(self.render_page(cx))
+                                    .track_scroll(&self.scroll_handle),
+                            ),
                     )
                     .vertical_scrollbar_for(&self.scroll_handle, window, cx),
             )
