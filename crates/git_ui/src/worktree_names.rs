@@ -54,14 +54,14 @@ const NOUNS: &[&str] = &[
     "vole", "walrus", "warbler", "willow", "wolf", "wren", "yew", "zenith",
 ];
 
-/// Generates a branch name in `"adjective-noun"` format (e.g. `"swift-falcon"`).
+/// Generates a worktree name in `"adjective-noun"` format (e.g. `"swift-falcon"`).
 ///
-/// Tries up to 100 random combinations, skipping any name that already appears
-/// in `existing_branches`. Returns `None` if no unused name is found.
-pub fn generate_branch_name(existing_branches: &[&str], rng: &mut impl Rng) -> Option<String> {
-    let existing: HashSet<&str> = existing_branches.iter().copied().collect();
+/// Tries up to 10 random combinations, skipping any name that already appears
+/// in `existing_names`. Returns `None` if no unused name is found.
+pub fn generate_worktree_name(existing_names: &[&str], rng: &mut impl Rng) -> Option<String> {
+    let existing: HashSet<&str> = existing_names.iter().copied().collect();
 
-    for _ in 0..100 {
+    for _ in 0..10 {
         let adjective = ADJECTIVES[rng.random_range(0..ADJECTIVES.len())];
         let noun = NOUNS[rng.random_range(0..NOUNS.len())];
         let name = format!("{adjective}-{noun}");
@@ -80,8 +80,8 @@ mod tests {
     use rand::rngs::StdRng;
 
     #[gpui::test(iterations = 10)]
-    fn test_generate_branch_name_format(mut rng: StdRng) {
-        let name = generate_branch_name(&[], &mut rng).unwrap();
+    fn test_generate_worktree_name_format(mut rng: StdRng) {
+        let name = generate_worktree_name(&[], &mut rng).unwrap();
         let (adjective, noun) = name.split_once('-').expect("name should contain a hyphen");
         assert!(
             ADJECTIVES.contains(&adjective),
@@ -91,9 +91,9 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_generate_branch_name_avoids_existing(mut rng: StdRng) {
+    fn test_generate_worktree_name_avoids_existing(mut rng: StdRng) {
         let existing = &["swift-falcon", "calm-river", "bold-cedar"];
-        let name = generate_branch_name(existing, &mut rng).unwrap();
+        let name = generate_worktree_name(existing, &mut rng).unwrap();
         for &branch in existing {
             assert_ne!(
                 name, branch,
@@ -103,13 +103,13 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_generate_branch_name_returns_none_when_stuck(mut rng: StdRng) {
+    fn test_generate_worktree_name_returns_none_when_stuck(mut rng: StdRng) {
         let all_names: Vec<String> = ADJECTIVES
             .iter()
             .flat_map(|adj| NOUNS.iter().map(move |noun| format!("{adj}-{noun}")))
             .collect();
         let refs: Vec<&str> = all_names.iter().map(|s| s.as_str()).collect();
-        let result = generate_branch_name(&refs, &mut rng);
+        let result = generate_worktree_name(&refs, &mut rng);
         assert!(result.is_none());
     }
 

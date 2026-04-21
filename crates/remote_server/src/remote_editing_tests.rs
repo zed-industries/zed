@@ -1566,6 +1566,7 @@ async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &m
             ref_name: Some("refs/heads/feature-branch".into()),
             sha: "abc123".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -1619,6 +1620,98 @@ async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &m
         worktree.snapshot().root_repo_common_dir().cloned()
     });
     assert_eq!(common_dir, None);
+}
+
+#[gpui::test]
+async fn test_remote_archive_git_operations_are_supported(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/project",
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+    fs.set_head_for_repo(
+        Path::new("/project/.git"),
+        &[("file.txt", "content".into())],
+        "head-sha",
+    );
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(Path::new("/project"), true, cx)
+        })
+        .await
+        .expect("should open remote worktree");
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("remote project should have an active repository")
+    });
+
+    let head_sha = cx
+        .update(|cx| repository.update(cx, |repository, _| repository.head_sha()))
+        .await
+        .expect("head_sha request should complete")
+        .expect("head_sha should succeed")
+        .expect("HEAD should exist");
+
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        repository.update(cx, |repository, _| {
+            repository.update_ref("refs/zed-tests/archive-checkpoint".to_string(), head_sha)
+        })
+    })
+    .await
+    .expect("update_ref request should complete")
+    .expect("update_ref should succeed for remote repository");
+
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        repository.update(cx, |repository, _| {
+            repository.delete_ref("refs/zed-tests/archive-checkpoint".to_string())
+        })
+    })
+    .await
+    .expect("delete_ref request should complete")
+    .expect("delete_ref should succeed for remote repository");
+
+    cx.run_until_parked();
+
+    cx.update(|cx| repository.update(cx, |repository, _| repository.repair_worktrees()))
+        .await
+        .expect("repair_worktrees request should complete")
+        .expect("repair_worktrees should succeed for remote repository");
+
+    cx.run_until_parked();
+
+    let (staged_commit_sha, unstaged_commit_sha) = cx
+        .update(|cx| repository.update(cx, |repository, _| repository.create_archive_checkpoint()))
+        .await
+        .expect("create_archive_checkpoint request should complete")
+        .expect("create_archive_checkpoint should succeed for remote repository");
+
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        repository.update(cx, |repository, _| {
+            repository.restore_archive_checkpoint(staged_commit_sha, unstaged_commit_sha)
+        })
+    })
+    .await
+    .expect("restore_archive_checkpoint request should complete")
+    .expect("restore_archive_checkpoint should succeed for remote repository");
 }
 
 #[gpui::test]

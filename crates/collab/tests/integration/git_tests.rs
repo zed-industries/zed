@@ -514,6 +514,7 @@ async fn test_linked_worktrees_sync(
             ref_name: Some("refs/heads/feature-branch".into()),
             sha: "bbb222".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -525,6 +526,7 @@ async fn test_linked_worktrees_sync(
             ref_name: Some("refs/heads/bugfix-branch".into()),
             sha: "ccc333".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -597,6 +599,7 @@ async fn test_linked_worktrees_sync(
                 ref_name: Some("refs/heads/hotfix-branch".into()),
                 sha: "ddd444".into(),
                 is_main: false,
+                is_bare: false,
             },
         )
         .await;

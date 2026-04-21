@@ -5,6 +5,7 @@ use cloud_api_client::websocket_protocol::MessageToClient;
 use cloud_api_client::{
     GetAuthenticatedUserResponse, KnownOrUnknown, Organization, OrganizationId, Plan, PlanInfo,
 };
+use cloud_api_types::OrganizationConfiguration;
 use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
@@ -117,6 +118,7 @@ pub struct UserStore {
     current_organization: Option<Arc<Organization>>,
     organizations: Vec<Arc<Organization>>,
     plans_by_organization: HashMap<OrganizationId, Plan>,
+    configuration_by_organization: HashMap<OrganizationId, OrganizationConfiguration>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -193,6 +195,7 @@ impl UserStore {
             current_organization: None,
             organizations: Vec::new(),
             plans_by_organization: HashMap::default(),
+            configuration_by_organization: HashMap::default(),
             plan_info: None,
             edit_prediction_usage: None,
             contacts: Default::default(),
@@ -730,6 +733,13 @@ impl UserStore {
         self.plans_by_organization.get(organization_id).copied()
     }
 
+    pub fn current_organization_configuration(&self) -> Option<&OrganizationConfiguration> {
+        let current_organization = self.current_organization.as_ref()?;
+
+        self.configuration_by_organization
+            .get(&current_organization.id)
+    }
+
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
@@ -745,10 +755,8 @@ impl UserStore {
             };
         }
 
-        if let Some(organization) = &self.current_organization
-            && let Some(plan) = self.plan_for_organization(&organization.id)
-        {
-            return Some(plan);
+        if let Some(organization) = &self.current_organization {
+            return self.plan_for_organization(&organization.id);
         }
 
         self.plan_info.as_ref().map(|info| info.plan())
@@ -774,7 +782,16 @@ impl UserStore {
     }
 
     /// Returns whether the user's account is too new to use the service.
+    ///
+    /// This only applies when operating under the user's personal organization,
+    /// not a business organization.
     pub fn account_too_young(&self) -> bool {
+        if let Some(org) = &self.current_organization {
+            if !org.is_personal {
+                return false;
+            }
+        }
+
         self.plan_info
             .as_ref()
             .map(|plan| plan.is_account_too_young)
@@ -865,6 +882,8 @@ impl UserStore {
                 (organization_id, plan)
             })
             .collect();
+        self.configuration_by_organization =
+            response.configuration_by_organization.into_iter().collect();
 
         self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
             limit: response.plan.usage.edit_predictions.limit,
