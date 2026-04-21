@@ -423,10 +423,15 @@ impl BedrockLanguageModelProvider {
         }
     }
 
-    fn create_language_model(&self, model: bedrock::Model) -> Arc<dyn LanguageModel> {
+    fn create_language_model(
+        &self,
+        model: bedrock::Model,
+        allow_extended_context: bool,
+    ) -> Arc<dyn LanguageModel> {
         Arc::new(BedrockModel {
             id: LanguageModelId::from(model.id().to_string()),
             model,
+            allow_extended_context,
             http_client: self.http_client.clone(),
             handle: self.handle.clone(),
             state: self.state.clone(),
@@ -449,13 +454,18 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiBedrock)
     }
 
-    fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(bedrock::Model::default()))
+    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let allow_extended_context = self.state.read(cx).get_allow_extended_context();
+        Some(self.create_language_model(bedrock::Model::default(), allow_extended_context))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let region = self.state.read(cx).get_region();
-        Some(self.create_language_model(bedrock::Model::default_fast(region.as_str())))
+        let allow_extended_context = self.state.read(cx).get_allow_extended_context();
+        Some(self.create_language_model(
+            bedrock::Model::default_fast(region.as_str()),
+            allow_extended_context,
+        ))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -491,9 +501,10 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
             );
         }
 
+        let allow_extended_context = self.state.read(cx).get_allow_extended_context();
         models
             .into_values()
-            .map(|model| self.create_language_model(model))
+            .map(|model| self.create_language_model(model, allow_extended_context))
             .collect()
     }
 
@@ -531,6 +542,7 @@ impl LanguageModelProviderState for BedrockLanguageModelProvider {
 struct BedrockModel {
     id: LanguageModelId,
     model: Model,
+    allow_extended_context: bool,
     http_client: AwsHttpClient,
     handle: tokio::runtime::Handle,
     client: OnceCell<BedrockClient>,
@@ -699,7 +711,11 @@ impl LanguageModel for BedrockModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
+        if self.allow_extended_context && self.model.supports_extended_context() {
+            1_000_000
+        } else {
+            self.model.max_token_count()
+        }
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
