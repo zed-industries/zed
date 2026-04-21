@@ -165,14 +165,14 @@ where
     };
 
     let num_cpus = executor.num_cpus().min(candidates.len());
-    let segment_size = candidates.len().div_ceil(num_cpus);
-    let num_segments = candidates.len().div_ceil(segment_size);
-    let mut segment_results = (0..num_segments)
+    let base_size = candidates.len() / num_cpus;
+    let remainder = candidates.len() % num_cpus;
+    let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
 
     let config = nucleo::Config::DEFAULT;
-    let mut matchers = matcher::get_matchers(num_segments, config);
+    let mut matchers = matcher::get_matchers(num_cpus, config);
 
     executor
         .scoped(|scope| {
@@ -183,8 +183,9 @@ where
             {
                 let query = &query;
                 scope.spawn(async move {
-                    let segment_start = segment_idx * segment_size;
-                    let segment_end = (segment_start + segment_size).min(candidates.len());
+                    let segment_start = segment_idx * base_size + segment_idx.min(remainder);
+                    let segment_end =
+                        (segment_idx + 1) * base_size + (segment_idx + 1).min(remainder);
 
                     match_string_helper(
                         &candidates[segment_start..segment_end],
