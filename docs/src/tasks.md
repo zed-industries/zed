@@ -232,7 +232,7 @@ This could be useful for launching a terminal application that you want to use i
 
 ## Hooks
 
-In addition to being spawned manually, tasks can be configured to run automatically in response to certain Zed events by adding one or more hooks to the `hooks` field on a task template. A task with a matching hook will be resolved and spawned when that event fires.
+In addition to being spawned manually, tasks can be configured to run automatically in response to certain Zed events by adding a hook to the `hooks` field on a task template. A task with a matching hook will be resolved and spawned when that event fires.
 
 The following hooks are currently supported:
 
