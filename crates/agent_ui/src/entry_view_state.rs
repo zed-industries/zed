@@ -1,6 +1,5 @@
 use std::ops::Range;
 
-use super::thread_history::ThreadHistory;
 use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::ThreadStore;
 use agent_client_protocol::ToolCallId;
@@ -26,7 +25,6 @@ pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    history: Option<WeakEntity<ThreadHistory>>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     session_capabilities: SharedSessionCapabilities,
@@ -38,7 +36,6 @@ impl EntryViewState {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: Option<WeakEntity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         session_capabilities: SharedSessionCapabilities,
         agent_id: AgentId,
@@ -47,7 +44,6 @@ impl EntryViewState {
             workspace,
             project,
             thread_store,
-            history,
             prompt_store,
             entries: Vec::new(),
             session_capabilities,
@@ -90,7 +86,6 @@ impl EntryViewState {
                             self.workspace.clone(),
                             self.project.clone(),
                             self.thread_store.clone(),
-                            self.history.clone(),
                             self.prompt_store.clone(),
                             self.session_capabilities.clone(),
                             self.agent_id.clone(),
@@ -543,14 +538,12 @@ mod tests {
         });
 
         let thread_store = None;
-        let history: Option<gpui::WeakEntity<crate::ThreadHistory>> = None;
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.downgrade(),
                 project.downgrade(),
                 thread_store,
-                history,
                 None,
                 Arc::new(RwLock::new(SessionCapabilities::default())),
                 "Test Agent".into(),

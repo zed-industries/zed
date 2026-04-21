@@ -74,7 +74,6 @@ use zed_actions::assistant::OpenRulesLibrary;
 
 use super::config_options::ConfigOptionsView;
 use super::entry_view_state::EntryViewState;
-use super::thread_history::ThreadHistory;
 use crate::ModeSelector;
 use crate::ModelSelectorPopover;
 use crate::agent_connection_store::{
@@ -556,7 +555,6 @@ pub struct ConnectedServerState {
     active_id: Option<acp::SessionId>,
     pub(crate) threads: HashMap<acp::SessionId, Entity<ThreadView>>,
     connection: Rc<dyn AgentConnection>,
-    history: Option<Entity<ThreadHistory>>,
     conversation: Entity<Conversation>,
     _connection_entry_subscription: Subscription,
 }
@@ -791,11 +789,8 @@ impl ConversationView {
         };
 
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let (connection, history) = match connect_result.await {
-                Ok(AgentConnectedState {
-                    connection,
-                    history,
-                }) => (connection, history),
+            let connection = match connect_result.await {
+                Ok(AgentConnectedState { connection, .. }) => connection,
                 Err(err) => {
                     this.update_in(cx, |this, window, cx| {
                         this.handle_load_error(err, window, cx);
@@ -891,7 +886,6 @@ impl ConversationView {
                             conversation.clone(),
                             resumed_without_history,
                             initial_content,
-                            history.clone(),
                             window,
                             cx,
                         );
@@ -912,7 +906,6 @@ impl ConversationView {
                                 active_id: Some(root_session_id.clone()),
                                 threads: HashMap::from_iter([(root_session_id, current)]),
                                 conversation,
-                                history,
                                 _connection_entry_subscription: connection_entry_subscription,
                             }),
                             cx,
@@ -945,7 +938,6 @@ impl ConversationView {
         conversation: Entity<Conversation>,
         resumed_without_history: bool,
         initial_content: Option<AgentInitialContent>,
-        history: Option<Entity<ThreadHistory>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ThreadView> {
@@ -962,7 +954,6 @@ impl ConversationView {
                 self.workspace.clone(),
                 self.project.downgrade(),
                 self.thread_store.clone(),
-                history.as_ref().map(|h| h.downgrade()),
                 self.prompt_store.clone(),
                 session_capabilities.clone(),
                 self.agent.agent_id(),
@@ -1130,7 +1121,6 @@ impl ConversationView {
                 resumed_without_history,
                 self.project.downgrade(),
                 self.thread_store.clone(),
-                history,
                 self.prompt_store.clone(),
                 initial_content,
                 subscriptions,
@@ -1212,7 +1202,6 @@ impl ConversationView {
                         threads: HashMap::default(),
                         connection,
                         conversation: cx.new(|_cx| Conversation::default()),
-                        history: None,
                         _connection_entry_subscription: Subscription::new(|| {}),
                     }),
                     cx,
@@ -1787,9 +1776,9 @@ impl ConversationView {
         cx.spawn_in(window, async move |this, cx| {
             let subagent_thread = subagent_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
-                let Some((conversation, history)) = this
+                let Some(conversation) = this
                     .as_connected()
-                    .map(|connected| (connected.conversation.clone(), connected.history.clone()))
+                    .map(|connected| connected.conversation.clone())
                 else {
                     return;
                 };
@@ -1797,15 +1786,8 @@ impl ConversationView {
                 conversation.update(cx, |conversation, cx| {
                     conversation.register_thread(subagent_thread.clone(), cx);
                 });
-                let view = this.new_thread_view(
-                    subagent_thread,
-                    conversation,
-                    false,
-                    None,
-                    history,
-                    window,
-                    cx,
-                );
+                let view =
+                    this.new_thread_view(subagent_thread, conversation, false, None, window, cx);
                 let Some(connected) = this.as_connected_mut() else {
                     return;
                 };
@@ -2264,7 +2246,6 @@ impl ConversationView {
         let Some(connected) = self.as_connected() else {
             return;
         };
-        let history = connected.history.as_ref().map(|h| h.downgrade());
         let Some(thread) = connected.active_view() else {
             return;
         };
@@ -2305,7 +2286,6 @@ impl ConversationView {
                     workspace.clone(),
                     project.clone(),
                     None,
-                    history.clone(),
                     None,
                     session_capabilities.clone(),
                     agent_name.clone(),
@@ -2709,10 +2689,6 @@ impl ConversationView {
             Self::handle_auth_required(this, AuthRequired::new(), agent_id, connection, window, cx);
         })
     }
-
-    pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
-        self.as_connected().and_then(|c| c.history.as_ref())
-    }
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
@@ -2862,9 +2838,7 @@ fn plan_label_markdown_style(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use acp_thread::{
-        AgentSessionList, AgentSessionListRequest, AgentSessionListResponse, StubAgentConnection,
-    };
+    use acp_thread::StubAgentConnection;
     use action_log::ActionLog;
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
     use agent_client_protocol::SessionId;
@@ -3027,66 +3001,6 @@ pub(crate) mod tests {
             1,
             "ConversationView should close the ACP session after a thread exit"
         );
-    }
-
-    #[gpui::test]
-    async fn test_recent_history_refreshes_when_history_cache_updated(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let session_a = AgentSessionInfo::new(SessionId::new("session-a"));
-        let session_b = AgentSessionInfo::new(SessionId::new("session-b"));
-
-        // Use a connection that provides a session list so ThreadHistory is created
-        let (conversation_view, history, cx) = setup_thread_view_with_history(
-            StubAgentServer::new(SessionHistoryConnection::new(vec![session_a.clone()])),
-            cx,
-        )
-        .await;
-
-        // Initially has session_a from the connection's session list
-        active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
-            assert_eq!(view.recent_history_entries.len(), 1);
-            assert_eq!(
-                view.recent_history_entries[0].session_id,
-                session_a.session_id
-            );
-        });
-
-        // Swap to a different session list
-        let list_b: Rc<dyn AgentSessionList> =
-            Rc::new(StubSessionList::new(vec![session_b.clone()]));
-        history.update(cx, |history, cx| {
-            history.set_session_list(list_b, cx);
-        });
-        cx.run_until_parked();
-
-        active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
-            assert_eq!(view.recent_history_entries.len(), 1);
-            assert_eq!(
-                view.recent_history_entries[0].session_id,
-                session_b.session_id
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_new_thread_creation_triggers_session_list_refresh(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let session = AgentSessionInfo::new(SessionId::new("history-session"));
-        let (conversation_view, _history, cx) = setup_thread_view_with_history(
-            StubAgentServer::new(SessionHistoryConnection::new(vec![session.clone()])),
-            cx,
-        )
-        .await;
-
-        active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
-            assert_eq!(view.recent_history_entries.len(), 1);
-            assert_eq!(
-                view.recent_history_entries[0].session_id,
-                session.session_id
-            );
-        });
     }
 
     #[gpui::test]
@@ -4040,22 +3954,7 @@ pub(crate) mod tests {
         agent: impl AgentServer + 'static,
         cx: &mut TestAppContext,
     ) -> (Entity<ConversationView>, &mut VisualTestContext) {
-        let (conversation_view, _history, cx) =
-            setup_conversation_view_with_history_and_initial_content(agent, None, cx).await;
-        (conversation_view, cx)
-    }
-
-    async fn setup_thread_view_with_history(
-        agent: impl AgentServer + 'static,
-        cx: &mut TestAppContext,
-    ) -> (
-        Entity<ConversationView>,
-        Entity<ThreadHistory>,
-        &mut VisualTestContext,
-    ) {
-        let (conversation_view, history, cx) =
-            setup_conversation_view_with_history_and_initial_content(agent, None, cx).await;
-        (conversation_view, history.expect("Missing history"), cx)
+        setup_conversation_view_with_initial_content_opt(agent, None, cx).await
     }
 
     async fn setup_conversation_view_with_initial_content(
@@ -4063,25 +3962,14 @@ pub(crate) mod tests {
         initial_content: AgentInitialContent,
         cx: &mut TestAppContext,
     ) -> (Entity<ConversationView>, &mut VisualTestContext) {
-        let (conversation_view, _history, cx) =
-            setup_conversation_view_with_history_and_initial_content(
-                agent,
-                Some(initial_content),
-                cx,
-            )
-            .await;
-        (conversation_view, cx)
+        setup_conversation_view_with_initial_content_opt(agent, Some(initial_content), cx).await
     }
 
-    async fn setup_conversation_view_with_history_and_initial_content(
+    async fn setup_conversation_view_with_initial_content_opt(
         agent: impl AgentServer + 'static,
         initial_content: Option<AgentInitialContent>,
         cx: &mut TestAppContext,
-    ) -> (
-        Entity<ConversationView>,
-        Option<Entity<ThreadHistory>>,
-        &mut VisualTestContext,
-    ) {
+    ) -> (Entity<ConversationView>, &mut VisualTestContext) {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (multi_workspace, cx) =
@@ -4117,14 +4005,7 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
 
-        let history = cx.update(|_window, cx| {
-            connection_store
-                .read(cx)
-                .entry(&agent_key)
-                .and_then(|e| e.read(cx).history().cloned())
-        });
-
-        (conversation_view, history, cx)
+        (conversation_view, cx)
     }
 
     fn add_to_workspace(conversation_view: Entity<ConversationView>, cx: &mut VisualTestContext) {
@@ -4256,42 +4137,6 @@ pub(crate) mod tests {
         }
     }
 
-    #[derive(Clone)]
-    struct StubSessionList {
-        sessions: Vec<AgentSessionInfo>,
-    }
-
-    impl StubSessionList {
-        fn new(sessions: Vec<AgentSessionInfo>) -> Self {
-            Self { sessions }
-        }
-    }
-
-    impl AgentSessionList for StubSessionList {
-        fn list_sessions(
-            &self,
-            _request: AgentSessionListRequest,
-            _cx: &mut App,
-        ) -> Task<anyhow::Result<AgentSessionListResponse>> {
-            Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
-        }
-
-        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-            self
-        }
-    }
-
-    #[derive(Clone)]
-    struct SessionHistoryConnection {
-        sessions: Vec<AgentSessionInfo>,
-    }
-
-    impl SessionHistoryConnection {
-        fn new(sessions: Vec<AgentSessionInfo>) -> Self {
-            Self { sessions }
-        }
-    }
-
     fn build_test_thread(
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
@@ -4318,67 +4163,6 @@ pub(crate) mod tests {
                 cx,
             )
         })
-    }
-
-    impl AgentConnection for SessionHistoryConnection {
-        fn agent_id(&self) -> AgentId {
-            AgentId::new("history-connection")
-        }
-
-        fn telemetry_id(&self) -> SharedString {
-            "history-connection".into()
-        }
-
-        fn new_session(
-            self: Rc<Self>,
-            project: Entity<Project>,
-            _work_dirs: PathList,
-            cx: &mut App,
-        ) -> Task<anyhow::Result<Entity<AcpThread>>> {
-            let thread = build_test_thread(
-                self,
-                project,
-                "SessionHistoryConnection",
-                SessionId::new("history-session"),
-                cx,
-            );
-            Task::ready(Ok(thread))
-        }
-
-        fn supports_load_session(&self) -> bool {
-            true
-        }
-
-        fn session_list(&self, _cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
-            Some(Rc::new(StubSessionList::new(self.sessions.clone())))
-        }
-
-        fn auth_methods(&self) -> &[acp::AuthMethod] {
-            &[]
-        }
-
-        fn authenticate(
-            &self,
-            _method_id: acp::AuthMethodId,
-            _cx: &mut App,
-        ) -> Task<anyhow::Result<()>> {
-            Task::ready(Ok(()))
-        }
-
-        fn prompt(
-            &self,
-            _id: acp_thread::UserMessageId,
-            _params: acp::PromptRequest,
-            _cx: &mut App,
-        ) -> Task<anyhow::Result<acp::PromptResponse>> {
-            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
-        }
-
-        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
-
-        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-            self
-        }
     }
 
     #[derive(Clone)]

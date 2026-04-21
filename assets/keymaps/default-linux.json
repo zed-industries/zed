@@ -224,7 +224,6 @@
     "context": "AgentPanel",
     "bindings": {
       "ctrl-n": "agent::NewThread",
-      "ctrl-shift-h": "agent::OpenHistory",
       "ctrl-alt-c": "agent::OpenSettings",
       "ctrl-alt-p": "agent::ManageProfiles",
       "ctrl-alt-l": "agent::OpenRulesLibrary",
@@ -234,7 +233,6 @@
       "alt-tab": "agent::CycleFavoriteModels",
       // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Linux under the `AgentPanel` context
       "alt-l": "agent::CycleFavoriteModels",
-      "shift-alt-j": "agent::ToggleNavigationMenu",
       "shift-alt-i": "agent::ToggleOptionsMenu",
       "ctrl-alt-shift-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",

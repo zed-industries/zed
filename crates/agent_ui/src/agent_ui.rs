@@ -27,8 +27,6 @@ mod terminal_codegen;
 mod terminal_inline_assistant;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
-mod thread_history;
-mod thread_history_view;
 mod thread_import;
 pub mod thread_metadata_store;
 pub mod thread_worktree_archive;
@@ -73,8 +71,6 @@ pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
-pub(crate) use thread_history::ThreadHistory;
-pub(crate) use thread_history_view::*;
 pub use thread_import::{
     AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,
@@ -89,8 +85,6 @@ actions!(
     [
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
-        /// Toggles the navigation menu for switching between threads and views.
-        ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
         ToggleOptionsMenu,
         /// Toggles the profile or mode selector for switching between agent profiles.
@@ -101,10 +95,6 @@ actions!(
         CycleFavoriteModels,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
-        /// Removes all thread history.
-        RemoveHistory,
-        /// Opens the conversation history view.
-        OpenHistory,
         /// Adds a context server to the configuration.
         AddContextServer,
         /// Archives the currently selected thread.
