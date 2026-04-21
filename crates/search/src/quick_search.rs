@@ -2431,8 +2431,15 @@ impl PickerDelegate for QuickSearchDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let search_match = self.matches.get(ix)?;
-        let path_style = self.project.read(cx).path_style(cx);
-        let path_str = search_match.path.path.display(path_style).to_string();
+        let path = &search_match.path.path;
+        let file_name = path
+            .file_name()
+            .map(|name| name.to_string())
+            .unwrap_or_default();
+        let directory = path
+            .parent()
+            .map(|parent| parent.as_std_path().to_string_lossy().to_string())
+            .unwrap_or_default();
 
         let original_line = &search_match.line_text;
         let line_text = original_line.trim_start();
@@ -2532,20 +2539,30 @@ impl PickerDelegate for QuickSearchDelegate {
                             h_flex()
                                 .w(relative(0.35))
                                 .flex_none()
-                                .justify_between()
                                 .gap_2()
-                                .text_color(cx.theme().colors().text_muted)
                                 .child(
-                                    div()
+                                    h_flex()
                                         .flex_1()
+                                        .min_w_0()
                                         .overflow_hidden()
-                                        .text_ellipsis()
-                                        .whitespace_nowrap()
-                                        .child(path_str),
+                                        .child(div().flex_none().child(format!("{file_name} ")))
+                                        .when(!directory.is_empty(), |this| {
+                                            this.child(
+                                                div()
+                                                    .min_w_0()
+                                                    .overflow_hidden()
+                                                    .whitespace_nowrap()
+                                                    .text_ellipsis_start()
+                                                    .text_color(cx.theme().colors().text_muted)
+                                                    .child(directory),
+                                            )
+                                        }),
                                 )
                                 .child(
                                     div()
+                                        .flex_none()
                                         .pr_2()
+                                        .text_color(cx.theme().colors().text_muted)
                                         .child(search_match.line_number.to_string()),
                                 ),
                         ),
