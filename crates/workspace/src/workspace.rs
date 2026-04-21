@@ -2090,6 +2090,15 @@ impl Workspace {
                     });
                 })
                 .log_err();
+
+            if open_mode == OpenMode::NewWindow {
+                window
+                    .update(cx, |_, window, _cx| {
+                        window.activate_window();
+                    })
+                    .log_err();
+            }
+
             Ok(OpenResult {
                 window,
                 workspace,
