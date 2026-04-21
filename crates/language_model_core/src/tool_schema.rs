@@ -118,6 +118,15 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             }
         }
 
+        // Ensure that the type field is not an array. This can happen with MCP tool
+        // schemas that use multiple types (e.g. `["string", "number"]` or `["string", "null"]`).
+        if let Some(type_value) = obj.get_mut("type")
+            && let Some(types) = type_value.as_array()
+            && let Some(first_type) = types.first().cloned()
+        {
+            *type_value = first_type;
+        }
+
         if matches!(obj.get("description"), Some(Value::String(_)))
             && !obj.contains_key("type")
             && !(obj.contains_key("anyOf")
@@ -301,6 +310,42 @@ mod tests {
                             { "type": "string" },
                             { "type": "null" }
                         ]
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_transform_array_type_to_single_type() {
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "projectSlugOrId": {
+                    "type": ["string", "number"],
+                    "description": "Project slug or numeric ID"
+                },
+                "optionalName": {
+                    "type": ["string", "null"],
+                    "description": "An optional name"
+                }
+            }
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "projectSlugOrId": {
+                        "type": "string",
+                        "description": "Project slug or numeric ID"
+                    },
+                    "optionalName": {
+                        "type": "string",
+                        "description": "An optional name"
                     }
                 }
             })

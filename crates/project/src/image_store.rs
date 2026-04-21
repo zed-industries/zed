@@ -902,6 +902,7 @@ fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
             image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
             image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
             image::ImageFormat::Ico => gpui::ImageFormat::Ico,
+            image::ImageFormat::Pnm => gpui::ImageFormat::Pnm,
             format => anyhow::bail!("Image format {format:?} not supported"),
         },
         content,

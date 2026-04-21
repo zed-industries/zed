@@ -29,8 +29,8 @@ use editor::{
     movement::{self, FindRange},
 };
 use gpui::{
-    Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, Subscription, Task, WeakEntity, Window, actions,
+    Action, App, AppContext, Axis, Context, Entity, EventEmitter, Focusable, KeyContext,
+    KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{
@@ -247,6 +247,8 @@ actions!(
         PushReplaceWithRegister,
         /// Toggles comments.
         PushToggleComments,
+        /// Toggles block comments.
+        PushToggleBlockComments,
         /// Selects (count) next menu item
         MenuSelectNext,
         /// Selects (count) previous menu item
@@ -768,6 +770,7 @@ impl Vim {
                         Operator::ChangeSurrounds {
                             target: action.target,
                             opening: false,
+                            bracket_anchors: Vec::new(),
                         },
                         window,
                         cx,
@@ -898,6 +901,14 @@ impl Vim {
             Vim::action(editor, cx, |vim, _: &PushToggleComments, window, cx| {
                 vim.push_operator(Operator::ToggleComments, window, cx)
             });
+
+            Vim::action(
+                editor,
+                cx,
+                |vim, _: &PushToggleBlockComments, window, cx| {
+                    vim.push_operator(Operator::ToggleBlockComments, window, cx)
+                },
+            );
 
             Vim::action(editor, cx, |vim, _: &ClearOperators, window, cx| {
                 vim.clear_operator(window, cx)
@@ -1033,8 +1044,17 @@ impl Vim {
     }
 
     pub fn pane(&self, window: &Window, cx: &Context<Self>) -> Option<Entity<Pane>> {
-        self.workspace(window, cx)
-            .map(|workspace| workspace.read(cx).focused_pane(window, cx))
+        let pane = self
+            .workspace(window, cx)
+            .map(|workspace| workspace.read(cx).focused_pane(window, cx))?;
+        // `focused_pane` falls back to the center pane when a dock panel
+        // without its own pane (e.g. the Agent panel) has focus. Guard
+        // against that so vim search/match commands don't steal focus.
+        if pane.read(cx).focus_handle(cx).contains_focused(window, cx) {
+            Some(pane)
+        } else {
+            None
+        }
     }
 
     pub fn enabled(cx: &mut App) -> bool {
@@ -1961,10 +1981,14 @@ impl Vim {
                 }
                 _ => self.clear_operator(window, cx),
             },
-            Some(Operator::ChangeSurrounds { target, opening }) => match self.mode {
+            Some(Operator::ChangeSurrounds {
+                target,
+                opening,
+                bracket_anchors,
+            }) => match self.mode {
                 Mode::Normal => {
                     if let Some(target) = target {
-                        self.change_surrounds(text, target, opening, window, cx);
+                        self.change_surrounds(text, target, opening, bracket_anchors, window, cx);
                         self.clear_operator(window, cx);
                     }
                 }
