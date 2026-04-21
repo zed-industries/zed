@@ -1,5 +1,7 @@
 use gpui::ElementId;
-use ui::{ContextMenu, IconButton, IconName, IconSize, PopoverMenu, Tooltip, prelude::*};
+use ui::{
+    ContextMenu, GradientFade, IconButton, IconName, IconSize, PopoverMenu, Tooltip, prelude::*,
+};
 
 use crate::{
     CsvPreviewView,
@@ -25,18 +27,50 @@ impl CsvPreviewView {
             .applied_sorting
             .is_some_and(|o| o.col_idx == col_idx);
         let always_show_buttons = has_active_filter || has_active_sort;
-        let group_name =
-            SharedString::from(format!("csv-col-header-{}", col_idx.get()));
+        let group_name = SharedString::from(format!("csv-col-header-{}", col_idx.get()));
 
+        let colors = cx.theme().colors();
+        let base_bg = colors.editor_background;
+        let grad_width_hovered = px(100.);
+        let grad_width = if always_show_buttons {
+            grad_width_hovered
+        } else {
+            px(20.)
+        };
         h_flex()
             .group(group_name.clone())
-            .justify_between()
-            .items_center()
+            .relative()
+            .overflow_hidden()
             .w_full()
+            .items_center()
             .font_buffer(cx)
-            .child(div().child(header_text))
+            // Label: flex_1 so it truly fills the full header width.
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .child(header_text),
+            )
+            // Gradient: always present so text gracefully fades before the button area.
+            // GradientFade is absolutely positioned and grows on group hover.
+            .child(
+                GradientFade::new(base_bg, base_bg, base_bg)
+                    .width(grad_width)
+                    .width_hovered(grad_width_hovered)
+                    .right(px(0.))
+                    .gradient_stop(0.8)
+                    .group_name(group_name.clone()),
+            )
+            // Buttons: absolutely positioned so they never shrink the label.
             .child(
                 h_flex()
+                    .absolute()
+                    .right_0()
+                    .top_0()
+                    .h_full()
+                    .items_center()
                     .gap_1()
                     .when(!always_show_buttons, |this| {
                         this.visible_on_hover(group_name)
