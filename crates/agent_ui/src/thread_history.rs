@@ -1,6 +1,6 @@
 use acp_thread::{AgentSessionInfo, AgentSessionList, AgentSessionListRequest, SessionListUpdate};
 use agent_client_protocol as acp;
-use gpui::{App, Task};
+use gpui::Task;
 use std::rc::Rc;
 use ui::prelude::*;
 
@@ -73,10 +73,6 @@ impl ThreadHistory {
                 .ok();
             }
         }));
-    }
-
-    pub(crate) fn refresh_full_history(&mut self, cx: &mut Context<Self>) {
-        self.refresh_sessions(true, cx);
     }
 
     fn apply_info_update(
@@ -178,10 +174,6 @@ impl ThreadHistory {
         });
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.sessions.is_empty()
-    }
-
     pub fn refresh(&mut self, _cx: &mut Context<Self>) {
         self.session_list.notify_refresh();
     }
@@ -195,26 +187,6 @@ impl ThreadHistory {
 
     pub(crate) fn sessions(&self) -> &[AgentSessionInfo] {
         &self.sessions
-    }
-
-    pub(crate) fn get_recent_sessions(&self, limit: usize) -> Vec<AgentSessionInfo> {
-        self.sessions.iter().take(limit).cloned().collect()
-    }
-
-    pub fn supports_delete(&self) -> bool {
-        self.session_list.supports_delete()
-    }
-
-    pub(crate) fn delete_session(
-        &self,
-        session_id: &acp::SessionId,
-        cx: &mut App,
-    ) -> Task<anyhow::Result<()>> {
-        self.session_list.delete_session(session_id, cx)
-    }
-
-    pub(crate) fn delete_sessions(&self, cx: &mut App) -> Task<anyhow::Result<()>> {
-        self.session_list.delete_sessions(cx)
     }
 }
 
@@ -420,7 +392,7 @@ mod tests {
         cx.run_until_parked();
         session_list.clear_requested_cursors();
 
-        history.update(cx, |history, cx| history.refresh_full_history(cx));
+        history.update(cx, |history, cx| history.refresh_sessions(true, cx));
         cx.run_until_parked();
 
         history.update(cx, |history, _cx| {
@@ -454,7 +426,7 @@ mod tests {
         let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
 
-        history.update(cx, |history, cx| history.refresh_full_history(cx));
+        history.update(cx, |history, cx| history.refresh_sessions(true, cx));
         cx.run_until_parked();
         session_list.clear_requested_cursors();
 
@@ -485,11 +457,11 @@ mod tests {
         let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
 
-        history.update(cx, |history, cx| history.refresh_full_history(cx));
+        history.update(cx, |history, cx| history.refresh_sessions(true, cx));
         cx.run_until_parked();
         session_list.clear_requested_cursors();
 
-        history.update(cx, |history, cx| history.refresh_full_history(cx));
+        history.update(cx, |history, cx| history.refresh_sessions(true, cx));
         cx.run_until_parked();
 
         history.update(cx, |history, _cx| {
@@ -514,7 +486,7 @@ mod tests {
         let history = cx.new(|cx| ThreadHistory::new(session_list.clone(), cx));
         cx.run_until_parked();
 
-        history.update(cx, |history, cx| history.refresh_full_history(cx));
+        history.update(cx, |history, cx| history.refresh_sessions(true, cx));
         cx.run_until_parked();
 
         session_list.clear_requested_cursors();
@@ -558,7 +530,7 @@ mod tests {
         cx.run_until_parked();
         session_list.clear_requested_cursors();
 
-        history.update(cx, |history, cx| history.refresh_full_history(cx));
+        history.update(cx, |history, cx| history.refresh_sessions(true, cx));
         cx.run_until_parked();
 
         history.update(cx, |history, _cx| {

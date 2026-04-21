@@ -2709,10 +2709,6 @@ impl ConversationView {
             Self::handle_auth_required(this, AuthRequired::new(), agent_id, connection, window, cx);
         })
     }
-
-    pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
-        self.as_connected().and_then(|c| c.history.as_ref())
-    }
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
@@ -2862,9 +2858,7 @@ fn plan_label_markdown_style(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use acp_thread::{
-        AgentSessionList, AgentSessionListRequest, AgentSessionListResponse, StubAgentConnection,
-    };
+    use acp_thread::StubAgentConnection;
     use action_log::ActionLog;
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
     use agent_client_protocol::SessionId;
@@ -3027,66 +3021,6 @@ pub(crate) mod tests {
             1,
             "ConversationView should close the ACP session after a thread exit"
         );
-    }
-
-    #[gpui::test]
-    async fn test_recent_history_refreshes_when_history_cache_updated(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let session_a = AgentSessionInfo::new(SessionId::new("session-a"));
-        let session_b = AgentSessionInfo::new(SessionId::new("session-b"));
-
-        // Use a connection that provides a session list so ThreadHistory is created
-        let (conversation_view, history, cx) = setup_thread_view_with_history(
-            StubAgentServer::new(SessionHistoryConnection::new(vec![session_a.clone()])),
-            cx,
-        )
-        .await;
-
-        // Initially has session_a from the connection's session list
-        active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
-            assert_eq!(view.recent_history_entries.len(), 1);
-            assert_eq!(
-                view.recent_history_entries[0].session_id,
-                session_a.session_id
-            );
-        });
-
-        // Swap to a different session list
-        let list_b: Rc<dyn AgentSessionList> =
-            Rc::new(StubSessionList::new(vec![session_b.clone()]));
-        history.update(cx, |history, cx| {
-            history.set_session_list(list_b, cx);
-        });
-        cx.run_until_parked();
-
-        active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
-            assert_eq!(view.recent_history_entries.len(), 1);
-            assert_eq!(
-                view.recent_history_entries[0].session_id,
-                session_b.session_id
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_new_thread_creation_triggers_session_list_refresh(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let session = AgentSessionInfo::new(SessionId::new("history-session"));
-        let (conversation_view, _history, cx) = setup_thread_view_with_history(
-            StubAgentServer::new(SessionHistoryConnection::new(vec![session.clone()])),
-            cx,
-        )
-        .await;
-
-        active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
-            assert_eq!(view.recent_history_entries.len(), 1);
-            assert_eq!(
-                view.recent_history_entries[0].session_id,
-                session.session_id
-            );
-        });
     }
 
     #[gpui::test]
@@ -4045,19 +3979,6 @@ pub(crate) mod tests {
         (conversation_view, cx)
     }
 
-    async fn setup_thread_view_with_history(
-        agent: impl AgentServer + 'static,
-        cx: &mut TestAppContext,
-    ) -> (
-        Entity<ConversationView>,
-        Entity<ThreadHistory>,
-        &mut VisualTestContext,
-    ) {
-        let (conversation_view, history, cx) =
-            setup_conversation_view_with_history_and_initial_content(agent, None, cx).await;
-        (conversation_view, history.expect("Missing history"), cx)
-    }
-
     async fn setup_conversation_view_with_initial_content(
         agent: impl AgentServer + 'static,
         initial_content: AgentInitialContent,
@@ -4256,42 +4177,6 @@ pub(crate) mod tests {
         }
     }
 
-    #[derive(Clone)]
-    struct StubSessionList {
-        sessions: Vec<AgentSessionInfo>,
-    }
-
-    impl StubSessionList {
-        fn new(sessions: Vec<AgentSessionInfo>) -> Self {
-            Self { sessions }
-        }
-    }
-
-    impl AgentSessionList for StubSessionList {
-        fn list_sessions(
-            &self,
-            _request: AgentSessionListRequest,
-            _cx: &mut App,
-        ) -> Task<anyhow::Result<AgentSessionListResponse>> {
-            Task::ready(Ok(AgentSessionListResponse::new(self.sessions.clone())))
-        }
-
-        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-            self
-        }
-    }
-
-    #[derive(Clone)]
-    struct SessionHistoryConnection {
-        sessions: Vec<AgentSessionInfo>,
-    }
-
-    impl SessionHistoryConnection {
-        fn new(sessions: Vec<AgentSessionInfo>) -> Self {
-            Self { sessions }
-        }
-    }
-
     fn build_test_thread(
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
@@ -4318,67 +4203,6 @@ pub(crate) mod tests {
                 cx,
             )
         })
-    }
-
-    impl AgentConnection for SessionHistoryConnection {
-        fn agent_id(&self) -> AgentId {
-            AgentId::new("history-connection")
-        }
-
-        fn telemetry_id(&self) -> SharedString {
-            "history-connection".into()
-        }
-
-        fn new_session(
-            self: Rc<Self>,
-            project: Entity<Project>,
-            _work_dirs: PathList,
-            cx: &mut App,
-        ) -> Task<anyhow::Result<Entity<AcpThread>>> {
-            let thread = build_test_thread(
-                self,
-                project,
-                "SessionHistoryConnection",
-                SessionId::new("history-session"),
-                cx,
-            );
-            Task::ready(Ok(thread))
-        }
-
-        fn supports_load_session(&self) -> bool {
-            true
-        }
-
-        fn session_list(&self, _cx: &mut App) -> Option<Rc<dyn AgentSessionList>> {
-            Some(Rc::new(StubSessionList::new(self.sessions.clone())))
-        }
-
-        fn auth_methods(&self) -> &[acp::AuthMethod] {
-            &[]
-        }
-
-        fn authenticate(
-            &self,
-            _method_id: acp::AuthMethodId,
-            _cx: &mut App,
-        ) -> Task<anyhow::Result<()>> {
-            Task::ready(Ok(()))
-        }
-
-        fn prompt(
-            &self,
-            _id: acp_thread::UserMessageId,
-            _params: acp::PromptRequest,
-            _cx: &mut App,
-        ) -> Task<anyhow::Result<acp::PromptResponse>> {
-            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
-        }
-
-        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
-
-        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-            self
-        }
     }
 
     #[derive(Clone)]
