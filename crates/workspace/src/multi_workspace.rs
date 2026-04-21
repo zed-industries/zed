@@ -1213,13 +1213,40 @@ impl MultiWorkspace {
                 )
             });
 
+            let effective_paths_vec =
+                if let Some(project_group) = provisional_project_group_key.as_ref() {
+                    let resolve_tasks = cx.update(|cx| {
+                        let project = new_project.read(cx);
+                        paths_vec
+                            .iter()
+                            .map(|path| project.resolve_abs_path(&path.to_string_lossy(), cx))
+                            .collect::<Vec<_>>()
+                    });
+                    let resolved = futures::future::join_all(resolve_tasks).await;
+                    // `resolve_abs_path` returns `None` for both "definitely
+                    // absent" and transport errors (it swallows the error via
+                    // `log_err`). This is a weaker guarantee than the local
+                    // `Ok(None)` check, but it matches how the rest of the
+                    // codebase consumes this API.
+                    let all_paths_missing =
+                        !paths_vec.is_empty() && resolved.iter().all(|resolved| resolved.is_none());
+
+                    if all_paths_missing {
+                        project_group.path_list().paths().to_vec()
+                    } else {
+                        paths_vec
+                    }
+                } else {
+                    paths_vec
+                };
+
             let window_handle =
                 window_handle.ok_or_else(|| anyhow::anyhow!("Window is not a MultiWorkspace"))?;
 
             open_remote_project_with_existing_connection(
                 connection_options,
                 new_project,
-                paths_vec,
+                effective_paths_vec,
                 app_state,
                 window_handle,
                 provisional_project_group_key,

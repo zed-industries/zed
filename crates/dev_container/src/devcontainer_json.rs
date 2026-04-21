@@ -243,14 +243,26 @@ pub(crate) struct DevContainer {
     host_requirements: Option<HostRequirements>,
 }
 
+pub(crate) fn deserialize_devcontainer_json_to_value(
+    json: &str,
+) -> Result<serde_json_lenient::Value, DevContainerError> {
+    serde_json_lenient::from_str(json).map_err(|e| {
+        log::error!("Unable to deserialize json values: {e}");
+        DevContainerError::DevContainerParseFailed
+    })
+}
+
+pub(crate) fn deserialize_devcontainer_json_from_value(
+    json: serde_json_lenient::Value,
+) -> Result<DevContainer, DevContainerError> {
+    serde_json_lenient::from_value(json).map_err(|e| {
+        log::error!("Unable to deserialize devcontainer from json values: {e}");
+        DevContainerError::DevContainerParseFailed
+    })
+}
+
 pub(crate) fn deserialize_devcontainer_json(json: &str) -> Result<DevContainer, DevContainerError> {
-    match serde_json_lenient::from_str(json) {
-        Ok(devcontainer) => Ok(devcontainer),
-        Err(e) => {
-            log::error!("Unable to deserialize devcontainer from json: {e}");
-            Err(DevContainerError::DevContainerParseFailed)
-        }
-    }
+    deserialize_devcontainer_json_to_value(json).and_then(deserialize_devcontainer_json_from_value)
 }
 
 impl DevContainer {

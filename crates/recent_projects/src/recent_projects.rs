@@ -1783,7 +1783,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .child(
                     PopoverMenu::new("actions-menu-popover")
                         .with_handle(self.actions_menu_handle.clone())
-                        .anchor(gpui::Corner::BottomRight)
+                        .anchor(gpui::Anchor::BottomRight)
                         .offset(gpui::Point {
                             x: px(0.0),
                             y: px(-2.0),

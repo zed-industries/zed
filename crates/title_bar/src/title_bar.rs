@@ -7,6 +7,7 @@ mod update_version;
 
 use crate::application_menu::{ApplicationMenu, show_menus};
 use crate::plan_chip::PlanChip;
+use arrayvec::ArrayVec;
 use git_ui::worktree_picker::WorktreePicker;
 pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
@@ -25,7 +26,7 @@ use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, Context, Corner, Element, Entity, Focusable,
+    Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
     pulsating_between,
@@ -177,7 +178,7 @@ impl Render for TitleBar {
 
         let show_menus = show_menus(cx);
 
-        let mut children = Vec::new();
+        let mut children = <ArrayVec<_, 4>>::new();
 
         let mut project_name = None;
         let mut repository = None;
@@ -189,14 +190,20 @@ impl Render for TitleBar {
                 .root_name()
                 .file_name()
                 .map(|name| SharedString::from(name.to_string()));
-            linked_worktree_name = repository.as_ref().and_then(|repo| {
+            if let Some(repo) = &repository {
                 let repo = repo.read(cx);
-                linked_worktree_short_name(
+                linked_worktree_name = linked_worktree_short_name(
                     repo.original_repo_abs_path.as_ref(),
                     repo.work_directory_abs_path.as_ref(),
-                )
-                .filter(|name| Some(name) != project_name.as_ref())
-            });
+                );
+                if let Some(name) = repo
+                    .original_repo_abs_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                {
+                    project_name = Some(SharedString::from(name.to_string()));
+                }
+            }
         }
 
         children.push(
@@ -579,7 +586,7 @@ impl TitleBar {
                         )
                     },
                 )
-                .anchor(gpui::Corner::TopLeft)
+                .anchor(gpui::Anchor::TopLeft)
                 .into_any_element(),
         )
     }
@@ -762,7 +769,7 @@ impl TitleBar {
                     )
                 },
             )
-            .anchor(gpui::Corner::TopLeft)
+            .anchor(gpui::Anchor::TopLeft)
             .into_any_element()
     }
 
@@ -819,7 +826,7 @@ impl TitleBar {
                     )
                 },
             )
-            .anchor(gpui::Corner::TopLeft)
+            .anchor(gpui::Anchor::TopLeft)
     }
 
     fn render_project_branch(
@@ -925,7 +932,7 @@ impl TitleBar {
                         )
                     },
                 )
-                .anchor(gpui::Corner::TopLeft)
+                .anchor(gpui::Anchor::TopLeft)
         };
 
         let branch_tooltip_label = branch_name.clone();
@@ -975,7 +982,7 @@ impl TitleBar {
                 };
                 Tooltip::with_meta("Branch & Stash", Some(&zed_actions::git::Branch), meta, cx)
             })
-            .anchor(gpui::Corner::TopLeft);
+            .anchor(gpui::Anchor::TopLeft);
 
         Some(
             h_flex()
@@ -1297,6 +1304,6 @@ impl TitleBar {
                 })
                 .into()
             })
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
     }
 }

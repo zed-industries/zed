@@ -335,6 +335,26 @@ struct WorkspaceMenuWorktreeLabel {
     secondary_name: Option<SharedString>,
 }
 
+impl WorkspaceMenuWorktreeLabel {
+    fn render(&self, color: Color) -> impl IntoElement {
+        h_flex()
+            .min_w_0()
+            .gap_0p5()
+            .when_some(self.icon, |this, icon| {
+                this.child(Icon::new(icon).size(IconSize::XSmall).color(color))
+            })
+            .child(
+                Label::new(self.primary_name.clone())
+                    .color(color)
+                    .truncate(),
+            )
+            .when_some(self.secondary_name.clone(), |this, secondary_name| {
+                this.child(Label::new(":").color(color).alpha(0.5))
+                    .child(Label::new(secondary_name).color(color).truncate())
+            })
+    }
+}
+
 fn workspace_menu_worktree_labels(
     workspace: &Entity<Workspace>,
     cx: &App,
@@ -1920,68 +1940,57 @@ impl Sidebar {
                                             .w_full()
                                             .gap_2()
                                             .justify_between()
-                                            .child(h_flex().min_w_0().gap_2().children(
-                                                workspace_label.iter().map(|label| {
-                                                    h_flex()
-                                                        .min_w_0()
-                                                        .gap_0p5()
-                                                        .when_some(label.icon, |this, icon| {
-                                                            this.child(
-                                                                Icon::new(icon)
-                                                                    .size(IconSize::XSmall)
-                                                                    .color(label_color),
-                                                            )
-                                                        })
-                                                        .child(
-                                                            Label::new(label.primary_name.clone())
-                                                                .color(label_color)
-                                                                .truncate(),
-                                                        )
-                                                        .when_some(
-                                                            label.secondary_name.clone(),
-                                                            |this, secondary_name| {
+                                            .child(h_flex().min_w_0().gap_1().children(
+                                                workspace_label.iter().enumerate().map(
+                                                    |(label_ix, label)| {
+                                                        h_flex()
+                                                            .gap_1()
+                                                            .when(label_ix > 0, |this| {
                                                                 this.child(
-                                                                    Label::new(":")
-                                                                        .color(label_color)
-                                                                        .alpha(0.5),
+                                                                    Label::new("•").alpha(0.25),
                                                                 )
-                                                                .child(
-                                                                    Label::new(secondary_name)
-                                                                        .color(label_color)
-                                                                        .truncate(),
-                                                                )
-                                                            },
-                                                        )
-                                                        .into_any_element()
-                                                }),
+                                                            })
+                                                            .child(label.render(label_color))
+                                                            .into_any_element()
+                                                    },
+                                                ),
                                             ))
-                                            .child(
-                                                IconButton::new(
-                                                    ("close-workspace", workspace_index),
-                                                    IconName::Close,
+                                            .when(!is_active_workspace, |this| {
+                                                let close_multi_workspace =
+                                                    close_multi_workspace.clone();
+                                                let close_weak_menu = close_weak_menu.clone();
+                                                let close_workspace = close_workspace.clone();
+
+                                                this.child(
+                                                    IconButton::new(
+                                                        ("close-workspace", workspace_index),
+                                                        IconName::Close,
+                                                    )
+                                                    .icon_size(IconSize::Small)
+                                                    .visible_on_hover(&row_group_name)
+                                                    .tooltip(Tooltip::text("Close Workspace"))
+                                                    .on_click(move |_, window, cx| {
+                                                        cx.stop_propagation();
+                                                        window.prevent_default();
+                                                        close_multi_workspace
+                                                            .update(cx, |multi_workspace, cx| {
+                                                                multi_workspace
+                                                                    .close_workspace(
+                                                                        &close_workspace,
+                                                                        window,
+                                                                        cx,
+                                                                    )
+                                                                    .detach_and_log_err(cx);
+                                                            })
+                                                            .ok();
+                                                        close_weak_menu
+                                                            .update(cx, |_, cx| {
+                                                                cx.emit(DismissEvent)
+                                                            })
+                                                            .ok();
+                                                    }),
                                                 )
-                                                .shape(ui::IconButtonShape::Square)
-                                                .visible_on_hover(&row_group_name)
-                                                .tooltip(Tooltip::text("Close Workspace"))
-                                                .on_click(move |_, window, cx| {
-                                                    cx.stop_propagation();
-                                                    window.prevent_default();
-                                                    close_multi_workspace
-                                                        .update(cx, |multi_workspace, cx| {
-                                                            multi_workspace
-                                                                .close_workspace(
-                                                                    &close_workspace,
-                                                                    window,
-                                                                    cx,
-                                                                )
-                                                                .detach_and_log_err(cx);
-                                                        })
-                                                        .ok();
-                                                    close_weak_menu
-                                                        .update(cx, |_, cx| cx.emit(DismissEvent))
-                                                        .ok();
-                                                }),
-                                            )
+                                            })
                                             .into_any_element()
                                     },
                                     move |window, cx| {
@@ -2034,7 +2043,7 @@ impl Sidebar {
 
                 Some(menu)
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.),
                 y: px(1.),
@@ -4038,7 +4047,7 @@ impl Sidebar {
                 x: px(-2.0),
                 y: px(-2.0),
             })
-            .anchor(gpui::Corner::BottomRight)
+            .anchor(gpui::Anchor::BottomRight)
     }
 
     fn new_thread_in_group(
@@ -4455,14 +4464,14 @@ impl Sidebar {
 
         sidebar_side_context_menu("sidebar-toggle-menu", _cx)
             .anchor(if on_right {
-                gpui::Corner::BottomRight
+                gpui::Anchor::BottomRight
             } else {
-                gpui::Corner::BottomLeft
+                gpui::Anchor::BottomLeft
             })
             .attach(if on_right {
-                gpui::Corner::TopRight
+                gpui::Anchor::TopRight
             } else {
-                gpui::Corner::TopLeft
+                gpui::Anchor::TopLeft
             })
             .trigger(move |_is_active, _window, _cx| {
                 let icon = if on_right {
