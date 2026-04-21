@@ -2182,6 +2182,11 @@ impl Sidebar {
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.filter_editor.read(cx).is_focused(window) {
+            if self.reset_filter_editor_text(window, cx) {
+                self.update_entries(cx);
+                return;
+            }
+
             if self.selection.is_none() {
                 self.select_first_entry();
             }
