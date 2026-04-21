@@ -260,7 +260,9 @@ pub struct LocalSnapshot {
 
 struct BackgroundScannerState {
     snapshot: LocalSnapshot,
+    symlink_paths_by_target: HashMap<Arc<Path>, SmallVec<[Arc<RelPath>; 1]>>,
     scanned_dirs: HashSet<ProjectEntryId>,
+    watched_dir_abs_paths_by_entry_id: HashMap<ProjectEntryId, Arc<Path>>,
     path_prefixes_to_scan: HashSet<Arc<RelPath>>,
     paths_to_scan: HashSet<Arc<RelPath>>,
     /// The ids of all of the entries that were removed from the snapshot
@@ -1171,7 +1173,9 @@ impl LocalWorktree {
                     state: async_lock::Mutex::new(BackgroundScannerState {
                         prev_snapshot: snapshot.snapshot.clone(),
                         snapshot,
+                        symlink_paths_by_target: Default::default(),
                         scanned_dirs: Default::default(),
+                        watched_dir_abs_paths_by_entry_id: Default::default(),
                         scanning_enabled,
                         path_prefixes_to_scan: Default::default(),
                         paths_to_scan: Default::default(),
@@ -3151,7 +3155,12 @@ impl BackgroundScannerState {
         let mut removed_dir_abs_paths = Vec::new();
         for entry in removed_entries.cursor::<()>(()) {
             if entry.is_dir() {
-                removed_dir_abs_paths.push(self.snapshot.absolutize(&entry.path));
+                let watch_path = self
+                    .watched_dir_abs_paths_by_entry_id
+                    .remove(&entry.id)
+                    .map(|path| path.as_ref().to_path_buf())
+                    .unwrap_or_else(|| self.snapshot.absolutize(&entry.path));
+                removed_dir_abs_paths.push(watch_path);
             }
 
             match self.removed_entries.entry(entry.inode) {
@@ -4194,6 +4203,67 @@ impl BackgroundScanner {
         self.send_status_update(scanning, request.done, &[]).await
     }
 
+    fn normalized_events_for_worktree(
+        state: &BackgroundScannerState,
+        root_canonical_path: &SanitizedPath,
+        mut events: Vec<PathEvent>,
+    ) -> Vec<PathEvent> {
+        if state.symlink_paths_by_target.is_empty() {
+            return events;
+        }
+        let mut mapped_events = Vec::new();
+
+        events.retain(|event| {
+            let abs_path = SanitizedPath::new(&event.path);
+
+            let mut best_match: Option<(&Arc<Path>, &SmallVec<[Arc<RelPath>; 1]>)> = None;
+            let mut best_depth = 0;
+            for (target_root, symlink_paths) in &state.symlink_paths_by_target {
+                if abs_path.as_path().starts_with(target_root.as_ref()) {
+                    let depth = target_root.as_ref().components().count();
+                    if depth > best_depth {
+                        best_depth = depth;
+                        best_match = Some((target_root, symlink_paths));
+                    }
+                }
+            }
+
+            let Some((target_root, symlink_paths)) = best_match else {
+                return true;
+            };
+
+            let Ok(suffix) = abs_path.as_path().strip_prefix(target_root.as_ref()) else {
+                return true;
+            };
+
+            // If the symlink's real target is outside this worktree, the original path
+            // isn't visible to the worktree. Keep only the remapped symlink events.
+            let keep_original = target_root.starts_with(root_canonical_path.as_path());
+
+            for symlink_path in symlink_paths {
+                let mapped_path = if suffix.as_os_str().is_empty() {
+                    root_canonical_path
+                        .as_path()
+                        .join(symlink_path.as_std_path())
+                } else {
+                    root_canonical_path
+                        .as_path()
+                        .join(symlink_path.as_std_path())
+                        .join(suffix)
+                };
+                if mapped_path != event.path {
+                    mapped_events.push(PathEvent {
+                        path: mapped_path,
+                        kind: event.kind,
+                    });
+                }
+            }
+            keep_original
+        });
+        events.extend(mapped_events);
+        events
+    }
+
     async fn process_events(&self, mut events: Vec<PathEvent>) {
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
@@ -4244,6 +4314,11 @@ impl BackgroundScanner {
                 return;
             }
         };
+
+        {
+            let state = self.state.lock().await;
+            events = Self::normalized_events_for_worktree(&state, &root_canonical_path, events);
+        }
 
         // Certain directories may have FS changes, but do not lead to git data changes that Zed cares about.
         // Ignore these, to avoid Zed unnecessarily rescanning git metadata.
@@ -4513,7 +4588,15 @@ impl BackgroundScanner {
                     if let Some(entry) = state.snapshot.entry_for_path(ancestor)
                         && entry.kind == EntryKind::UnloadedDir
                     {
-                        let abs_path = root_path.join(ancestor.as_std_path());
+                        let abs_path = if entry.is_external {
+                            entry
+                                .canonical_path
+                                .as_ref()
+                                .map(|path| path.as_ref().to_path_buf())
+                                .unwrap_or_else(|| root_path.join(ancestor.as_std_path()))
+                        } else {
+                            root_path.join(ancestor.as_std_path())
+                        };
                         state
                             .enqueue_scan_dir(
                                 abs_path.into(),
@@ -4777,6 +4860,17 @@ impl BackgroundScanner {
                     child_entry.is_external = true;
                 }
 
+                if child_metadata.is_dir {
+                    let mut state = self.state.lock().await;
+                    let paths = state
+                        .symlink_paths_by_target
+                        .entry(Arc::from(canonical_path.clone()))
+                        .or_default();
+                    if !paths.iter().any(|path| path == &child_path) {
+                        paths.push(child_path.clone());
+                    }
+                }
+
                 child_entry.canonical_path = Some(canonical_path.into());
             }
 
@@ -4852,7 +4946,18 @@ impl BackgroundScanner {
         }
 
         state.populate_dir(job.path.clone(), new_entries, new_ignore);
+
         self.watcher.add(job.abs_path.as_ref()).log_err();
+
+        let entry_id = state
+            .snapshot
+            .entry_for_path(&job.path)
+            .map(|entry| entry.id);
+        if let Some(entry_id) = entry_id {
+            state
+                .watched_dir_abs_paths_by_entry_id
+                .insert(entry_id, job.abs_path.clone());
+        }
 
         for new_job in new_jobs.into_iter().flatten() {
             job.scan_queue
