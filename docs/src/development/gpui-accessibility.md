@@ -288,7 +288,72 @@ fn handle_action_request(request: ActionRequest, window: &mut Window, cx: &mut A
 | `crates/gpui/src/platform/windows/accessibility.rs` | New file: Windows adapter |
 | `crates/gpui/src/platform/linux/accessibility.rs` | New file: Linux adapter |
 | `crates/gpui/src/lib.rs` | Re-export `Role`, `Live` from `accesskit` |
-| `crates/gpui/examples/accessibility.rs` | New example: labeled counter + checkboxes + live region; console tree dump for headless verification |
+| `crates/gpui/examples/accessibility.rs` | New example: labeled counter + checkboxes + live region; live tree text panel showing `accessibility_tree()` output |
+
+## Debug API: Accessibility Tree Dump
+
+Mirrors GPUI's existing inspector pattern — gated on `#[cfg(any(feature = "inspector", debug_assertions))]`, zero overhead in release builds.
+
+### API
+
+```rust
+// crates/gpui/src/window.rs
+
+pub struct AccessibilityTree(String);
+
+impl std::fmt::Display for AccessibilityTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+#[cfg(any(feature = "inspector", debug_assertions))]
+impl Window {
+    /// Returns a snapshot of the current accessibility tree as formatted text.
+    pub fn accessibility_tree(&self) -> AccessibilityTree { ... }
+}
+```
+
+Called from application code or tests at any point after a frame has been drawn:
+
+```rust
+println!("{}", window.accessibility_tree());
+```
+
+### Output format
+
+Indented text tree, one node per line, modeled on how macOS Accessibility Inspector presents its hierarchy:
+
+```
+[accessibility tree]
+  Button          "Increment counter"  enabled=true   (160, 60, 120×32)
+  CheckBox        "Option A"           checked=true   (40, 110, 80×20)
+  CheckBox        "Option B"           checked=false  (140, 110, 80×20)
+  StaticText      "Counter value"      value="3"      (40, 60, 100×32)
+  Status          live=polite                         (40, 150, 400×20)
+    StaticText    "Counter updated to 3"              (40, 150, 400×20)
+```
+
+Each line: `role  label/value  state-flags  (x, y, w×h)`
+
+### Implementation
+
+`Window::accessibility_tree` walks the last built `AccessibilityFrame` and formats each node using `accesskit_consumer::Tree` for traversal order:
+
+```rust
+#[cfg(any(feature = "inspector", debug_assertions))]
+pub fn accessibility_tree(&self) -> String {
+    let Some(frame) = &self.last_accessibility_frame else {
+        return String::from("[no accessibility frame]");
+    };
+    let tree = accesskit_consumer::Tree::new(frame.to_tree_update(), false);
+    let mut out = String::from("[accessibility tree]\n");
+    format_node(&tree, tree.root(), 1, &mut out);
+    out
+}
+```
+
+`Window` stores `last_accessibility_frame: Option<AccessibilityFrame>` only in debug builds (same pattern as `debug_selector` on `Interactivity`).
 
 ## Verification Example
 
@@ -298,17 +363,23 @@ The example renders a small UI with clearly labeled roles and states, then provi
 
 ### What the example renders
 
+The window is split into two panels. The left panel contains interactive UI; the right panel displays the live output of `window.accessibility_tree()`, updated on every state change.
+
 ```
-┌─────────────────────────────────┐
-│  Accessibility Example          │
-│                                 │
-│  [Counter: 3]  [Increment]      │
-│                                 │
-│  ☑ Option A   ☐ Option B        │
-│                                 │
-│  Status: Counter updated to 3   │
-└─────────────────────────────────┘
+┌──────────────────┬─────────────────────────────────────────┐
+│                  │ [accessibility tree]                     │
+│  Counter: 3      │   Button  "Increment counter"            │
+│  [Increment]     │     enabled=true  (160, 60, 120×32)      │
+│                  │   CheckBox  "Option A"                   │
+│  ☑ Option A      │     checked=true  (40, 110, 80×20)       │
+│  ☐ Option B      │   CheckBox  "Option B"                   │
+│                  │     checked=false (140, 110, 80×20)      │
+│                  │   Status  live=polite                    │
+│                  │     "Counter updated to 3"               │
+└──────────────────┴─────────────────────────────────────────┘
 ```
+
+The right panel is simply a `div` rendering `window.accessibility_tree()` as a `SharedString`. No external tool needed — the tree is self-documenting inside the running app.
 
 Elements and their accessibility annotations:
 
@@ -320,35 +391,48 @@ Elements and their accessibility annotations:
 | Checkbox B | `CheckBox` | `"Option B"` | `aria_checked` |
 | Status div | `Status` | — | `aria_live(Live::Polite)` |
 
-### Verification path 1 — macOS Accessibility Inspector
+### Verification
 
-Run the example, open **Xcode → Accessibility Inspector** (or `/Applications/Xcode.app/.../AccessibilityInspector`), point it at the example window. Expected output:
+Interacting with the left panel (click Increment, toggle checkboxes) causes the right panel tree text to update in real time. This proves:
+1. Accessibility annotations are correctly attached to elements
+2. State changes (`checked`, `disabled`, label text) propagate into the tree each frame
+3. `window.accessibility_tree()` is a usable API for inspecting any GPUI window
 
-```
-AXWindow "Accessibility Example"
-  AXStaticText  label="Counter value"   value="3"
-  AXButton      label="Increment counter"  enabled=true
-  AXCheckBox    label="Option A"  value=checked
-  AXCheckBox    label="Option B"  value=unchecked
-  AXGroup       live=polite  label="Status: Counter updated to 3"
-```
+For platform-level validation, open **Xcode Accessibility Inspector** and point it at the example window — the AX hierarchy should match the text panel exactly.
 
-Clicking Increment in the Inspector (via its action panel) should increment the counter — this validates the `ActionRequest::Click` → GPUI event routing.
+## WAI-ARIA Compliance Notes
 
-### Verification path 2 — `cargo run` console output
+### Accessible Name Computation (ACCNAME 1.2)
 
-The example prints its own accessibility tree to stdout on each frame so it can be verified without any external tool:
+Per [ACCNAME 1.2](https://www.w3.org/TR/accname-1.2/), an element's accessible name is determined in this priority order:
 
-```
-[accessibility] frame:
-  NodeId(1)  role=Button       label="Increment counter"  disabled=false  bounds=(160,60,120,32)
-  NodeId(2)  role=CheckBox     label="Option A"            checked=true    bounds=(40,110,80,20)
-  NodeId(3)  role=CheckBox     label="Option B"            checked=false   bounds=(140,110,80,20)
-  NodeId(4)  role=StaticText   label="Counter value"       value="3"       bounds=(40,60,100,32)
-  NodeId(5)  role=Status       live=polite                                  bounds=(40,150,400,20)
+1. `aria-label` (our `label` field) — explicit override, always wins
+2. Text content of child elements — used when no explicit label is set
+
+The paint pipeline **must** implement fallback (2): when `label` is `None`, collect the concatenated text content of all descendant `StaticText` nodes and use it as the AccessKit node's name. Without this, a button with only `.child("Submit")` would have no accessible name — which breaks screen readers.
+
+```rust
+// In Accessibility::to_accesskit_node()
+let name = self.label.clone().or_else(|| collect_child_text(children));
 ```
 
-This dump is written by a `#[cfg(debug_assertions)]` hook in `AccessibilityFrame::into_tree_update`, requiring no platform adapter to produce output.
+### `aria-description` vs `aria-describedby`
+
+The `description` field maps to `aria-description`, which is a WAI-ARIA 1.3 draft attribute. Current AT support is limited. Component authors who need broad AT support today should combine an explicit `aria_label` with a visually hidden companion element. This is a known limitation of the initial implementation; `aria-describedby` (cross-element reference) is out of scope for v1.
+
+### Required Context Roles
+
+WAI-ARIA defines roles that are only meaningful inside a specific parent role:
+
+| Role | Required parent |
+|------|----------------|
+| `ListItem` | `List` |
+| `Option` | `ListBox` |
+| `Tab` | `TabList` |
+| `Row` | `Grid`, `RowGroup`, `Table`, or `TreeGrid` |
+| `TreeItem` | `Tree` or `Group` |
+
+GPUI does not enforce these constraints (nor does AccessKit). Component authors **must** follow them; violations cause AT to ignore or misrepresent the affected nodes. This should be documented in the GPUI accessibility guide.
 
 ## Out of Scope
 
