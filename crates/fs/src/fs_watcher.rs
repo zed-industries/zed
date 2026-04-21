@@ -29,6 +29,64 @@ pub struct FsWatcher {
     registrations: Mutex<BTreeMap<Arc<std::path::Path>, WatcherRegistrationId>>,
 }
 
+fn enqueue_path_events(
+    tx: &smol::channel::Sender<()>,
+    pending_path_events: &Arc<Mutex<Vec<PathEvent>>>,
+    mut path_events: Vec<PathEvent>,
+) {
+    if path_events.is_empty() {
+        return;
+    }
+
+    path_events.sort();
+    let mut pending_paths = pending_path_events.lock();
+    if pending_paths.is_empty() {
+        tx.try_send(()).ok();
+    }
+    coalesce_pending_rescans(&mut pending_paths, &mut path_events);
+    util::extend_sorted(&mut *pending_paths, path_events, usize::MAX, |a, b| {
+        a.path.cmp(&b.path)
+    });
+}
+
+fn push_notify_event(
+    tx: &smol::channel::Sender<()>,
+    pending_path_events: &Arc<Mutex<Vec<PathEvent>>>,
+    watched_root: &Path,
+    event: &notify::Event,
+) {
+    let kind = match &event.kind {
+        // `need_rescan` is handled below, so unknown event kinds can still trigger recovery.
+        EventKind::Create(_) => Some(PathEventKind::Created),
+        EventKind::Modify(_) => Some(PathEventKind::Changed),
+        EventKind::Remove(_) => Some(PathEventKind::Removed),
+        _ => None,
+    };
+    let root_path = SanitizedPath::new_arc(watched_root);
+    let mut path_events = event
+        .paths
+        .iter()
+        .filter_map(|event_path| {
+            let event_path = SanitizedPath::new(event_path);
+            event_path.starts_with(&root_path).then(|| PathEvent {
+                path: event_path.as_path().to_path_buf(),
+                kind,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if event.need_rescan() {
+        log::warn!("filesystem watcher lost sync for {watched_root:?}; scheduling rescan");
+        path_events.retain(|path_event| path_event.path != watched_root);
+        path_events.push(PathEvent {
+            path: watched_root.to_path_buf(),
+            kind: Some(PathEventKind::Rescan),
+        });
+    }
+
+    enqueue_path_events(tx, pending_path_events, path_events);
+}
+
 impl FsWatcher {
     pub fn new(
         tx: smol::channel::Sender<()>,
@@ -92,7 +150,6 @@ impl Watcher for FsWatcher {
             }
         }
 
-        let root_path = SanitizedPath::new_arc(path);
         let path: Arc<std::path::Path> = path.into();
 
         #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -107,52 +164,7 @@ impl Watcher for FsWatcher {
             |g| {
                 g.add(watch_path, mode, move |event: &notify::Event| {
                     log::trace!("watcher received event: {event:?}");
-                    let kind = match event.kind {
-                        EventKind::Create(_) => Some(PathEventKind::Created),
-                        EventKind::Modify(_) => Some(PathEventKind::Changed),
-                        EventKind::Remove(_) => Some(PathEventKind::Removed),
-                        _ => None,
-                    };
-                    let mut path_events = event
-                        .paths
-                        .iter()
-                        .filter_map(|event_path| {
-                            let event_path = SanitizedPath::new(event_path);
-                            event_path.starts_with(&root_path).then(|| PathEvent {
-                                path: event_path.as_path().to_path_buf(),
-                                kind,
-                            })
-                        })
-                        .collect::<Vec<_>>();
-
-                    let is_rescan_event = event.need_rescan();
-                    if is_rescan_event {
-                        log::warn!(
-                            "filesystem watcher lost sync for {callback_path:?}; scheduling rescan"
-                        );
-                        // we only keep the first event per path below, this ensures it will be the rescan event
-                        // we'll remove any existing pending events for the same reason once we have the lock below
-                        path_events.retain(|p| &p.path != callback_path.as_ref());
-                        path_events.push(PathEvent {
-                            path: callback_path.to_path_buf(),
-                            kind: Some(PathEventKind::Rescan),
-                        });
-                    }
-
-                    if !path_events.is_empty() {
-                        path_events.sort();
-                        let mut pending_paths = pending_paths.lock();
-                        if pending_paths.is_empty() {
-                            tx.try_send(()).ok();
-                        }
-                        coalesce_pending_rescans(&mut pending_paths, &mut path_events);
-                        util::extend_sorted(
-                            &mut *pending_paths,
-                            path_events,
-                            usize::MAX,
-                            |a, b| a.path.cmp(&b.path),
-                        );
-                    }
+                    push_notify_event(&tx, &pending_paths, callback_path.as_ref(), event);
                 })
             }
         })??;
@@ -232,7 +244,7 @@ fn is_covered_rescan(kind: Option<PathEventKind>, path: &Path, ancestor: &Path) 
 /// fail to deliver events.
 pub struct PollFsWatcher {
     watcher: Mutex<notify::PollWatcher>,
-    watched_paths: Mutex<Vec<Arc<std::path::Path>>>,
+    watched_paths: Arc<Mutex<BTreeMap<Arc<std::path::Path>, usize>>>,
 }
 
 impl PollFsWatcher {
@@ -243,41 +255,38 @@ impl PollFsWatcher {
     ) -> anyhow::Result<Self> {
         let config = notify::Config::default().with_poll_interval(poll_interval);
 
+        let watched_paths = Arc::new(Mutex::new(BTreeMap::<Arc<std::path::Path>, usize>::new()));
+        let callback_paths = watched_paths.clone();
         let watcher = notify::PollWatcher::new(
-            move |event: Result<notify::Event, notify::Error>| {
-                let Some(event) = event
-                    .map_err(|e| log::warn!("poll watcher error: {e}"))
-                    .ok()
-                    .filter(|event| !matches!(event.kind, EventKind::Access(_)))
-                else {
-                    return;
-                };
-
-                let kind = match event.kind {
-                    EventKind::Create(_) => Some(PathEventKind::Created),
-                    EventKind::Modify(_) => Some(PathEventKind::Changed),
-                    EventKind::Remove(_) => Some(PathEventKind::Removed),
-                    _ => None,
-                };
-
-                let mut path_events = event
-                    .paths
-                    .iter()
-                    .map(|event_path| PathEvent {
-                        path: event_path.to_path_buf(),
-                        kind,
-                    })
-                    .collect::<Vec<_>>();
-
-                if !path_events.is_empty() {
-                    path_events.sort();
-                    let mut pending_paths = pending_path_events.lock();
-                    if pending_paths.is_empty() {
-                        tx.try_send(()).ok();
+            move |result: Result<notify::Event, notify::Error>| {
+                let watched_roots = callback_paths.lock().keys().cloned().collect::<Vec<_>>();
+                match result {
+                    Ok(event) => {
+                        if matches!(event.kind, EventKind::Access(_)) {
+                            return;
+                        }
+                        for watched_root in watched_roots {
+                            push_notify_event(
+                                &tx,
+                                &pending_path_events,
+                                watched_root.as_ref(),
+                                &event,
+                            );
+                        }
                     }
-                    util::extend_sorted(&mut *pending_paths, path_events, usize::MAX, |a, b| {
-                        a.path.cmp(&b.path)
-                    });
+                    Err(error) => {
+                        for watched_root in watched_roots {
+                            log::warn!("watcher error for {watched_root:?}: {error}");
+                            enqueue_path_events(
+                                &tx,
+                                &pending_path_events,
+                                vec![PathEvent {
+                                    path: watched_root.to_path_buf(),
+                                    kind: Some(PathEventKind::Rescan),
+                                }],
+                            );
+                        }
+                    }
                 }
             },
             config,
@@ -285,38 +294,59 @@ impl PollFsWatcher {
 
         Ok(Self {
             watcher: Mutex::new(watcher),
-            watched_paths: Mutex::new(Vec::new()),
+            watched_paths,
         })
     }
 }
 
 impl Watcher for PollFsWatcher {
     fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        use notify::Watcher as _;
         log::trace!("poll watcher add: {path:?}");
 
-        {
-            let watched = self.watched_paths.lock();
-            if watched.iter().any(|p| path.starts_with(p.as_ref())) {
-                log::trace!("poll watcher: path already covered: {path:?}");
-                return Ok(());
-            }
+        let path: Arc<std::path::Path> = path.into();
+        let mut path_counts = self.watched_paths.lock();
+        let path_already_covered = path_counts
+            .keys()
+            .any(|watched_path| path.starts_with(watched_path.as_ref()) && path != *watched_path);
+
+        if !path_already_covered && !path_counts.contains_key(&path) {
+            drop(path_counts);
+            use notify::Watcher as _;
+            self.watcher
+                .lock()
+                .watch(&path, notify::RecursiveMode::Recursive)?;
+            path_counts = self.watched_paths.lock();
         }
 
-        self.watcher
-            .lock()
-            .watch(path, notify::RecursiveMode::Recursive)?;
-
-        self.watched_paths.lock().push(path.into());
+        *path_counts.entry(path).or_insert(0) += 1;
         Ok(())
     }
 
     fn remove(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        use notify::Watcher as _;
         log::trace!("poll watcher remove: {path:?}");
 
-        self.watched_paths.lock().retain(|p| p.as_ref() != path);
-        self.watcher.lock().unwatch(path)?;
+        let path: Arc<std::path::Path> = path.into();
+        let mut path_counts = self.watched_paths.lock();
+        let Some(count) = path_counts.get_mut(&path) else {
+            return Ok(());
+        };
+
+        *count -= 1;
+        if *count > 0 {
+            return Ok(());
+        }
+
+        path_counts.remove(&path);
+        let path_is_still_covered = path_counts.keys().any(|watched_path| {
+            path.starts_with(watched_path.as_ref()) && path.as_ref() != watched_path.as_ref()
+        });
+        if path_is_still_covered {
+            return Ok(());
+        }
+
+        drop(path_counts);
+        use notify::Watcher as _;
+        self.watcher.lock().unwatch(&path)?;
         Ok(())
     }
 }

@@ -92,9 +92,11 @@ pub fn requires_poll_watcher(path: &Path) -> bool {
         _ => {}
     }
 
+    let path = effective_watch_path(path);
+
     #[cfg(target_os = "linux")]
     {
-        return detect_requires_poll_watcher_linux(path);
+        return detect_requires_poll_watcher_linux(&path);
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -102,6 +104,20 @@ pub fn requires_poll_watcher(path: &Path) -> bool {
         let _ = path;
         false
     }
+}
+
+pub fn effective_watch_path(path: &Path) -> PathBuf {
+    if path.exists() {
+        return path.to_path_buf();
+    }
+
+    for ancestor in path.ancestors() {
+        if ancestor.exists() {
+            return ancestor.to_path_buf();
+        }
+    }
+
+    path.to_path_buf()
 }
 
 #[cfg(target_os = "linux")]
@@ -1172,6 +1188,7 @@ impl Fs for RealFs {
         let executor = self.executor.clone();
 
         let use_poll = requires_poll_watcher(path);
+        let watch_path = effective_watch_path(path);
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
@@ -1185,11 +1202,7 @@ impl Fs for RealFs {
                 .clamp(500, 30000);
             let poll_interval = Duration::from_millis(poll_ms);
 
-            match fs_watcher::PollFsWatcher::new(
-                tx.clone(),
-                pending_paths.clone(),
-                poll_interval,
-            ) {
+            match fs_watcher::PollFsWatcher::new(tx.clone(), pending_paths.clone(), poll_interval) {
                 Ok(pw) => {
                     log::info!(
                         "Using poll watcher ({}ms interval) for {}",
@@ -1203,22 +1216,24 @@ impl Fs for RealFs {
                         "Failed to create poll watcher for {}, falling back to native: {e}",
                         path.display()
                     );
-                    Arc::new(fs_watcher::FsWatcher::new(tx.clone(), pending_paths.clone()))
+                    Arc::new(fs_watcher::FsWatcher::new(
+                        tx.clone(),
+                        pending_paths.clone(),
+                    ))
                 }
             }
         } else {
-            Arc::new(fs_watcher::FsWatcher::new(tx.clone(), pending_paths.clone()))
+            Arc::new(fs_watcher::FsWatcher::new(
+                tx.clone(),
+                pending_paths.clone(),
+            ))
         };
 
-        // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
-        if let Err(e) = watcher.add(path)
-            && let Some(parent) = path.parent()
-            && let Err(parent_e) = watcher.add(parent)
-        {
+        if let Err(e) = watcher.add(&watch_path) {
             log::warn!(
-                "Failed to watch {} and its parent directory {}:\n{e}\n{parent_e}",
+                "Failed to watch {} using {}:\n{e}",
                 path.display(),
-                parent.display()
+                watch_path.display()
             );
         }
 
