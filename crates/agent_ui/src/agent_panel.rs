@@ -3681,13 +3681,6 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
             let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
                 return;
             };
-            let history = panel
-                .read(cx)
-                .connection_store()
-                .read(cx)
-                .entry(&crate::Agent::NativeAgent)
-                .and_then(|s| s.read(cx).history())
-                .map(|h| h.downgrade());
             let project = workspace.read(cx).project().downgrade();
             let panel = panel.read(cx);
             let thread_store = panel.thread_store().clone();
@@ -3697,7 +3690,6 @@ impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
                 project,
                 thread_store,
                 None,
-                history,
                 initial_prompt,
                 window,
                 cx,

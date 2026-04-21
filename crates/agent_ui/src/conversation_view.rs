@@ -74,7 +74,6 @@ use zed_actions::assistant::OpenRulesLibrary;
 
 use super::config_options::ConfigOptionsView;
 use super::entry_view_state::EntryViewState;
-use super::thread_history::ThreadHistory;
 use crate::ModeSelector;
 use crate::ModelSelectorPopover;
 use crate::agent_connection_store::{
@@ -556,7 +555,6 @@ pub struct ConnectedServerState {
     active_id: Option<acp::SessionId>,
     pub(crate) threads: HashMap<acp::SessionId, Entity<ThreadView>>,
     connection: Rc<dyn AgentConnection>,
-    history: Option<Entity<ThreadHistory>>,
     conversation: Entity<Conversation>,
     _connection_entry_subscription: Subscription,
 }
@@ -791,11 +789,8 @@ impl ConversationView {
         };
 
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let (connection, history) = match connect_result.await {
-                Ok(AgentConnectedState {
-                    connection,
-                    history,
-                }) => (connection, history),
+            let connection = match connect_result.await {
+                Ok(AgentConnectedState { connection, .. }) => connection,
                 Err(err) => {
                     this.update_in(cx, |this, window, cx| {
                         this.handle_load_error(err, window, cx);
@@ -891,7 +886,6 @@ impl ConversationView {
                             conversation.clone(),
                             resumed_without_history,
                             initial_content,
-                            history.clone(),
                             window,
                             cx,
                         );
@@ -912,7 +906,6 @@ impl ConversationView {
                                 active_id: Some(root_session_id.clone()),
                                 threads: HashMap::from_iter([(root_session_id, current)]),
                                 conversation,
-                                history,
                                 _connection_entry_subscription: connection_entry_subscription,
                             }),
                             cx,
@@ -945,7 +938,6 @@ impl ConversationView {
         conversation: Entity<Conversation>,
         resumed_without_history: bool,
         initial_content: Option<AgentInitialContent>,
-        history: Option<Entity<ThreadHistory>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ThreadView> {
@@ -962,7 +954,6 @@ impl ConversationView {
                 self.workspace.clone(),
                 self.project.downgrade(),
                 self.thread_store.clone(),
-                history.as_ref().map(|h| h.downgrade()),
                 self.prompt_store.clone(),
                 session_capabilities.clone(),
                 self.agent.agent_id(),
@@ -1130,7 +1121,6 @@ impl ConversationView {
                 resumed_without_history,
                 self.project.downgrade(),
                 self.thread_store.clone(),
-                history,
                 self.prompt_store.clone(),
                 initial_content,
                 subscriptions,
@@ -1212,7 +1202,6 @@ impl ConversationView {
                         threads: HashMap::default(),
                         connection,
                         conversation: cx.new(|_cx| Conversation::default()),
-                        history: None,
                         _connection_entry_subscription: Subscription::new(|| {}),
                     }),
                     cx,
@@ -1787,9 +1776,9 @@ impl ConversationView {
         cx.spawn_in(window, async move |this, cx| {
             let subagent_thread = subagent_thread_task.await?;
             this.update_in(cx, |this, window, cx| {
-                let Some((conversation, history)) = this
+                let Some(conversation) = this
                     .as_connected()
-                    .map(|connected| (connected.conversation.clone(), connected.history.clone()))
+                    .map(|connected| connected.conversation.clone())
                 else {
                     return;
                 };
@@ -1797,15 +1786,8 @@ impl ConversationView {
                 conversation.update(cx, |conversation, cx| {
                     conversation.register_thread(subagent_thread.clone(), cx);
                 });
-                let view = this.new_thread_view(
-                    subagent_thread,
-                    conversation,
-                    false,
-                    None,
-                    history,
-                    window,
-                    cx,
-                );
+                let view =
+                    this.new_thread_view(subagent_thread, conversation, false, None, window, cx);
                 let Some(connected) = this.as_connected_mut() else {
                     return;
                 };
@@ -2264,7 +2246,6 @@ impl ConversationView {
         let Some(connected) = self.as_connected() else {
             return;
         };
-        let history = connected.history.as_ref().map(|h| h.downgrade());
         let Some(thread) = connected.active_view() else {
             return;
         };
@@ -2305,7 +2286,6 @@ impl ConversationView {
                     workspace.clone(),
                     project.clone(),
                     None,
-                    history.clone(),
                     None,
                     session_capabilities.clone(),
                     agent_name.clone(),
@@ -2877,6 +2857,7 @@ pub(crate) mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::agent_panel;
+    use crate::thread_history::ThreadHistory;
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;

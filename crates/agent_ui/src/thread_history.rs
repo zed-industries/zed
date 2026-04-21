@@ -177,10 +177,6 @@ impl ThreadHistory {
     pub fn refresh(&mut self, _cx: &mut Context<Self>) {
         self.session_list.notify_refresh();
     }
-
-    pub(crate) fn sessions(&self) -> &[AgentSessionInfo] {
-        &self.sessions
-    }
 }
 
 #[cfg(test)]
