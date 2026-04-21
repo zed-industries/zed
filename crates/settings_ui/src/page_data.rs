@@ -62,8 +62,8 @@ macro_rules! concat_sections {
 }
 
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
-    vec![
-        general_page(),
+    let mut pages = vec![
+        general_page(cx),
         appearance_page(),
         keymap_page(),
         editor_page(),
@@ -77,12 +77,37 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         collaboration_page(),
         ai_page(cx),
         network_page(),
-    ]
+    ];
+
+    use feature_flags::FeatureFlagAppExt as _;
+    if cx.is_staff() || cfg!(debug_assertions) {
+        pages.push(developer_page());
+    }
+
+    pages
 }
 
-fn general_page() -> SettingsPage {
-    fn general_settings_section() -> [SettingsPageItem; 9] {
-        [
+fn developer_page() -> SettingsPage {
+    SettingsPage {
+        title: "Developer",
+        items: Box::new([
+            SettingsPageItem::SectionHeader("Feature Flags"),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Feature Flags".into(),
+                r#type: Default::default(),
+                description: None,
+                json_path: Some("feature_flags"),
+                in_json: true,
+                files: USER,
+                render: crate::pages::render_feature_flags_page,
+            }),
+        ]),
+    }
+}
+
+fn general_page(cx: &App) -> SettingsPage {
+    fn general_settings_section(cx: &App) -> Vec<SettingsPageItem> {
+        let mut items = vec![
             SettingsPageItem::SectionHeader("General Settings"),
             SettingsPageItem::SettingItem(SettingItem {
                 files: PROJECT,
@@ -139,27 +164,6 @@ fn general_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "CLI Default Open Behavior",
-                description: "How `zed <path>` opens directories when no `-e` or `-n` flag is specified.",
-                field: Box::new(SettingField {
-                    json_path: Some("cli_default_open_behavior"),
-                    pick: |settings_content| {
-                        settings_content
-                            .workspace
-                            .cli_default_open_behavior
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content.workspace.cli_default_open_behavior = value;
-                    },
-                }),
-                metadata: Some(Box::new(SettingsFieldMetadata {
-                    should_do_titlecase: Some(false),
-                    ..Default::default()
-                })),
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
@@ -221,7 +225,34 @@ fn general_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]
+        ];
+
+        use feature_flags::FeatureFlagAppExt;
+        if cx.has_flag::<feature_flags::AgentV2FeatureFlag>() {
+            items.push(SettingsPageItem::SettingItem(SettingItem {
+                title: "CLI Default Open Behavior",
+                description: "How `zed <path>` opens directories when no flag is specified.",
+                field: Box::new(SettingField {
+                    json_path: Some("cli_default_open_behavior"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .cli_default_open_behavior
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.workspace.cli_default_open_behavior = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    should_do_titlecase: Some(false),
+                    ..Default::default()
+                })),
+                files: USER,
+            }));
+        }
+
+        items
     }
     fn security_section() -> [SettingsPageItem; 2] {
         [
@@ -391,13 +422,15 @@ fn general_page() -> SettingsPage {
     SettingsPage {
         title: "General",
         items: concat_sections!(
-            general_settings_section(),
+            @vec,
+            general_settings_section(cx),
             security_section(),
             workspace_restoration_section(),
             scoped_settings_section(),
             privacy_section(),
             auto_update_section(),
-        ),
+        )
+        .into(),
     }
 }
 
@@ -1885,7 +1918,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn gutter_section() -> [SettingsPageItem; 8] {
+    fn gutter_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Gutter"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1965,6 +1998,29 @@ fn editor_page() -> SettingsPage {
                             .gutter
                             .get_or_insert_default()
                             .breakpoints = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Bookmarks",
+                description: "Show bookmarks in the gutter.",
+                field: Box::new(SettingField {
+                    json_path: Some("gutter.bookmarks"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .as_ref()
+                            .and_then(|gutter| gutter.bookmarks.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .get_or_insert_default()
+                            .bookmarks = value;
                     },
                 }),
                 metadata: None,
@@ -3598,22 +3654,22 @@ fn window_and_layout_page() -> SettingsPage {
         [
             SettingsPageItem::SectionHeader("Title Bar"),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Show Branch Icon",
-                description: "Show the branch icon beside branch switcher in the titlebar.",
+                title: "Show Branch Status Icon",
+                description: "Show git status indicators on the branch icon in the titlebar.",
                 field: Box::new(SettingField {
-                    json_path: Some("title_bar.show_branch_icon"),
+                    json_path: Some("title_bar.show_branch_status_icon"),
                     pick: |settings_content| {
                         settings_content
                             .title_bar
                             .as_ref()?
-                            .show_branch_icon
+                            .show_branch_status_icon
                             .as_ref()
                     },
                     write: |settings_content, value| {
                         settings_content
                             .title_bar
                             .get_or_insert_default()
-                            .show_branch_icon = value;
+                            .show_branch_status_icon = value;
                     },
                 }),
                 metadata: None,
@@ -5803,23 +5859,58 @@ fn panels_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Agent Panel Max Content Width",
-                description: "Maximum content width in pixels. Content will be centered when the panel is wider than this value.",
-                field: Box::new(SettingField {
-                    json_path: Some("agent.max_content_width"),
-                    pick: |settings_content| {
-                        settings_content.agent.as_ref()?.max_content_width.as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .agent
-                            .get_or_insert_default()
-                            .max_content_width = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Limit Content Width",
+                    description: "Whether to constrain the agent panel content to a maximum width, centering it when the panel is wider, for optimal readability.",
+                    field: Box::new(SettingField::<bool> {
+                        json_path: Some("agent.limit_content_width"),
+                        pick: |settings_content| {
+                            settings_content
+                                .agent
+                                .as_ref()?
+                                .limit_content_width
+                                .as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .limit_content_width = value;
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    let enabled = settings_content
+                        .agent
+                        .as_ref()?
+                        .limit_content_width
+                        .unwrap_or(true);
+                    Some(if enabled { 1 } else { 0 })
+                },
+                fields: vec![
+                    vec![],
+                    vec![SettingItem {
+                        files: USER,
+                        title: "Max Content Width",
+                        description: "Maximum content width in pixels. Content will be centered when the panel is wider than this value.",
+                        field: Box::new(SettingField {
+                            json_path: Some("agent.max_content_width"),
+                            pick: |settings_content| {
+                                settings_content.agent.as_ref()?.max_content_width.as_ref()
+                            },
+                            write: |settings_content, value| {
+                                settings_content
+                                    .agent
+                                    .get_or_insert_default()
+                                    .max_content_width = value;
+                            },
+                        }),
+                        metadata: None,
+                    }],
+                ],
             }),
         ]
     }

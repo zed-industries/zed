@@ -3,19 +3,21 @@ use client::{Client, EditPredictionUsage, NeedsLlmTokenRefresh, UserStore, globa
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::{OrganizationId, SubmitEditPredictionFeedbackBody};
 use cloud_llm_client::predict_edits_v3::{
-    PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
+    PREDICT_EDITS_MODE_HEADER_NAME, PredictEditsMode, PredictEditsV3Request,
+    PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
 };
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection,
     MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
-    PredictEditsRequestTrigger, RejectEditPredictionsBodyRef, ZED_VERSION_HEADER_NAME,
+    PREFERRED_EXPERIMENT_HEADER_NAME, PredictEditsRequestTrigger, RejectEditPredictionsBodyRef,
+    ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet};
 use copilot::{Copilot, Reinstall, SignIn, SignOut};
 use credentials_provider::CredentialsProvider;
 use db::kvp::{Dismissable, KeyValueStore};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use futures::{
     AsyncReadExt as _, FutureExt as _, StreamExt as _,
     channel::mpsc::{self, UnboundedReceiver},
@@ -29,9 +31,10 @@ use gpui::{
     prelude::*,
 };
 use heapless::Vec as ArrayVec;
-use language::language_settings::all_language_settings;
-use language::{Anchor, Buffer, EditPreview, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
-use language::{BufferSnapshot, OffsetRangeExt};
+use language::{
+    Anchor, Buffer, BufferSnapshot, EditPredictionsMode, EditPreview, File, OffsetRangeExt, Point,
+    TextBufferSnapshot, ToOffset, ToPoint, language_settings::all_language_settings,
+};
 use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
@@ -117,7 +120,9 @@ pub struct EditPredictionJumpsFeatureFlag;
 
 impl FeatureFlag for EditPredictionJumpsFeatureFlag {
     const NAME: &'static str = "edit_prediction_jumps";
+    type Value = PresenceFlag;
 }
+register_feature_flag!(EditPredictionJumpsFeatureFlag);
 
 #[derive(Clone)]
 struct EditPredictionStoreGlobal(Entity<EditPredictionStore>);
@@ -176,6 +181,7 @@ pub struct EditPredictionModelInput {
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
     related_files: Vec<RelatedFile>,
+    mode: PredictEditsMode,
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
@@ -347,7 +353,7 @@ impl ProjectState {
             drop(pending_prediction.task);
         } else {
             cx.spawn(async move |this, cx| {
-                let Some(prediction_id) = pending_prediction.task.await else {
+                let Some((prediction_id, model_version)) = pending_prediction.task.await else {
                     return;
                 };
 
@@ -356,7 +362,7 @@ impl ProjectState {
                         prediction_id,
                         EditPredictionRejectReason::Canceled,
                         false,
-                        None,
+                        model_version,
                         None,
                         cx,
                     );
@@ -454,7 +460,7 @@ pub enum DiagnosticSearchScope {
 #[derive(Debug)]
 struct PendingPrediction {
     id: usize,
-    task: Task<Option<EditPredictionId>>,
+    task: Task<Option<(EditPredictionId, Option<String>)>>,
     /// If true, the task is dropped immediately on cancel (cancelling the HTTP request).
     /// If false, the task is awaited to completion so rejection can be reported.
     drop_on_cancel: bool,
@@ -2033,6 +2039,7 @@ impl EditPredictionStore {
                                 EditPredictionResult {
                                     id: prediction_result.id,
                                     prediction: Err(EditPredictionRejectReason::CurrentPreferred),
+                                    model_version: prediction_result.model_version,
                                     e2e_latency: prediction_result.e2e_latency,
                                 }
                             },
@@ -2207,9 +2214,9 @@ impl EditPredictionStore {
             }
 
             let new_prediction_result = do_refresh(this.clone(), cx).await.log_err().flatten();
-            let new_prediction_id = new_prediction_result
+            let new_prediction_metadata = new_prediction_result
                 .as_ref()
-                .map(|(prediction, _)| prediction.id.clone());
+                .map(|(prediction, _)| (prediction.id.clone(), prediction.model_version.clone()));
 
             // When a prediction completes, remove it from the pending list, and cancel
             // any pending predictions that were enqueued before it.
@@ -2265,7 +2272,7 @@ impl EditPredictionStore {
                                 prediction_result.id,
                                 reject_reason,
                                 false,
-                                None,
+                                prediction_result.model_version,
                                 Some(prediction_result.e2e_latency),
                                 cx,
                             );
@@ -2297,7 +2304,7 @@ impl EditPredictionStore {
             })
             .ok();
 
-            new_prediction_id
+            new_prediction_metadata
         });
 
         if project_state.pending_predictions.len() < max_pending_predictions {
@@ -2366,6 +2373,10 @@ impl EditPredictionStore {
             Point::new(diagnostic_search_start, 0)..Point::new(diagnostic_search_end, 0);
 
         let related_files = self.context_for_project(&project, cx);
+        let mode = match all_language_settings(snapshot.file(), cx).edit_predictions_mode() {
+            EditPredictionsMode::Eager => PredictEditsMode::Eager,
+            EditPredictionsMode::Subtle => PredictEditsMode::Subtle,
+        };
 
         let is_open_source = snapshot
             .file()
@@ -2377,7 +2388,6 @@ impl EditPredictionStore {
             && is_open_source
             && self.is_data_collection_enabled(cx)
             && matches!(self.edit_prediction_model, EditPredictionModel::Zeta);
-
         let inputs = EditPredictionModelInput {
             project: project.clone(),
             buffer: active_buffer,
@@ -2385,8 +2395,9 @@ impl EditPredictionStore {
             position,
             events,
             related_files,
+            mode,
             trigger,
-            diagnostic_search_range: diagnostic_search_range,
+            diagnostic_search_range,
             debug_tx,
             can_collect_data,
             is_open_source,
@@ -2579,11 +2590,13 @@ impl EditPredictionStore {
 
     pub(crate) async fn send_v3_request(
         input: ZetaPromptInput,
+        preferred_experiment: Option<String>,
         client: Arc<Client>,
         llm_token: LlmApiToken,
         organization_id: Option<OrganizationId>,
         app_version: Version,
         trigger: PredictEditsRequestTrigger,
+        mode: PredictEditsMode,
     ) -> Result<(PredictEditsV3Response, Option<EditPredictionUsage>)> {
         let url = client
             .http_client()
@@ -2596,10 +2609,16 @@ impl EditPredictionStore {
 
         Self::send_api_request(
             |builder| {
-                let req = builder
+                let builder = builder
                     .uri(url.as_ref())
                     .header("Content-Encoding", "zstd")
-                    .body(compressed.clone().into());
+                    .header(PREDICT_EDITS_MODE_HEADER_NAME, mode.as_ref());
+                let builder = if let Some(preferred_experiment) = preferred_experiment.as_deref() {
+                    builder.header(PREFERRED_EXPERIMENT_HEADER_NAME, preferred_experiment)
+                } else {
+                    builder
+                };
+                let req = builder.body(compressed.clone().into());
                 Ok(req?)
             },
             client,

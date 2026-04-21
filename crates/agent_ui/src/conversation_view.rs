@@ -46,7 +46,10 @@ use prompt_store::{PromptId, PromptStore};
 use crate::DEFAULT_THREAD_TITLE;
 use crate::message_editor::SessionCapabilities;
 use rope::Point;
-use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore, ThinkingBlockDisplay};
+use settings::{
+    NewThreadLocation, NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide,
+    ThinkingBlockDisplay,
+};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -285,7 +288,8 @@ impl Conversation {
                     | AcpThreadEvent::AvailableCommandsUpdated(_)
                     | AcpThreadEvent::ModeUpdated(_)
                     | AcpThreadEvent::ConfigOptionsUpdated(_)
-                    | AcpThreadEvent::WorkingDirectoriesUpdated => {}
+                    | AcpThreadEvent::WorkingDirectoriesUpdated
+                    | AcpThreadEvent::PromptUpdated => {}
                 }
             }
         });
@@ -392,23 +396,24 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
     match event {
         AcpThreadEvent::NewEntry
         | AcpThreadEvent::TitleUpdated
-        | AcpThreadEvent::EntryUpdated(_)
-        | AcpThreadEvent::EntriesRemoved(_)
         | AcpThreadEvent::ToolAuthorizationRequested(_)
         | AcpThreadEvent::ToolAuthorizationReceived(_)
-        | AcpThreadEvent::Retry(_)
         | AcpThreadEvent::Stopped(_)
         | AcpThreadEvent::Error
         | AcpThreadEvent::LoadError(_)
         | AcpThreadEvent::Refusal
         | AcpThreadEvent::WorkingDirectoriesUpdated => true,
         // --
-        AcpThreadEvent::TokenUsageUpdated
+        AcpThreadEvent::EntryUpdated(_)
+        | AcpThreadEvent::EntriesRemoved(_)
+        | AcpThreadEvent::Retry(_)
+        | AcpThreadEvent::TokenUsageUpdated
         | AcpThreadEvent::PromptCapabilitiesUpdated
         | AcpThreadEvent::AvailableCommandsUpdated(_)
         | AcpThreadEvent::ModeUpdated(_)
         | AcpThreadEvent::ConfigOptionsUpdated(_)
-        | AcpThreadEvent::SubagentSpawned(_) => false,
+        | AcpThreadEvent::SubagentSpawned(_)
+        | AcpThreadEvent::PromptUpdated => false,
     }
 }
 
@@ -428,16 +433,13 @@ pub struct ConversationView {
     thread_store: Option<Entity<ThreadStore>>,
     prompt_store: Option<Entity<PromptStore>>,
     pub(crate) thread_id: ThreadId,
-    root_session_id: Option<acp::SessionId>,
+    pub(crate) root_session_id: Option<acp::SessionId>,
     server_state: ServerState,
     focus_handle: FocusHandle,
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
-    /// True when this conversation was created as a new draft (no resume
-    /// session). False when resuming an existing session from history.
-    is_new_draft: bool,
 }
 
 impl ConversationView {
@@ -445,10 +447,6 @@ impl ConversationView {
         self.as_connected().map_or(false, |connected| {
             !connected.connection.auth_methods().is_empty()
         })
-    }
-
-    pub fn is_new_draft(&self) -> bool {
-        self.is_new_draft
     }
 
     pub fn active_thread(&self) -> Option<&Entity<ThreadView>> {
@@ -462,13 +460,7 @@ impl ConversationView {
         &'a self,
         cx: &'a App,
     ) -> Option<(acp::SessionId, acp::ToolCallId, &'a PermissionOptions)> {
-        let session_id = self
-            .active_thread()?
-            .read(cx)
-            .thread
-            .read(cx)
-            .session_id()
-            .clone();
+        let session_id = self.active_thread()?.read(cx).session_id.clone();
         self.as_connected()?
             .conversation
             .read(cx)
@@ -476,7 +468,7 @@ impl ConversationView {
     }
 
     pub fn root_thread_has_pending_tool_call(&self, cx: &App) -> bool {
-        let Some(root_thread) = self.root_thread(cx) else {
+        let Some(root_thread) = self.root_thread_view() else {
             return false;
         };
         let root_session_id = root_thread.read(cx).thread.read(cx).session_id().clone();
@@ -489,47 +481,18 @@ impl ConversationView {
         })
     }
 
-    pub fn root_thread(&self, cx: &App) -> Option<Entity<ThreadView>> {
-        match &self.server_state {
-            ServerState::Connected(connected) => {
-                let mut current = connected.active_view()?;
-                while let Some(parent_session_id) =
-                    current.read(cx).thread.read(cx).parent_session_id()
-                {
-                    if let Some(parent) = connected.threads.get(parent_session_id) {
-                        current = parent;
-                    } else {
-                        break;
-                    }
-                }
-                Some(current.clone())
-            }
-            _ => None,
-        }
+    pub(crate) fn root_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
+        self.root_thread_view()
+            .map(|view| view.read(cx).thread.clone())
     }
 
-    pub(crate) fn root_acp_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
-        let connected = self.as_connected()?;
-        let root_session_id = self.root_session_id.as_ref()?;
-        connected
-            .conversation
-            .read(cx)
-            .threads
-            .get(root_session_id)
-            .cloned()
-    }
-
-    pub fn root_thread_view(&self, cx: &App) -> Option<Entity<ThreadView>> {
+    pub fn root_thread_view(&self) -> Option<Entity<ThreadView>> {
         self.root_session_id
             .as_ref()
-            .and_then(|sid| self.thread_view(sid, cx))
+            .and_then(|id| self.thread_view(id))
     }
 
-    pub fn thread_view(
-        &self,
-        session_id: &acp::SessionId,
-        _cx: &App,
-    ) -> Option<Entity<ThreadView>> {
+    pub fn thread_view(&self, session_id: &acp::SessionId) -> Option<Entity<ThreadView>> {
         let connected = self.as_connected()?;
         connected.threads.get(session_id).cloned()
     }
@@ -664,6 +627,7 @@ impl ConversationView {
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -692,7 +656,6 @@ impl ConversationView {
         })
         .detach();
 
-        let is_new_draft = resume_session_id.is_none();
         let thread_id = thread_id.unwrap_or_else(ThreadId::new);
 
         Self {
@@ -705,7 +668,7 @@ impl ConversationView {
             thread_store,
             prompt_store,
             thread_id,
-            root_session_id: None,
+            root_session_id: resume_session_id.clone(),
             server_state: Self::initial_state(
                 agent.clone(),
                 connection_store,
@@ -715,6 +678,7 @@ impl ConversationView {
                 title,
                 project,
                 initial_content,
+                source,
                 window,
                 cx,
             ),
@@ -723,7 +687,6 @@ impl ConversationView {
             auth_task: None,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
-            is_new_draft,
         }
     }
 
@@ -739,7 +702,7 @@ impl ConversationView {
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (resume_session_id, cwd, title) = self
-            .active_thread()
+            .root_thread_view()
             .map(|thread_view| {
                 let tv = thread_view.read(cx);
                 let thread = tv.thread.read(cx);
@@ -760,12 +723,13 @@ impl ConversationView {
             title,
             self.project.clone(),
             None,
+            "agent_panel",
             window,
             cx,
         );
         self.set_server_state(state, cx);
 
-        if let Some(view) = self.active_thread() {
+        if let Some(view) = self.root_thread_view() {
             view.update(cx, |this, cx| {
                 this.message_editor.update(cx, |editor, cx| {
                     editor.set_session_capabilities(this.session_capabilities.clone(), cx);
@@ -784,6 +748,7 @@ impl ConversationView {
         title: Option<SharedString>,
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
@@ -805,7 +770,7 @@ impl ConversationView {
         let connection_entry_subscription =
             cx.subscribe(&connection_entry, |this, _entry, event, cx| match event {
                 AgentConnectionEntryEvent::NewVersionAvailable(version) => {
-                    if let Some(thread) = this.active_thread() {
+                    if let Some(thread) = this.root_thread_view() {
                         thread.update(cx, |thread, cx| {
                             thread.new_server_version_available = Some(version.clone());
                             cx.notify();
@@ -815,6 +780,15 @@ impl ConversationView {
             });
 
         let connect_result = connection_entry.read(cx).wait_for_connection();
+
+        let side = match AgentSettings::get_global(cx).sidebar_side() {
+            SidebarSide::Left => "left",
+            SidebarSide::Right => "right",
+        };
+        let thread_location = match AgentSettings::get_global(cx).new_thread_location {
+            NewThreadLocation::LocalProject => "current_worktree",
+            NewThreadLocation::NewWorktree => "new_worktree",
+        };
 
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let (connection, history) = match connect_result.await {
@@ -832,7 +806,13 @@ impl ConversationView {
                 }
             };
 
-            telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
+            telemetry::event!(
+                "Agent Thread Started",
+                agent = connection.telemetry_id(),
+                source = source,
+                side = side,
+                thread_location = thread_location
+            );
 
             let mut resumed_without_history = false;
             let result = if let Some(session_id) = resume_session_id.clone() {
@@ -1244,7 +1224,7 @@ impl ConversationView {
     }
 
     fn handle_load_error(&mut self, err: LoadError, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(view) = self.active_thread() {
+        if let Some(view) = self.root_thread_view() {
             if view
                 .read(cx)
                 .message_editor
@@ -1277,7 +1257,7 @@ impl ConversationView {
         };
 
         if should_retry {
-            if let Some(active) = self.active_thread() {
+            if let Some(active) = self.root_thread_view() {
                 active.update(cx, |active, cx| {
                     active.clear_thread_error(cx);
                 });
@@ -1330,14 +1310,6 @@ impl ConversationView {
         matches!(self.server_state, ServerState::Loading { .. })
     }
 
-    fn update_turn_tokens(&mut self, cx: &mut Context<Self>) {
-        if let Some(active) = self.active_thread() {
-            active.update(cx, |active, cx| {
-                active.update_turn_tokens(cx);
-            });
-        }
-    }
-
     fn send_queued_message_at_index(
         &mut self,
         index: usize,
@@ -1345,7 +1317,7 @@ impl ConversationView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active) = self.active_thread() {
+        if let Some(active) = self.root_thread_view() {
             active.update(cx, |active, cx| {
                 active.send_queued_message_at_index(index, is_send_now, window, cx);
             });
@@ -1360,7 +1332,7 @@ impl ConversationView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active) = self.active_thread() {
+        if let Some(active) = self.root_thread_view() {
             active.update(cx, |active, cx| {
                 active.move_queued_message_to_main_editor(
                     index,
@@ -1395,7 +1367,7 @@ impl ConversationView {
             AcpThreadEvent::NewEntry => {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
-                if let Some(active) = self.thread_view(&session_id, cx) {
+                if let Some(active) = self.thread_view(&session_id) {
                     let entry_view_state = active.read(cx).entry_view_state.clone();
                     let list_state = active.read(cx).list_state.clone();
                     entry_view_state.update(cx, |view_state, cx| {
@@ -1413,7 +1385,7 @@ impl ConversationView {
                 }
             }
             AcpThreadEvent::EntryUpdated(index) => {
-                if let Some(active) = self.thread_view(&session_id, cx) {
+                if let Some(active) = self.thread_view(&session_id) {
                     let entry_view_state = active.read(cx).entry_view_state.clone();
                     let list_state = active.read(cx).list_state.clone();
                     entry_view_state.update(cx, |view_state, cx| {
@@ -1426,7 +1398,7 @@ impl ConversationView {
                 }
             }
             AcpThreadEvent::EntriesRemoved(range) => {
-                if let Some(active) = self.thread_view(&session_id, cx) {
+                if let Some(active) = self.thread_view(&session_id) {
                     let entry_view_state = active.read(cx).entry_view_state.clone();
                     let list_state = active.read(cx).list_state.clone();
                     entry_view_state.update(cx, |view_state, _cx| view_state.remove(range.clone()));
@@ -1444,14 +1416,14 @@ impl ConversationView {
             }
             AcpThreadEvent::ToolAuthorizationReceived(_) => {}
             AcpThreadEvent::Retry(retry) => {
-                if let Some(active) = self.thread_view(&session_id, cx) {
+                if let Some(active) = self.thread_view(&session_id) {
                     active.update(cx, |active, _cx| {
                         active.thread_retry_status = Some(retry.clone());
                     });
                 }
             }
             AcpThreadEvent::Stopped(stop_reason) => {
-                if let Some(active) = self.thread_view(&session_id, cx) {
+                if let Some(active) = self.thread_view(&session_id) {
                     let is_generating =
                         matches!(thread.read(cx).status(), ThreadStatus::Generating);
                     active.update(cx, |active, cx| {
@@ -1486,7 +1458,7 @@ impl ConversationView {
                     cx,
                 );
 
-                let should_send_queued = if let Some(active) = self.active_thread() {
+                let should_send_queued = if let Some(active) = self.root_thread_view() {
                     active.update(cx, |active, cx| {
                         if active.skip_queue_processing_count > 0 {
                             active.skip_queue_processing_count -= 1;
@@ -1515,7 +1487,7 @@ impl ConversationView {
             }
             AcpThreadEvent::Refusal => {
                 let error = ThreadError::Refusal;
-                if let Some(active) = self.thread_view(&session_id, cx) {
+                if let Some(active) = self.thread_view(&session_id) {
                     active.update(cx, |active, cx| {
                         active.handle_thread_error(error, cx);
                         active.thread_retry_status.take();
@@ -1529,7 +1501,7 @@ impl ConversationView {
                 }
             }
             AcpThreadEvent::Error => {
-                if let Some(active) = self.thread_view(&session_id, cx) {
+                if let Some(active) = self.thread_view(&session_id) {
                     let is_generating =
                         matches!(thread.read(cx).status(), ThreadStatus::Generating);
                     active.update(cx, |active, cx| {
@@ -1552,7 +1524,7 @@ impl ConversationView {
                 }
             }
             AcpThreadEvent::LoadError(error) => {
-                if let Some(view) = self.active_thread() {
+                if let Some(view) = self.root_thread_view() {
                     if view
                         .read(cx)
                         .message_editor
@@ -1571,7 +1543,7 @@ impl ConversationView {
             }
             AcpThreadEvent::TitleUpdated => {
                 if let Some(title) = thread.read(cx).title()
-                    && let Some(active_thread) = self.thread_view(&session_id, cx)
+                    && let Some(active_thread) = self.thread_view(&session_id)
                 {
                     let title_editor = active_thread.read(cx).title_editor.clone();
                     title_editor.update(cx, |editor, cx| {
@@ -1583,7 +1555,7 @@ impl ConversationView {
                 cx.notify();
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
-                if let Some(active) = self.thread_view(&session_id, cx) {
+                if let Some(active) = self.thread_view(&session_id) {
                     active.update(cx, |active, _cx| {
                         active
                             .session_capabilities
@@ -1593,11 +1565,14 @@ impl ConversationView {
                 }
             }
             AcpThreadEvent::TokenUsageUpdated => {
-                self.update_turn_tokens(cx);
-                self.emit_token_limit_telemetry_if_needed(thread, cx);
+                if let Some(active) = self.thread_view(&session_id) {
+                    active.update(cx, |active, cx| {
+                        active.update_turn_tokens(cx);
+                    });
+                }
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
-                if let Some(thread_view) = self.thread_view(&session_id, cx) {
+                if let Some(thread_view) = self.thread_view(&session_id) {
                     let has_commands = !available_commands.is_empty();
 
                     let agent_display_name = self
@@ -1629,6 +1604,9 @@ impl ConversationView {
                 cx.notify();
             }
             AcpThreadEvent::WorkingDirectoriesUpdated => {
+                cx.notify();
+            }
+            AcpThreadEvent::PromptUpdated => {
                 cx.notify();
             }
         }
@@ -1711,7 +1689,7 @@ impl ConversationView {
                             {
                                 pending_auth_method.take();
                             }
-                            if let Some(active) = this.active_thread() {
+                            if let Some(active) = this.root_thread_view() {
                                 active.update(cx, |active, cx| {
                                     active.handle_thread_error(err, cx);
                                 })
@@ -1759,7 +1737,7 @@ impl ConversationView {
                         {
                             pending_auth_method.take();
                         }
-                        if let Some(active) = this.active_thread() {
+                        if let Some(active) = this.root_thread_view() {
                             active.update(cx, |active, cx| active.handle_thread_error(err, cx));
                         }
                     } else {
@@ -1965,19 +1943,14 @@ impl ConversationView {
     }
 
     pub fn has_user_submitted_prompt(&self, cx: &App) -> bool {
-        self.active_thread().is_some_and(|active| {
+        self.root_thread_view().is_some_and(|active| {
             active
                 .read(cx)
                 .thread
                 .read(cx)
                 .entries()
                 .iter()
-                .any(|entry| {
-                    matches!(
-                        entry,
-                        AgentThreadEntry::UserMessage(user_message) if user_message.id.is_some()
-                    )
-                })
+                .any(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
         })
     }
 
@@ -2096,59 +2069,6 @@ impl ConversationView {
             .into_any_element()
     }
 
-    fn emit_token_limit_telemetry_if_needed(
-        &mut self,
-        thread: &Entity<AcpThread>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(active_thread) = self.active_thread() else {
-            return;
-        };
-
-        let (ratio, agent_telemetry_id, session_id) = {
-            let thread_data = thread.read(cx);
-            let Some(token_usage) = thread_data.token_usage() else {
-                return;
-            };
-            (
-                token_usage.ratio(),
-                thread_data.connection().telemetry_id(),
-                thread_data.session_id().clone(),
-            )
-        };
-
-        let kind = match ratio {
-            acp_thread::TokenUsageRatio::Normal => {
-                active_thread.update(cx, |active, _cx| {
-                    active.last_token_limit_telemetry = None;
-                });
-                return;
-            }
-            acp_thread::TokenUsageRatio::Warning => "warning",
-            acp_thread::TokenUsageRatio::Exceeded => "exceeded",
-        };
-
-        let should_skip = active_thread
-            .read(cx)
-            .last_token_limit_telemetry
-            .as_ref()
-            .is_some_and(|last| *last >= ratio);
-        if should_skip {
-            return;
-        }
-
-        active_thread.update(cx, |active, _cx| {
-            active.last_token_limit_telemetry = Some(ratio);
-        });
-
-        telemetry::event!(
-            "Agent Token Limit Warning",
-            agent = agent_telemetry_id,
-            session_id = session_id,
-            kind = kind,
-        );
-    }
-
     fn emit_load_error_telemetry(&self, error: &LoadError) {
         let error_kind = match error {
             LoadError::Unsupported { .. } => "unsupported",
@@ -2255,18 +2175,20 @@ impl ConversationView {
         &self,
         cx: &App,
     ) -> Option<Rc<agent::NativeAgentConnection>> {
-        let acp_thread = self.active_thread()?.read(cx).thread.read(cx);
-        acp_thread.connection().clone().downcast()
+        self.root_thread(cx)?
+            .read(cx)
+            .connection()
+            .clone()
+            .downcast()
     }
 
     pub fn as_native_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
-        let acp_thread = self.active_thread()?.read(cx).thread.read(cx);
         self.as_native_connection(cx)?
-            .thread(acp_thread.session_id(), cx)
+            .thread(self.root_session_id.as_ref()?, cx)
     }
 
     fn queued_messages_len(&self, cx: &App) -> usize {
-        self.active_thread()
+        self.root_thread_view()
             .map(|thread| thread.read(cx).local_queued_messages.len())
             .unwrap_or_default()
     }
@@ -2278,7 +2200,7 @@ impl ConversationView {
         tracked_buffers: Vec<Entity<Buffer>>,
         cx: &mut Context<Self>,
     ) -> bool {
-        match self.active_thread() {
+        match self.root_thread_view() {
             Some(thread) => thread.update(cx, |thread, _cx| {
                 if index < thread.local_queued_messages.len() {
                     thread.local_queued_messages[index] = QueuedMessage {
@@ -2295,7 +2217,7 @@ impl ConversationView {
     }
 
     fn queued_message_contents(&self, cx: &App) -> Vec<Vec<acp::ContentBlock>> {
-        match self.active_thread() {
+        match self.root_thread_view() {
             None => Vec::new(),
             Some(thread) => thread
                 .read(cx)
@@ -2307,7 +2229,7 @@ impl ConversationView {
     }
 
     fn save_queued_message_at_index(&mut self, index: usize, cx: &mut Context<Self>) {
-        let editor = match self.active_thread() {
+        let editor = match self.root_thread_view() {
             Some(thread) => thread.read(cx).queued_message_editors.get(index).cloned(),
             None => None,
         };
@@ -2438,7 +2360,7 @@ impl ConversationView {
             });
         }
 
-        if let Some(active) = self.active_thread() {
+        if let Some(active) = self.root_thread_view() {
             active.update(cx, |active, _cx| {
                 active.last_synced_queue_length = needed_count;
             });
@@ -2469,17 +2391,18 @@ impl ConversationView {
             return false;
         };
 
-        multi_workspace.read(cx).workspace() == &workspace
-            && AgentPanel::is_visible(&workspace, cx)
-            && multi_workspace
-                .read(cx)
-                .workspace()
-                .read(cx)
-                .panel::<AgentPanel>(cx)
-                .map_or(false, |p| {
-                    p.read(cx).active_conversation_view().map(|c| c.entity_id())
-                        == Some(cx.entity_id())
-                })
+        multi_workspace.read(cx).sidebar_open()
+            || multi_workspace.read(cx).workspace() == &workspace
+                && AgentPanel::is_visible(&workspace, cx)
+                && multi_workspace
+                    .read(cx)
+                    .workspace()
+                    .read(cx)
+                    .panel::<AgentPanel>(cx)
+                    .map_or(false, |p| {
+                        p.read(cx).active_conversation_view().map(|c| c.entity_id())
+                            == Some(cx.entity_id())
+                    })
     }
 
     fn agent_status_visible(&self, window: &Window, cx: &Context<Self>) -> bool {
@@ -2531,7 +2454,7 @@ impl ConversationView {
             return;
         }
 
-        let Some(root_thread) = self.root_thread(cx) else {
+        let Some(root_thread) = self.root_thread_view() else {
             return;
         };
         let root_thread = root_thread.read(cx).thread.read(cx);
@@ -2637,7 +2560,12 @@ impl ConversationView {
                                     .update(cx, |multi_workspace, window, cx| {
                                         window.activate_window();
                                         if let Some(workspace) = workspace_handle.upgrade() {
-                                            multi_workspace.activate(workspace.clone(), window, cx);
+                                            multi_workspace.activate(
+                                                workspace.clone(),
+                                                None,
+                                                window,
+                                                cx,
+                                            );
                                             workspace.update(cx, |workspace, cx| {
                                                 workspace.reveal_panel::<AgentPanel>(window, cx);
                                                 if let Some(panel) =
@@ -2650,6 +2578,7 @@ impl ConversationView {
                                                             root_work_dirs.clone(),
                                                             root_title.clone(),
                                                             true,
+                                                            "agent_panel",
                                                             window,
                                                             cx,
                                                         );
@@ -2749,7 +2678,7 @@ impl ConversationView {
         // For ACP agents, use the agent name (e.g., "Claude Agent", "Gemini CLI")
         // This provides better clarity about what refused the request
         if self.as_native_connection(cx).is_some() {
-            self.active_thread()
+            self.root_thread_view()
                 .and_then(|active| active.read(cx).model_selector.clone())
                 .and_then(|selector| selector.read(cx).active_model(cx))
                 .map(|model| model.name.clone())
@@ -2768,7 +2697,7 @@ impl ConversationView {
 
     pub(crate) fn reauthenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let agent_id = self.agent.agent_id();
-        if let Some(active) = self.active_thread() {
+        if let Some(active) = self.root_thread_view() {
             active.update(cx, |active, cx| active.clear_thread_error(cx));
         }
         let this = cx.weak_entity();
@@ -2939,6 +2868,7 @@ pub(crate) mod tests {
     use action_log::ActionLog;
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
     use agent_client_protocol::SessionId;
+    use agent_servers::FakeAcpAgentServer;
     use editor::MultiBufferOffset;
     use fs::FakeFs;
     use gpui::{EventEmitter, TestAppContext, VisualTestContext};
@@ -3048,8 +2978,8 @@ pub(crate) mod tests {
     async fn test_notification_for_error(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::new(SaboteurAgentConnection), cx).await;
+        let server = FakeAcpAgentServer::new();
+        let (conversation_view, cx) = setup_conversation_view(server.clone(), cx).await;
 
         let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
@@ -3057,6 +2987,7 @@ pub(crate) mod tests {
         });
 
         cx.deactivate_window();
+        server.fail_next_prompt();
 
         active_thread(&conversation_view, cx)
             .update_in(cx, |view, window, cx| view.send(window, cx));
@@ -3067,6 +2998,34 @@ pub(crate) mod tests {
             cx.windows()
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_acp_server_exit_transitions_conversation_to_load_error_without_panic(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let server = FakeAcpAgentServer::new();
+        let close_session_count = server.close_session_count();
+        let (conversation_view, cx) = setup_conversation_view(server.clone(), cx).await;
+
+        cx.run_until_parked();
+
+        server.simulate_server_exit();
+        cx.run_until_parked();
+
+        conversation_view.read_with(cx, |view, _cx| {
+            assert!(
+                matches!(view.server_state, ServerState::LoadError { .. }),
+                "Conversation should transition to LoadError when an ACP thread exits"
+            );
+        });
+        assert_eq!(
+            close_session_count.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "ConversationView should close the ACP session after a thread exit"
         );
     }
 
@@ -3159,6 +3118,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -3295,6 +3255,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -3376,6 +3337,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -3698,6 +3660,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -3731,6 +3694,94 @@ pub(crate) mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some()),
             "Expected notification when a different conversation is active in the visible panel"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_notification_when_sidebar_open_but_different_thread_focused(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs, [], cx).await;
+        let multi_workspace_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace_handle
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+
+        // Open the sidebar so that sidebar_open() returns true.
+        multi_workspace_handle
+            .update(cx, |mw, _window, cx| {
+                mw.open_sidebar(cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        assert!(
+            multi_workspace_handle
+                .read_with(cx, |mw, _cx| mw.sidebar_open())
+                .unwrap(),
+            "Sidebar should be open"
+        );
+
+        // Create a conversation view that is NOT the active one in the panel.
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(StubAgentServer::default_response()),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project.clone(),
+                    Some(thread_store),
+                    None,
+                    "agent_panel",
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        assert!(
+            !cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected no notification when the sidebar is open, even if focused on another thread"
         );
     }
 
@@ -3810,6 +3861,7 @@ pub(crate) mod tests {
                     project1.clone(),
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -3819,7 +3871,7 @@ pub(crate) mod tests {
 
         let root_session_id = conversation_view
             .read_with(cx, |view, cx| {
-                view.root_thread(cx)
+                view.root_thread_view()
                     .map(|thread| thread.read(cx).thread.read(cx).session_id().clone())
             })
             .expect("Conversation view should have a root thread");
@@ -4057,6 +4109,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -4502,75 +4555,6 @@ pub(crate) mod tests {
         }
     }
 
-    #[derive(Clone)]
-    struct SaboteurAgentConnection;
-
-    impl AgentConnection for SaboteurAgentConnection {
-        fn agent_id(&self) -> AgentId {
-            AgentId::new("saboteur")
-        }
-
-        fn telemetry_id(&self) -> SharedString {
-            "saboteur".into()
-        }
-
-        fn new_session(
-            self: Rc<Self>,
-            project: Entity<Project>,
-            work_dirs: PathList,
-            cx: &mut gpui::App,
-        ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            Task::ready(Ok(cx.new(|cx| {
-                let action_log = cx.new(|_| ActionLog::new(project.clone()));
-                AcpThread::new(
-                    None,
-                    None,
-                    Some(work_dirs),
-                    self,
-                    project,
-                    action_log,
-                    SessionId::new("test"),
-                    watch::Receiver::constant(
-                        acp::PromptCapabilities::new()
-                            .image(true)
-                            .audio(true)
-                            .embedded_context(true),
-                    ),
-                    cx,
-                )
-            })))
-        }
-
-        fn auth_methods(&self) -> &[acp::AuthMethod] {
-            &[]
-        }
-
-        fn authenticate(
-            &self,
-            _method_id: acp::AuthMethodId,
-            _cx: &mut App,
-        ) -> Task<gpui::Result<()>> {
-            unimplemented!()
-        }
-
-        fn prompt(
-            &self,
-            _id: acp_thread::UserMessageId,
-            _params: acp::PromptRequest,
-            _cx: &mut App,
-        ) -> Task<gpui::Result<acp::PromptResponse>> {
-            Task::ready(Err(anyhow::anyhow!("Error prompting")))
-        }
-
-        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
-            unimplemented!()
-        }
-
-        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
-            self
-        }
-    }
-
     /// Simulates a model which always returns a refusal response
     #[derive(Clone)]
     struct RefusalAgentConnection;
@@ -4827,6 +4811,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store.clone()),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -7159,6 +7144,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )

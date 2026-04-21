@@ -31,7 +31,7 @@ use gpui::{
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
@@ -2275,8 +2275,12 @@ impl ProjectPanel {
                         .update(cx, |panel, cx| {
                             let message = format!("Failed to restore {}: {}", file_name, e);
                             let toast = StatusToast::new(message, cx, |this, _| {
-                                this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                                    .dismiss_button(true)
+                                this.icon(
+                                    Icon::new(IconName::XCircle)
+                                        .size(IconSize::Small)
+                                        .color(Color::Error),
+                                )
+                                .dismiss_button(true)
                             });
                             panel
                                 .workspace

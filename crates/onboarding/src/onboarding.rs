@@ -7,7 +7,7 @@ use gpui::{
     FocusHandle, Focusable, Global, IntoElement, KeyContext, Render, ScrollHandle, SharedString,
     Subscription, Task, WeakEntity, Window, actions,
 };
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
@@ -495,8 +495,12 @@ pub async fn handle_import_vscode_settings(
                     format!("Your {} settings were successfully imported.", source),
                     cx,
                     |this, _| {
-                        this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
-                            .dismiss_button(true)
+                        this.icon(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Success),
+                        )
+                        .dismiss_button(true)
                     },
                 );
                 SettingsImportState::update(cx, |state, _| match source {
@@ -514,11 +518,15 @@ pub async fn handle_import_vscode_settings(
                     "Failed to import settings. See log for details",
                     cx,
                     |this, _| {
-                        this.icon(ToastIcon::new(IconName::Close).color(Color::Error))
-                            .action("Open Log", |window, cx| {
-                                window.dispatch_action(workspace::OpenLog.boxed_clone(), cx)
-                            })
-                            .dismiss_button(true)
+                        this.icon(
+                            Icon::new(IconName::Close)
+                                .size(IconSize::Small)
+                                .color(Color::Error),
+                        )
+                        .action("Open Log", |window, cx| {
+                            window.dispatch_action(workspace::OpenLog.boxed_clone(), cx)
+                        })
+                        .dismiss_button(true)
                     },
                 );
                 workspace.toggle_status_toast(error_toast, cx);

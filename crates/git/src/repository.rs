@@ -74,6 +74,7 @@ pub fn original_repo_path(
 ) -> PathBuf {
     if common_dir != repository_dir {
         original_repo_path_from_common_dir(common_dir)
+            .unwrap_or_else(|| work_directory.to_path_buf())
     } else {
         work_directory.to_path_buf()
     }
@@ -86,16 +87,13 @@ pub fn original_repo_path(
 /// is the working directory. For a git worktree, `common_dir` is the **main**
 /// repo's `.git` directory, so the parent is the original repo's working directory.
 ///
-/// Falls back to returning `common_dir` itself if it doesn't end with `.git`
-/// (e.g. bare repos or unusual layouts).
-pub fn original_repo_path_from_common_dir(common_dir: &Path) -> PathBuf {
+/// Returns `None` if `common_dir` doesn't end with `.git` (e.g. bare repos),
+/// because there is no working-tree root to resolve to in that case.
+pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> {
     if common_dir.file_name() == Some(OsStr::new(".git")) {
-        common_dir
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| common_dir.to_path_buf())
+        common_dir.parent().map(|p| p.to_path_buf())
     } else {
-        common_dir.to_path_buf()
+        None
     }
 }
 
@@ -239,6 +237,7 @@ pub struct Worktree {
     // todo(git_worktree) This type should be a Oid
     pub sha: SharedString,
     pub is_main: bool,
+    pub is_bare: bool,
 }
 
 /// Describes how a new worktree should choose or create its checked-out HEAD.
@@ -293,6 +292,34 @@ impl Worktree {
         self.branch_name()
             .unwrap_or(&self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)])
     }
+
+    pub fn directory_name(&self, main_worktree_path: Option<&Path>) -> String {
+        if self.is_main {
+            return "main worktree".to_string();
+        }
+
+        let dir_name = self
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(self.display_name());
+
+        if let Some(main_path) = main_worktree_path {
+            let main_dir = main_path.file_name().and_then(|n| n.to_str());
+            if main_dir == Some(dir_name) {
+                if let Some(parent_name) = self
+                    .path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                {
+                    return parent_name.to_string();
+                }
+            }
+        }
+
+        dir_name.to_string()
+    }
 }
 
 pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree> {
@@ -305,6 +332,8 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
         let mut sha = None;
         let mut ref_name = None;
 
+        let mut is_bare = false;
+
         for line in entry.lines() {
             let line = line.trim();
             if line.is_empty() {
@@ -316,8 +345,10 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
                 sha = Some(rest.to_string());
             } else if let Some(rest) = line.strip_prefix("branch ") {
                 ref_name = Some(rest.to_string());
+            } else if line == "bare" {
+                is_bare = true;
             }
-            // Ignore other lines: detached, bare, locked, prunable, etc.
+            // Ignore other lines: detached, locked, prunable, etc.
         }
 
         if let (Some(path), Some(sha)) = (path, sha) {
@@ -326,6 +357,7 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
                 ref_name: ref_name.map(Into::into),
                 sha: sha.into(),
                 is_main: is_first,
+                is_bare,
             });
             is_first = false;
         }
@@ -951,6 +983,8 @@ pub trait GitRepository: Send + Sync {
         target_checkpoint: GitRepositoryCheckpoint,
     ) -> BoxFuture<'_, Result<String>>;
 
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>>;
+
     fn default_branch(
         &self,
         include_remote_name: bool,
@@ -1011,6 +1045,25 @@ pub struct RealGitRepository {
     is_trusted: Arc<AtomicBool>,
 }
 
+#[derive(Debug)]
+pub enum RefEdit {
+    Update { ref_name: String, commit: String },
+    Delete { ref_name: String },
+}
+
+impl RefEdit {
+    fn into_args(self) -> Vec<OsString> {
+        match self {
+            Self::Update { ref_name, commit } => {
+                vec!["update-ref".into(), ref_name.into(), commit.into()]
+            }
+            Self::Delete { ref_name } => {
+                vec!["update-ref".into(), "-d".into(), ref_name.into()]
+            }
+        }
+    }
+}
+
 impl RealGitRepository {
     pub fn new(
         dotgit_path: &Path,
@@ -1057,6 +1110,17 @@ impl RealGitRepository {
         ))
     }
 
+    fn edit_ref(&self, edit: RefEdit) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let args = edit.into_args();
+                git_binary?.run(&args).await?;
+                Ok(())
+            })
+            .boxed()
+    }
+
     async fn any_git_binary_help_output(&self) -> SharedString {
         if let Some(output) = self.any_git_binary_help_output.lock().clone() {
             return output;
@@ -1082,6 +1146,11 @@ pub struct GitRepositoryCheckpoint {
 pub struct GitCommitter {
     pub name: Option<String>,
     pub email: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GitCommitTemplate {
+    pub template: String,
 }
 
 pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
@@ -1435,6 +1504,58 @@ impl GitRepository for RealGitRepository {
                 let repo = repo.lock();
                 let content = repo.find_blob(oid.0)?.content().to_owned();
                 Ok(String::from_utf8(content)?)
+            })
+            .boxed()
+    }
+
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
+        let working_directory_and_git_binary = self.working_directory().map(|working_directory| {
+            (
+                working_directory.clone(),
+                GitBinary::new(
+                    self.any_git_binary_path.clone(),
+                    working_directory,
+                    self.path(),
+                    self.executor.clone(),
+                    self.is_trusted(),
+                ),
+            )
+        });
+
+        self.executor
+            .spawn(async move {
+                let (working_directory, git_binary) = working_directory_and_git_binary?;
+
+                let output = git_binary
+                    .build_command(&["config", "--get", "commit.template"])
+                    .output()
+                    .await
+                    .context("failed to run git config --get commit.template")?;
+
+                let raw_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !output.status.success() || raw_path.is_empty() {
+                    return Ok(None);
+                }
+
+                let path = PathBuf::from(&raw_path);
+                let path = if let Some(path) = raw_path.strip_prefix("~/") {
+                    paths::home_dir().join(path)
+                } else if path.is_relative() {
+                    working_directory.join(path)
+                } else {
+                    path
+                };
+
+                let template = match std::fs::read_to_string(&path) {
+                    Ok(s) if !s.trim().is_empty() => Some(s),
+                    Err(err) => {
+                        log::warn!("failed to read commit template {}: {}", path.display(), err);
+                        None
+                    }
+                    _ => None,
+                };
+
+                Ok(template.map(|template| GitCommitTemplate { template }))
             })
             .boxed()
     }
@@ -2284,25 +2405,11 @@ impl GitRepository for RealGitRepository {
     }
 
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
-        self.executor
-            .spawn(async move {
-                let args: Vec<OsString> = vec!["update-ref".into(), ref_name.into(), commit.into()];
-                git_binary?.run(&args).await?;
-                Ok(())
-            })
-            .boxed()
+        self.edit_ref(RefEdit::Update { ref_name, commit })
     }
 
     fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
-        self.executor
-            .spawn(async move {
-                let args: Vec<OsString> = vec!["update-ref".into(), "-d".into(), ref_name.into()];
-                git_binary?.run(&args).await?;
-                Ok(())
-            })
-            .boxed()
+        self.edit_ref(RefEdit::Delete { ref_name })
     }
 
     fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>> {
@@ -4120,6 +4227,7 @@ mod tests {
         assert_eq!(result[0].sha.as_ref(), "abc123def");
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
         assert!(result[0].is_main);
+        assert!(!result[0].is_bare);
 
         // Multiple worktrees
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -4129,9 +4237,11 @@ mod tests {
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
         assert!(result[0].is_main);
+        assert!(!result[0].is_bare);
         assert_eq!(result[1].path, PathBuf::from("/home/user/project-wt"));
         assert_eq!(result[1].ref_name, Some("refs/heads/feature".into()));
         assert!(!result[1].is_main);
+        assert!(!result[1].is_bare);
 
         // Detached HEAD entry (included with ref_name: None)
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -4145,6 +4255,7 @@ mod tests {
         assert_eq!(result[1].ref_name, None);
         assert_eq!(result[1].sha.as_ref(), "def456");
         assert!(!result[1].is_main);
+        assert!(!result[1].is_bare);
 
         // Bare repo entry (included with ref_name: None)
         let input = "worktree /home/user/bare.git\nHEAD abc123\nbare\n\n\
@@ -4154,9 +4265,11 @@ mod tests {
         assert_eq!(result[0].path, PathBuf::from("/home/user/bare.git"));
         assert_eq!(result[0].ref_name, None);
         assert!(result[0].is_main);
+        assert!(result[0].is_bare);
         assert_eq!(result[1].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[1].ref_name, Some("refs/heads/main".into()));
         assert!(!result[1].is_main);
+        assert!(!result[1].is_bare);
 
         // Extra porcelain lines (locked, prunable) should be ignored
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -4446,26 +4559,26 @@ mod tests {
         // Normal repo: common_dir is <work_dir>/.git
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/code/zed5/.git")),
-            PathBuf::from("/code/zed5")
+            Some(PathBuf::from("/code/zed5"))
         );
 
         // Worktree: common_dir is the main repo's .git
         // (same result — that's the point, it always traces back to the original)
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/code/zed5/.git")),
-            PathBuf::from("/code/zed5")
+            Some(PathBuf::from("/code/zed5"))
         );
 
-        // Bare repo: no .git suffix, returns as-is
+        // Bare repo: no .git suffix, returns None (no working-tree root)
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/code/zed5.git")),
-            PathBuf::from("/code/zed5.git")
+            None
         );
 
         // Root-level .git directory
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/.git")),
-            PathBuf::from("/")
+            Some(PathBuf::from("/"))
         );
     }
 

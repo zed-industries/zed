@@ -68,8 +68,8 @@ pub fn init(cx: &mut App) {
     }
 
     cx.observe_flag::<NotebookFeatureFlag, _>({
-        move |is_enabled, cx| {
-            if is_enabled {
+        move |flag, cx| {
+            if *flag {
                 workspace::register_project_item::<NotebookEditor>(cx);
             } else {
                 // todo: there is no way to unregister a project item, so if the feature flag
@@ -206,13 +206,14 @@ impl NotebookEditor {
             cell_order: cell_order.clone(),
             original_cell_order: cell_order.clone(),
             cell_map: cell_map.clone(),
-            kernel: Kernel::Shutdown, // TODO: use recommended kernel after the implementation is done in repl
+            kernel: Kernel::Shutdown,
             kernel_specification: None,
             execution_requests: HashMap::default(),
             kernel_picker_handle: PopoverMenuHandle::default(),
         };
         editor.launch_kernel(window, cx);
         editor.refresh_language(cx);
+        editor.refresh_kernelspecs(cx);
 
         cx.subscribe(&notebook_item, |this, _item, _event, cx| {
             this.refresh_language(cx);
@@ -220,6 +221,18 @@ impl NotebookEditor {
         .detach();
 
         editor
+    }
+
+    fn refresh_kernelspecs(&mut self, cx: &mut Context<Self>) {
+        let store = ReplStore::global(cx);
+        let project = self.project.clone();
+        let worktree_id = self.worktree_id;
+
+        let refresh_task = store.update(cx, |store, cx| {
+            store.refresh_python_kernelspecs(worktree_id, &project, cx)
+        });
+
+        cx.background_spawn(refresh_task).detach_and_log_err(cx);
     }
 
     fn refresh_language(&mut self, cx: &mut Context<Self>) {
@@ -313,8 +326,13 @@ impl NotebookEditor {
     }
 
     fn launch_kernel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // use default Python kernel if no specification is set
-        let spec = self.kernel_specification.clone().unwrap_or_else(|| {
+        let spec = self.kernel_specification.clone().or_else(|| {
+            ReplStore::global(cx)
+                .read(cx)
+                .active_kernelspec(self.worktree_id, None, cx)
+        });
+
+        let spec = spec.unwrap_or_else(|| {
             KernelSpecification::Jupyter(LocalKernelSpecification {
                 name: "python3".to_string(),
                 path: PathBuf::from("python3"),

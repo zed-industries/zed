@@ -159,8 +159,8 @@ pub fn init(cx: &mut App) {
 
     cx.observe_flag::<PanicFeatureFlag, _>({
         let mut added = false;
-        move |enabled, cx| {
-            if added || !enabled {
+        move |flag, cx| {
+            if added || !*flag {
                 return;
             }
             added = true;
@@ -324,6 +324,21 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
 
     let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
 
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    static APP_ICON: std::sync::LazyLock<Option<std::sync::Arc<image::RgbaImage>>> =
+        std::sync::LazyLock::new(|| {
+            // this shouldn't fail since decode is checked in build.rs
+            const BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/app_icon.png"));
+            util::maybe!({
+                let image = image::ImageReader::new(std::io::Cursor::new(BYTES))
+                    .with_guessed_format()?
+                    .decode()?
+                    .into();
+                anyhow::Ok(Arc::new(image))
+            })
+            .log_err()
+        });
+
     WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: None,
@@ -338,6 +353,8 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        icon: APP_ICON.as_ref().cloned(),
         window_decorations: Some(window_decorations),
         window_min_size: Some(gpui::Size {
             width: px(360.0),
@@ -406,6 +423,38 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
 
         let window_handle = window.window_handle();
         let multi_workspace_handle = cx.entity();
+        cx.subscribe_in(
+            &multi_workspace_handle,
+            window,
+            |this, _multi_workspace, event: &workspace::MultiWorkspaceEvent, window, cx| {
+                let workspace::MultiWorkspaceEvent::ActiveWorkspaceChanged { source_workspace } =
+                    event
+                else {
+                    return;
+                };
+
+                let active_workspace = this.workspace().clone();
+                let source_workspace = source_workspace.clone();
+                active_workspace.update(cx, |workspace, cx| {
+                    if let Some(ref source) = source_workspace {
+                        if let Some(panel) = workspace.panel::<agent_ui::AgentPanel>(cx) {
+                            panel.update(cx, |panel, cx| {
+                                panel.initialize_from_source_workspace_if_needed(
+                                    source.clone(),
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }
+                    }
+
+                    ensure_agent_panel_for_workspace(workspace, source_workspace, window, cx)
+                        .detach_and_log_err(cx);
+                });
+            },
+        )
+        .detach();
+
         cx.defer(move |cx| {
             window_handle
                 .update(cx, |_, window, cx| {
@@ -718,24 +767,43 @@ fn setup_or_teardown_ai_panel<P: Panel>(
     }
 }
 
+fn ensure_agent_panel_for_workspace(
+    workspace: &mut Workspace,
+    source_workspace: Option<WeakEntity<Workspace>>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> Task<anyhow::Result<()>> {
+    let task = setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
+        agent_ui::AgentPanel::load(workspace, cx)
+    });
+
+    cx.spawn_in(window, async move |workspace, cx| {
+        task.await?;
+        workspace.update_in(cx, |workspace, window, cx| {
+            if let Some(source_workspace) = source_workspace.clone()
+                && let Some(panel) = workspace.panel::<agent_ui::AgentPanel>(cx)
+            {
+                panel.update(cx, |panel, cx| {
+                    panel.initialize_from_source_workspace_if_needed(source_workspace, window, cx);
+                });
+            }
+        })
+    })
+}
+
 async fn initialize_agent_panel(
     workspace_handle: WeakEntity<Workspace>,
     mut cx: AsyncWindowContext,
 ) -> anyhow::Result<()> {
     workspace_handle
         .update_in(&mut cx, |workspace, window, cx| {
-            setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
-                agent_ui::AgentPanel::load(workspace, cx)
-            })
+            ensure_agent_panel_for_workspace(workspace, None, window, cx)
         })?
         .await?;
 
     workspace_handle.update_in(&mut cx, |workspace, window, cx| {
         cx.observe_global_in::<SettingsStore>(window, move |workspace, window, cx| {
-            setup_or_teardown_ai_panel(workspace, window, cx, move |workspace, cx| {
-                agent_ui::AgentPanel::load(workspace, cx)
-            })
-            .detach_and_log_err(cx);
+            ensure_agent_panel_for_workspace(workspace, None, window, cx).detach_and_log_err(cx);
         })
         .detach();
 
@@ -765,6 +833,22 @@ fn register_actions(
 ) {
     workspace
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
+        .register_action(
+            |workspace: &mut Workspace,
+             _: &input_latency_ui::DumpInputLatencyHistogram,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                let report =
+                    input_latency_ui::format_input_latency_report(window, cx);
+                let project = workspace.project().clone();
+                let buffer = project.update(cx, |project, cx| {
+                    project.create_local_buffer(&report, None, true, cx)
+                });
+                let editor =
+                    cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+                workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+            },
+        )
         .register_action(|_, _: &Minimize, window, _| {
             window.minimize_window();
         })
@@ -1071,11 +1155,12 @@ fn register_actions(
         })
         .register_action({
             let app_state = app_state.clone();
-            move |_workspace, _: &CloseProject, window, cx| {
+            move |workspace, _: &CloseProject, window, cx| {
                 let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
                     return;
                 };
                 let app_state = app_state.clone();
+                let old_group_key = workspace.project_group_key(cx);
                 cx.spawn_in(window, async move |this, cx| {
                     let should_continue = this
                         .update_in(cx, |workspace, window, cx| {
@@ -1114,7 +1199,11 @@ fn register_actions(
                                 },
                             )
                         })?;
-                        task.await
+                        task.await?;
+                        window_handle.update(cx, |mw, window, cx| {
+                            mw.remove_project_group(&old_group_key, window, cx)
+                        })?.await.log_err();
+                        Ok::<(), anyhow::Error>(())
                     } else {
                         Ok(())
                     }
@@ -1520,7 +1609,7 @@ fn quit(_: &Quit, cx: &mut App) {
             for workspace in workspaces {
                 if let Some(should_close) = window
                     .update(cx, |multi_workspace, window, cx| {
-                        multi_workspace.activate(workspace.clone(), window, cx);
+                        multi_workspace.activate(workspace.clone(), None, window, cx);
                         window.activate_window();
                         workspace.update(cx, |workspace, cx| {
                             workspace.prepare_to_close(CloseIntent::Quit, window, cx)
@@ -2005,7 +2094,7 @@ pub fn open_new_ssh_project_from_project(
             paths,
             app_state,
             workspace::OpenOptions {
-                open_new_workspace: Some(true),
+                workspace_matching: workspace::WorkspaceMatching::None,
                 ..Default::default()
             },
             cx,
@@ -2566,13 +2655,13 @@ mod tests {
             })
             .unwrap();
 
-        // Opening with -n (open_new_workspace: Some(true)) still creates a new window.
+        // Opening with -n (reuse_worktrees: false) still creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/e"))],
                 app_state,
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,
@@ -2613,7 +2702,7 @@ mod tests {
                 &[PathBuf::from(path!("/root/a"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(false),
+                    workspace_matching: workspace::WorkspaceMatching::MatchSubdirectory,
                     ..Default::default()
                 },
                 cx,
@@ -2623,29 +2712,13 @@ mod tests {
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
-        // Opening a file inside the existing worktree with -n reuses the window.
+        // Opening a file inside the existing worktree with -n creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/dir/c"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
-                    ..Default::default()
-                },
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-
-        // Opening a path NOT in any existing worktree with -n creates a new window.
-        cx.update(|cx| {
-            open_paths(
-                &[PathBuf::from(path!("/root/b"))],
-                app_state.clone(),
-                workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,
@@ -2654,6 +2727,22 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+
+        // Opening a path NOT in any existing worktree with -n creates a new window.
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/root/b"))],
+                app_state.clone(),
+                workspace::OpenOptions {
+                    workspace_matching: workspace::WorkspaceMatching::None,
+                    ..Default::default()
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 3);
     }
 
     #[gpui::test]
@@ -2706,29 +2795,13 @@ mod tests {
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
-        // Opening a directory already in a worktree with -n reuses the window.
+        // Opening a directory already in a worktree with -n creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/dir2"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
-                    ..Default::default()
-                },
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-
-        // Opening a directory NOT in any worktree with -n creates a new window.
-        cx.update(|cx| {
-            open_paths(
-                &[PathBuf::from(path!("/root"))],
-                app_state.clone(),
-                workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,
@@ -2737,6 +2810,22 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+
+        // Opening a directory NOT in any worktree with -n creates a new window.
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/root"))],
+                app_state.clone(),
+                workspace::OpenOptions {
+                    workspace_matching: workspace::WorkspaceMatching::None,
+                    ..Default::default()
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 3);
     }
 
     #[gpui::test]
@@ -4283,6 +4372,7 @@ mod tests {
                     editor.save(
                         SaveOptions {
                             format: true,
+                            force_format: false,
                             autosave: false,
                         },
                         project.clone(),
@@ -5090,6 +5180,7 @@ mod tests {
                 "vim",
                 "window",
                 "workspace",
+                "worktree_picker",
                 "zed",
                 "zed_actions",
                 "zed_predict_onboarding",
@@ -5634,10 +5725,10 @@ mod tests {
 
         window
             .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.activate(workspace2.clone(), window, cx);
-                multi_workspace.activate(workspace3.clone(), window, cx);
+                multi_workspace.activate(workspace2.clone(), None, window, cx);
+                multi_workspace.activate(workspace3.clone(), None, window, cx);
                 // Switch back to workspace1 for test setup
-                multi_workspace.activate(workspace1.clone(), window, cx);
+                multi_workspace.activate(workspace1.clone(), None, window, cx);
                 assert_eq!(multi_workspace.workspace(), &workspace1);
             })
             .unwrap();
@@ -5821,8 +5912,8 @@ mod tests {
 
         window1
             .update(cx, |multi_workspace, window, cx| {
-                multi_workspace.activate(workspace1_2.clone(), window, cx);
-                multi_workspace.activate(workspace1_1.clone(), window, cx);
+                multi_workspace.activate(workspace1_2.clone(), None, window, cx);
+                multi_workspace.activate(workspace1_1.clone(), None, window, cx);
             })
             .unwrap();
 
@@ -6141,7 +6232,7 @@ mod tests {
         window_a
             .update(cx, |multi_workspace, window, cx| {
                 let workspace = multi_workspace.workspaces().next().unwrap().clone();
-                multi_workspace.activate(workspace, window, cx);
+                multi_workspace.activate(workspace, None, window, cx);
             })
             .unwrap();
 
@@ -6349,7 +6440,7 @@ mod tests {
                     })
                     .expect("workspace_a should exist")
                     .clone();
-                mw.activate(workspace_a, window, cx);
+                mw.activate(workspace_a, None, window, cx);
             })
             .unwrap();
         cx.run_until_parked();
@@ -6427,5 +6518,56 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_close_project_removes_project_group(cx: &mut TestAppContext) {
+        use util::path_list::PathList;
+        use workspace::{OpenMode, ProjectGroupKey};
+
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/my-project"), json!({}))
+            .await;
+
+        let workspace::OpenResult { window, .. } = cx
+            .update(|cx| {
+                workspace::Workspace::new_local(
+                    vec![path!("/my-project").into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        window.update(cx, |mw, _, cx| mw.open_sidebar(cx)).unwrap();
+        cx.background_executor.run_until_parked();
+
+        let project_key = ProjectGroupKey::new(None, PathList::new(&[path!("/my-project")]));
+        let keys = window
+            .read_with(cx, |mw, _| mw.project_group_keys())
+            .unwrap();
+        assert_eq!(
+            keys,
+            vec![project_key],
+            "project group should exist before CloseProject: {keys:?}"
+        );
+
+        cx.dispatch_action(window.into(), CloseProject);
+
+        let keys = window
+            .read_with(cx, |mw, _| mw.project_group_keys())
+            .unwrap();
+        assert!(
+            keys.is_empty(),
+            "project group should be removed after CloseProject: {keys:?}"
+        );
     }
 }

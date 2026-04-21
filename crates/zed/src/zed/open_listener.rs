@@ -462,9 +462,7 @@ pub async fn handle_cli_connection(
                 diff_all,
                 wait,
                 wsl,
-                mut open_new_workspace,
-                mut force_existing_window,
-                reuse,
+                mut open_behavior,
                 env,
                 user_data_dir: _,
                 dev_container,
@@ -482,6 +480,7 @@ pub async fn handle_cli_connection(
                             cx,
                         ) {
                             Ok(open_request) => {
+                                cx.activate(true);
                                 handle_open_request(open_request, app_state.clone(), cx);
                                 responses.send(CliResponse::Exit { status: 0 }).log_err();
                             }
@@ -498,7 +497,7 @@ pub async fn handle_cli_connection(
                     return;
                 }
 
-                if open_new_workspace.is_none() && !force_existing_window && !reuse {
+                if open_behavior == cli::OpenBehavior::Default {
                     match resolve_open_behavior(
                         &paths,
                         &app_state,
@@ -509,22 +508,22 @@ pub async fn handle_cli_connection(
                     .await
                     {
                         Some(settings::CliDefaultOpenBehavior::ExistingWindow) => {
-                            force_existing_window = true;
+                            open_behavior = cli::OpenBehavior::ExistingWindow;
                         }
                         Some(settings::CliDefaultOpenBehavior::NewWindow) => {
-                            open_new_workspace = Some(true);
+                            open_behavior = cli::OpenBehavior::Classic;
                         }
                         None => {}
                     }
                 }
 
+                cx.update(|cx| cx.activate(true));
+
                 let open_workspace_result = open_workspaces(
                     paths,
                     diff_paths,
                     diff_all,
-                    open_new_workspace,
-                    force_existing_window,
-                    reuse,
+                    open_behavior,
                     responses.as_ref(),
                     wait,
                     dev_container,
@@ -626,10 +625,10 @@ async fn resolve_open_behavior(
 
     if let Some(CliRequest::SetOpenBehavior { behavior }) = requests.next().await {
         let behavior = match behavior {
-            cli::CliOpenBehavior::ExistingWindow => {
+            cli::CliBehaviorSetting::ExistingWindow => {
                 settings::CliDefaultOpenBehavior::ExistingWindow
             }
-            cli::CliOpenBehavior::NewWindow => settings::CliDefaultOpenBehavior::NewWindow,
+            cli::CliBehaviorSetting::NewWindow => settings::CliDefaultOpenBehavior::NewWindow,
         };
 
         let fs = app_state.fs.clone();
@@ -649,9 +648,7 @@ async fn open_workspaces(
     paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
     diff_all: bool,
-    open_new_workspace: Option<bool>,
-    force_existing_window: bool,
-    reuse: bool,
+    open_behavior: cli::OpenBehavior,
     responses: &dyn CliResponseSink,
     wait: bool,
     dev_container: bool,
@@ -659,7 +656,7 @@ async fn open_workspaces(
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    if paths.is_empty() && diff_paths.is_empty() && open_new_workspace != Some(true) {
+    if paths.is_empty() && diff_paths.is_empty() && open_behavior != cli::OpenBehavior::AlwaysNew {
         return restore_or_create_workspace(app_state, cx).await;
     }
 
@@ -699,21 +696,33 @@ async fn open_workspaces(
 
     for (location, workspace_paths) in grouped_locations {
         // If reuse flag is passed, open a new workspace in an existing window.
-        let (open_new_workspace, replace_window) = if reuse {
-            (
-                Some(true),
-                cx.update(|cx| {
-                    workspace::workspace_windows_for_location(&location, cx)
-                        .into_iter()
-                        .next()
-                }),
-            )
+        let replace_window = if open_behavior == cli::OpenBehavior::Reuse {
+            cx.update(|cx| {
+                workspace::workspace_windows_for_location(&location, cx)
+                    .into_iter()
+                    .next()
+            })
         } else {
-            (open_new_workspace, None)
+            None
         };
         let open_options = workspace::OpenOptions {
-            open_new_workspace,
-            force_existing_window,
+            workspace_matching: match open_behavior {
+                cli::OpenBehavior::AlwaysNew | cli::OpenBehavior::Reuse => {
+                    workspace::WorkspaceMatching::None
+                }
+                cli::OpenBehavior::Add => workspace::WorkspaceMatching::MatchSubdirectory,
+                _ => workspace::WorkspaceMatching::MatchExact,
+            },
+            add_dirs_to_sidebar: match open_behavior {
+                cli::OpenBehavior::ExistingWindow => true,
+                // For the default value, we consult the settings to decide
+                // whether to open in a new window or existing window.
+                cli::OpenBehavior::Default => cx.update(|cx| {
+                    workspace::WorkspaceSettings::get_global(cx).cli_default_open_behavior
+                        == settings::CliDefaultOpenBehavior::ExistingWindow
+                }),
+                _ => false,
+            },
             requesting_window: replace_window,
             wait,
             env: env.clone(),
@@ -774,7 +783,7 @@ async fn open_workspaces(
 }
 
 async fn open_local_workspace(
-    workspace_paths: Vec<String>,
+    mut workspace_paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
     diff_all: bool,
     open_options: workspace::OpenOptions,
@@ -782,6 +791,16 @@ async fn open_local_workspace(
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
+    let user_provided_paths = !workspace_paths.is_empty();
+
+    // When only diff paths are provided (no regular paths), add the current
+    // working directory so the workspace opens with the right context.
+    if !user_provided_paths && !diff_paths.is_empty() {
+        if let Ok(cwd) = std::env::current_dir() {
+            workspace_paths.push(cwd.to_string_lossy().into_owned());
+        }
+    }
+
     let paths_with_position =
         derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
 
@@ -813,10 +832,12 @@ async fn open_local_workspace(
     // the entire workspace is closed.
     if open_options.wait {
         let mut wait_for_window_close = paths_with_position.is_empty() && diff_paths.is_empty();
-        for path_with_position in &paths_with_position {
-            if app_state.fs.is_dir(&path_with_position.path).await {
-                wait_for_window_close = true;
-                break;
+        if user_provided_paths {
+            for path_with_position in &paths_with_position {
+                if app_state.fs.is_dir(&path_with_position.path).await {
+                    wait_for_window_close = true;
+                    break;
+                }
             }
         }
 
@@ -1212,7 +1233,7 @@ mod tests {
         assert_eq!(cx.windows().len(), 0);
 
         // First open the workspace directory
-        open_workspace_file(path!("/root/dir1"), None, app_state.clone(), cx).await;
+        open_workspace_file(path!("/root/dir1"), <_>::default(), app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
         let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
@@ -1225,7 +1246,13 @@ mod tests {
             .unwrap();
 
         // Now open a file inside that workspace
-        open_workspace_file(path!("/root/dir1/file1.txt"), None, app_state.clone(), cx).await;
+        open_workspace_file(
+            path!("/root/dir1/file1.txt"),
+            <_>::default(),
+            app_state.clone(),
+            cx,
+        )
+        .await;
 
         assert_eq!(cx.windows().len(), 1);
         multi_workspace
@@ -1236,16 +1263,19 @@ mod tests {
             })
             .unwrap();
 
-        // Opening a file inside the existing worktree with -n reuses the window.
+        // Opening a file inside the existing worktree with -n creates a new window.
         open_workspace_file(
             path!("/root/dir1/file1.txt"),
-            Some(true),
+            workspace::OpenOptions {
+                workspace_matching: workspace::WorkspaceMatching::None,
+                ..Default::default()
+            },
             app_state.clone(),
             cx,
         )
         .await;
 
-        assert_eq!(cx.windows().len(), 1);
+        assert_eq!(cx.windows().len(), 2);
     }
 
     #[gpui::test]
@@ -1316,7 +1346,13 @@ mod tests {
         assert_eq!(cx.windows().len(), 0);
 
         // Test case 1: Open a single file that does not exist yet
-        open_workspace_file(path!("/root/file5.txt"), None, app_state.clone(), cx).await;
+        open_workspace_file(
+            path!("/root/file5.txt"),
+            <_>::default(),
+            app_state.clone(),
+            cx,
+        )
+        .await;
 
         assert_eq!(cx.windows().len(), 1);
         let multi_workspace_1 = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
@@ -1330,7 +1366,16 @@ mod tests {
 
         // Test case 2: Open a single file that does not exist yet,
         // but tell Zed to add it to the current workspace
-        open_workspace_file(path!("/root/file6.txt"), Some(false), app_state.clone(), cx).await;
+        open_workspace_file(
+            path!("/root/file6.txt"),
+            workspace::OpenOptions {
+                workspace_matching: workspace::WorkspaceMatching::MatchSubdirectory,
+                ..Default::default()
+            },
+            app_state.clone(),
+            cx,
+        )
+        .await;
 
         assert_eq!(cx.windows().len(), 1);
         multi_workspace_1
@@ -1344,7 +1389,16 @@ mod tests {
 
         // Test case 3: Open a single file that does not exist yet,
         // but tell Zed to NOT add it to the current workspace
-        open_workspace_file(path!("/root/file7.txt"), Some(true), app_state.clone(), cx).await;
+        open_workspace_file(
+            path!("/root/file7.txt"),
+            workspace::OpenOptions {
+                workspace_matching: workspace::WorkspaceMatching::None,
+                ..Default::default()
+            },
+            app_state.clone(),
+            cx,
+        )
+        .await;
 
         assert_eq!(cx.windows().len(), 2);
         let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
@@ -1360,7 +1414,7 @@ mod tests {
 
     async fn open_workspace_file(
         path: &str,
-        open_new_workspace: Option<bool>,
+        open_options: workspace::OpenOptions,
         app_state: Arc<AppState>,
         cx: &TestAppContext,
     ) {
@@ -1374,10 +1428,7 @@ mod tests {
                     workspace_paths,
                     vec![],
                     false,
-                    workspace::OpenOptions {
-                        open_new_workspace,
-                        ..Default::default()
-                    },
+                    open_options,
                     &response_sink,
                     &app_state,
                     &mut cx,
@@ -1654,7 +1705,7 @@ mod tests {
                         Vec::new(),
                         false,
                         workspace::OpenOptions {
-                            open_new_workspace: Some(true), // Force new window
+                            workspace_matching: workspace::WorkspaceMatching::None, // Force new window
                             ..Default::default()
                         },
                         &response_sink,
@@ -1676,7 +1727,7 @@ mod tests {
             })
             .unwrap();
 
-        // Now use --add flag (open_new_workspace = Some(false)) to add a new file
+        // Now use --add flag (open_behavior = OpenBehavior::Add) to add a new file
         // It should open in the focused window (window2), not an arbitrary window
         let new_file_path = if cfg!(windows) {
             "C:\\root\\new_file.txt"
@@ -1700,7 +1751,7 @@ mod tests {
                         Vec::new(),
                         false,
                         workspace::OpenOptions {
-                            open_new_workspace: Some(false), // --add flag
+                            workspace_matching: workspace::WorkspaceMatching::MatchSubdirectory, // --add flag
                             ..Default::default()
                         },
                         &response_sink,
@@ -1852,11 +1903,7 @@ mod tests {
             .unwrap();
     }
 
-    fn make_cli_open_request(
-        paths: Vec<String>,
-        open_new_workspace: Option<bool>,
-        force_existing_window: bool,
-    ) -> CliRequest {
+    fn make_cli_open_request(paths: Vec<String>, open_behavior: cli::OpenBehavior) -> CliRequest {
         CliRequest::Open {
             paths,
             urls: vec![],
@@ -1864,9 +1911,7 @@ mod tests {
             diff_all: false,
             wsl: None,
             wait: false,
-            open_new_workspace,
-            force_existing_window,
-            reuse: false,
+            open_behavior,
             env: None,
             user_data_dir: None,
             dev_container: false,
@@ -1883,7 +1928,7 @@ mod tests {
         cx: &mut TestAppContext,
         app_state: Arc<AppState>,
         open_request: CliRequest,
-        prompt_response: Option<cli::CliOpenBehavior>,
+        prompt_response: Option<cli::CliBehaviorSetting>,
     ) -> (i32, bool) {
         cx.executor().allow_parking();
 
@@ -1912,7 +1957,7 @@ mod tests {
                     CliResponse::PromptOpenBehavior => {
                         prompt_called_for_thread.store(true, std::sync::atomic::Ordering::SeqCst);
                         let behavior =
-                            prompt_response.unwrap_or(cli::CliOpenBehavior::ExistingWindow);
+                            prompt_response.unwrap_or(cli::CliBehaviorSetting::ExistingWindow);
                         request_tx
                             .unbounded_send(CliRequest::SetOpenBehavior { behavior })
                             .map_err(|error| anyhow::anyhow!("{error}"))?;
@@ -1952,7 +1997,10 @@ mod tests {
         let (status, prompt_shown) = run_cli_with_zed_handler(
             cx,
             app_state,
-            make_cli_open_request(vec![path!("/project/file.txt").to_string()], None, false),
+            make_cli_open_request(
+                vec![path!("/project/file.txt").to_string()],
+                cli::OpenBehavior::Default,
+            ),
             None,
         );
 
@@ -1980,14 +2028,23 @@ mod tests {
             .await;
 
         // Create an existing window so the prompt triggers
-        open_workspace_file(path!("/project_a"), None, app_state.clone(), cx).await;
+        open_workspace_file(
+            path!("/project_a"),
+            Default::default(),
+            app_state.clone(),
+            cx,
+        )
+        .await;
         assert_eq!(cx.windows().len(), 1);
 
         let (status, prompt_shown) = run_cli_with_zed_handler(
             cx,
             app_state.clone(),
-            make_cli_open_request(vec![path!("/project_b").to_string()], None, false),
-            Some(cli::CliOpenBehavior::ExistingWindow),
+            make_cli_open_request(
+                vec![path!("/project_b").to_string()],
+                cli::OpenBehavior::Default,
+            ),
+            Some(cli::CliBehaviorSetting::ExistingWindow),
         );
 
         assert_eq!(status, 0);
@@ -2021,14 +2078,23 @@ mod tests {
             .await;
 
         // Create an existing window with project_a
-        open_workspace_file(path!("/project_a"), None, app_state.clone(), cx).await;
+        open_workspace_file(
+            path!("/project_a"),
+            Default::default(),
+            app_state.clone(),
+            cx,
+        )
+        .await;
         assert_eq!(cx.windows().len(), 1);
 
         let (status, prompt_shown) = run_cli_with_zed_handler(
             cx,
             app_state.clone(),
-            make_cli_open_request(vec![path!("/project_b").to_string()], None, false),
-            Some(cli::CliOpenBehavior::NewWindow),
+            make_cli_open_request(
+                vec![path!("/project_b").to_string()],
+                cli::OpenBehavior::Default,
+            ),
+            Some(cli::CliBehaviorSetting::NewWindow),
         );
 
         assert_eq!(status, 0);
@@ -2069,13 +2135,16 @@ mod tests {
             .await;
 
         // Create an existing window
-        open_workspace_file(path!("/project"), None, app_state.clone(), cx).await;
+        open_workspace_file(path!("/project"), Default::default(), app_state.clone(), cx).await;
         assert_eq!(cx.windows().len(), 1);
 
         let (status, prompt_shown) = run_cli_with_zed_handler(
             cx,
             app_state,
-            make_cli_open_request(vec![path!("/project/file.txt").to_string()], None, false),
+            make_cli_open_request(
+                vec![path!("/project/file.txt").to_string()],
+                cli::OpenBehavior::Default,
+            ),
             None,
         );
 
@@ -2097,7 +2166,7 @@ mod tests {
             .await;
 
         // Create an existing window
-        open_workspace_file(path!("/project"), None, app_state.clone(), cx).await;
+        open_workspace_file(path!("/project"), Default::default(), app_state.clone(), cx).await;
         assert_eq!(cx.windows().len(), 1);
 
         let (status, prompt_shown) = run_cli_with_zed_handler(
@@ -2105,8 +2174,7 @@ mod tests {
             app_state,
             make_cli_open_request(
                 vec![path!("/project/file.txt").to_string()],
-                None,
-                true, // -e flag: force existing window
+                cli::OpenBehavior::ExistingWindow, // -e flag: force existing window
             ),
             None,
         );
@@ -2132,7 +2200,13 @@ mod tests {
             .await;
 
         // Create an existing window
-        open_workspace_file(path!("/project_a"), None, app_state.clone(), cx).await;
+        open_workspace_file(
+            path!("/project_a"),
+            Default::default(),
+            app_state.clone(),
+            cx,
+        )
+        .await;
         assert_eq!(cx.windows().len(), 1);
 
         let (status, prompt_shown) = run_cli_with_zed_handler(
@@ -2140,8 +2214,7 @@ mod tests {
             app_state,
             make_cli_open_request(
                 vec![path!("/project_b/file.txt").to_string()],
-                Some(true), // -n flag: force new window
-                false,
+                cli::OpenBehavior::AlwaysNew, // -n flag: force new window
             ),
             None,
         );
@@ -2169,14 +2242,17 @@ mod tests {
             .await;
 
         // Open the project directory as a workspace
-        open_workspace_file(path!("/project"), None, app_state.clone(), cx).await;
+        open_workspace_file(path!("/project"), Default::default(), app_state.clone(), cx).await;
         assert_eq!(cx.windows().len(), 1);
 
         // Opening a file inside the already-open workspace should not prompt
         let (status, prompt_shown) = run_cli_with_zed_handler(
             cx,
             app_state,
-            make_cli_open_request(vec![path!("/project/src/main.rs").to_string()], None, false),
+            make_cli_open_request(
+                vec![path!("/project/src/main.rs").to_string()],
+                cli::OpenBehavior::Default,
+            ),
             None,
         );
 

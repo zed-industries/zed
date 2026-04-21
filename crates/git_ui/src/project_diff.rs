@@ -378,7 +378,6 @@ impl ProjectDiff {
                         editor.register_addon(BranchDiffAddon {
                             branch_diff: branch_diff.clone(),
                         });
-                        editor.start_temporary_diff_override();
                     }
                 }
             });
@@ -1973,6 +1972,7 @@ mod tests {
             buffer_editor.save(
                 SaveOptions {
                     format: false,
+                    force_format: false,
                     autosave: false,
                 },
                 project.clone(),

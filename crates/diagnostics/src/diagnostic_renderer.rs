@@ -206,7 +206,7 @@ impl DiagnosticBlock {
                 (status_colors.warning_background, status_colors.warning)
             }
             DiagnosticSeverity::INFORMATION => (status_colors.info_background, status_colors.info),
-            DiagnosticSeverity::HINT => (status_colors.hint_background, status_colors.info),
+            DiagnosticSeverity::HINT => (status_colors.hint_background, status_colors.hint),
             _ => (status_colors.ignored_background, status_colors.ignored),
         };
         let settings = ThemeSettings::get_global(cx);
