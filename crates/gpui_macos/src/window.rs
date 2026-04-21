@@ -417,6 +417,16 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             toggle_tab_bar as extern "C" fn(&Object, Sel, id),
         );
 
+        decl.add_method(
+            sel!(accessibilityFocusedUIElement),
+            window_accessibility_focused_ui_element as extern "C" fn(&Object, Sel) -> id,
+        );
+
+        decl.add_method(
+            sel!(accessibilityHitTest:),
+            window_accessibility_hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id,
+        );
+
         decl.register()
     }
 }
@@ -460,6 +470,10 @@ struct MacWindowState {
     closed: Arc<AtomicBool>,
     // The parent window if this window is a sheet (Dialog kind)
     sheet_parent: Option<id>,
+    accessibility_adapter: Option<(
+        accesskit_macos::SubclassingAdapter,
+        Arc<parking_lot::Mutex<Option<accesskit::TreeUpdate>>>,
+    )>,
 }
 
 impl MacWindowState {
@@ -785,6 +799,7 @@ impl MacWindow {
                 activated_least_once: false,
                 closed: Arc::new(AtomicBool::new(false)),
                 sheet_parent: None,
+                accessibility_adapter: None,
             })));
 
             (*native_window).set_ivar(
@@ -926,6 +941,44 @@ impl MacWindow {
                         }
                     }
                 }
+            }
+
+            {
+                // Install the AccessKit subclassing adapter BEFORE the window is first shown.
+                // SubclassingAdapter::for_window dynamically subclasses the window's content view
+                // to intercept accessibilityChildren/accessibilityHitTest/accessibilityFocusedUIElement.
+                // It must be installed before makeKeyAndOrderFront_ / orderFront_ so that the first
+                // accessibility query from the OS (which can happen immediately on show) goes through it.
+                //
+                // The ActivationHandler reads from a shared slot so the first AT query (which normally
+                // produces an empty Placeholder tree) instead returns the last rendered tree. Without
+                // this, the Placeholder's zero-bounds Window node makes the window unselectable in
+                // Accessibility Inspector.
+                let last_tree: Arc<parking_lot::Mutex<Option<accesskit::TreeUpdate>>> =
+                    Arc::new(parking_lot::Mutex::new(None));
+                struct StoredActivationHandler(
+                    Arc<parking_lot::Mutex<Option<accesskit::TreeUpdate>>>,
+                );
+                impl accesskit::ActivationHandler for StoredActivationHandler {
+                    fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
+                        let tree = self.0.lock().clone();
+                        eprintln!("[a11y] request_initial_tree: has_tree={}", tree.is_some());
+                        tree
+                    }
+                }
+                struct NullActionHandler;
+                impl accesskit::ActionHandler for NullActionHandler {
+                    fn do_action(&mut self, _request: accesskit::ActionRequest) {}
+                }
+                // Subclass the NSWindow's contentView (the standard AT entry point for the window)
+                // rather than the GPUIView subview, so that the accessibility hierarchy matches
+                // what macOS expects: NSWindow → contentView → accesskit tree.
+                let adapter = accesskit_macos::SubclassingAdapter::for_window(
+                    native_window as *mut std::ffi::c_void,
+                    StoredActivationHandler(last_tree.clone()),
+                    NullActionHandler,
+                );
+                window.0.lock().accessibility_adapter = Some((adapter, last_tree));
             }
 
             if focus && show {
@@ -1428,6 +1481,20 @@ impl PlatformWindow for MacWindow {
         false
     }
 
+    fn accessibility_adapter(&mut self) -> Option<Box<dyn FnMut(accesskit::TreeUpdate)>> {
+        let (mut adapter, last_tree) = self.0.lock().accessibility_adapter.take()?;
+        Some(Box::new(move |update: accesskit::TreeUpdate| {
+            eprintln!("[a11y] commit_frame: {} nodes", update.nodes.len());
+            // Cache the latest tree so StoredActivationHandler can return it when
+            // the AT first connects (avoiding a zero-bounds Placeholder node).
+            *last_tree.lock() = Some(update.clone());
+            if let Some(events) = adapter.update_if_active(|| update) {
+                eprintln!("[a11y] update_if_active returned events → raising");
+                events.raise();
+            }
+        }))
+    }
+
     fn set_edited(&mut self, edited: bool) {
         unsafe {
             let window = self.0.lock().native_window;
@@ -1749,6 +1816,36 @@ extern "C" fn dealloc_window(this: &Object, _: Sel) {
     unsafe {
         drop_window_state(this);
         let _: () = msg_send![super(this, class!(NSWindow)), dealloc];
+    }
+}
+
+// When an accesskit SubclassingAdapter is installed on the contentView, its
+// accessibilityFocusedUIElement returns null when no accesskit node has
+// keyboard focus (e.g. because the root is Role::Window which can't be
+// focused). This causes Accessibility Inspector to see no focused element in
+// the window and refuse to let the user select elements. We fix this by
+// intercepting on the window and falling back to the contentView itself,
+// which still exposes the full accesskit tree via accessibilityChildren.
+extern "C" fn window_accessibility_focused_ui_element(this: &Object, _: Sel) -> id {
+    unsafe {
+        let content_view: id = msg_send![this, contentView];
+        let focused: id = msg_send![content_view, accessibilityFocusedUIElement];
+        if !focused.is_null() {
+            focused
+        } else {
+            content_view
+        }
+    }
+}
+
+// Forward accessibilityHitTest: from the NSWindow to the contentView so that
+// Accessibility Inspector can select individual GPUI elements (not just the window).
+// NSWindow's default implementation does not always delegate into the contentView's
+// accessibilityHitTest:, so we do it explicitly here.
+extern "C" fn window_accessibility_hit_test(this: &Object, _: Sel, point: NSPoint) -> id {
+    unsafe {
+        let content_view: id = msg_send![this, contentView];
+        msg_send![content_view, accessibilityHitTest: point]
     }
 }
 

@@ -10,8 +10,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use gpui::{
-    App, Bounds, Context, FocusHandle, Live, Role, SharedString, Stateful, Window, WindowBounds,
-    WindowOptions, actions, div, prelude::*, px, size,
+    App, Bounds, Context, FocusHandle, KeyDownEvent, Live, Role, SharedString, Stateful, Window,
+    WindowBounds, WindowOptions, actions, div, prelude::*, px, size,
 };
 use gpui_platform::application;
 
@@ -27,6 +27,8 @@ struct AccessibilityExample {
     mute_focus: FocusHandle,
     option_a_focus: FocusHandle,
     option_b_focus: FocusHandle,
+    username: String,
+    username_focus: FocusHandle,
 }
 
 impl AccessibilityExample {
@@ -41,6 +43,28 @@ impl AccessibilityExample {
             mute_focus: cx.focus_handle(),
             option_a_focus: cx.focus_handle(),
             option_b_focus: cx.focus_handle(),
+            username: String::new(),
+            username_focus: cx.focus_handle(),
+        }
+    }
+
+    fn handle_username_keydown(
+        &mut self,
+        event: &KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.key == "backspace" {
+            self.username.pop();
+            cx.notify();
+        } else if let Some(ch) = &event.keystroke.key_char {
+            if !event.keystroke.modifiers.platform
+                && !event.keystroke.modifiers.control
+                && ch.chars().all(|c| !c.is_control())
+            {
+                self.username.push_str(ch);
+                cx.notify();
+            }
         }
     }
 
@@ -114,9 +138,29 @@ fn checkbox(id: &'static str, label: &'static str, checked: bool) -> Stateful<gp
 }
 
 fn section_label(text: &'static str) -> gpui::Div {
+    div().text_color(gpui::black().opacity(0.4)).child(text)
+}
+
+fn text_input_label(text: &'static str) -> gpui::Div {
     div()
-        .text_color(gpui::black().opacity(0.4))
+        .text_xs()
+        .text_color(gpui::black().opacity(0.5))
         .child(text)
+}
+
+fn text_input(id: &'static str, value: &str) -> Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .role(Role::TextInput)
+        .px_2()
+        .py_1()
+        .w_full()
+        .border_1()
+        .border_color(gpui::black().opacity(0.3))
+        .rounded_sm()
+        .bg(gpui::white())
+        .cursor_text()
+        .child(SharedString::from(value.to_owned()))
 }
 
 impl Render for AccessibilityExample {
@@ -126,138 +170,184 @@ impl Render for AccessibilityExample {
         div()
             .size_full()
             .flex()
-            .flex_row()
+            .flex_col()
             .bg(gpui::white())
             .text_color(gpui::black())
             .text_sm()
-            // Left panel
+            // Top row: left panel + right panel
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap_4()
-                    .p_4()
-                    .w(px(240.))
-                    // Buttons section
-                    .child(section_label("BUTTONS"))
+                    .flex_row()
+                    .flex_1()
                     .child(
+                        // Left panel
                         div()
                             .flex()
                             .flex_col()
-                            .gap_2()
-                            // Default
-                            .child(
-                                button("btn-default", "Default")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.status = "Default clicked.".into();
-                                        cx.notify();
-                                    })),
-                            )
-                            // Primary (blue)
-                            .child(
-                                button("btn-primary", "Primary")
-                                    .bg(gpui::blue())
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.status = "Primary clicked.".into();
-                                        cx.notify();
-                                    })),
-                            )
-                            // Danger (red, destructive)
-                            .child(
-                                button("btn-danger", "Danger")
-                                    .bg(gpui::red())
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.status = "Danger clicked.".into();
-                                        cx.notify();
-                                    })),
-                            )
-                            // Disabled — aria_disabled + no on_click
-                            .child(
-                                button("btn-disabled", "Disabled")
-                                    .aria_disabled(true)
-                                    .bg(gpui::black().opacity(0.25))
-                                    .cursor_not_allowed(),
-                            )
-                            // Toggle (aria_pressed) — press to mute/unmute
-                            .child(
-                                button("btn-mute", if self.muted { "Unmute" } else { "Mute" })
-                                    .aria_pressed(self.muted)
-                                    .track_focus(&self.mute_focus)
-                                    .when(self.muted, |el| el.bg(gpui::blue()))
-                                    .on_click(cx.listener(Self::toggle_mute)),
-                            )
-                            // Counter with increment
+                            .gap_4()
+                            .p_4()
+                            .w(px(240.))
+                            .border_r_1()
+                            .border_color(gpui::black().opacity(0.1))
+                            // Buttons section
+                            .child(section_label("BUTTONS"))
                             .child(
                                 div()
                                     .flex()
-                                    .flex_row()
-                                    .items_center()
+                                    .flex_col()
                                     .gap_2()
+                                    // Default
+                                    .child(button("btn-default", "Button 1").on_click(cx.listener(
+                                        |this, _, _, cx| {
+                                            this.status = "Default clicked.".into();
+                                            cx.notify();
+                                        },
+                                    )))
+                                    // Primary (blue)
+                                    .child(
+                                        button("btn-primary", "OK").bg(gpui::blue()).on_click(
+                                            cx.listener(|this, _, _, cx| {
+                                                this.status = "Primary clicked.".into();
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    )
+                                    // Danger (red, destructive)
+                                    .child(button("btn-danger", "Delete").bg(gpui::red()).on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            this.status = "Danger clicked.".into();
+                                            cx.notify();
+                                        }),
+                                    ))
+                                    // Disabled — aria_disabled + no on_click
+                                    .child(
+                                        button("btn-disabled", "Upload")
+                                            .aria_disabled(true)
+                                            .bg(gpui::black().opacity(0.25))
+                                            .cursor_not_allowed(),
+                                    )
+                                    // Toggle (aria_pressed) — press to mute/unmute
+                                    .child(
+                                        button(
+                                            "btn-mute",
+                                            if self.muted { "Unmute" } else { "Mute" },
+                                        )
+                                        .aria_pressed(self.muted)
+                                        .track_focus(&self.mute_focus)
+                                        .when(self.muted, |el| el.bg(gpui::blue()))
+                                        .on_click(cx.listener(Self::toggle_mute)),
+                                    )
+                                    // Counter with increment
                                     .child(
                                         div()
-                                            .role(Role::Label)
-                                            .aria_label("Counter value")
-                                            .child(SharedString::from(format!(
-                                                "Count: {}",
-                                                self.count
-                                            ))),
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .role(Role::Label)
+                                                    .aria_label("Counter value")
+                                                    .child(SharedString::from(format!(
+                                                        "Count: {}",
+                                                        self.count
+                                                    ))),
+                                            )
+                                            .child(
+                                                button("btn-increment", "Increment")
+                                                    .track_focus(&self.increment_focus)
+                                                    .on_click(cx.listener(Self::increment)),
+                                            ),
+                                    ),
+                            )
+                            // Checkboxes section
+                            .child(section_label("CHECKBOXES"))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        checkbox("option-a", "Option A", self.option_a)
+                                            .track_focus(&self.option_a_focus)
+                                            .on_click(cx.listener(Self::toggle_a)),
                                     )
                                     .child(
-                                        button("btn-increment", "Increment")
-                                            .track_focus(&self.increment_focus)
-                                            .on_click(cx.listener(Self::increment)),
+                                        checkbox("option-b", "Option B", self.option_b)
+                                            .track_focus(&self.option_b_focus)
+                                            .on_click(cx.listener(Self::toggle_b)),
                                     ),
-                            ),
-                    )
-                    // Checkboxes section
-                    .child(section_label("CHECKBOXES"))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(
-                                checkbox("option-a", "Option A", self.option_a)
-                                    .track_focus(&self.option_a_focus)
-                                    .on_click(cx.listener(Self::toggle_a)),
                             )
+                            // Text inputs section
+                            .child(section_label("TEXT INPUTS"))
                             .child(
-                                checkbox("option-b", "Option B", self.option_b)
-                                    .track_focus(&self.option_b_focus)
-                                    .on_click(cx.listener(Self::toggle_b)),
+                                div().flex().flex_col().gap_3()
+                                    // Editable input — required
+                                    .child(text_input_label("Username (required)"))
+                                    .child(
+                                        text_input(
+                                            "input-username",
+                                            if self.username.is_empty() {
+                                                "Type here…"
+                                            } else {
+                                                &self.username
+                                            },
+                                        )
+                                        .aria_label("Username")
+                                        .aria_required(true)
+                                        .track_focus(&self.username_focus)
+                                        .on_key_down(cx.listener(Self::handle_username_keydown))
+                                        .when(self.username.is_empty(), |el| {
+                                            el.text_color(gpui::black().opacity(0.3))
+                                        }),
+                                    )
+                                    // Read-only input
+                                    .child(text_input_label("Version (read-only)"))
+                                    .child(
+                                        text_input("input-version", "1.0.0")
+                                            .aria_label("Version")
+                                            .aria_readonly(true)
+                                            .text_color(gpui::black().opacity(0.5))
+                                            .bg(gpui::black().opacity(0.05)),
+                                    ),
+                            )
+                            // Live status region
+                            .child(
+                                div()
+                                    .role(Role::Status)
+                                    .aria_live(Live::Polite)
+                                    .text_color(gpui::black().opacity(0.5))
+                                    .child(self.status.clone()),
                             ),
                     )
-                    // Live status region
                     .child(
                         div()
-                            .role(Role::Status)
-                            .aria_live(Live::Polite)
-                            .text_color(gpui::black().opacity(0.5))
-                            .child(self.status.clone()),
-                    )
-                    // Inspector link
-                    .child(
-                        div()
-                            .id("inspector-link")
-                            .mt_2()
-                            .cursor_pointer()
-                            .text_color(gpui::black().opacity(0.4))
-                            .on_click(|_, _, cx| {
-                                cx.open_url("https://developer.apple.com/documentation/accessibility/accessibility-inspector");
-                            })
-                            .child("Open Accessibility Inspector docs ↗"),
+                            .id("inspector-tree")
+                            .flex_1()
+                            .p_3()
+                            .bg(gpui::black().opacity(0.05))
+                            .text_color(gpui::black())
+                            .font_family("monospace")
+                            .overflow_hidden()
+                            .child(tree_text),
                     ),
             )
-            // Right panel: live accessibility tree dump
             .child(
                 div()
-                    .flex_1()
-                    .p_3()
-                    .bg(gpui::black().opacity(0.05))
-                    .text_color(gpui::black())
-                    .font_family("monospace")
-                    .overflow_hidden()
-                    .child(tree_text),
+                    .id("inspector-link")
+                    .py_1()
+                    .px_2()
+                    .border_t_1()
+                    .border_color(gpui::black().opacity(0.1))
+                    .text_color(gpui::black().opacity(0.4))
+                    .cursor_pointer()
+                    .on_click(|_, _, cx| {
+                        cx.open_url(
+                            "https://developer.apple.com/documentation/accessibility/accessibility-inspector",
+                        );
+                    })
+                    .child("Open Accessibility Inspector docs ↗"),
             )
     }
 }
@@ -272,7 +362,10 @@ fn run_example() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |window, cx| cx.new(|cx| AccessibilityExample::new(window, cx)),
+            |window, cx| {
+                window.set_window_title("GPUI Accessibility Example");
+                cx.new(|cx| AccessibilityExample::new(window, cx))
+            },
         )
         .unwrap();
 

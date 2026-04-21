@@ -1967,8 +1967,13 @@ impl Interactivity {
                                         .as_ref()
                                         .map(|h| window.focus == Some(h.id))
                                         .unwrap_or(false);
-                                    let node = props.to_node(bounds, is_focused, None);
+                                    let scaled_bounds =
+                                        bounds.scale(window.scale_factor());
+                                    let node = props.to_node(scaled_bounds, is_focused, None);
                                     window.push_accessibility_node(node_id, node, parent_id);
+                                    if is_focused {
+                                        window.accessibility_frame.focus = Some(node_id);
+                                    }
                                     window.accessibility_node_stack.push(node_id);
                                     true
                                 } else {

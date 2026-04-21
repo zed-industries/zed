@@ -1011,8 +1011,7 @@ pub struct Window {
     pub(crate) accessibility_frame: crate::accessibility::AccessibilityFrame,
     pub(crate) accessibility_node_stack: Vec<accesskit::NodeId>,
     pub(crate) accessibility_node_counter: u64,
-    pub(crate) accessibility_adapter:
-        Option<Box<dyn crate::accessibility::AccessibilityAdapter>>,
+    pub(crate) accessibility_adapter: Option<Box<dyn FnMut(accesskit::TreeUpdate)>>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) last_accessibility_frame: Option<crate::accessibility::AccessibilityFrame>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1562,6 +1561,8 @@ impl Window {
             platform_window.set_app_id(&app_id);
         }
 
+        let accessibility_adapter = platform_window.accessibility_adapter();
+
         platform_window.map_window().unwrap();
 
         Ok(Window {
@@ -1624,8 +1625,8 @@ impl Window {
             captured_hitbox: None,
             accessibility_frame: crate::accessibility::AccessibilityFrame::new(),
             accessibility_node_stack: Vec::new(),
-            accessibility_node_counter: 1,
-            accessibility_adapter: None,
+            accessibility_node_counter: 2,
+            accessibility_adapter,
             #[cfg(any(feature = "inspector", debug_assertions))]
             last_accessibility_frame: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1692,7 +1693,7 @@ impl Window {
     }
 
     fn take_accessibility_frame(&mut self) -> crate::accessibility::AccessibilityFrame {
-        self.accessibility_node_counter = 1;
+        self.accessibility_node_counter = 2;
         std::mem::replace(
             &mut self.accessibility_frame,
             crate::accessibility::AccessibilityFrame::new(),
@@ -2521,7 +2522,7 @@ impl Window {
         }
         if let Some(adapter) = &mut self.accessibility_adapter {
             if !frame.is_empty() {
-                adapter.update(frame.into_tree_update());
+                adapter(frame.into_tree_update());
             }
         }
     }

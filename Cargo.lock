@@ -7757,6 +7757,7 @@ dependencies = [
 name = "gpui_macos"
 version = "0.1.0"
 dependencies = [
+ "accesskit",
  "accesskit_macos",
  "anyhow",
  "async-task",

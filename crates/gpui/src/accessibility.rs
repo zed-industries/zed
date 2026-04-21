@@ -1,6 +1,6 @@
 use accesskit::{Live, Node, NodeId, Role, Toggled, TreeUpdate};
 
-use crate::{Bounds, Pixels, SharedString};
+use crate::{Bounds, ScaledPixels, SharedString};
 
 /// Accessibility annotations for a GPUI element.
 ///
@@ -42,7 +42,7 @@ impl Accessibility {
     /// no explicit `aria-label` is set.
     pub(crate) fn to_node(
         &self,
-        bounds: Bounds<Pixels>,
+        bounds: Bounds<ScaledPixels>,
         is_focused: bool,
         child_text: Option<String>,
     ) -> Node {
@@ -220,13 +220,6 @@ fn write_node(
     }
 }
 
-/// Platform trait — each OS backend implements this to push `TreeUpdate` to the AT.
-///
-/// Implementations must ensure internal thread-safety (the adapter may only be
-/// called from the main thread on macOS, so `RefCell` is sufficient).
-pub(crate) trait AccessibilityAdapter {
-    fn update(&mut self, update: TreeUpdate);
-}
 
 #[cfg(test)]
 mod tests {
