@@ -84,7 +84,7 @@ use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
-use crate::thread_metadata_store::ThreadId;
+use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
@@ -699,7 +699,7 @@ impl ConversationView {
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (resume_session_id, cwd, title) = self
+        let (resume_session_id, work_dirs, title) = self
             .root_thread_view()
             .map(|thread_view| {
                 let tv = thread_view.read(cx);
@@ -710,14 +710,25 @@ impl ConversationView {
                     thread.title(),
                 )
             })
-            .unwrap_or((None, None, None));
+            .unwrap_or_else(|| {
+                let session_id = self.root_session_id.clone();
+                let (work_dirs, title) = session_id
+                    .as_ref()
+                    .and_then(|id| {
+                        let store = ThreadMetadataStore::try_global(cx)?;
+                        let entry = store.read(cx).entry_by_session(id)?;
+                        Some((Some(entry.folder_paths().clone()), entry.title.clone()))
+                    })
+                    .unwrap_or((None, None));
+                (session_id, work_dirs, title)
+            });
 
         let state = Self::initial_state(
             self.agent.clone(),
             self.connection_store.clone(),
             self.connection_key.clone(),
             resume_session_id,
-            cwd,
+            work_dirs,
             title,
             self.project.clone(),
             None,
@@ -3330,6 +3341,122 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_reset_preserves_session_id_after_load_error(cx: &mut TestAppContext) {
+        use crate::thread_metadata_store::{ThreadId, ThreadMetadata};
+        use chrono::Utc;
+        use project::{AgentId as ProjectAgentId, WorktreePaths};
+        use std::sync::atomic::Ordering;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        // Simulate a previous run that persisted metadata for this session.
+        let resume_session_id = SessionId::new("persistent-session");
+        let stored_title: SharedString = "Persistent chat".into();
+        cx.update(|_window, cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(
+                    ThreadMetadata {
+                        thread_id: ThreadId::new(),
+                        session_id: Some(resume_session_id.clone()),
+                        agent_id: ProjectAgentId::new("Flaky"),
+                        title: Some(stored_title.clone()),
+                        updated_at: Utc::now(),
+                        created_at: Some(Utc::now()),
+                        interacted_at: None,
+                        worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
+                        remote_connection: None,
+                        archived: false,
+                    },
+                    cx,
+                );
+            });
+        });
+
+        let connection = StubAgentConnection::new().with_supports_load_session(true);
+        let (server, fail) = FlakyAgentServer::new(connection);
+
+        let conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(server),
+                    connection_store,
+                    Agent::Custom { id: "Flaky".into() },
+                    Some(resume_session_id.clone()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project.clone(),
+                    Some(thread_store),
+                    None,
+                    "agent_panel",
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+
+        // The first connect() fails, so we land in LoadError.
+        conversation_view.read_with(cx, |view, _cx| {
+            assert!(
+                matches!(view.server_state, ServerState::LoadError { .. }),
+                "expected LoadError after failed initial connect"
+            );
+            assert_eq!(
+                view.root_session_id.as_ref(),
+                Some(&resume_session_id),
+                "root_session_id should still hold the original id while in LoadError"
+            );
+        });
+
+        // Now let the agent come online and emit AgentServersUpdated. This is
+        // the moment the bug would have stomped on root_session_id.
+        fail.store(false, Ordering::SeqCst);
+        project.update(cx, |project, cx| {
+            project
+                .agent_server_store()
+                .update(cx, |_store, cx| cx.emit(project::AgentServersUpdated));
+        });
+        cx.run_until_parked();
+
+        // The retry should have resumed the ORIGINAL session, not created a
+        // brand-new one.
+        conversation_view.read_with(cx, |view, cx| {
+            let connected = view
+                .as_connected()
+                .expect("should be Connected after flaky server comes online");
+            let active_id = connected
+                .active_id
+                .as_ref()
+                .expect("Connected state should have an active_id");
+            assert_eq!(
+                active_id, &resume_session_id,
+                "reset() must resume the original session id, not call new_session()"
+            );
+            let active_thread = view
+                .active_thread()
+                .expect("should have an active thread view");
+            let thread_session = active_thread.read(cx).thread.read(cx).session_id().clone();
+            assert_eq!(
+                thread_session, resume_session_id,
+                "the live AcpThread should hold the resumed session id"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_auth_required_on_initial_connect(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -4130,6 +4257,58 @@ pub(crate) mod tests {
                  codex-acp-0.9.4-aarch64-pc-windows-msvc.zip: \
                  failed to iterate over archive: Invalid gzip header"
             )))
+        }
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    /// Agent server whose `connect()` fails while `fail` is `true` and
+    /// returns the wrapped connection otherwise. Used to simulate the
+    /// race where an external agent isn't yet registered at startup.
+    pub(crate) struct FlakyAgentServer {
+        connection: StubAgentConnection,
+        fail: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl FlakyAgentServer {
+        pub(crate) fn new(
+            connection: StubAgentConnection,
+        ) -> (Self, Arc<std::sync::atomic::AtomicBool>) {
+            let fail = Arc::new(std::sync::atomic::AtomicBool::new(true));
+            (
+                Self {
+                    connection,
+                    fail: fail.clone(),
+                },
+                fail,
+            )
+        }
+    }
+
+    impl AgentServer for FlakyAgentServer {
+        fn logo(&self) -> ui::IconName {
+            ui::IconName::ZedAgent
+        }
+
+        fn agent_id(&self) -> AgentId {
+            "Flaky".into()
+        }
+
+        fn connect(
+            &self,
+            _delegate: AgentServerDelegate,
+            _project: Entity<Project>,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
+            if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                Task::ready(Err(anyhow!(
+                    "Custom agent server `Flaky` is not registered"
+                )))
+            } else {
+                Task::ready(Ok(Rc::new(self.connection.clone())))
+            }
         }
 
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
