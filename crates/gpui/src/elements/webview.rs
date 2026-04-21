@@ -556,7 +556,7 @@ fn create_child_webview(
         display: display_handle,
     };
 
-    let mut cx = cx.to_async();
+    let cx = cx.to_async();
     cx.clone()
         .foreground_executor()
         .spawn(async move {
@@ -592,9 +592,7 @@ fn create_child_webview(
                         );
                     });
 
-                    if let Err(error) = cx.update(|cx| cx.refresh_windows()) {
-                        log::error!("WebView #{}: failed to refresh windows: {}", id, error);
-                    }
+                    cx.update(|cx| cx.refresh_windows());
                 }
                 Err(error) => {
                     log::error!("WebView #{}: build_as_child failed: {}", id, error);
