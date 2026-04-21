@@ -3828,10 +3828,7 @@ impl Editor {
 
         let selections = &self.selections.disjoint_anchors_arc();
         if selections.len() == 1 {
-            // TODO!(dino): We likely still need to emit this, even though we
-            // don't want it to be handled by `BufferSearchBar`.
-            dbg!("Emitting SearchEvent::ActiveMatchChanged");
-            // cx.emit(SearchEvent::ActiveMatchChanged)
+            cx.emit(SearchEvent::ActiveMatchChanged)
         }
         if local && let Some(buffer_snapshot) = buffer.as_singleton() {
             let inmemory_selections = selections
