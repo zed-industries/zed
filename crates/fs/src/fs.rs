@@ -1202,30 +1202,23 @@ impl Fs for RealFs {
                 .clamp(500, 30000);
             let poll_interval = Duration::from_millis(poll_ms);
 
-            match fs_watcher::PollFsWatcher::new(tx.clone(), pending_paths.clone(), poll_interval) {
-                Ok(pw) => {
-                    log::info!(
-                        "Using poll watcher ({}ms interval) for {}",
-                        poll_ms,
-                        path.display()
-                    );
-                    Arc::new(pw)
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to create poll watcher for {}, falling back to native: {e}",
-                        path.display()
-                    );
-                    Arc::new(fs_watcher::FsWatcher::new(
-                        tx.clone(),
-                        pending_paths.clone(),
-                    ))
-                }
-            }
+            log::info!(
+                "Using poll watcher ({}ms interval) for {}",
+                poll_ms,
+                path.display()
+            );
+            Arc::new(fs_watcher::FsWatcher::new(
+                tx.clone(),
+                pending_paths.clone(),
+                fs_watcher::WatcherMode::Poll,
+                Some(poll_interval),
+            ))
         } else {
             Arc::new(fs_watcher::FsWatcher::new(
                 tx.clone(),
                 pending_paths.clone(),
+                fs_watcher::WatcherMode::Native,
+                None,
             ))
         };
 
