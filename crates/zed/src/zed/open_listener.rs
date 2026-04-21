@@ -12,7 +12,6 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::future;
 
-use feature_flags::FeatureFlagAppExt as _;
 use futures::{FutureExt, StreamExt};
 use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
 use gpui::{App, AsyncApp, Global, WindowHandle};
@@ -558,11 +557,6 @@ async fn resolve_open_behavior(
     requests: &mut mpsc::UnboundedReceiver<CliRequest>,
     cx: &mut AsyncApp,
 ) -> Option<settings::CliDefaultOpenBehavior> {
-    let cli_prompt_enabled = cx.update(|cx| cx.has_flag::<feature_flags::AgentV2FeatureFlag>());
-    if !cli_prompt_enabled {
-        return Some(settings::CliDefaultOpenBehavior::NewWindow);
-    }
-
     let has_existing_windows = cx.update(|cx| {
         cx.windows()
             .iter()
