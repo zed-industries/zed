@@ -5,7 +5,7 @@ description: Bring your own API keys to Zed. Set up Anthropic, OpenAI, Google AI
 
 # LLM Providers
 
-To use AI in Zed, you need to have at least one large language model provider set up. Once configured, providers are available in the [Agent Panel](./agent-panel.md), [Inline Assistant](./inline-assistant.md), and [Text Threads](./text-threads.md).
+To use AI in Zed, you need to have at least one large language model provider set up. Once configured, providers are available in the [Agent Panel](./agent-panel.md) and [Inline Assistant](./inline-assistant.md).
 
 You can do that by either subscribing to [one of Zed's plans](./plans-and-usage.md), or by using API keys you already have for the supported providers. For general AI setup, see [Configuration](./configuration.md).
 
@@ -167,7 +167,7 @@ Anthropic models on Bedrock support a 1M token extended context window through t
 }
 ```
 
-Zed enables extended context for supported models (Claude Sonnet 4.5 and Claude Opus 4.6). Extended context usage may increase API costs—refer to AWS Bedrock pricing for details.
+Zed enables extended context for supported models (Claude Sonnet 4.5, Claude Opus 4.6, and Claude Opus 4.7). Extended context usage may increase API costs—refer to AWS Bedrock pricing for details.
 
 #### Image Support {#bedrock-image-support}
 
@@ -762,7 +762,7 @@ You can also set a custom endpoint for Vercel AI Gateway in your settings file:
 [Vercel v0](https://v0.app/docs/api/model) is a model for generating full-stack apps, with framework-aware completions for stacks like Next.js and Vercel.
 It supports text and image inputs and provides fast streaming responses.
 
-The v0 models are [OpenAI-compatible models](/#openai-api-compatible), and Vercel appears as a dedicated provider in the panel's settings view.
+The v0 models are [OpenAI-compatible models](#openai-api-compatible), and Vercel appears as a dedicated provider in the panel's settings view.
 
 To start using it with Zed, ensure you have first created a [v0 API key](https://v0.dev/chat/settings/keys).
 Once you have it, paste it directly into the Vercel provider section in the panel's settings view.

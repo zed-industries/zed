@@ -7,7 +7,10 @@ use chardetng::EncodingDetector;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
-use fs::{Fs, MTime, PathEvent, RemoveOptions, Watcher, copy_recursive, read_dir_items};
+use fs::{
+    Fs, MTime, PathEvent, PathEventKind, RemoveOptions, TrashedEntry, Watcher, copy_recursive,
+    read_dir_items,
+};
 use futures::{
     FutureExt as _, Stream, StreamExt,
     channel::{
@@ -66,9 +69,9 @@ use std::{
 use sum_tree::{Bias, Dimensions, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
-    ResultExt, debug_panic, maybe,
+    ResultExt, maybe,
     paths::{PathMatcher, PathStyle, SanitizedPath, home_dir},
-    rel_path::RelPath,
+    rel_path::{RelPath, RelPathBuf},
 };
 pub use worktree_settings::WorktreeSettings;
 
@@ -128,6 +131,7 @@ pub struct LocalWorktree {
     scan_requests_tx: channel::Sender<ScanRequest>,
     path_prefixes_to_scan_tx: channel::Sender<PathPrefixScanRequest>,
     is_scanning: (watch::Sender<bool>, watch::Receiver<bool>),
+    snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
     _background_scanner_tasks: Vec<Task<()>>,
     update_observer: Option<UpdateObservationState>,
     fs: Arc<dyn Fs>,
@@ -161,6 +165,7 @@ pub struct RemoteWorktree {
     replica_id: ReplicaId,
     visible: bool,
     disconnected: bool,
+    received_initial_update: bool,
 }
 
 #[derive(Clone)]
@@ -173,6 +178,7 @@ pub struct Snapshot {
     root_char_bag: CharBag,
     entries_by_path: SumTree<Entry>,
     entries_by_id: SumTree<PathEntry>,
+    root_repo_common_dir: Option<Arc<SanitizedPath>>,
     always_included_entries: Vec<Arc<RelPath>>,
 
     /// A number that increases every time the worktree begins scanning
@@ -254,7 +260,9 @@ pub struct LocalSnapshot {
 
 struct BackgroundScannerState {
     snapshot: LocalSnapshot,
+    symlink_paths_by_target: HashMap<Arc<Path>, SmallVec<[Arc<RelPath>; 1]>>,
     scanned_dirs: HashSet<ProjectEntryId>,
+    watched_dir_abs_paths_by_entry_id: HashMap<ProjectEntryId, Arc<Path>>,
     path_prefixes_to_scan: HashSet<Arc<RelPath>>,
     paths_to_scan: HashSet<Arc<RelPath>>,
     /// The ids of all of the entries that were removed from the snapshot
@@ -265,6 +273,12 @@ struct BackgroundScannerState {
     changed_paths: Vec<Arc<RelPath>>,
     prev_snapshot: Snapshot,
     scanning_enabled: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EventRoot {
+    path: Arc<RelPath>,
+    was_rescanned: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -280,9 +294,11 @@ struct LocalRepositoryEntry {
     dot_git_abs_path: Arc<Path>,
     /// Absolute path to the "commondir" for this repository.
     ///
-    /// This is always a directory. For a normal repository, this is the same as dot_git_abs_path,
-    /// but in the case of a submodule or a worktree it is the path to the "parent" .git directory
-    /// from which the submodule/worktree was derived.
+    /// This is always a directory. For a normal repository, this is the same as
+    /// `dot_git_abs_path`. For a linked worktree, this is the main repo's `.git`
+    /// directory (resolved from the worktree's `commondir` file). For a submodule,
+    /// this equals `repository_dir_abs_path` (submodules don't have a `commondir`
+    /// file).
     common_dir_abs_path: Arc<Path>,
     /// Absolute path to the directory holding the repository's state.
     ///
@@ -344,6 +360,7 @@ enum ScanState {
     RootUpdated {
         new_path: Arc<SanitizedPath>,
     },
+    RootDeleted,
 }
 
 struct UpdateObservationState {
@@ -356,7 +373,12 @@ struct UpdateObservationState {
 pub enum Event {
     UpdatedEntries(UpdatedEntriesSet),
     UpdatedGitRepositories(UpdatedGitRepositoriesSet),
+    UpdatedRootRepoCommonDir {
+        old: Option<Arc<SanitizedPath>>,
+    },
     DeletedEntry(ProjectEntryId),
+    /// The worktree root itself has been deleted (for single-file worktrees)
+    Deleted,
 }
 
 impl EventEmitter<Event> for Worktree {}
@@ -393,6 +415,10 @@ impl Worktree {
             None
         };
 
+        let root_repo_common_dir = discover_root_repo_common_dir(&abs_path, fs.as_ref())
+            .await
+            .map(SanitizedPath::from_arc);
+
         Ok(cx.new(move |cx: &mut Context<Worktree>| {
             let mut snapshot = LocalSnapshot {
                 ignores_by_parent_abs_path: Default::default(),
@@ -412,6 +438,7 @@ impl Worktree {
                 ),
                 root_file_handle,
             };
+            snapshot.root_repo_common_dir = root_repo_common_dir;
 
             let worktree_id = snapshot.id();
             let settings_location = Some(SettingsLocation {
@@ -464,6 +491,7 @@ impl Worktree {
                 next_entry_id,
                 snapshot,
                 is_scanning: watch::channel_with(true),
+                snapshot_subscriptions: Default::default(),
                 update_observer: None,
                 scan_requests_tx,
                 path_prefixes_to_scan_tx,
@@ -488,13 +516,17 @@ impl Worktree {
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
-            let snapshot = Snapshot::new(
+            let mut snapshot = Snapshot::new(
                 WorktreeId::from_proto(worktree.id),
                 RelPath::from_proto(&worktree.root_name)
                     .unwrap_or_else(|_| RelPath::empty().into()),
                 Path::new(&worktree.abs_path).into(),
                 path_style,
             );
+
+            snapshot.root_repo_common_dir = worktree
+                .root_repo_common_dir
+                .map(|p| SanitizedPath::new_arc(Path::new(&p)));
 
             let background_snapshot = Arc::new(Mutex::new((
                 snapshot.clone(),
@@ -523,6 +555,7 @@ impl Worktree {
                 snapshot_subscriptions: Default::default(),
                 visible: worktree.visible,
                 disconnected: false,
+                received_initial_update: false,
             };
 
             // Apply updates to a separate snapshot in a background task, then
@@ -547,8 +580,16 @@ impl Worktree {
             cx.spawn(async move |this, cx| {
                 while (snapshot_updated_rx.recv().await).is_some() {
                     this.update(cx, |this, cx| {
-                        let mut entries_changed = false;
                         let this = this.as_remote_mut().unwrap();
+
+                        // The watch channel delivers an initial signal before
+                        // any real updates arrive. Skip these spurious wakeups.
+                        if this.background_snapshot.lock().1.is_empty() {
+                            return;
+                        }
+
+                        let old_root_repo_common_dir = this.snapshot.root_repo_common_dir.clone();
+                        let mut entries_changed = false;
                         {
                             let mut lock = this.background_snapshot.lock();
                             this.snapshot = lock.0.clone();
@@ -563,6 +604,15 @@ impl Worktree {
 
                         if entries_changed {
                             cx.emit(Event::UpdatedEntries(Arc::default()));
+                        }
+                        let is_first_update = !this.received_initial_update;
+                        this.received_initial_update = true;
+                        if this.snapshot.root_repo_common_dir != old_root_repo_common_dir
+                            || (is_first_update && this.snapshot.root_repo_common_dir.is_none())
+                        {
+                            cx.emit(Event::UpdatedRootRepoCommonDir {
+                                old: old_root_repo_common_dir,
+                            });
                         }
                         cx.notify();
                         while let Some((scan_id, _)) = this.snapshot_subscriptions.front() {
@@ -650,6 +700,9 @@ impl Worktree {
             root_name: self.root_name().to_proto(),
             visible: self.is_visible(),
             abs_path: self.abs_path().to_string_lossy().into_owned(),
+            root_repo_common_dir: self
+                .root_repo_common_dir()
+                .map(|p| p.to_string_lossy().into_owned()),
         }
     }
 
@@ -705,6 +758,16 @@ impl Worktree {
             Worktree::Remote(this) => {
                 this.update_observer.take();
             }
+        }
+    }
+
+    pub fn wait_for_snapshot(
+        &mut self,
+        scan_id: usize,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        match self {
+            Worktree::Local(this) => this.wait_for_snapshot(scan_id).boxed(),
+            Worktree::Remote(this) => this.wait_for_snapshot(scan_id).boxed(),
         }
     }
 
@@ -805,7 +868,7 @@ impl Worktree {
         entry_id: ProjectEntryId,
         trash: bool,
         cx: &mut Context<Worktree>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let task = match self {
             Worktree::Local(this) => this.delete_entry(entry_id, trash, cx),
             Worktree::Remote(this) => this.delete_entry(entry_id, trash, cx),
@@ -825,6 +888,20 @@ impl Worktree {
             cx.emit(Event::DeletedEntry(id));
         }
         Some(task)
+    }
+
+    pub async fn restore_entry(
+        trash_entry: TrashedEntry,
+        worktree: Entity<Self>,
+        cx: &mut AsyncApp,
+    ) -> Result<RelPathBuf> {
+        let is_local = worktree.read_with(cx, |this, _| this.is_local());
+        if is_local {
+            LocalWorktree::restore_entry(trash_entry, worktree, cx).await
+        } else {
+            // TODO(dino): Add support for restoring entries in remote worktrees.
+            Err(anyhow!("Unsupported"))
+        }
     }
 
     fn get_children_ids_recursive(&self, path: &RelPath, ids: &mut Vec<ProjectEntryId>) {
@@ -1084,6 +1161,7 @@ impl LocalWorktree {
                 };
                 let fs_case_sensitive = fs.is_case_sensitive().await;
 
+                let is_single_file = snapshot.snapshot.root_dir().is_none();
                 let mut scanner = BackgroundScanner {
                     fs,
                     fs_case_sensitive,
@@ -1095,7 +1173,9 @@ impl LocalWorktree {
                     state: async_lock::Mutex::new(BackgroundScannerState {
                         prev_snapshot: snapshot.snapshot.clone(),
                         snapshot,
+                        symlink_paths_by_target: Default::default(),
                         scanned_dirs: Default::default(),
+                        watched_dir_abs_paths_by_entry_id: Default::default(),
                         scanning_enabled,
                         path_prefixes_to_scan: Default::default(),
                         paths_to_scan: Default::default(),
@@ -1106,6 +1186,7 @@ impl LocalWorktree {
                     share_private_files,
                     settings,
                     watcher,
+                    is_single_file,
                 };
 
                 scanner
@@ -1134,6 +1215,13 @@ impl LocalWorktree {
                         ScanState::RootUpdated { new_path } => {
                             this.update_abs_path_and_refresh(new_path, cx);
                         }
+                        ScanState::RootDeleted => {
+                            log::info!(
+                                "worktree root {} no longer exists, closing worktree",
+                                this.abs_path().display()
+                            );
+                            cx.emit(Event::Deleted);
+                        }
                     }
                 });
             }
@@ -1149,6 +1237,14 @@ impl LocalWorktree {
         cx: &mut Context<Worktree>,
     ) {
         let repo_changes = self.changed_repos(&self.snapshot, &mut new_snapshot);
+
+        new_snapshot.root_repo_common_dir = new_snapshot
+            .local_repo_for_work_directory_path(RelPath::empty())
+            .map(|repo| SanitizedPath::from_arc(repo.common_dir_abs_path.clone()));
+
+        let old_root_repo_common_dir = (self.snapshot.root_repo_common_dir
+            != new_snapshot.root_repo_common_dir)
+            .then(|| self.snapshot.root_repo_common_dir.clone());
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.update_observer.as_mut() {
@@ -1163,6 +1259,18 @@ impl LocalWorktree {
         }
         if !repo_changes.is_empty() {
             cx.emit(Event::UpdatedGitRepositories(repo_changes));
+        }
+        if let Some(old) = old_root_repo_common_dir {
+            cx.emit(Event::UpdatedRootRepoCommonDir { old });
+        }
+
+        while let Some((scan_id, _)) = self.snapshot_subscriptions.front() {
+            if self.snapshot.completed_scan_id >= *scan_id {
+                let (_, tx) = self.snapshot_subscriptions.pop_front().unwrap();
+                tx.send(()).ok();
+            } else {
+                break;
+            }
         }
     }
 
@@ -1280,6 +1388,28 @@ impl LocalWorktree {
         }
     }
 
+    pub fn wait_for_snapshot(
+        &mut self,
+        scan_id: usize,
+    ) -> impl Future<Output = Result<()>> + use<> {
+        let (tx, rx) = oneshot::channel();
+        if self.snapshot.completed_scan_id >= scan_id {
+            tx.send(()).ok();
+        } else {
+            match self
+                .snapshot_subscriptions
+                .binary_search_by_key(&scan_id, |probe| probe.0)
+            {
+                Ok(ix) | Err(ix) => self.snapshot_subscriptions.insert(ix, (scan_id, tx)),
+            }
+        }
+
+        async move {
+            rx.await?;
+            Ok(())
+        }
+    }
+
     pub fn snapshot(&self) -> LocalSnapshot {
         self.snapshot.clone()
     }
@@ -1322,6 +1452,7 @@ impl LocalWorktree {
                         path,
                         disk_state: DiskState::Present {
                             mtime: metadata.mtime,
+                            size: metadata.len,
                         },
                         is_local: true,
                         is_private,
@@ -1378,6 +1509,7 @@ impl LocalWorktree {
                         path,
                         disk_state: DiskState::Present {
                             mtime: metadata.mtime,
+                            size: metadata.len,
                         },
                         is_local: true,
                         is_private,
@@ -1575,6 +1707,7 @@ impl LocalWorktree {
                     path,
                     disk_state: DiskState::Present {
                         mtime: metadata.mtime,
+                        size: metadata.len,
                     },
                     entry_id: None,
                     is_local: true,
@@ -1589,42 +1722,46 @@ impl LocalWorktree {
         entry_id: ProjectEntryId,
         trash: bool,
         cx: &Context<Worktree>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let entry = self.entry_for_id(entry_id)?.clone();
         let abs_path = self.absolutize(&entry.path);
         let fs = self.fs.clone();
 
         let delete = cx.background_spawn(async move {
-            if entry.is_file() {
-                if trash {
-                    fs.trash_file(&abs_path, Default::default()).await?;
-                } else {
+            let trashed_entry = match (entry.is_file(), trash) {
+                (true, true) => Some(fs.trash(&abs_path, Default::default()).await?),
+                (false, true) => Some(
+                    fs.trash(
+                        &abs_path,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: false,
+                        },
+                    )
+                    .await?,
+                ),
+                (true, false) => {
                     fs.remove_file(&abs_path, Default::default()).await?;
+                    None
                 }
-            } else if trash {
-                fs.trash_dir(
-                    &abs_path,
-                    RemoveOptions {
-                        recursive: true,
-                        ignore_if_not_exists: false,
-                    },
-                )
-                .await?;
-            } else {
-                fs.remove_dir(
-                    &abs_path,
-                    RemoveOptions {
-                        recursive: true,
-                        ignore_if_not_exists: false,
-                    },
-                )
-                .await?;
-            }
-            anyhow::Ok(entry.path)
+                (false, false) => {
+                    fs.remove_dir(
+                        &abs_path,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: false,
+                        },
+                    )
+                    .await?;
+                    None
+                }
+            };
+
+            anyhow::Ok((trashed_entry, entry.path))
         });
 
         Some(cx.spawn(async move |this, cx| {
-            let path = delete.await?;
+            let (trashed_entry, path) = delete.await?;
             this.update(cx, |this, _| {
                 this.as_local_mut()
                     .unwrap()
@@ -1632,8 +1769,37 @@ impl LocalWorktree {
             })?
             .recv()
             .await;
-            Ok(())
+
+            Ok(trashed_entry)
         }))
+    }
+
+    pub async fn restore_entry(
+        trash_entry: TrashedEntry,
+        this: Entity<Worktree>,
+        cx: &mut AsyncApp,
+    ) -> Result<RelPathBuf> {
+        let Some((fs, worktree_abs_path, path_style)) = this.read_with(cx, |this, _cx| {
+            let local_worktree = match this {
+                Worktree::Local(local_worktree) => local_worktree,
+                Worktree::Remote(_) => return None,
+            };
+
+            let fs = local_worktree.fs.clone();
+            let path_style = local_worktree.path_style();
+            Some((fs, Arc::clone(local_worktree.abs_path()), path_style))
+        }) else {
+            return Err(anyhow!("Localworktree should not change into a remote one"));
+        };
+
+        let path_buf = fs.restore(trash_entry).await?;
+        let path = path_buf
+            .strip_prefix(worktree_abs_path)
+            .context("Could not strip prefix")?;
+        let path = RelPath::new(&path, path_style)?;
+        let path = path.into_owned();
+
+        Ok(path)
     }
 
     pub fn copy_external_entries(
@@ -2003,7 +2169,7 @@ impl RemoteWorktree {
         entry_id: ProjectEntryId,
         trash: bool,
         cx: &Context<Worktree>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let response = self.client.request(proto::DeleteProjectEntry {
             project_id: self.project_id,
             entry_id: entry_id.to_proto(),
@@ -2023,6 +2189,12 @@ impl RemoteWorktree {
                 let snapshot = &mut this.background_snapshot.lock().0;
                 snapshot.delete_entry(entry_id);
                 this.snapshot = snapshot.clone();
+
+                // TODO: How can we actually track the deleted entry when
+                // working in remote? We likely only need to keep this
+                // information on the remote side in order to support restoring
+                // the trashed file.
+                None
             })
         }))
     }
@@ -2148,6 +2320,7 @@ impl Snapshot {
             always_included_entries: Default::default(),
             entries_by_path: Default::default(),
             entries_by_id: Default::default(),
+            root_repo_common_dir: None,
             scan_id: 1,
             completed_scan_id: 0,
         }
@@ -2173,6 +2346,12 @@ impl Snapshot {
         SanitizedPath::cast_arc_ref(&self.abs_path)
     }
 
+    pub fn root_repo_common_dir(&self) -> Option<&Arc<Path>> {
+        self.root_repo_common_dir
+            .as_ref()
+            .map(SanitizedPath::cast_arc_ref)
+    }
+
     fn build_initial_update(&self, project_id: u64, worktree_id: u64) -> proto::UpdateWorktree {
         let mut updated_entries = self
             .entries_by_path
@@ -2186,6 +2365,9 @@ impl Snapshot {
             worktree_id,
             abs_path: self.abs_path().to_string_lossy().into_owned(),
             root_name: self.root_name().to_proto(),
+            root_repo_common_dir: self
+                .root_repo_common_dir()
+                .map(|p| p.to_string_lossy().into_owned()),
             updated_entries,
             removed_entries: Vec::new(),
             scan_id: self.scan_id as u64,
@@ -2331,6 +2513,13 @@ impl Snapshot {
         self.entries_by_path.edit(entries_by_path_edits, ());
         self.entries_by_id.edit(entries_by_id_edits, ());
 
+        if let Some(dir) = update
+            .root_repo_common_dir
+            .map(|p| SanitizedPath::new_arc(Path::new(&p)))
+        {
+            self.root_repo_common_dir = Some(dir);
+        }
+
         self.scan_id = update.scan_id as usize;
         if update.is_last_update {
             self.completed_scan_id = update.scan_id as usize;
@@ -2472,15 +2661,14 @@ impl Snapshot {
     }
 
     pub fn entry_for_path(&self, path: &RelPath) -> Option<&Entry> {
-        self.traverse_from_path(true, true, true, path)
-            .entry()
-            .and_then(|entry| {
-                if entry.path.as_ref() == path {
-                    Some(entry)
-                } else {
-                    None
-                }
-            })
+        let entry = self.traverse_from_path(true, true, true, path).entry();
+        entry.and_then(|entry| {
+            if entry.path.as_ref() == path {
+                Some(entry)
+            } else {
+                None
+            }
+        })
     }
 
     /// Resolves a path to an executable using the following heuristics:
@@ -2559,6 +2747,9 @@ impl LocalSnapshot {
             worktree_id,
             abs_path: self.abs_path().to_string_lossy().into_owned(),
             root_name: self.root_name().to_proto(),
+            root_repo_common_dir: self
+                .root_repo_common_dir()
+                .map(|p| p.to_string_lossy().into_owned()),
             updated_entries,
             removed_entries,
             scan_id: self.scan_id as u64,
@@ -2708,7 +2899,7 @@ impl LocalSnapshot {
         for entry in self.entries_by_path.cursor::<()>(()) {
             if entry.is_file() {
                 assert_eq!(files.next().unwrap().inode, entry.inode);
-                if (!entry.is_ignored && !entry.is_external) || entry.is_always_included {
+                if !entry.is_ignored || entry.is_always_included {
                     assert_eq!(visible_files.next().unwrap().inode, entry.inode);
                 }
             }
@@ -2964,7 +3155,12 @@ impl BackgroundScannerState {
         let mut removed_dir_abs_paths = Vec::new();
         for entry in removed_entries.cursor::<()>(()) {
             if entry.is_dir() {
-                removed_dir_abs_paths.push(self.snapshot.absolutize(&entry.path));
+                let watch_path = self
+                    .watched_dir_abs_paths_by_entry_id
+                    .remove(&entry.id)
+                    .map(|path| path.as_ref().to_path_buf())
+                    .unwrap_or_else(|| self.snapshot.absolutize(&entry.path));
+                removed_dir_abs_paths.push(watch_path);
             }
 
             match self.removed_entries.entry(entry.inode) {
@@ -3108,7 +3304,7 @@ impl BackgroundScannerState {
     }
 }
 
-async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
+async fn is_dot_git(path: &Path, fs: &dyn Fs) -> bool {
     if let Some(file_name) = path.file_name()
         && file_name == DOT_GIT
     {
@@ -3289,7 +3485,10 @@ impl File {
             worktree,
             path: entry.path.clone(),
             disk_state: if let Some(mtime) = entry.mtime {
-                DiskState::Present { mtime }
+                DiskState::Present {
+                    mtime,
+                    size: entry.size,
+                }
             } else {
                 DiskState::New
             },
@@ -3318,7 +3517,7 @@ impl File {
         } else if proto.is_deleted {
             DiskState::Deleted
         } else if let Some(mtime) = proto.mtime.map(&Into::into) {
-            DiskState::Present { mtime }
+            DiskState::Present { mtime, size: 0 }
         } else {
             DiskState::New
         };
@@ -3384,8 +3583,7 @@ pub struct Entry {
     /// symlink.
     ///
     /// We only scan entries outside of the worktree once the symlinked
-    /// directory is expanded. External entries are treated like gitignored
-    /// entries in that they are not included in searches.
+    /// directory is expanded.
     pub is_external: bool,
 
     /// Whether this entry is considered to be a `.env` file.
@@ -3590,8 +3788,7 @@ impl sum_tree::Item for Entry {
     type Summary = EntrySummary;
 
     fn summary(&self, _cx: ()) -> Self::Summary {
-        let non_ignored_count = if (self.is_ignored || self.is_external) && !self.is_always_included
-        {
+        let non_ignored_count = if self.is_ignored && !self.is_always_included {
             0
         } else {
             1
@@ -3740,6 +3937,9 @@ struct BackgroundScanner {
     watcher: Arc<dyn Watcher>,
     settings: WorktreeSettings,
     share_private_files: bool,
+    /// Whether this is a single-file worktree (root is a file, not a directory).
+    /// Used to determine if we should give up after repeated canonicalization failures.
+    is_single_file: bool,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -3874,7 +4074,7 @@ impl BackgroundScanner {
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
         }
 
-        self.send_status_update(false, SmallVec::new()).await;
+        self.send_status_update(false, SmallVec::new(), &[]).await;
 
         // Process any any FS events that occurred while performing the initial scan.
         // For these events, update events cannot be as precise, because we didn't
@@ -3887,14 +4087,17 @@ impl BackgroundScanner {
             self.process_events(
                 paths
                     .into_iter()
-                    .filter(|e| e.kind.is_some())
-                    .map(Into::into)
+                    .filter(|event| event.kind.is_some())
                     .collect(),
             )
             .await;
         }
         if let Some(abs_path) = containing_git_repository {
-            self.process_events(vec![abs_path]).await;
+            self.process_events(vec![PathEvent {
+                path: abs_path,
+                kind: Some(fs::PathEventKind::Changed),
+            }])
+            .await;
         }
 
         // Continue processing events until the worktree is dropped.
@@ -3925,10 +4128,14 @@ impl BackgroundScanner {
                         };
 
                         if let Some(abs_path) = self.fs.canonicalize(&abs_path).await.log_err() {
-                            self.process_events(vec![abs_path]).await;
+                            self.process_events(vec![PathEvent {
+                                path: abs_path,
+                                kind: Some(fs::PathEventKind::Changed),
+                            }])
+                            .await;
                         }
                     }
-                    self.send_status_update(false, request.done).await;
+                    self.send_status_update(false, request.done, &[]).await;
                 }
 
                 paths = fs_events_rx.next().fuse() => {
@@ -3936,7 +4143,7 @@ impl BackgroundScanner {
                     while let Poll::Ready(Some(more_paths)) = futures::poll!(fs_events_rx.next()) {
                         paths.extend(more_paths);
                     }
-                    self.process_events(paths.into_iter().filter(|e| e.kind.is_some()).map(Into::into).collect()).await;
+                    self.process_events(paths.into_iter().filter(|event| event.kind.is_some()).collect()).await;
                 }
 
                 _ = global_gitignore_events.next().fuse() => {
@@ -3993,11 +4200,71 @@ impl BackgroundScanner {
         )
         .await;
 
-        self.send_status_update(scanning, request.done).await
+        self.send_status_update(scanning, request.done, &[]).await
     }
 
-    async fn process_events(&self, mut abs_paths: Vec<PathBuf>) {
-        log::trace!("process events: {abs_paths:?}");
+    fn normalized_events_for_worktree(
+        state: &BackgroundScannerState,
+        root_canonical_path: &SanitizedPath,
+        mut events: Vec<PathEvent>,
+    ) -> Vec<PathEvent> {
+        if state.symlink_paths_by_target.is_empty() {
+            return events;
+        }
+        let mut mapped_events = Vec::new();
+
+        events.retain(|event| {
+            let abs_path = SanitizedPath::new(&event.path);
+
+            let mut best_match: Option<(&Arc<Path>, &SmallVec<[Arc<RelPath>; 1]>)> = None;
+            let mut best_depth = 0;
+            for (target_root, symlink_paths) in &state.symlink_paths_by_target {
+                if abs_path.as_path().starts_with(target_root.as_ref()) {
+                    let depth = target_root.as_ref().components().count();
+                    if depth > best_depth {
+                        best_depth = depth;
+                        best_match = Some((target_root, symlink_paths));
+                    }
+                }
+            }
+
+            let Some((target_root, symlink_paths)) = best_match else {
+                return true;
+            };
+
+            let Ok(suffix) = abs_path.as_path().strip_prefix(target_root.as_ref()) else {
+                return true;
+            };
+
+            // If the symlink's real target is outside this worktree, the original path
+            // isn't visible to the worktree. Keep only the remapped symlink events.
+            let keep_original = target_root.starts_with(root_canonical_path.as_path());
+
+            for symlink_path in symlink_paths {
+                let mapped_path = if suffix.as_os_str().is_empty() {
+                    root_canonical_path
+                        .as_path()
+                        .join(symlink_path.as_std_path())
+                } else {
+                    root_canonical_path
+                        .as_path()
+                        .join(symlink_path.as_std_path())
+                        .join(suffix)
+                };
+                if mapped_path != event.path {
+                    mapped_events.push(PathEvent {
+                        path: mapped_path,
+                        kind: event.kind,
+                    });
+                }
+            }
+            keep_original
+        });
+        events.extend(mapped_events);
+        events
+    }
+
+    async fn process_events(&self, mut events: Vec<PathEvent>) {
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
         let root_canonical_path = match &root_canonical_path {
@@ -4031,21 +4298,52 @@ impl BackgroundScanner {
                         .ok();
                 } else {
                     log::error!("root path could not be canonicalized: {err:#}");
+
+                    // For single-file worktrees, if we can't canonicalize and the file handle
+                    // fallback also failed, the file is gone - close the worktree
+                    if self.is_single_file {
+                        log::info!(
+                            "single-file worktree root {:?} no longer exists, marking as deleted",
+                            root_path.as_path()
+                        );
+                        self.status_updates_tx
+                            .unbounded_send(ScanState::RootDeleted)
+                            .ok();
+                    }
                 }
                 return;
             }
         };
+
+        {
+            let state = self.state.lock().await;
+            events = Self::normalized_events_for_worktree(&state, &root_canonical_path, events);
+        }
 
         // Certain directories may have FS changes, but do not lead to git data changes that Zed cares about.
         // Ignore these, to avoid Zed unnecessarily rescanning git metadata.
         let skipped_files_in_dot_git = [COMMIT_MESSAGE, INDEX_LOCK];
         let skipped_dirs_in_dot_git = [FSMONITOR_DAEMON, LFS_DIR];
 
-        let mut relative_paths = Vec::with_capacity(abs_paths.len());
+        let mut relative_paths = Vec::with_capacity(events.len());
         let mut dot_git_abs_paths = Vec::new();
         let mut work_dirs_needing_exclude_update = Vec::new();
-        abs_paths.sort_unstable();
-        abs_paths.dedup_by(|a, b| a.starts_with(b));
+        events.sort_unstable_by(|left, right| left.path.cmp(&right.path));
+        events.dedup_by(|left, right| {
+            if left.path == right.path {
+                if matches!(left.kind, Some(fs::PathEventKind::Rescan)) {
+                    right.kind = left.kind;
+                }
+                true
+            } else if left.path.starts_with(&right.path) {
+                if matches!(left.kind, Some(fs::PathEventKind::Rescan)) {
+                    right.kind = left.kind;
+                }
+                true
+            } else {
+                false
+            }
+        });
         {
             let snapshot = &self.state.lock().await.snapshot;
 
@@ -4061,14 +4359,14 @@ impl BackgroundScanner {
                 }
             }
 
-            for (ix, abs_path) in abs_paths.iter().enumerate() {
-                let abs_path = &SanitizedPath::new(&abs_path);
+            for (ix, event) in events.iter().enumerate() {
+                let abs_path = SanitizedPath::new(&event.path);
 
                 let mut is_git_related = false;
                 let mut dot_git_paths = None;
 
                 for ancestor in abs_path.as_path().ancestors() {
-                    if is_git_dir(ancestor, self.fs.as_ref()).await {
+                    if is_dot_git(ancestor, self.fs.as_ref()).await {
                         let path_in_git_dir = abs_path
                             .as_path()
                             .strip_prefix(ancestor)
@@ -4079,13 +4377,25 @@ impl BackgroundScanner {
                 }
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
-                    if skipped_files_in_dot_git
+                    // We ignore `""` as well, as that is going to be the
+                    // `.git` folder itself. WE do not care about it, if
+                    // there are changes within we will see them, we need
+                    // this ignore to prevent us from accidentally observing
+                    // the ignored created file due to the events not being
+                    // empty after filtering.
+
+                    let is_dot_git_changed = {
+                        path_in_git_dir == Path::new("")
+                            && event.kind == Some(PathEventKind::Changed)
+                            && self.fs.is_dir(abs_path.as_path()).await
+                    };
+                    let condition = skipped_files_in_dot_git.iter().any(|skipped| {
+                        OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
+                    }) || skipped_dirs_in_dot_git
                         .iter()
-                        .any(|skipped| OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str())
-                        || skipped_dirs_in_dot_git.iter().any(|skipped_git_subdir| {
-                            path_in_git_dir.starts_with(skipped_git_subdir)
-                        })
-                    {
+                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir))
+                        || is_dot_git_changed;
+                    if condition {
                         log::debug!(
                             "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
                         );
@@ -4162,11 +4472,14 @@ impl BackgroundScanner {
                     continue;
                 }
 
-                relative_paths.push(relative_path.into_arc());
+                relative_paths.push(EventRoot {
+                    path: relative_path.into_arc(),
+                    was_rescanned: matches!(event.kind, Some(fs::PathEventKind::Rescan)),
+                });
             }
 
             for range_to_drop in ranges_to_drop.into_iter().rev() {
-                abs_paths.drain(range_to_drop);
+                events.drain(range_to_drop);
             }
         }
 
@@ -4190,12 +4503,24 @@ impl BackgroundScanner {
         self.state.lock().await.snapshot.scan_id += 1;
 
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
-        log::debug!("received fs events {:?}", relative_paths);
+        log::debug!(
+            "received fs events {:?}",
+            relative_paths
+                .iter()
+                .map(|event_root| &event_root.path)
+                .collect::<Vec<_>>()
+        );
         self.reload_entries_for_paths(
             &root_path,
             &root_canonical_path,
-            &relative_paths,
-            abs_paths,
+            &relative_paths
+                .iter()
+                .map(|event_root| event_root.path.clone())
+                .collect::<Vec<_>>(),
+            events
+                .into_iter()
+                .map(|event| event.path)
+                .collect::<Vec<_>>(),
             Some(scan_job_tx.clone()),
         )
         .await;
@@ -4223,7 +4548,8 @@ impl BackgroundScanner {
                 state.scanned_dirs.remove(&entry.id);
             }
         }
-        self.send_status_update(false, SmallVec::new()).await;
+        self.send_status_update(false, SmallVec::new(), &relative_paths)
+            .await;
     }
 
     async fn update_global_gitignore(&self, abs_path: &Path) {
@@ -4249,7 +4575,7 @@ impl BackgroundScanner {
         )
         .await;
         self.scan_dirs(false, scan_job_rx).await;
-        self.send_status_update(false, SmallVec::new()).await;
+        self.send_status_update(false, SmallVec::new(), &[]).await;
     }
 
     async fn forcibly_load_paths(&self, paths: &[Arc<RelPath>]) -> bool {
@@ -4262,7 +4588,15 @@ impl BackgroundScanner {
                     if let Some(entry) = state.snapshot.entry_for_path(ancestor)
                         && entry.kind == EntryKind::UnloadedDir
                     {
-                        let abs_path = root_path.join(ancestor.as_std_path());
+                        let abs_path = if entry.is_external {
+                            entry
+                                .canonical_path
+                                .as_ref()
+                                .map(|path| path.as_ref().to_path_buf())
+                                .unwrap_or_else(|| root_path.join(ancestor.as_std_path()))
+                        } else {
+                            root_path.join(ancestor.as_std_path())
+                        };
                         state
                             .enqueue_scan_dir(
                                 abs_path.into(),
@@ -4330,7 +4664,8 @@ impl BackgroundScanner {
                                     ) {
                                         Ok(_) => {
                                             last_progress_update_count += 1;
-                                            self.send_status_update(true, SmallVec::new()).await;
+                                            self.send_status_update(true, SmallVec::new(), &[])
+                                                .await;
                                         }
                                         Err(count) => {
                                             last_progress_update_count = count;
@@ -4359,11 +4694,14 @@ impl BackgroundScanner {
         &self,
         scanning: bool,
         barrier: SmallVec<[barrier::Sender; 1]>,
+        event_roots: &[EventRoot],
     ) -> bool {
         let mut state = self.state.lock().await;
-        if state.changed_paths.is_empty() && scanning {
+        if state.changed_paths.is_empty() && event_roots.is_empty() && scanning {
             return true;
         }
+
+        let merged_event_roots = merge_event_roots(&state.changed_paths, event_roots);
 
         let new_snapshot = state.snapshot.clone();
         let old_snapshot = mem::replace(&mut state.prev_snapshot, new_snapshot.snapshot.clone());
@@ -4371,7 +4709,7 @@ impl BackgroundScanner {
             self.phase,
             &old_snapshot,
             &new_snapshot,
-            &state.changed_paths,
+            &merged_event_roots,
         );
         state.changed_paths.clear();
 
@@ -4522,6 +4860,17 @@ impl BackgroundScanner {
                     child_entry.is_external = true;
                 }
 
+                if child_metadata.is_dir {
+                    let mut state = self.state.lock().await;
+                    let paths = state
+                        .symlink_paths_by_target
+                        .entry(Arc::from(canonical_path.clone()))
+                        .or_default();
+                    if !paths.iter().any(|path| path == &child_path) {
+                        paths.push(child_path.clone());
+                    }
+                }
+
                 child_entry.canonical_path = Some(canonical_path.into());
             }
 
@@ -4597,7 +4946,18 @@ impl BackgroundScanner {
         }
 
         state.populate_dir(job.path.clone(), new_entries, new_ignore);
+
         self.watcher.add(job.abs_path.as_ref()).log_err();
+
+        let entry_id = state
+            .snapshot
+            .entry_for_path(&job.path)
+            .map(|entry| entry.id);
+        if let Some(entry_id) = entry_id {
+            state
+                .watched_dir_abs_paths_by_entry_id
+                .insert(entry_id, job.abs_path.clone());
+        }
 
         for new_job in new_jobs.into_iter().flatten() {
             job.scan_queue
@@ -5063,10 +5423,14 @@ impl BackgroundScanner {
             match existing_repository_entry {
                 None => {
                     let Ok(relative) = dot_git_dir.strip_prefix(state.snapshot.abs_path()) else {
-                        debug_panic!(
-                            "update_git_repositories called with .git directory outside the worktree root"
-                        );
-                        return Vec::new();
+                        // A `.git` path outside the worktree root is not
+                        // ours to register. This happens legitimately when
+                        // `.git` is a gitfile pointing outside the worktree
+                        // (linked worktrees and submodules), and also when
+                        // a rescan of a linked worktree's commondir arrives
+                        // after the worktree's repository has already been
+                        // unregistered.
+                        continue;
                     };
                     affected_repo_roots.push(dot_git_dir.parent().unwrap().into());
                     state
@@ -5225,11 +5589,40 @@ async fn discover_ancestor_git_repo(
     (ignores, exclude, None)
 }
 
+fn merge_event_roots(changed_paths: &[Arc<RelPath>], event_roots: &[EventRoot]) -> Vec<EventRoot> {
+    let mut merged_event_roots = Vec::with_capacity(changed_paths.len() + event_roots.len());
+    let mut changed_paths = changed_paths.iter().peekable();
+    let mut event_roots = event_roots.iter().peekable();
+    while let (Some(path), Some(event_root)) = (changed_paths.peek(), event_roots.peek()) {
+        match path.cmp(&&event_root.path) {
+            Ordering::Less => {
+                merged_event_roots.push(EventRoot {
+                    path: (*changed_paths.next().expect("peeked changed path")).clone(),
+                    was_rescanned: false,
+                });
+            }
+            Ordering::Equal => {
+                merged_event_roots.push((*event_roots.next().expect("peeked event root")).clone());
+                changed_paths.next();
+            }
+            Ordering::Greater => {
+                merged_event_roots.push((*event_roots.next().expect("peeked event root")).clone());
+            }
+        }
+    }
+    merged_event_roots.extend(changed_paths.map(|path| EventRoot {
+        path: path.clone(),
+        was_rescanned: false,
+    }));
+    merged_event_roots.extend(event_roots.cloned());
+    merged_event_roots
+}
+
 fn build_diff(
     phase: BackgroundScannerPhase,
     old_snapshot: &Snapshot,
     new_snapshot: &Snapshot,
-    event_paths: &[Arc<RelPath>],
+    event_roots: &[EventRoot],
 ) -> UpdatedEntriesSet {
     use BackgroundScannerPhase::*;
     use PathChange::{Added, AddedOrUpdated, Loaded, Removed, Updated};
@@ -5237,13 +5630,14 @@ fn build_diff(
     // Identify which paths have changed. Use the known set of changed
     // parent paths to optimize the search.
     let mut changes = Vec::new();
+
     let mut old_paths = old_snapshot.entries_by_path.cursor::<PathKey>(());
     let mut new_paths = new_snapshot.entries_by_path.cursor::<PathKey>(());
     let mut last_newly_loaded_dir_path = None;
     old_paths.next();
     new_paths.next();
-    for path in event_paths {
-        let path = PathKey(path.clone());
+    for event_root in event_roots {
+        let path = PathKey(event_root.path.clone());
         if old_paths.item().is_some_and(|e| e.path < path.0) {
             old_paths.seek_forward(&path, Bias::Left);
         }
@@ -5289,6 +5683,8 @@ fn build_diff(
                                 } else {
                                     changes.push((new_entry.path.clone(), new_entry.id, Updated));
                                 }
+                            } else if event_root.was_rescanned {
+                                changes.push((new_entry.path.clone(), new_entry.id, Updated));
                             }
                             old_paths.next();
                             new_paths.next();
@@ -5895,6 +6291,16 @@ fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
     Ok(Path::new(path.trim()))
 }
 
+pub async fn discover_root_repo_common_dir(root_abs_path: &Path, fs: &dyn Fs) -> Option<Arc<Path>> {
+    let root_dot_git = root_abs_path.join(DOT_GIT);
+    if !fs.metadata(&root_dot_git).await.is_ok_and(|m| m.is_some()) {
+        return None;
+    }
+    let dot_git_path: Arc<Path> = root_dot_git.into();
+    let (_, common_dir) = discover_git_paths(&dot_git_path, fs).await;
+    Some(common_dir)
+}
+
 async fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, Arc<Path>) {
     let mut repository_dir_abs_path = dot_git_abs_path.clone();
     let mut common_dir_abs_path = dot_git_abs_path.clone();
@@ -6055,7 +6461,7 @@ fn decode_byte_full(
     }
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum ByteContent {
     Utf16Le,
     Utf16Be,
@@ -6111,13 +6517,24 @@ fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
         return ByteContent::Unknown;
     }
 
-    if total_null_count >= limit / 16 {
-        if even_null_count > odd_null_count * 4 {
+    let has_significant_nulls = total_null_count >= limit / 16;
+    let nulls_skew_to_even = even_null_count > odd_null_count * 4;
+    let nulls_skew_to_odd = odd_null_count > even_null_count * 4;
+
+    if has_significant_nulls {
+        let sample = &bytes[..limit];
+
+        // UTF-16BE ASCII: [0x00, char] — nulls at even positions (high byte first)
+        // UTF-16LE ASCII: [char, 0x00] — nulls at odd positions (low byte first)
+
+        if nulls_skew_to_even && is_plausible_utf16_text(sample, false) {
             return ByteContent::Utf16Be;
         }
-        if odd_null_count > even_null_count * 4 {
+
+        if nulls_skew_to_odd && is_plausible_utf16_text(sample, true) {
             return ByteContent::Utf16Le;
         }
+
         return ByteContent::Binary;
     }
 
@@ -6139,4 +6556,208 @@ fn is_known_binary_header(bytes: &[u8]) -> bool {
         || bytes.starts_with(b"GIF89a") // GIF89a
         || bytes.starts_with(b"IWAD") // Doom IWAD archive
         || bytes.starts_with(b"PWAD") // Doom PWAD archive
+        || bytes.starts_with(b"RIFF") // WAV, AVI, WebP
+        || bytes.starts_with(b"OggS") // OGG (Vorbis, Opus, FLAC)
+        || bytes.starts_with(b"fLaC") // FLAC
+        || bytes.starts_with(b"ID3") // MP3 with ID3v2 tag
+        || bytes.starts_with(b"\xFF\xFB") // MP3 frame sync (MPEG1 Layer3)
+        || bytes.starts_with(b"\xFF\xFA") // MP3 frame sync (MPEG1 Layer3)
+        || bytes.starts_with(b"\xFF\xF3") // MP3 frame sync (MPEG2 Layer3)
+        || bytes.starts_with(b"\xFF\xF2") // MP3 frame sync (MPEG2 Layer3)
+}
+
+// Null byte skew alone is not enough to identify UTF-16 -- binary formats with
+// small 16-bit values (like PCM audio) produce the same pattern. Decode the
+// bytes as UTF-16 and reject if too many code units land in control character
+// ranges or form unpaired surrogates, which real text almost never contains.
+fn is_plausible_utf16_text(bytes: &[u8], little_endian: bool) -> bool {
+    let mut suspicious_count = 0usize;
+    let mut total = 0usize;
+
+    let mut i = 0;
+    while let Some(code_unit) = read_u16(bytes, i, little_endian) {
+        total += 1;
+
+        match code_unit {
+            0x0009 | 0x000A | 0x000C | 0x000D => {}
+            // C0/C1 control characters and non-characters
+            0x0000..=0x001F | 0x007F..=0x009F | 0xFFFE | 0xFFFF => suspicious_count += 1,
+            0xD800..=0xDBFF => {
+                let next_offset = i + 2;
+                let has_low_surrogate = read_u16(bytes, next_offset, little_endian)
+                    .is_some_and(|next| (0xDC00..=0xDFFF).contains(&next));
+                if has_low_surrogate {
+                    total += 1;
+                    i += 2;
+                } else {
+                    suspicious_count += 1;
+                }
+            }
+            // Lone low surrogate without a preceding high surrogate
+            0xDC00..=0xDFFF => suspicious_count += 1,
+            _ => {}
+        }
+
+        i += 2;
+    }
+
+    if total == 0 {
+        return false;
+    }
+
+    // Real UTF-16 text has near-zero control characters; binary data with
+    // small 16-bit values typically exceeds 5%. 2% provides a safe margin.
+    suspicious_count * 100 < total * 2
+}
+
+fn read_u16(bytes: &[u8], offset: usize, little_endian: bool) -> Option<u16> {
+    let pair = [*bytes.get(offset)?, *bytes.get(offset + 1)?];
+    if little_endian {
+        return Some(u16::from_le_bytes(pair));
+    }
+    Some(u16::from_be_bytes(pair))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// reproduction of issue #50785
+    fn build_pcm16_wav_bytes() -> Vec<u8> {
+        let header: Vec<u8> = vec![
+            /*  RIFF header  */
+            0x52, 0x49, 0x46, 0x46, // "RIFF"
+            0xc6, 0xcf, 0x00, 0x00, // file size: 8
+            0x57, 0x41, 0x56, 0x45, // "WAVE"
+            /*  fmt chunk  */
+            0x66, 0x6d, 0x74, 0x20, // "fmt "
+            0x10, 0x00, 0x00, 0x00, // chunk size: 16
+            0x01, 0x00, // format: PCM (1)
+            0x01, 0x00, // channels: 1 (mono)
+            0x80, 0x3e, 0x00, 0x00, // sample rate: 16000
+            0x00, 0x7d, 0x00, 0x00, // byte rate: 32000
+            0x02, 0x00, // block align: 2
+            0x10, 0x00, // bits per sample: 16
+            /*  LIST chunk  */
+            0x4c, 0x49, 0x53, 0x54, // "LIST"
+            0x1a, 0x00, 0x00, 0x00, // chunk size: 26
+            0x49, 0x4e, 0x46, 0x4f, // "INFO"
+            0x49, 0x53, 0x46, 0x54, // "ISFT"
+            0x0d, 0x00, 0x00, 0x00, // sub-chunk size: 13
+            0x4c, 0x61, 0x76, 0x66, 0x36, 0x32, 0x2e, 0x33, // "Lavf62.3"
+            0x2e, 0x31, 0x30, 0x30, 0x00, // ".100\0"
+            /* padding byte for word alignment */
+            0x00, // data chunk header
+            0x64, 0x61, 0x74, 0x61, // "data"
+            0x80, 0xcf, 0x00, 0x00, // chunk size
+        ];
+
+        let mut bytes = header;
+
+        // fill remaining space up to `FILE_ANALYSIS_BYTES` with synthetic PCM
+        let audio_bytes_needed = FILE_ANALYSIS_BYTES - bytes.len();
+        for i in 0..(audio_bytes_needed / 2) {
+            let sample = (i & 0xFF) as u8;
+            bytes.push(sample); // low byte: varies
+            bytes.push(0x00); // high byte: zero for small values
+        }
+
+        bytes
+    }
+
+    #[test]
+    fn test_pcm16_wav_detected_as_binary() {
+        let wav_bytes = build_pcm16_wav_bytes();
+        assert_eq!(wav_bytes.len(), FILE_ANALYSIS_BYTES);
+
+        let result = analyze_byte_content(&wav_bytes);
+        assert_eq!(
+            result,
+            ByteContent::Binary,
+            "PCM 16-bit WAV should be detected as Binary via RIFF header"
+        );
+    }
+
+    #[test]
+    fn test_le16_binary_not_misdetected_as_utf16le() {
+        let mut bytes = b"FAKE".to_vec();
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            let sample = (bytes.len() & 0xFF) as u8;
+            bytes.push(sample);
+            bytes.push(0x00);
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+
+        let result = analyze_byte_content(&bytes);
+        assert_eq!(
+            result,
+            ByteContent::Binary,
+            "LE 16-bit binary with control characters should be detected as Binary"
+        );
+    }
+
+    #[test]
+    fn test_be16_binary_not_misdetected_as_utf16be() {
+        let mut bytes = b"FAKE".to_vec();
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            bytes.push(0x00);
+            let sample = (bytes.len() & 0xFF) as u8;
+            bytes.push(sample);
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+
+        let result = analyze_byte_content(&bytes);
+        assert_eq!(
+            result,
+            ByteContent::Binary,
+            "BE 16-bit binary with control characters should be detected as Binary"
+        );
+    }
+
+    #[test]
+    fn test_utf16le_text_detected_as_utf16le() {
+        let text = "Hello, world! This is a UTF-16 test string. ";
+        let mut bytes = Vec::new();
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            bytes.extend(text.encode_utf16().flat_map(|u| u.to_le_bytes()));
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+
+        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Le);
+    }
+
+    #[test]
+    fn test_utf16be_text_detected_as_utf16be() {
+        let text = "Hello, world! This is a UTF-16 test string. ";
+        let mut bytes = Vec::new();
+        while bytes.len() < FILE_ANALYSIS_BYTES {
+            bytes.extend(text.encode_utf16().flat_map(|u| u.to_be_bytes()));
+        }
+        bytes.truncate(FILE_ANALYSIS_BYTES);
+
+        assert_eq!(analyze_byte_content(&bytes), ByteContent::Utf16Be);
+    }
+
+    #[test]
+    fn test_known_binary_headers() {
+        let cases: &[(&[u8], &str)] = &[
+            (b"RIFF\x00\x00\x00\x00WAVE", "WAV"),
+            (b"RIFF\x00\x00\x00\x00AVI ", "AVI"),
+            (b"OggS\x00\x02", "OGG"),
+            (b"fLaC\x00\x00", "FLAC"),
+            (b"ID3\x03\x00", "MP3 ID3v2"),
+            (b"\xFF\xFB\x90\x00", "MP3 MPEG1 Layer3"),
+            (b"\xFF\xF3\x90\x00", "MP3 MPEG2 Layer3"),
+        ];
+
+        for (header, label) in cases {
+            let mut bytes = header.to_vec();
+            bytes.resize(FILE_ANALYSIS_BYTES, 0x41); // pad with 'A'
+            assert_eq!(
+                analyze_byte_content(&bytes),
+                ByteContent::Binary,
+                "{label} should be detected as Binary"
+            );
+        }
+    }
 }

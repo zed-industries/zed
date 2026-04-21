@@ -6,6 +6,7 @@ mod callout;
 mod chip;
 mod collab;
 mod context_menu;
+mod count_badge;
 mod data_table;
 mod diff_stat;
 mod disclosure;
@@ -28,6 +29,7 @@ mod notification;
 mod popover;
 mod popover_menu;
 mod progress;
+mod redistributable_columns;
 mod right_click_menu;
 mod scrollbar;
 mod stack;
@@ -38,9 +40,6 @@ mod toggle;
 mod tooltip;
 mod tree_view_item;
 
-#[cfg(feature = "stories")]
-mod stories;
-
 pub use ai::*;
 pub use avatar::*;
 pub use banner::*;
@@ -49,6 +48,7 @@ pub use callout::*;
 pub use chip::*;
 pub use collab::*;
 pub use context_menu::*;
+pub use count_badge::*;
 pub use data_table::*;
 pub use diff_stat::*;
 pub use disclosure::*;
@@ -71,6 +71,7 @@ pub use notification::*;
 pub use popover::*;
 pub use popover_menu::*;
 pub use progress::*;
+pub use redistributable_columns::*;
 pub use right_click_menu::*;
 pub use scrollbar::*;
 pub use stack::*;
@@ -80,6 +81,3 @@ pub use tab_bar::*;
 pub use toggle::*;
 pub use tooltip::*;
 pub use tree_view_item::*;
-
-#[cfg(feature = "stories")]
-pub use stories::*;

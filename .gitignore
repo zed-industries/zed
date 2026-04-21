@@ -1,4 +1,5 @@
 **/*.db
+**/*.proptest-regressions
 **/cargo-target
 **/target
 **/venv

@@ -1779,6 +1779,7 @@ mod tests {
         fn disk_state(&self) -> language::DiskState {
             language::DiskState::Present {
                 mtime: ::fs::MTime::from_seconds_and_nanos(100, 42),
+                size: 0,
             }
         }
 

@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use client::{Client, ProxySettings, UserStore};
+use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore};
+use db::AppDatabase;
 use extension::ExtensionHostProxy;
 use fs::RealFs;
 use gpui::http_client::read_proxy_from_env;
@@ -61,6 +62,9 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
     let client = Client::production(cx);
     cx.set_http_client(client.http_client());
 
+    let app_db = AppDatabase::new();
+    cx.set_global(app_db);
+
     let git_binary_path = None;
     let fs = Arc::new(RealFs::new(
         git_binary_path,
@@ -104,7 +108,8 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
     let extension_host_proxy = ExtensionHostProxy::global(cx);
     debug_adapter_extension::init(extension_host_proxy.clone(), cx);
     language_extension::init(LspAccess::Noop, extension_host_proxy, languages.clone());
-    language_model::init(user_store.clone(), client.clone(), cx);
+    language_model::init(cx);
+    RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), cx);
     languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);
@@ -114,9 +119,9 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
     let prompt_builder = PromptBuilder::load(fs.clone(), stdout_is_a_pty, cx);
     agent_ui::init(
         fs.clone(),
-        client.clone(),
         prompt_builder,
         languages.clone(),
+        true,
         true,
         cx,
     );

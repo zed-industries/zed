@@ -7,8 +7,8 @@ use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSSavePanel,
-        NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSControl as _, NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel,
+        NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -297,6 +297,7 @@ impl MacPlatform {
                     action,
                     os_action,
                     checked,
+                    disabled,
                 } => {
                     // Note that this is intentionally using earlier bindings, whereas typically
                     // later ones take display precedence. See the discussion on
@@ -394,13 +395,18 @@ impl MacPlatform {
                     if *checked {
                         item.setState_(NSVisualEffectState::Active);
                     }
+                    item.setEnabled_(if *disabled { NO } else { YES });
 
                     let tag = actions.len() as NSInteger;
                     let _: () = msg_send![item, setTag: tag];
                     actions.push(action.boxed_clone());
                     item
                 }
-                MenuItem::Submenu(Menu { name, items }) => {
+                MenuItem::Submenu(Menu {
+                    name,
+                    items,
+                    disabled,
+                }) => {
                     let item = NSMenuItem::new(nil).autorelease();
                     let submenu = NSMenu::new(nil).autorelease();
                     submenu.setDelegate_(delegate);
@@ -408,6 +414,7 @@ impl MacPlatform {
                         submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
                     }
                     item.setSubmenu_(submenu);
+                    item.setEnabled_(if *disabled { NO } else { YES });
                     item.setTitle_(ns_string(name));
                     item
                 }
@@ -848,6 +855,7 @@ impl Platform for MacPlatform {
             .background_executor
             .spawn(async move {
                 if let Some(mut child) = new_command("open")
+                    .arg("--")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")
@@ -1382,6 +1390,7 @@ unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
     pub(super) fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut Object;
+    pub(super) fn TISCopyCurrentKeyboardInputSource() -> *mut Object;
     pub(super) fn TISGetInputSourceProperty(
         inputSource: *mut Object,
         propertyKey: *const c_void,
@@ -1403,6 +1412,9 @@ unsafe extern "C" {
     pub(super) static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
     pub(super) static kTISPropertyInputSourceID: CFStringRef;
     pub(super) static kTISPropertyLocalizedName: CFStringRef;
+    pub(super) static kTISPropertyInputSourceIsASCIICapable: CFStringRef;
+    pub(super) static kTISPropertyInputSourceType: CFStringRef;
+    pub(super) static kTISTypeKeyboardInputMode: CFStringRef;
 }
 
 mod security {

@@ -34,6 +34,7 @@ impl Database {
         worktrees: &[proto::WorktreeMetadata],
         is_ssh_project: bool,
         windows_paths: bool,
+        features: &[String],
     ) -> Result<TransactionGuard<(ProjectId, proto::Room)>> {
         self.room_transaction(room_id, |tx| async move {
             let participant = room_participant::Entity::find()
@@ -71,6 +72,7 @@ impl Database {
                 ))),
                 id: ActiveValue::NotSet,
                 windows_paths: ActiveValue::set(windows_paths),
+                features: ActiveValue::set(serde_json::to_string(features).unwrap()),
             }
             .insert(&*tx)
             .await?;
@@ -85,6 +87,7 @@ impl Database {
                         visible: ActiveValue::set(worktree.visible),
                         scan_id: ActiveValue::set(0),
                         completed_scan_id: ActiveValue::set(0),
+                        root_repo_common_dir: ActiveValue::set(None),
                     }
                 }))
                 .exec(&*tx)
@@ -201,6 +204,7 @@ impl Database {
                 visible: ActiveValue::set(worktree.visible),
                 scan_id: ActiveValue::set(0),
                 completed_scan_id: ActiveValue::set(0),
+                root_repo_common_dir: ActiveValue::set(None),
             }))
             .on_conflict(
                 OnConflict::columns([worktree::Column::ProjectId, worktree::Column::Id])
@@ -264,6 +268,7 @@ impl Database {
                     ActiveValue::default()
                 },
                 abs_path: ActiveValue::set(update.abs_path.clone()),
+                root_repo_common_dir: ActiveValue::set(update.root_repo_common_dir.clone()),
                 ..Default::default()
             })
             .exec(&*tx)
@@ -374,6 +379,9 @@ impl Database {
                 merge_message: ActiveValue::set(update.merge_message.clone()),
                 remote_upstream_url: ActiveValue::set(update.remote_upstream_url.clone()),
                 remote_origin_url: ActiveValue::set(update.remote_origin_url.clone()),
+                linked_worktrees: ActiveValue::Set(Some(
+                    serde_json::to_string(&update.linked_worktrees).unwrap(),
+                )),
             })
             .on_conflict(
                 OnConflict::columns([
@@ -388,6 +396,7 @@ impl Database {
                     project_repository::Column::CurrentMergeConflicts,
                     project_repository::Column::HeadCommitDetails,
                     project_repository::Column::MergeMessage,
+                    project_repository::Column::LinkedWorktrees,
                 ])
                 .to_owned(),
             )
@@ -755,6 +764,7 @@ impl Database {
                         settings_files: Default::default(),
                         scan_id: db_worktree.scan_id as u64,
                         completed_scan_id: db_worktree.completed_scan_id as u64,
+                        root_repo_common_dir: db_worktree.root_repo_common_dir,
                         legacy_repository_entries: Default::default(),
                     },
                 )
@@ -883,6 +893,11 @@ impl Database {
                         remote_upstream_url: db_repository_entry.remote_upstream_url.clone(),
                         remote_origin_url: db_repository_entry.remote_origin_url.clone(),
                         original_repo_abs_path: Some(db_repository_entry.abs_path),
+                        linked_worktrees: db_repository_entry
+                            .linked_worktrees
+                            .as_deref()
+                            .and_then(|s| serde_json::from_str(s).ok())
+                            .unwrap_or_default(),
                     });
                 }
             }
@@ -939,6 +954,7 @@ impl Database {
         } else {
             PathStyle::Posix
         };
+        let features: Vec<String> = serde_json::from_str(&project.features).unwrap_or_default();
 
         let project = Project {
             id: project.id,
@@ -968,6 +984,7 @@ impl Database {
                 })
                 .collect(),
             path_style,
+            features,
         };
         Ok((project, replica_id as ReplicaId))
     }

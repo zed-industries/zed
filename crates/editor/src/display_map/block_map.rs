@@ -9,10 +9,10 @@ use crate::{
 };
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, App, EntityId, Pixels, Window};
-use language::{Patch, Point};
+use language::{LanguageAwareStyling, Patch, Point};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferOffset, MultiBufferPoint,
-    MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint as _,
+    Anchor, ExcerptBoundaryInfo, MultiBuffer, MultiBufferOffset, MultiBufferPoint, MultiBufferRow,
+    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint as _,
 };
 use parking_lot::Mutex;
 use std::{
@@ -298,10 +298,10 @@ pub struct BlockContext<'a, 'b> {
     pub indent_guide_padding: Pixels,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlockId {
-    ExcerptBoundary(ExcerptId),
-    FoldedBuffer(ExcerptId),
+    ExcerptBoundary(Anchor),
+    FoldedBuffer(BufferId),
     Custom(CustomBlockId),
     Spacer(SpacerId),
 }
@@ -310,10 +310,8 @@ impl From<BlockId> for ElementId {
     fn from(value: BlockId) -> Self {
         match value {
             BlockId::Custom(CustomBlockId(id)) => ("Block", id).into(),
-            BlockId::ExcerptBoundary(excerpt_id) => {
-                ("ExcerptBoundary", EntityId::from(excerpt_id)).into()
-            }
-            BlockId::FoldedBuffer(id) => ("FoldedBuffer", EntityId::from(id)).into(),
+            BlockId::ExcerptBoundary(anchor) => anchor.opaque_id().unwrap().into(),
+            BlockId::FoldedBuffer(id) => ("FoldedBuffer", EntityId::from(id.to_proto())).into(),
             BlockId::Spacer(SpacerId(id)) => ("Spacer", id).into(),
         }
     }
@@ -323,7 +321,7 @@ impl std::fmt::Display for BlockId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Custom(id) => write!(f, "Block({id:?})"),
-            Self::ExcerptBoundary(id) => write!(f, "ExcerptHeader({id:?})"),
+            Self::ExcerptBoundary(id) => write!(f, "ExcerptBoundary({id:?})"),
             Self::FoldedBuffer(id) => write!(f, "FoldedBuffer({id:?})"),
             Self::Spacer(id) => write!(f, "Spacer({id:?})"),
         }
@@ -340,15 +338,15 @@ struct Transform {
 pub enum Block {
     Custom(Arc<CustomBlock>),
     FoldedBuffer {
-        first_excerpt: ExcerptInfo,
+        first_excerpt: ExcerptBoundaryInfo,
         height: u32,
     },
     ExcerptBoundary {
-        excerpt: ExcerptInfo,
+        excerpt: ExcerptBoundaryInfo,
         height: u32,
     },
     BufferHeader {
-        excerpt: ExcerptInfo,
+        excerpt: ExcerptBoundaryInfo,
         height: u32,
     },
     Spacer {
@@ -365,12 +363,14 @@ impl Block {
             Block::ExcerptBoundary {
                 excerpt: next_excerpt,
                 ..
-            } => BlockId::ExcerptBoundary(next_excerpt.id),
-            Block::FoldedBuffer { first_excerpt, .. } => BlockId::FoldedBuffer(first_excerpt.id),
+            } => BlockId::ExcerptBoundary(next_excerpt.start_anchor),
+            Block::FoldedBuffer { first_excerpt, .. } => {
+                BlockId::FoldedBuffer(first_excerpt.buffer_id())
+            }
             Block::BufferHeader {
                 excerpt: next_excerpt,
                 ..
-            } => BlockId::ExcerptBoundary(next_excerpt.id),
+            } => BlockId::ExcerptBoundary(next_excerpt.start_anchor),
             Block::Spacer { id, .. } => BlockId::Spacer(*id),
         }
     }
@@ -1174,10 +1174,10 @@ impl BlockMap {
                 let wrap_row = wrap_row_for(Point::new(excerpt_boundary.row.0, 0), Bias::Left);
 
                 let new_buffer_id = match (&excerpt_boundary.prev, &excerpt_boundary.next) {
-                    (None, next) => Some(next.buffer_id),
+                    (None, next) => Some(next.buffer_id()),
                     (Some(prev), next) => {
-                        if prev.buffer_id != next.buffer_id {
-                            Some(next.buffer_id)
+                        if prev.buffer_id() != next.buffer_id() {
+                            Some(next.buffer_id())
                         } else {
                             None
                         }
@@ -1195,7 +1195,7 @@ impl BlockMap {
                         let mut last_excerpt_end_row = first_excerpt.end_row;
 
                         while let Some(next_boundary) = boundaries.peek() {
-                            if next_boundary.next.buffer_id == new_buffer_id {
+                            if next_boundary.next.buffer_id() == new_buffer_id {
                                 last_excerpt_end_row = next_boundary.next.end_row;
                             } else {
                                 break;
@@ -1254,12 +1254,24 @@ impl BlockMap {
         let our_buffer = wrap_snapshot.buffer_snapshot();
         let companion_buffer = companion_snapshot.buffer_snapshot();
 
-        let patches = companion.convert_rows_to_companion(
+        let range = match bounds {
+            (Bound::Included(start), Bound::Excluded(end)) => start..end,
+            (Bound::Included(start), Bound::Unbounded) => start..wrap_snapshot.buffer().max_point(),
+            _ => unreachable!(),
+        };
+        let mut patches = companion.convert_rows_to_companion(
             display_map_id,
             companion_buffer,
             our_buffer,
-            bounds,
+            range,
         );
+        if let Some(patch) = patches.last()
+            && let Bound::Excluded(end) = bounds.1
+            && end == wrap_snapshot.buffer().max_point()
+            && patch.source_excerpt_range.is_empty()
+        {
+            patches.pop();
+        }
 
         let mut our_inlay_point_cursor = wrap_snapshot.inlay_point_cursor();
         let mut our_fold_point_cursor = wrap_snapshot.fold_point_cursor();
@@ -1391,18 +1403,15 @@ impl BlockMap {
                 }
             }
 
-            // Main loop: process one hunk/group at a time, possibly inserting spacers before and after.
             while let Some(source_point) = source_points.next() {
                 let mut current_boundary = source_point;
                 let current_range = excerpt.patch.edit_for_old_position(current_boundary).new;
 
-                // This can only occur at the end of an excerpt.
                 if current_boundary.column > 0 {
                     debug_assert_eq!(current_boundary, excerpt.source_excerpt_range.end);
                     break;
                 }
 
-                // Align the two sides at the start of this group.
                 let (delta_at_start, mut spacer_at_start) = determine_spacer(
                     &mut our_wrapper,
                     &mut companion_wrapper,
@@ -1434,7 +1443,6 @@ impl BlockMap {
                     source_points.next();
                 }
 
-                // This can only occur at the end of an excerpt.
                 if current_boundary.column > 0 {
                     debug_assert_eq!(current_boundary, excerpt.source_excerpt_range.end);
                     break;
@@ -1538,7 +1546,8 @@ impl BlockMap {
                         | Block::BufferHeader {
                             excerpt: excerpt_b, ..
                         },
-                    ) => Some(excerpt_a.id).cmp(&Some(excerpt_b.id)),
+                    ) => Some(excerpt_a.start_text_anchor().opaque_id())
+                        .cmp(&Some(excerpt_b.start_text_anchor().opaque_id())),
                     (
                         Block::ExcerptBoundary { .. } | Block::BufferHeader { .. },
                         Block::Spacer { .. } | Block::Custom(_),
@@ -2034,6 +2043,7 @@ impl BlockMapWriter<'_> {
         multi_buffer: &MultiBuffer,
         cx: &App,
     ) {
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let mut ranges = Vec::new();
         let mut companion_buffer_ids = HashSet::default();
         for buffer_id in buffer_ids {
@@ -2042,17 +2052,19 @@ impl BlockMapWriter<'_> {
             } else {
                 self.block_map.folded_buffers.remove(&buffer_id);
             }
-            ranges.extend(multi_buffer.excerpt_ranges_for_buffer(buffer_id, cx));
+            ranges.extend(multi_buffer_snapshot.range_for_buffer(buffer_id));
             if let Some(companion) = &self.companion
                 && companion.inverse.is_some()
             {
-                companion_buffer_ids.extend(
-                    companion
-                        .companion
-                        .buffer_to_companion_buffer(companion.display_map_id)
-                        .get(&buffer_id)
-                        .copied(),
-                )
+                if let Some(diff) = multi_buffer_snapshot.diff_for_buffer_id(buffer_id) {
+                    let companion_buffer_id =
+                        if companion.companion.is_rhs(companion.display_map_id) {
+                            diff.base_text().remote_id()
+                        } else {
+                            diff.buffer_id()
+                        };
+                    companion_buffer_ids.insert(companion_buffer_id);
+                }
             }
         }
         ranges.sort_unstable_by_key(|range| range.start);
@@ -2130,7 +2142,10 @@ impl BlockSnapshot {
     pub fn text(&self) -> String {
         self.chunks(
             BlockRow(0)..self.transforms.summary().output_rows,
-            false,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
             false,
             Highlights::default(),
         )
@@ -2142,7 +2157,7 @@ impl BlockSnapshot {
     pub(crate) fn chunks<'a>(
         &'a self,
         rows: Range<BlockRow>,
-        language_aware: bool,
+        language_aware: LanguageAwareStyling,
         masked: bool,
         highlights: Highlights<'a>,
     ) -> BlockChunks<'a> {
@@ -2268,14 +2283,16 @@ impl BlockSnapshot {
                 let custom_block = self.custom_blocks_by_id.get(&custom_block_id)?;
                 return Some(Block::Custom(custom_block.clone()));
             }
-            BlockId::ExcerptBoundary(next_excerpt_id) => {
-                let excerpt_range = buffer.range_for_excerpt(next_excerpt_id)?;
-                self.wrap_snapshot
-                    .make_wrap_point(excerpt_range.start, Bias::Left)
+            BlockId::ExcerptBoundary(start_anchor) => {
+                let start_point = start_anchor.to_point(&buffer);
+                self.wrap_snapshot.make_wrap_point(start_point, Bias::Left)
             }
-            BlockId::FoldedBuffer(excerpt_id) => self
-                .wrap_snapshot
-                .make_wrap_point(buffer.range_for_excerpt(excerpt_id)?.start, Bias::Left),
+            BlockId::FoldedBuffer(buffer_id) => self.wrap_snapshot.make_wrap_point(
+                buffer
+                    .anchor_in_excerpt(buffer.excerpts_for_buffer(buffer_id).next()?.context.start)?
+                    .to_point(buffer),
+                Bias::Left,
+            ),
             BlockId::Spacer(_) => return None,
         };
         let wrap_row = wrap_point.row();
@@ -2571,7 +2588,7 @@ impl BlockChunks<'_> {
 }
 
 pub struct StickyHeaderExcerpt<'a> {
-    pub excerpt: &'a ExcerptInfo,
+    pub excerpt: &'a ExcerptBoundaryInfo,
 }
 
 impl<'a> Iterator for BlockChunks<'a> {
@@ -2854,7 +2871,6 @@ mod tests {
         display_map::{
             Companion, fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
         },
-        split::{convert_lhs_rows_to_rhs, convert_rhs_rows_to_lhs},
         test::test_font,
     };
     use buffer_diff::BufferDiff;
@@ -3096,7 +3112,13 @@ mod tests {
             );
             multi_buffer
         });
-        let excerpt_ids = multi_buffer.read_with(cx, |mb, _| mb.excerpt_ids());
+        let excerpt_start_anchors = multi_buffer.read_with(cx, |mb, _| {
+            let snapshot = mb.snapshot(cx);
+            snapshot
+                .excerpts()
+                .map(|e| snapshot.anchor_in_excerpt(e.context.start).unwrap())
+                .collect::<Vec<_>>()
+        });
 
         let font = test_font();
         let font_size = px(14.);
@@ -3129,9 +3151,9 @@ mod tests {
         assert_eq!(
             blocks,
             vec![
-                (0..1, BlockId::ExcerptBoundary(excerpt_ids[0])), // path, header
-                (3..4, BlockId::ExcerptBoundary(excerpt_ids[1])), // path, header
-                (6..7, BlockId::ExcerptBoundary(excerpt_ids[2])), // path, header
+                (0..1, BlockId::ExcerptBoundary(excerpt_start_anchors[0])), // path, header
+                (3..4, BlockId::ExcerptBoundary(excerpt_start_anchors[1])), // path, header
+                (6..7, BlockId::ExcerptBoundary(excerpt_start_anchors[2])), // path, header
             ]
         );
     }
@@ -3447,13 +3469,13 @@ mod tests {
                 ],
                 cx,
             );
-            assert_eq!(multibuffer.read(cx).excerpt_ids().len(), 6);
+            assert_eq!(multibuffer.read(cx).snapshot(cx).excerpts().count(), 6);
             multibuffer
         });
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
             .excerpts()
-            .map(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id())
+            .map(|excerpt| excerpt.context.start.buffer_id)
             .dedup()
             .collect::<Vec<_>>();
         assert_eq!(buffer_ids.len(), 3);
@@ -3800,7 +3822,7 @@ mod tests {
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
             .excerpts()
-            .map(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id())
+            .map(|excerpt| excerpt.context.start.buffer_id)
             .dedup()
             .collect::<Vec<_>>();
         assert_eq!(buffer_ids.len(), 1);
@@ -4008,17 +4030,16 @@ mod tests {
                         wrap_map.sync(tab_snapshot, tab_edits, cx)
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits, None);
-                    let (unfolded_buffers, folded_buffers) = buffer.read_with(cx, |buffer, _| {
-                        let folded_buffers: Vec<_> =
-                            block_map.block_map.folded_buffers.iter().cloned().collect();
-                        let mut unfolded_buffers = buffer.excerpt_buffer_ids();
-                        unfolded_buffers.dedup();
-                        log::debug!("All buffers {unfolded_buffers:?}");
-                        log::debug!("Folded buffers {folded_buffers:?}");
-                        unfolded_buffers.retain(|buffer_id| {
-                            !block_map.block_map.folded_buffers.contains(buffer_id)
-                        });
-                        (unfolded_buffers, folded_buffers)
+                    let folded_buffers: Vec<_> =
+                        block_map.block_map.folded_buffers.iter().cloned().collect();
+                    let mut unfolded_buffers = buffer_snapshot
+                        .buffer_ids_for_range(Anchor::Min..Anchor::Max)
+                        .collect::<Vec<_>>();
+                    unfolded_buffers.dedup();
+                    log::debug!("All buffers {unfolded_buffers:?}");
+                    log::debug!("Folded buffers {folded_buffers:?}");
+                    unfolded_buffers.retain(|buffer_id| {
+                        !block_map.block_map.folded_buffers.contains(buffer_id)
                     });
                     let mut folded_count = folded_buffers.len();
                     let mut unfolded_count = unfolded_buffers.len();
@@ -4039,12 +4060,14 @@ mod tests {
                             log::info!("Folding {buffer_to_fold:?}");
                             let related_excerpts = buffer_snapshot
                                 .excerpts()
-                                .filter_map(|(excerpt_id, buffer, range)| {
-                                    if buffer.remote_id() == buffer_to_fold {
+                                .filter_map(|excerpt| {
+                                    if excerpt.context.start.buffer_id == buffer_to_fold {
                                         Some((
-                                            excerpt_id,
-                                            buffer
-                                                .text_for_range(range.context)
+                                            excerpt.context.start,
+                                            buffer_snapshot
+                                                .buffer_for_id(buffer_to_fold)
+                                                .unwrap()
+                                                .text_for_range(excerpt.context)
                                                 .collect::<String>(),
                                         ))
                                     } else {
@@ -4281,7 +4304,10 @@ mod tests {
                 let actual_text = blocks_snapshot
                     .chunks(
                         BlockRow(start_row as u32)..BlockRow(end_row as u32),
-                        false,
+                        LanguageAwareStyling {
+                            tree_sitter: false,
+                            diagnostics: false,
+                        },
                         false,
                         Highlights::default(),
                     )
@@ -4518,7 +4544,7 @@ mod tests {
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
             .excerpts()
-            .map(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id())
+            .map(|excerpt| excerpt.context.start.buffer_id)
             .dedup()
             .collect::<Vec<_>>();
         assert_eq!(buffer_ids.len(), 1);
@@ -4563,7 +4589,7 @@ mod tests {
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let buffer_ids = buffer_snapshot
             .excerpts()
-            .map(|(_, buffer_snapshot, _)| buffer_snapshot.remote_id())
+            .map(|excerpt| excerpt.context.start.buffer_id)
             .dedup()
             .collect::<Vec<_>>();
         assert_eq!(buffer_ids.len(), 1);
@@ -4635,11 +4661,6 @@ mod tests {
         let subscription =
             rhs_multibuffer.update(cx, |rhs_multibuffer, _| rhs_multibuffer.subscribe());
 
-        let lhs_excerpt_id =
-            lhs_multibuffer.read_with(cx, |mb, cx| mb.snapshot(cx).excerpts().next().unwrap().0);
-        let rhs_excerpt_id =
-            rhs_multibuffer.read_with(cx, |mb, cx| mb.snapshot(cx).excerpts().next().unwrap().0);
-
         let lhs_buffer_snapshot = cx.update(|cx| lhs_multibuffer.read(cx).snapshot(cx));
         let (mut _lhs_inlay_map, lhs_inlay_snapshot) = InlayMap::new(lhs_buffer_snapshot);
         let (mut _lhs_fold_map, lhs_fold_snapshot) = FoldMap::new(lhs_inlay_snapshot);
@@ -4660,15 +4681,7 @@ mod tests {
 
         let rhs_entity_id = rhs_multibuffer.entity_id();
 
-        let companion = cx.new(|_| {
-            let mut c = Companion::new(
-                rhs_entity_id,
-                convert_rhs_rows_to_lhs,
-                convert_lhs_rows_to_rhs,
-            );
-            c.add_excerpt_mapping(lhs_excerpt_id, rhs_excerpt_id);
-            c
-        });
+        let companion = cx.new(|_| Companion::new(rhs_entity_id));
 
         let rhs_edits = Patch::new(vec![text::Edit {
             old: WrapRow(0)..rhs_wrap_snapshot.max_point().row(),
@@ -4830,7 +4843,7 @@ mod tests {
     fn init_test(cx: &mut gpui::App) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         assets::Assets.load_test_fonts(cx);
     }
 

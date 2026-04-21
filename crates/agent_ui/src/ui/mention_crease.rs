@@ -9,9 +9,11 @@ use gpui::{
 use prompt_store::PromptId;
 use rope::Point;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
 use workspace::{OpenOptions, Workspace};
+
+use crate::Agent;
 
 #[derive(IntoElement)]
 pub struct MentionCrease {
@@ -176,14 +178,13 @@ fn open_mention_uri(
         MentionUri::Thread { id, name } => {
             open_thread(workspace, id, name, window, cx);
         }
-        MentionUri::TextThread { .. } => {}
         MentionUri::Rule { id, .. } => {
             open_rule(workspace, id, window, cx);
         }
         MentionUri::Fetch { url } => {
             cx.open_url(url.as_str());
         }
-        MentionUri::PastedImage
+        MentionUri::PastedImage { .. }
         | MentionUri::Selection { abs_path: None, .. }
         | MentionUri::Diagnostics { .. }
         | MentionUri::TerminalSelection { .. }
@@ -275,8 +276,18 @@ fn open_thread(
         return;
     };
 
+    // Right now we only support loading threads in the native agent
     panel.update(cx, |panel, cx| {
-        panel.load_agent_thread(id, None, Some(name.into()), window, cx)
+        panel.load_agent_thread(
+            Agent::NativeAgent,
+            id,
+            None,
+            Some(name.into()),
+            true,
+            "agent_panel",
+            window,
+            cx,
+        )
     });
 }
 

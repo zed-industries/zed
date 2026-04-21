@@ -132,7 +132,7 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 | Action            | Shortcut                   | Notes                          |
 | ----------------- | -------------------------- | ------------------------------ |
-| Toggle Right Dock | `Cmd + R`                  | Assistant panel, notifications |
+| Toggle Right Dock | `Cmd + R`                  | Agent panel, notifications     |
 | Split Panes       | `Cmd + K`, then arrow keys | Create splits in any direction |
 
 ### How to Customize Keybindings
@@ -315,7 +315,6 @@ Zed's extension catalog is smaller and more focused:
 
 - Language support and syntax highlighting
 - Themes
-- Slash commands for AI
 - Context servers
 
 Several features that might require plugins in other editors are built into Zed:

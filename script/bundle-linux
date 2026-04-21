@@ -74,7 +74,15 @@ fi
 export CC=${CC:-$(which clang)}
 
 # Build binary in release mode
-export RUSTFLAGS="${RUSTFLAGS:-} -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
+# We need lld to link libwebrtc.a successfully on aarch64-linux.
+# NOTE: Since RUSTFLAGS env var overrides all .cargo/config.toml rustflags
+# (see https://github.com/rust-lang/cargo/issues/5376), the
+# [target.aarch64-unknown-linux-gnu] section in config.toml has no effect here.
+if [[ "$(uname -m)" == "aarch64" ]]; then
+    export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-fuse-ld=lld -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
+else
+    export RUSTFLAGS="${RUSTFLAGS:-} -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
+fi
 cargo build --release --target "${target_triple}" --package zed --package cli
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
@@ -111,10 +119,12 @@ else
     fi
 fi
 
-# Strip debug symbols and save them for upload to DigitalOcean
-objcopy --strip-debug "${target_dir}/${target_triple}/release/zed"
-objcopy --strip-debug "${target_dir}/${target_triple}/release/cli"
-objcopy --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
+# Strip debug symbols and save them for upload to DigitalOcean.
+# We use llvm-objcopy because GNU objcopy on older distros (e.g. Ubuntu 20.04)
+# doesn't understand CREL sections produced by newer LLVM.
+llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/zed"
+llvm-objcopy --strip-debug "${target_dir}/${target_triple}/release/cli"
+llvm-objcopy --strip-debug "${target_dir}/${remote_server_triple}/release/remote_server"
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
 if ldd "${target_dir}/${remote_server_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'; then

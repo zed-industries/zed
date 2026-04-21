@@ -8,6 +8,7 @@ use dap::{
     },
 };
 use fs::Fs;
+use futures::StreamExt;
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
 use log::warn;
@@ -71,27 +72,59 @@ impl GoDebugAdapter {
             return Ok(path);
         }
 
-        let asset = Self::fetch_latest_adapter_version(delegate).await?;
-        let ty = if consts::OS == "windows" {
-            DownloadedFileType::Zip
-        } else {
-            DownloadedFileType::GzipTar
-        };
-        download_adapter_from_github(
-            "delve-shim-dap".into(),
-            asset.clone(),
-            ty,
-            delegate.as_ref(),
-        )
-        .await?;
+        let adapter_dir = paths::debug_adapters_dir().join("delve-shim-dap");
 
-        let path = paths::debug_adapters_dir()
-            .join("delve-shim-dap")
-            .join(format!("delve-shim-dap_{}", asset.tag_name))
-            .join(format!("delve-shim-dap{}", std::env::consts::EXE_SUFFIX));
-        self.shim_path.set(path.clone()).ok();
+        match Self::fetch_latest_adapter_version(delegate).await {
+            Ok(asset) => {
+                let ty = if consts::OS == "windows" {
+                    DownloadedFileType::Zip
+                } else {
+                    DownloadedFileType::GzipTar
+                };
+                download_adapter_from_github(
+                    "delve-shim-dap".into(),
+                    asset.clone(),
+                    ty,
+                    delegate.as_ref(),
+                )
+                .await?;
 
-        Ok(path)
+                let path = adapter_dir
+                    .join(format!("delve-shim-dap_{}", asset.tag_name))
+                    .join(format!("delve-shim-dap{}", consts::EXE_SUFFIX));
+                self.shim_path.set(path.clone()).ok();
+
+                Ok(path)
+            }
+            Err(error) => {
+                let binary_name = format!("delve-shim-dap{}", consts::EXE_SUFFIX);
+                let mut cached = None;
+                if let Ok(mut entries) = delegate.fs().read_dir(&adapter_dir).await {
+                    while let Some(entry) = entries.next().await {
+                        if let Ok(version_dir) = entry {
+                            let candidate = version_dir.join(&binary_name);
+                            if delegate
+                                .fs()
+                                .metadata(&candidate)
+                                .await
+                                .is_ok_and(|m| m.is_some())
+                            {
+                                cached = Some(candidate);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if let Some(path) = cached {
+                    warn!("Failed to fetch latest delve-shim-dap, using cached version: {error:#}");
+                    self.shim_path.set(path.clone()).ok();
+                    Ok(path)
+                } else {
+                    Err(error)
+                }
+            }
+        }
     }
 }
 
