@@ -3718,7 +3718,7 @@ impl BufferSnapshot {
             range,
             &self.text,
             TreeSitterOptions {
-                max_context_bytes: Some(MAX_CONTEXT_BYTES),
+                max_context_bytes: Some(1024),
                 max_start_depth: None,
             },
             |grammar| {
