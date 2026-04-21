@@ -8,7 +8,6 @@ use gpui::{
 };
 pub use project::ProjectGroupKey;
 use project::{DisableAiSettings, Project};
-use release_channel::ReleaseChannel;
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
@@ -103,7 +102,9 @@ pub fn sidebar_side_context_menu(
 }
 
 pub enum MultiWorkspaceEvent {
-    ActiveWorkspaceChanged,
+    ActiveWorkspaceChanged {
+        source_workspace: Option<WeakEntity<Workspace>>,
+    },
     WorkspaceAdded(Entity<Workspace>),
     WorkspaceRemoved(EntityId),
     ProjectGroupsChanged,
@@ -395,8 +396,7 @@ impl MultiWorkspace {
     }
 
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
-        !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
-            && !DisableAiSettings::get_global(cx).disable_ai
+        !DisableAiSettings::get_global(cx).disable_ai
     }
 
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -578,7 +578,7 @@ impl MultiWorkspace {
 
         cx.subscribe_in(workspace, window, |this, workspace, event, window, cx| {
             if let WorkspaceEvent::Activate = event {
-                this.activate(workspace.clone(), window, cx);
+                this.activate(workspace.clone(), None, window, cx);
             }
         })
         .detach();
@@ -730,7 +730,7 @@ impl MultiWorkspace {
             self.retained_workspaces.push(workspace.clone());
         }
 
-        self.activate(workspace.clone(), window, cx);
+        self.activate(workspace.clone(), None, window, cx);
         cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
     }
 
@@ -1138,18 +1138,51 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
+        self.find_or_create_workspace_with_source_workspace(
+            paths,
+            host,
+            provisional_project_group_key,
+            connect_remote,
+            excluding,
+            init,
+            open_mode,
+            None,
+            window,
+            cx,
+        )
+    }
+
+    pub fn find_or_create_workspace_with_source_workspace(
+        &mut self,
+        paths: PathList,
+        host: Option<RemoteConnectionOptions>,
+        provisional_project_group_key: Option<ProjectGroupKey>,
+        connect_remote: impl FnOnce(
+            RemoteConnectionOptions,
+            &mut Window,
+            &mut Context<Self>,
+        ) -> Task<Result<Option<Entity<remote::RemoteClient>>>>
+        + 'static,
+        excluding: &[Entity<Workspace>],
+        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        open_mode: OpenMode,
+        source_workspace: Option<WeakEntity<Workspace>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Workspace>>> {
         if let Some(workspace) = self.workspace_for_paths(&paths, host.as_ref(), cx) {
-            self.activate(workspace.clone(), window, cx);
+            self.activate(workspace.clone(), source_workspace, window, cx);
             return Task::ready(Ok(workspace));
         }
 
         let Some(connection_options) = host else {
-            return self.find_or_create_local_workspace(
+            return self.find_or_create_local_workspace_with_source_workspace(
                 paths,
                 provisional_project_group_key,
                 excluding,
                 init,
                 open_mode,
+                source_workspace,
                 window,
                 cx,
             );
@@ -1178,16 +1211,44 @@ impl MultiWorkspace {
                 )
             });
 
+            let effective_paths_vec =
+                if let Some(project_group) = provisional_project_group_key.as_ref() {
+                    let resolve_tasks = cx.update(|cx| {
+                        let project = new_project.read(cx);
+                        paths_vec
+                            .iter()
+                            .map(|path| project.resolve_abs_path(&path.to_string_lossy(), cx))
+                            .collect::<Vec<_>>()
+                    });
+                    let resolved = futures::future::join_all(resolve_tasks).await;
+                    // `resolve_abs_path` returns `None` for both "definitely
+                    // absent" and transport errors (it swallows the error via
+                    // `log_err`). This is a weaker guarantee than the local
+                    // `Ok(None)` check, but it matches how the rest of the
+                    // codebase consumes this API.
+                    let all_paths_missing =
+                        !paths_vec.is_empty() && resolved.iter().all(|resolved| resolved.is_none());
+
+                    if all_paths_missing {
+                        project_group.path_list().paths().to_vec()
+                    } else {
+                        paths_vec
+                    }
+                } else {
+                    paths_vec
+                };
+
             let window_handle =
                 window_handle.ok_or_else(|| anyhow::anyhow!("Window is not a MultiWorkspace"))?;
 
             open_remote_project_with_existing_connection(
                 connection_options,
                 new_project,
-                paths_vec,
+                effective_paths_vec,
                 app_state,
                 window_handle,
                 provisional_project_group_key,
+                source_workspace,
                 cx,
             )
             .await?;
@@ -1217,9 +1278,32 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
+        self.find_or_create_local_workspace_with_source_workspace(
+            path_list,
+            project_group,
+            excluding,
+            init,
+            open_mode,
+            None,
+            window,
+            cx,
+        )
+    }
+
+    pub fn find_or_create_local_workspace_with_source_workspace(
+        &mut self,
+        path_list: PathList,
+        project_group: Option<ProjectGroupKey>,
+        excluding: &[Entity<Workspace>],
+        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        open_mode: OpenMode,
+        source_workspace: Option<WeakEntity<Workspace>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Workspace>>> {
         if let Some(workspace) = self.workspace_for_paths_excluding(&path_list, None, excluding, cx)
         {
-            self.activate(workspace.clone(), window, cx);
+            self.activate(workspace.clone(), source_workspace, window, cx);
             return Task::ready(Ok(workspace));
         }
 
@@ -1264,7 +1348,12 @@ impl MultiWorkspace {
                                 cx,
                             )
                             .inspect(|workspace| {
-                                multi_workspace.activate(workspace.clone(), window, cx);
+                                multi_workspace.activate(
+                                    workspace.clone(),
+                                    source_workspace.clone(),
+                                    window,
+                                    cx,
+                                );
                             })
                     })
                     .ok()
@@ -1327,6 +1416,7 @@ impl MultiWorkspace {
     pub fn activate(
         &mut self,
         workspace: Entity<Workspace>,
+        source_workspace: Option<WeakEntity<Workspace>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1359,7 +1449,7 @@ impl MultiWorkspace {
             self.detach_workspace(&old_active_workspace, cx);
         }
 
-        cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
+        cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged { source_workspace });
         self.serialize(cx);
         self.focus_active_workspace(window, cx);
         cx.notify();
@@ -1644,7 +1734,7 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Entity<Workspace> {
         let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
-        self.activate(workspace.clone(), window, cx);
+        self.activate(workspace.clone(), None, window, cx);
         workspace
     }
 
@@ -1675,7 +1765,7 @@ impl MultiWorkspace {
             cx,
         );
         let new_workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
-        self.activate(new_workspace.clone(), window, cx);
+        self.activate(new_workspace.clone(), None, window, cx);
 
         let weak_workspace = new_workspace.downgrade();
         let db = crate::persistence::WorkspaceDb::global(cx);
@@ -1800,12 +1890,12 @@ impl MultiWorkspace {
                         !workspaces.contains(&new_active),
                         "fallback workspace must not be one of the workspaces being removed"
                     );
-                    this.activate(new_active, window, cx);
+                    this.activate(new_active, None, window, cx);
                 })?;
             } else {
                 this.update_in(cx, |this, window, cx| {
                     if *this.workspace() != original_active {
-                        this.activate(original_active, window, cx);
+                        this.activate(original_active, None, window, cx);
                     }
                 })?;
             }
@@ -1840,15 +1930,55 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         if self.multi_workspace_enabled(cx) {
-            self.find_or_create_local_workspace(
-                PathList::new(&paths),
-                None,
-                &[],
-                None,
-                OpenMode::Activate,
-                window,
-                cx,
-            )
+            let empty_workspace = if self
+                .active_workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .is_none()
+            {
+                Some(self.active_workspace.clone())
+            } else {
+                None
+            };
+
+            cx.spawn_in(window, async move |this, cx| {
+                if let Some(empty_workspace) = empty_workspace.as_ref() {
+                    let should_continue = empty_workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+                        })?
+                        .await?;
+                    if !should_continue {
+                        return Ok(empty_workspace.clone());
+                    }
+                }
+
+                let create_task = this.update_in(cx, |this, window, cx| {
+                    this.find_or_create_local_workspace(
+                        PathList::new(&paths),
+                        None,
+                        empty_workspace.as_slice(),
+                        None,
+                        OpenMode::Activate,
+                        window,
+                        cx,
+                    )
+                })?;
+                let new_workspace = create_task.await?;
+
+                if let Some(empty_workspace) = empty_workspace {
+                    this.update(cx, |this, cx| {
+                        if this.is_workspace_retained(&empty_workspace) {
+                            this.detach_workspace(&empty_workspace, cx);
+                        }
+                    })?;
+                }
+
+                Ok(new_workspace)
+            })
         } else {
             let workspace = self.workspace().clone();
             cx.spawn_in(window, async move |_this, cx| {

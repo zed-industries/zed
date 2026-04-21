@@ -46,6 +46,7 @@ use std::fmt::Display;
 use std::fs::{File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::str::FromStr;
 use std::sync::Mutex;
 use std::{path::PathBuf, sync::Arc};
 
@@ -363,9 +364,9 @@ enum PredictionProvider {
     Zeta1,
     Zeta2(ZetaFormat),
     Baseten(ZetaFormat),
-    Teacher(TeacherBackend),
+    Teacher(TeacherBackend, ZetaFormat),
     TeacherMultiRegion(TeacherBackend),
-    TeacherNonBatching(TeacherBackend),
+    TeacherNonBatching(TeacherBackend, ZetaFormat),
     TeacherMultiRegionNonBatching(TeacherBackend),
     Repair,
 }
@@ -383,12 +384,14 @@ impl std::fmt::Display for PredictionProvider {
             PredictionProvider::Zeta1 => write!(f, "zeta1"),
             PredictionProvider::Zeta2(format) => write!(f, "zeta2:{format}"),
             PredictionProvider::Baseten(format) => write!(f, "baseten:{format}"),
-            PredictionProvider::Teacher(backend) => write!(f, "teacher:{backend}"),
+            PredictionProvider::Teacher(backend, format) => {
+                write!(f, "teacher:{backend}:{format:?}")
+            }
             PredictionProvider::TeacherMultiRegion(backend) => {
                 write!(f, "teacher-multi-region:{backend}")
             }
-            PredictionProvider::TeacherNonBatching(backend) => {
-                write!(f, "teacher-non-batching:{backend}")
+            PredictionProvider::TeacherNonBatching(backend, format) => {
+                write!(f, "teacher-non-batching:{backend}:{format:?}")
             }
             PredictionProvider::TeacherMultiRegionNonBatching(backend) => {
                 write!(f, "teacher-multi-region-non-batching:{backend}")
@@ -413,11 +416,12 @@ impl std::str::FromStr for PredictionProvider {
                 Ok(PredictionProvider::Zeta2(format))
             }
             "teacher" => {
-                let backend = arg
-                    .map(|a| a.parse())
-                    .transpose()?
-                    .unwrap_or(TeacherBackend::default());
-                Ok(PredictionProvider::Teacher(backend))
+                let (backend, format) = parse_teacher_args(arg)?;
+                Ok(PredictionProvider::Teacher(backend, format))
+            }
+            "teacher-non-batching" | "teacher_non_batching" => {
+                let (backend, format) = parse_teacher_args(arg)?;
+                Ok(PredictionProvider::TeacherNonBatching(backend, format))
             }
             "teacher-multi-region" | "teacher_multi_region" => {
                 let backend = arg
@@ -425,13 +429,6 @@ impl std::str::FromStr for PredictionProvider {
                     .transpose()?
                     .unwrap_or(TeacherBackend::default());
                 Ok(PredictionProvider::TeacherMultiRegion(backend))
-            }
-            "teacher-non-batching" | "teacher_non_batching" => {
-                let backend = arg
-                    .map(|a| a.parse())
-                    .transpose()?
-                    .unwrap_or(TeacherBackend::default());
-                Ok(PredictionProvider::TeacherNonBatching(backend))
             }
             "teacher-multi-region-non-batching" | "teacher_multi_region_non_batching" => {
                 let backend = arg
@@ -459,6 +456,27 @@ impl std::str::FromStr for PredictionProvider {
             }
         }
     }
+}
+
+fn parse_teacher_args(arg: Option<&str>) -> Result<(TeacherBackend, ZetaFormat), anyhow::Error> {
+    let mut backend = TeacherBackend::default();
+    let mut format = ZetaFormat::default();
+
+    for arg in arg.unwrap_or_default().split(':') {
+        if arg.is_empty() {
+            continue;
+        }
+
+        if let Ok(parsed_backend) = TeacherBackend::from_str(arg) {
+            backend = parsed_backend;
+        } else if let Ok(parsed_format) = ZetaFormat::parse(arg) {
+            format = parsed_format;
+        } else {
+            anyhow::bail!("unknown teacher backend or zeta format `{arg}`");
+        }
+    }
+
+    Ok((backend, format))
 }
 
 impl Serialize for PredictionProvider {

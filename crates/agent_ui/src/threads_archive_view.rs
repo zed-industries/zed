@@ -320,26 +320,20 @@ impl ThreadsArchiveView {
         let preserve = self.preserve_selection_on_next_update;
         self.preserve_selection_on_next_update = false;
 
-        let saved_scroll = if preserve {
-            Some(self.list_state.logical_scroll_top())
-        } else {
-            None
-        };
+        let saved_scroll = self.list_state.logical_scroll_top();
 
         self.list_state.reset(items.len());
         self.items = items;
 
-        if !preserve {
-            self.hovered_index = None;
-        } else if let Some(ix) = self.hovered_index {
+        if let Some(ix) = self.hovered_index {
             if ix >= self.items.len() || !self.is_selectable_item(ix) {
                 self.hovered_index = None;
             }
         }
 
-        if let Some(scroll_top) = saved_scroll {
-            self.list_state.scroll_to(scroll_top);
+        self.list_state.scroll_to(saved_scroll);
 
+        if preserve {
             if let Some(ix) = self.selection {
                 let next = self.find_next_selectable(ix).or_else(|| {
                     ix.checked_sub(1)
@@ -653,12 +647,15 @@ impl ThreadsArchiveView {
                     .focused(is_focused)
                     .hovered(is_hovered)
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                        if *is_hovered {
-                            this.hovered_index = Some(ix);
-                        } else if this.hovered_index == Some(ix) {
-                            this.hovered_index = None;
+                        let previously_hovered = this.hovered_index;
+                        this.hovered_index = if *is_hovered {
+                            Some(ix)
+                        } else {
+                            previously_hovered.filter(|&i| i != ix)
+                        };
+                        if this.hovered_index != previously_hovered {
+                            cx.notify();
                         }
-                        cx.notify();
                     }));
 
                 if is_restoring {
@@ -1082,7 +1079,7 @@ impl ProjectPickerModal {
         let db = WorkspaceDb::global(cx);
         cx.spawn_in(window, async move |this, cx| {
             let workspaces = db
-                .recent_workspaces_on_disk(fs.as_ref())
+                .recent_project_workspaces(fs.as_ref())
                 .await
                 .log_err()
                 .unwrap_or_default();

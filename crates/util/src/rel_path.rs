@@ -27,7 +27,7 @@ pub struct RelPath(str);
 /// relative and normalized.
 ///
 /// This type is to [`RelPath`] as [`std::path::PathBuf`] is to [`std::path::Path`]
-#[derive(PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[derive(PartialEq, Eq, Clone, Ord, PartialOrd, Serialize)]
 pub struct RelPathBuf(String);
 
 impl RelPath {
@@ -333,9 +333,33 @@ impl RelPathBuf {
     }
 }
 
+impl<'de> Deserialize<'de> for RelPathBuf {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let path = String::deserialize(deserializer)?;
+        let rel_path =
+            RelPath::new(Path::new(&path), PathStyle::local()).map_err(serde::de::Error::custom)?;
+        Ok(rel_path.into_owned())
+    }
+}
+
 impl Into<Arc<RelPath>> for RelPathBuf {
     fn into(self) -> Arc<RelPath> {
         Arc::from(self.as_rel_path())
+    }
+}
+
+impl AsRef<Path> for RelPathBuf {
+    fn as_ref(&self) -> &Path {
+        self.as_std_path()
+    }
+}
+
+impl AsRef<Path> for RelPath {
+    fn as_ref(&self) -> &Path {
+        self.as_std_path()
     }
 }
 
@@ -378,9 +402,25 @@ pub fn rel_path(path: &str) -> &RelPath {
     RelPath::unix(path).unwrap()
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[track_caller]
+pub fn rel_path_buf(path: &str) -> RelPathBuf {
+    RelPath::unix(path).unwrap().to_rel_path_buf()
+}
+
 impl PartialEq<str> for RelPath {
     fn eq(&self, other: &str) -> bool {
         self.0 == *other
+    }
+}
+
+pub trait PathExt {
+    fn to_rel_path_buf(&self) -> Result<RelPathBuf>;
+}
+
+impl<T: AsRef<Path> + ?Sized> PathExt for T {
+    fn to_rel_path_buf(&self) -> Result<RelPathBuf> {
+        Ok(RelPath::new(self.as_ref(), PathStyle::local())?.into_owned())
     }
 }
 
