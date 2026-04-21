@@ -2186,7 +2186,7 @@ impl GitGraph {
             .borrow()
             .last_item_size
             .map(|size| size.item.height)
-            .unwrap_or(px(600.0));
+            .unwrap_or(window.viewport_size().height);
         let loaded_commit_count = self.graph_data.commits.len();
 
         let content_height = row_height * loaded_commit_count;
