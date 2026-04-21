@@ -346,7 +346,7 @@ pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
                 .unwrap_or_default();
             linked_short_names.push((short_name.clone(), project_name));
             infos.push(ThreadItemWorktreeInfo {
-                name: short_name,
+                worktree_name: Some(short_name),
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: WorktreeKind::Linked,
@@ -357,7 +357,7 @@ pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
                 continue;
             };
             infos.push(ThreadItemWorktreeInfo {
-                name: SharedString::from(name.to_string_lossy().to_string()),
+                worktree_name: Some(SharedString::from(name.to_string_lossy().to_string())),
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: WorktreeKind::Main,
@@ -370,7 +370,10 @@ pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
     // folder paths don't all share the same short name, prefix each
     // linked worktree chip with its main project name so the user knows
     // which project it belongs to.
-    let all_same_name = infos.len() > 1 && infos.iter().all(|i| i.name == infos[0].name);
+    let all_same_name = infos.len() > 1
+        && infos
+            .iter()
+            .all(|i| i.worktree_name == infos[0].worktree_name);
 
     if unique_main_count.len() > 1 && !all_same_name {
         for (info, (_short_name, project_name)) in infos
@@ -378,7 +381,9 @@ pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
             .filter(|i| i.kind == WorktreeKind::Linked)
             .zip(linked_short_names.iter())
         {
-            info.name = SharedString::from(format!("{}:{}", project_name, info.name));
+            if let Some(name) = &info.worktree_name {
+                info.worktree_name = Some(SharedString::from(format!("{}:{}", project_name, name)));
+            }
         }
     }
 
@@ -1171,7 +1176,9 @@ impl ThreadMetadataStore {
             .and_then(|t| t.created_at)
             .unwrap_or_else(|| updated_at);
 
-        let interacted_at = existing_thread.and_then(|t| t.interacted_at);
+        let interacted_at = existing_thread
+            .map(|t| t.interacted_at)
+            .unwrap_or(Some(updated_at));
 
         let agent_id = thread_ref.connection().agent_id();
 

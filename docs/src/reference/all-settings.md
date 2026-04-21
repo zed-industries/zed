@@ -2759,7 +2759,7 @@ To override settings for a language, add an entry for that languages name to the
     "C": {
       "format_on_save": "off",
       "preferred_line_length": 64,
-      "soft_wrap": "preferred_line_length"
+      "soft_wrap": "bounded"
     },
     "JSON": {
       "tab_size": 4
@@ -4659,7 +4659,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 ```json [settings]
 {
   "title_bar": {
-    "show_branch_icon": false,
+    "show_branch_status_icon": false,
     "show_branch_name": true,
     "show_project_items": true,
     "show_onboarding_banner": true,
@@ -4674,7 +4674,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 **Options**
 
-- `show_branch_icon`: Whether to show the branch icon beside branch switcher in the titlebar
+- `show_branch_status_icon`: Whether to show git status indicators on the branch icon in the titlebar
 - `show_branch_name`: Whether to show the branch name button in the titlebar
 - `show_project_items`: Whether to show the project host and name in the titlebar
 - `show_onboarding_banner`: Whether to show onboarding banners in the titlebar
@@ -5494,7 +5494,7 @@ To preview and enable a settings profile, open the command palette via {#kb comm
       "format_on_save": "on",
       "formatter": "language_server",
       "preferred_line_length": 64,
-      "soft_wrap": "preferred_line_length"
+      "soft_wrap": "bounded"
     }
   }
 }
