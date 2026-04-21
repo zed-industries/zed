@@ -3444,24 +3444,26 @@ impl Workspace {
         let project = self.project.clone();
         cx.spawn_in(window, async move |workspace, cx| {
             let dirty_items = if save_intent == SaveIntent::Close && !dirty_items.is_empty() {
-                let (serialize_tasks, remaining_dirty_items) =
-                    workspace.update_in(cx, |workspace, window, cx| {
-                        let mut remaining_dirty_items = Vec::new();
-                        let mut serialize_tasks = Vec::new();
-                        for (pane, item) in dirty_items {
-                            if let Some(task) = item
-                                .to_serializable_item_handle(cx)
-                                .and_then(|handle| handle.serialize(workspace, true, window, cx))
-                            {
-                                serialize_tasks.push(task);
-                            } else {
-                                remaining_dirty_items.push((pane, item));
-                            }
+                let mut serialize_tasks = Vec::new();
+                let mut remaining_dirty_items = Vec::new();
+                workspace.update_in(cx, |workspace, window, cx| {
+                    for (pane, item) in dirty_items {
+                        if let Some(task) = item
+                            .to_serializable_item_handle(cx)
+                            .and_then(|handle| handle.serialize(workspace, true, window, cx))
+                        {
+                            serialize_tasks.push((pane, item, task));
+                        } else {
+                            remaining_dirty_items.push((pane, item));
                         }
-                        (serialize_tasks, remaining_dirty_items)
-                    })?;
+                    }
+                })?;
 
-                futures::future::try_join_all(serialize_tasks).await?;
+                for (pane, item, task) in serialize_tasks {
+                    if task.await.log_err().is_none() {
+                        remaining_dirty_items.push((pane, item));
+                    }
+                }
 
                 if !remaining_dirty_items.is_empty() {
                     workspace.update(cx, |_, cx| cx.emit(Event::Activate))?;
@@ -11297,6 +11299,49 @@ mod tests {
         let task = workspace.update_in(cx, |w, window, cx| {
             w.prepare_to_close(CloseIntent::CloseWindow, window, cx)
         });
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_close_window_with_failing_serialization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx).with_dirty(true).with_serialize(|| {
+                Some(Task::ready(Err(anyhow::anyhow!(
+                    "FOREIGN KEY constraint failed"
+                ))))
+            })
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        // The failing serialization must not short-circuit the close; a
+        // save/discard prompt must be shown for the dirty scratch item.
+        assert!(
+            cx.has_pending_prompt(),
+            "a save/discard prompt should be shown for the dirty scratch item \
+             when its serialization fails"
+        );
+        cx.simulate_prompt_answer("Don't Save");
+        cx.executor().run_until_parked();
+
+        // Preparing to close succeeds, even though serialization failed.
         assert!(task.await.unwrap());
     }
 
