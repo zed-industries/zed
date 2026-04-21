@@ -5466,4 +5466,71 @@ pub mod tests {
         );
         cx.background_executor.run_until_parked();
     }
+
+    #[gpui::test]
+    async fn test_project_search_replace_all_with_unicode_and_regex_chars(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file.rs": "😀#12345\n😀#12345\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        // text with non-ASCII and regex special characters
+        let query_text = "😀#123";
+        search_view
+            .update(cx, |search_view, window, cx| {
+                search_view
+                    .search_options
+                    .remove(SearchOptions::CASE_SENSITIVE);
+                search_view.query_editor.update(cx, |query_editor, cx| {
+                    query_editor.set_text(query_text, window, cx)
+                });
+                search_view
+                    .replacement_editor
+                    .update(cx, |replacement_editor, cx| {
+                        replacement_editor.set_text("REPLACED", window, cx)
+                    });
+                search_view.search(cx);
+            })
+            .unwrap();
+
+        cx.background_executor.run_until_parked();
+
+        search_view
+            .update(cx, |search_view, window, cx| {
+                search_view.replace_all(&ReplaceAll, window, cx);
+            })
+            .unwrap();
+
+        // Before, the replace would get stuck in an infinite loop
+        // The executor never gets parked
+        cx.background_executor.run_until_parked();
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/file.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            buffer.update(cx, |buffer, _| buffer.text()),
+            "REPLACED45\nREPLACED45\n"
+        );
+    }
 }
