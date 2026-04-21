@@ -956,7 +956,12 @@ impl SearchableItem for MarkdownPreviewView {
         }
     }
 
-    fn query_suggestion(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> String {
+    fn query_suggestion(
+        &mut self,
+        _ignore_settings: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
         self.markdown.read(cx).selected_text().unwrap_or_default()
     }
 
