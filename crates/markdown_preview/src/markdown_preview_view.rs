@@ -917,13 +917,7 @@ impl Render for MarkdownPreviewView {
                                                     url.to_string(),
                                                 ));
                                             })
-                                            .separator()
                                         })
-                                        .action("Copy", Box::new(markdown::Copy))
-                                        .action(
-                                            "Copy as Markdown",
-                                            Box::new(markdown::CopyAsMarkdown),
-                                        )
                                 })
                             })
                     }),
