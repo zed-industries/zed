@@ -1952,6 +1952,7 @@ mod tests {
             PointForPosition {
                 previous_valid,
                 next_valid,
+                nearest_valid: previous_valid,
                 exact_unclipped,
                 column_overshoot_after_line_end: 0,
             }
@@ -2079,6 +2080,7 @@ mod tests {
             PointForPosition {
                 previous_valid,
                 next_valid,
+                nearest_valid: previous_valid,
                 exact_unclipped,
                 column_overshoot_after_line_end: 0,
             }

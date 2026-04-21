@@ -2050,6 +2050,21 @@ impl DisplaySnapshot {
         DisplayPoint(self.block_snapshot.clip_point(point.0, bias))
     }
 
+    pub fn inlay_bias_at(&self, point: DisplayPoint) -> Option<Bias> {
+        let wrap_point = self.block_snapshot.to_wrap_point(point.0, Bias::Left);
+        let tab_point = self.block_snapshot.to_tab_point(wrap_point);
+        let (fold_point, _, _) = self
+            .block_snapshot
+            .tab_snapshot
+            .tab_point_to_fold_point(tab_point, Bias::Left);
+        let inlay_point =
+            fold_point.to_inlay_point(&self.block_snapshot.tab_snapshot.fold_snapshot);
+        self.block_snapshot
+            .tab_snapshot
+            .fold_snapshot
+            .inlay_bias_at_point(inlay_point)
+    }
+
     pub fn clip_at_line_end(&self, display_point: DisplayPoint) -> DisplayPoint {
         let mut point = self.display_point_to_point(display_point, Bias::Left);
 

@@ -2043,7 +2043,7 @@ impl Sidebar {
 
                 Some(menu)
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.),
                 y: px(1.),
@@ -4047,7 +4047,7 @@ impl Sidebar {
                 x: px(-2.0),
                 y: px(-2.0),
             })
-            .anchor(gpui::Corner::BottomRight)
+            .anchor(gpui::Anchor::BottomRight)
     }
 
     fn new_thread_in_group(
@@ -4464,14 +4464,14 @@ impl Sidebar {
 
         sidebar_side_context_menu("sidebar-toggle-menu", _cx)
             .anchor(if on_right {
-                gpui::Corner::BottomRight
+                gpui::Anchor::BottomRight
             } else {
-                gpui::Corner::BottomLeft
+                gpui::Anchor::BottomLeft
             })
             .attach(if on_right {
-                gpui::Corner::TopRight
+                gpui::Anchor::TopRight
             } else {
-                gpui::Corner::TopLeft
+                gpui::Anchor::TopLeft
             })
             .trigger(move |_is_active, _window, _cx| {
                 let icon = if on_right {

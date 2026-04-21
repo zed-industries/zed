@@ -26,7 +26,7 @@ use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, Context, Corner, Element, Entity, Focusable,
+    Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
     pulsating_between,
@@ -580,7 +580,7 @@ impl TitleBar {
                         )
                     },
                 )
-                .anchor(gpui::Corner::TopLeft)
+                .anchor(gpui::Anchor::TopLeft)
                 .into_any_element(),
         )
     }
@@ -763,7 +763,7 @@ impl TitleBar {
                     )
                 },
             )
-            .anchor(gpui::Corner::TopLeft)
+            .anchor(gpui::Anchor::TopLeft)
             .into_any_element()
     }
 
@@ -820,7 +820,7 @@ impl TitleBar {
                     )
                 },
             )
-            .anchor(gpui::Corner::TopLeft)
+            .anchor(gpui::Anchor::TopLeft)
     }
 
     fn render_project_branch(
@@ -926,7 +926,7 @@ impl TitleBar {
                         )
                     },
                 )
-                .anchor(gpui::Corner::TopLeft)
+                .anchor(gpui::Anchor::TopLeft)
         };
 
         let branch_tooltip_label = branch_name.clone();
@@ -976,7 +976,7 @@ impl TitleBar {
                 };
                 Tooltip::with_meta("Branch & Stash", Some(&zed_actions::git::Branch), meta, cx)
             })
-            .anchor(gpui::Corner::TopLeft);
+            .anchor(gpui::Anchor::TopLeft);
 
         Some(
             h_flex()
@@ -1298,6 +1298,6 @@ impl TitleBar {
                 })
                 .into()
             })
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
     }
 }
