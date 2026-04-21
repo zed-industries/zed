@@ -214,12 +214,11 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
                     }
                 })
-                .register_action(|workspace, _action: &NewExternalAgentThread, window, cx| {
+                .register_action(|workspace, action: &NewExternalAgentThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            let id = panel.create_thread("agent_panel", window, cx);
-                            panel.activate_retained_thread(id, true, window, cx);
+                            panel.new_external_agent_thread(action, window, cx);
                         });
                     }
                 })
@@ -1161,6 +1160,14 @@ impl AgentPanel {
         &self.connection_store
     }
 
+    pub fn selected_agent(&self, cx: &App) -> Agent {
+        if self.project.read(cx).is_via_collab() {
+            Agent::NativeAgent
+        } else {
+            self.selected_agent.clone()
+        }
+    }
+
     pub fn open_thread(
         &mut self,
         session_id: acp::SessionId,
@@ -1217,6 +1224,18 @@ impl AgentPanel {
         self.activate_draft(true, window, cx);
     }
 
+    pub fn new_external_agent_thread(
+        &mut self,
+        action: &NewExternalAgentThread,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(agent) = action.agent.clone() {
+            self.selected_agent = agent;
+        }
+        self.activate_draft(true, window, cx);
+    }
+
     pub fn activate_draft(&mut self, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
         let draft = self.ensure_draft(window, cx);
         if let BaseView::AgentThread { conversation_view } = &self.base_view {
@@ -1242,22 +1261,13 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ConversationView> {
-        let desired_agent = if self.project.read(cx).is_via_collab() {
-            Agent::NativeAgent
-        } else {
-            self.selected_agent.clone()
-        };
+        let desired_agent = self.selected_agent(cx);
+
+        let previous_content = self.take_active_initial_content(cx);
+
         if let Some(draft) = &self.draft_thread {
             let agent_matches = *draft.read(cx).agent_key() == desired_agent;
-            let has_editor_content = draft.read(cx).root_thread_view().is_some_and(|tv| {
-                !tv.read(cx)
-                    .message_editor
-                    .read(cx)
-                    .text(cx)
-                    .trim()
-                    .is_empty()
-            });
-            if agent_matches || has_editor_content {
+            if agent_matches {
                 return draft.clone();
             }
             self.draft_thread = None;
@@ -1268,7 +1278,7 @@ impl AgentPanel {
             None,
             None,
             None,
-            None,
+            previous_content,
             "agent_panel",
             window,
             cx,
@@ -1308,11 +1318,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadId {
-        let agent = if self.project.read(cx).is_via_collab() {
-            Agent::NativeAgent
-        } else {
-            self.selected_agent.clone()
-        };
+        let agent = self.selected_agent(cx);
         let thread = self.create_agent_thread(agent, None, None, None, None, source, window, cx);
         let thread_id = thread.conversation_view.read(cx).thread_id;
         self.retained_threads
@@ -1501,13 +1507,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let agent = agent_choice.unwrap_or_else(|| {
-            if self.project.read(cx).is_via_collab() {
-                Agent::NativeAgent
-            } else {
-                self.selected_agent.clone()
-            }
-        });
+        let agent = agent_choice.unwrap_or_else(|| self.selected_agent(cx));
         let thread = self.create_agent_thread(
             agent,
             resume_session_id,
@@ -2423,18 +2423,17 @@ impl AgentPanel {
                     let entry = entry.clone();
                     panel
                         .update(cx, move |this, cx| {
-                            if let Some(agent) = this.selected_agent() {
-                                this.load_agent_thread(
-                                    agent,
-                                    entry.session_id.clone(),
-                                    entry.work_dirs.clone(),
-                                    entry.title.clone(),
-                                    true,
-                                    "agent_panel",
-                                    window,
-                                    cx,
-                                );
-                            }
+                            let agent = this.selected_agent(cx);
+                            this.load_agent_thread(
+                                agent,
+                                entry.session_id.clone(),
+                                entry.work_dirs.clone(),
+                                entry.title.clone(),
+                                true,
+                                "agent_panel",
+                                window,
+                                cx,
+                            );
                         })
                         .ok();
                 }
@@ -2471,10 +2470,6 @@ impl AgentPanel {
                 },
             )
         })
-    }
-
-    pub(crate) fn selected_agent(&self) -> Option<Agent> {
-        Some(self.selected_agent.clone())
     }
 
     fn sync_agent_servers_from_extensions(&mut self, cx: &mut Context<Self>) {
@@ -2515,31 +2510,6 @@ impl AgentPanel {
             None,
             external_source_prompt.map(AgentInitialContent::from),
             true,
-            "agent_panel",
-            window,
-            cx,
-        );
-    }
-
-    pub fn new_agent_thread(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
-        self.new_agent_thread_inner(agent, true, window, cx);
-    }
-
-    fn new_agent_thread_inner(
-        &mut self,
-        agent: Agent,
-        focus: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let initial_content = self.take_active_initial_content(cx);
-        self.external_thread(
-            Some(agent),
-            None,
-            None,
-            None,
-            initial_content,
-            focus,
             "agent_panel",
             window,
             cx,
@@ -2980,11 +2950,6 @@ impl AgentPanel {
             return false;
         };
 
-        let agent = if self.project.read(cx).is_via_collab() {
-            Agent::NativeAgent
-        } else {
-            agent
-        };
         let thread = self.create_agent_thread(
             agent,
             None,
@@ -3349,14 +3314,12 @@ impl AgentPanel {
                                                     workspace.panel::<AgentPanel>(cx)
                                                 {
                                                     panel.update(cx, |panel, cx| {
-                                                        panel.selected_agent = Agent::NativeAgent;
-                                                        let id = panel.create_thread(
-                                                            "agent_panel",
+                                                        panel.new_external_agent_thread(
+                                                            &NewExternalAgentThread {
+                                                                agent: Some(Agent::NativeAgent),
+                                                            },
                                                             window,
                                                             cx,
-                                                        );
-                                                        panel.activate_retained_thread(
-                                                            id, true, window, cx,
                                                         );
                                                     });
                                                 }
@@ -3438,16 +3401,14 @@ impl AgentPanel {
                                                         workspace.panel::<AgentPanel>(cx)
                                                     {
                                                         panel.update(cx, |panel, cx| {
-                                                            panel.selected_agent = Agent::Custom {
-                                                                id: agent_id.clone(),
-                                                            };
-                                                            let id = panel.create_thread(
-                                                                "agent_panel",
+                                                            panel.new_external_agent_thread(
+                                                                &NewExternalAgentThread {
+                                                                    agent: Some(Agent::Custom {
+                                                                        id: agent_id.clone(),
+                                                                    }),
+                                                                },
                                                                 window,
                                                                 cx,
-                                                            );
-                                                            panel.activate_retained_thread(
-                                                                id, true, window, cx,
                                                             );
                                                         });
                                                     }
@@ -5172,7 +5133,7 @@ mod tests {
         // Load thread A back via load_agent_thread — should promote from background.
         panel.update_in(&mut cx, |panel, window, cx| {
             panel.load_agent_thread(
-                panel.selected_agent().expect("selected agent must be set"),
+                panel.selected_agent(cx),
                 session_id_a.clone(),
                 None,
                 None,
