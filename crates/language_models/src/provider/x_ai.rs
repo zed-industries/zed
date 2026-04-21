@@ -9,7 +9,7 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
-    Role, env_var,
+    env_var,
 };
 use open_ai::ResponseStreamEvent;
 pub use settings::XaiAvailableModel as AvailableModel;
@@ -19,7 +19,8 @@ use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use x_ai::{Model, XAI_API_URL};
+use x_ai::XAI_API_URL;
+pub use x_ai::completion::count_xai_tokens;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");
@@ -320,7 +321,9 @@ impl LanguageModel for XAiLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
-        count_xai_tokens(request, self.model.clone(), cx)
+        let model = self.model.clone();
+        cx.background_spawn(async move { count_xai_tokens(request, model) })
+            .boxed()
     }
 
     fn stream_completion(
@@ -352,37 +355,6 @@ impl LanguageModel for XAiLanguageModel {
         }
         .boxed()
     }
-}
-
-pub fn count_xai_tokens(
-    request: LanguageModelRequest,
-    model: Model,
-    cx: &App,
-) -> BoxFuture<'static, Result<u64>> {
-    cx.background_spawn(async move {
-        let messages = request
-            .messages
-            .into_iter()
-            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                role: match message.role {
-                    Role::User => "user".into(),
-                    Role::Assistant => "assistant".into(),
-                    Role::System => "system".into(),
-                },
-                content: Some(message.string_contents()),
-                name: None,
-                function_call: None,
-            })
-            .collect::<Vec<_>>();
-
-        let model_name = if model.max_token_count() >= 100_000 {
-            "gpt-4o"
-        } else {
-            "gpt-4"
-        };
-        tiktoken_rs::num_tokens_from_messages(model_name, &messages).map(|tokens| tokens as u64)
-    })
-    .boxed()
 }
 
 struct ConfigurationView {

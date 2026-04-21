@@ -1,7 +1,8 @@
 use crate::{
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
-    WorkspaceItemBuilder, ZoomIn, ZoomOut,
+    CloseWindow, NewCenterTerminal, NewFile, NewTerminal, OpenInTerminal, OpenOptions,
+    OpenTerminal, OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom,
+    Workspace, WorkspaceItemBuilder, ZoomIn, ZoomOut,
+    focus_follows_mouse::FocusFollowsMouse as _,
     invalid_item_view::InvalidItemView,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
@@ -11,13 +12,13 @@ use crate::{
     move_item,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
-    workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
+    workspace_settings::{AutosaveSetting, FocusFollowsMouse, TabBarSettings, WorkspaceSettings},
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
+    Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
     Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window, actions, anchored,
@@ -82,6 +83,8 @@ pub enum SaveIntent {
     /// write all files (even if unchanged)
     /// prompt before overwriting on-disk changes
     Save,
+    /// same as Save, but always formats regardless of the format_on_save setting
+    FormatAndSave,
     /// same as Save, but without auto formatting
     SaveWithoutFormat,
     /// write any files that have local changes
@@ -194,6 +197,16 @@ pub struct DeploySearch {
     pub included_files: Option<String>,
     #[serde(default)]
     pub excluded_files: Option<String>,
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub regex: Option<bool>,
+    #[serde(default)]
+    pub case_sensitive: Option<bool>,
+    #[serde(default)]
+    pub whole_word: Option<bool>,
+    #[serde(default)]
+    pub include_ignored: Option<bool>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema, Default)]
@@ -304,16 +317,6 @@ actions!(
         UnpinAllTabs,
     ]
 );
-
-impl DeploySearch {
-    pub fn find() -> Self {
-        Self {
-            replace_enabled: false,
-            included_files: None,
-            excluded_files: None,
-        }
-    }
-}
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -443,6 +446,7 @@ pub struct Pane {
     pinned_tab_count: usize,
     diagnostics: HashMap<ProjectPath, DiagnosticSeverity>,
     zoom_out_on_close: bool,
+    focus_follows_mouse: FocusFollowsMouse,
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
@@ -615,6 +619,7 @@ impl Pane {
             pinned_tab_count: 0,
             diagnostics: Default::default(),
             zoom_out_on_close: true,
+            focus_follows_mouse: WorkspaceSettings::get_global(cx).focus_follows_mouse,
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
             welcome_page: None,
@@ -782,7 +787,6 @@ impl Pane {
 
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let tab_bar_settings = TabBarSettings::get_global(cx);
-        let new_max_tabs = WorkspaceSettings::get_global(cx).max_tabs;
 
         if let Some(display_nav_history_buttons) = self.display_nav_history_buttons.as_mut() {
             *display_nav_history_buttons = tab_bar_settings.show_nav_history_buttons;
@@ -794,6 +798,12 @@ impl Pane {
             self.preview_item_id = None;
             self.nav_history.0.lock().preview_item_id = None;
         }
+
+        let workspace_settings = WorkspaceSettings::get_global(cx);
+
+        self.focus_follows_mouse = workspace_settings.focus_follows_mouse;
+
+        let new_max_tabs = workspace_settings.max_tabs;
 
         if self.use_max_tabs && new_max_tabs != self.max_tabs {
             self.max_tabs = new_max_tabs;
@@ -2259,7 +2269,10 @@ impl Pane {
         })?;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
-        if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
+        if save_intent == SaveIntent::Save
+            || save_intent == SaveIntent::FormatAndSave
+            || save_intent == SaveIntent::SaveWithoutFormat
+        {
             is_dirty = true;
         }
 
@@ -2274,6 +2287,7 @@ impl Pane {
         }
 
         let should_format = save_intent != SaveIntent::SaveWithoutFormat;
+        let force_format = save_intent == SaveIntent::FormatAndSave;
 
         if has_conflict && can_save {
             if has_deleted_file && is_singleton {
@@ -2293,6 +2307,7 @@ impl Pane {
                             item.save(
                                 SaveOptions {
                                     format: should_format,
+                                    force_format,
                                     autosave: false,
                                 },
                                 project,
@@ -2327,6 +2342,7 @@ impl Pane {
                             item.save(
                                 SaveOptions {
                                     format: should_format,
+                                    force_format,
                                     autosave: false,
                                 },
                                 project,
@@ -2408,6 +2424,7 @@ impl Pane {
                     item.save(
                         SaveOptions {
                             format: should_format,
+                            force_format,
                             autosave: false,
                         },
                         project,
@@ -2492,6 +2509,7 @@ impl Pane {
             item.save(
                 SaveOptions {
                     format,
+                    force_format: false,
                     autosave: true,
                 },
                 project,
@@ -3662,11 +3680,16 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_external_paths_drop(paths, window, cx)
             }))
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                if event.click_count() == 2 {
+                    window.dispatch_action(this.double_click_dispatch_action.boxed_clone(), cx);
+                }
+            }))
     }
 
     pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
         div().absolute().bottom_0().right_0().size_0().child(
-            deferred(anchored().anchor(Corner::TopRight).child(menu.clone())).with_priority(1),
+            deferred(anchored().anchor(Anchor::TopRight).child(menu.clone())).with_priority(1),
         )
     }
 
@@ -4165,25 +4188,21 @@ fn default_render_tab_bar_buttons(
                     IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
                     Tooltip::text("New..."),
                 )
-                .anchor(Corner::TopRight)
+                .anchor(Anchor::TopRight)
                 .with_handle(pane.new_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _, _| {
                         menu.action("New File", NewFile.boxed_clone())
                             .action("Open File", ToggleFileFinder::default().boxed_clone())
                             .separator()
-                            .action(
-                                "Search Project",
-                                DeploySearch {
-                                    replace_enabled: false,
-                                    included_files: None,
-                                    excluded_files: None,
-                                }
-                                .boxed_clone(),
-                            )
+                            .action("Search Project", DeploySearch::default().boxed_clone())
                             .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
                             .separator()
                             .action("New Terminal", NewTerminal::default().boxed_clone())
+                            .action(
+                                "New Center Terminal",
+                                NewCenterTerminal::default().boxed_clone(),
+                            )
                     }))
                 }),
         )
@@ -4195,7 +4214,7 @@ fn default_render_tab_bar_buttons(
                         .disabled(!can_clone && !can_split_move),
                     Tooltip::text("Split Pane"),
                 )
-                .anchor(Corner::TopRight)
+                .anchor(Anchor::TopRight)
                 .with_handle(pane.split_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
@@ -4385,21 +4404,37 @@ impl Render for Pane {
                         .detach_and_log_err(cx)
                 },
             ))
-            .on_action(
-                cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, _, cx| {
-                    let entry_id = action
-                        .entry_id
-                        .map(ProjectEntryId::from_proto)
-                        .or_else(|| pane.active_item()?.project_entry_ids(cx).first().copied());
-                    if let Some(entry_id) = entry_id {
-                        pane.project
-                            .update(cx, |_, cx| {
-                                cx.emit(project::Event::RevealInProjectPanel(entry_id))
-                            })
-                            .ok();
-                    }
-                }),
-            )
+            .on_action(cx.listener(
+                |pane: &mut Self, action: &RevealInProjectPanel, _window, cx| {
+                    let active_item = pane.active_item();
+                    let entry_id = active_item.as_ref().and_then(|item| {
+                        action
+                            .entry_id
+                            .map(ProjectEntryId::from_proto)
+                            .or_else(|| item.project_entry_ids(cx).first().copied())
+                    });
+
+                    pane.project
+                        .update(cx, |project, cx| {
+                            if let Some(entry_id) = entry_id
+                                && project
+                                    .worktree_for_entry(entry_id, cx)
+                                    .is_some_and(|worktree| worktree.read(cx).is_visible())
+                            {
+                                return cx.emit(project::Event::RevealInProjectPanel(entry_id));
+                            }
+
+                            // When no entry is found, which is the case when
+                            // working with an unsaved buffer, or the worktree
+                            // is not visible, for example, a file that doesn't
+                            // belong to an open project, we can't reveal the
+                            // entry but we still want to activate the project
+                            // panel.
+                            cx.emit(project::Event::ActivateProjectPanel);
+                        })
+                        .log_err();
+                },
+            ))
             .on_action(cx.listener(|_, _: &menu::Cancel, window, cx| {
                 if cx.stop_active_drag(window) {
                 } else {
@@ -4460,6 +4495,7 @@ impl Render for Pane {
                                 placeholder.child(self.welcome_page.clone().unwrap())
                             }
                         }
+                        .focus_follows_mouse(self.focus_follows_mouse, cx)
                     })
                     .child(
                         // drag target
@@ -4841,36 +4877,9 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>, path_style: PathStyle) ->
 }
 
 pub fn tab_details(items: &[Box<dyn ItemHandle>], _window: &Window, cx: &App) -> Vec<usize> {
-    let mut tab_details = items.iter().map(|_| 0).collect::<Vec<_>>();
-    let mut tab_descriptions = HashMap::default();
-    let mut done = false;
-    while !done {
-        done = true;
-
-        // Store item indices by their tab description.
-        for (ix, (item, detail)) in items.iter().zip(&tab_details).enumerate() {
-            let description = item.tab_content_text(*detail, cx);
-            if *detail == 0 || description != item.tab_content_text(detail - 1, cx) {
-                tab_descriptions
-                    .entry(description)
-                    .or_insert(Vec::new())
-                    .push(ix);
-            }
-        }
-
-        // If two or more items have the same tab description, increase their level
-        // of detail and try again.
-        for (_, item_ixs) in tab_descriptions.drain() {
-            if item_ixs.len() > 1 {
-                done = false;
-                for ix in item_ixs {
-                    tab_details[ix] += 1;
-                }
-            }
-        }
-    }
-
-    tab_details
+    util::disambiguate::compute_disambiguation_details(items, |item, detail| {
+        item.tab_content_text(detail, cx)
+    })
 }
 
 pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &App) -> Option<Indicator> {
@@ -4908,14 +4917,17 @@ impl Render for DraggedTab {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, iter::zip, num::NonZero};
+    use std::{cell::Cell, iter::zip, num::NonZero, rc::Rc};
 
     use super::*;
     use crate::{
         Member,
         item::test::{TestItem, TestProjectItem},
     };
-    use gpui::{AppContext, Axis, TestAppContext, VisualTestContext, size};
+    use gpui::{
+        AppContext, Axis, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+        TestAppContext, VisualTestContext, size,
+    };
     use project::FakeFs;
     use settings::SettingsStore;
     use theme::LoadThemes;
@@ -6640,8 +6652,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_drag_tab_to_middle_tab_with_mouse_events(cx: &mut TestAppContext) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -6693,8 +6703,6 @@ mod tests {
     async fn test_drag_pinned_tab_when_show_pinned_tabs_in_separate_row_enabled(
         cx: &mut TestAppContext,
     ) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         set_pinned_tabs_separate_row(cx, true);
         let fs = FakeFs::new(cx.executor());
@@ -6770,8 +6778,6 @@ mod tests {
     async fn test_drag_unpinned_tab_when_show_pinned_tabs_in_separate_row_enabled(
         cx: &mut TestAppContext,
     ) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         set_pinned_tabs_separate_row(cx, true);
         let fs = FakeFs::new(cx.executor());
@@ -6824,8 +6830,6 @@ mod tests {
     async fn test_drag_mixed_tabs_when_show_pinned_tabs_in_separate_row_enabled(
         cx: &mut TestAppContext,
     ) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         set_pinned_tabs_separate_row(cx, true);
         let fs = FakeFs::new(cx.executor());
@@ -6891,8 +6895,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_middle_click_pinned_tab_does_not_close(cx: &mut TestAppContext) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent};
-
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -6960,6 +6962,74 @@ mod tests {
         cx.run_until_parked();
 
         assert_item_labels(&pane, ["A*!"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_double_click_pinned_tab_bar_empty_space_creates_new_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // The real NewFile handler lives in editor::init, which isn't initialized
+        // in workspace tests. Register a global action handler that sets a flag so
+        // we can verify the action is dispatched without depending on the editor crate.
+        // TODO: If editor::init is ever available in workspace tests, remove this
+        // flag and assert the resulting tab bar state directly instead.
+        let new_file_dispatched = Rc::new(Cell::new(false));
+        cx.update(|_, cx| {
+            let new_file_dispatched = new_file_dispatched.clone();
+            cx.on_action(move |_: &NewFile, _cx| {
+                new_file_dispatched.set(true);
+            });
+        });
+
+        set_pinned_tabs_separate_row(cx, true);
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane
+                .index_for_item_id(item_a.item_id())
+                .expect("item A should exist");
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B*"], cx);
+        cx.run_until_parked();
+
+        let pinned_drop_target_bounds = cx
+            .debug_bounds("pinned_tabs_border")
+            .expect("pinned_tabs_border should have debug bounds");
+
+        cx.simulate_event(MouseDownEvent {
+            position: pinned_drop_target_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 2,
+            first_mouse: false,
+        });
+
+        cx.run_until_parked();
+
+        cx.simulate_event(MouseUpEvent {
+            position: pinned_drop_target_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 2,
+        });
+
+        cx.run_until_parked();
+
+        // TODO: If editor::init is ever available in workspace tests, replace this
+        // with an assert_item_labels check that verifies a new tab is actually created.
+        assert!(
+            new_file_dispatched.get(),
+            "Double-clicking pinned tab bar empty space should dispatch the new file action"
+        );
     }
 
     #[gpui::test]

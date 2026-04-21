@@ -123,6 +123,13 @@
   // Time to wait in milliseconds before showing the informational hover box.
   // This delay also applies to auto signature help when `auto_signature_help` is enabled.
   "hover_popover_delay": 300,
+  // Whether the hover popover sticks when the mouse moves toward it,
+  // allowing interaction with its contents before it disappears.
+  "hover_popover_sticky": true,
+  // Time to wait in milliseconds before hiding the hover popover
+  // after the mouse moves away from the hover target.
+  // Only applies when `hover_popover_sticky` is enabled.
+  "hover_popover_hiding_delay": 300,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened
@@ -134,6 +141,16 @@
   //  3. Do not restore previous workspaces
   //         "restore_on_startup": "none",
   "restore_on_startup": "last_session",
+  // The default behavior when opening paths from the CLI without
+  // an explicit `-e` (existing window) or `-n` (new window) flag.
+  //
+  // May take 2 values:
+  //  1. Open directories as a new workspace in the current Zed window's sidebar
+  //         "cli_default_open_behavior": "existing_window"
+  //  2. Open directories in a new window (reuse existing windows for files
+  //     that are already part of an open project)
+  //         "cli_default_open_behavior": "new_window"
+  "cli_default_open_behavior": "existing_window",
   // Whether to attempt to restore previous file's state when opening it again.
   // The state is stored per pane.
   // When disabled, defaults are applied instead of the state restoration.
@@ -225,6 +242,11 @@
   // 3. Hide on both typing and cursor movement:
   //    "on_typing_and_movement"
   "hide_mouse": "on_typing_and_movement",
+  // Determines whether the focused panel follows the mouse location.
+  "focus_follows_mouse": {
+    "enabled": false,
+    "debounce_ms": 250,
+  },
   // Determines how snippets are sorted relative to other completion items.
   //
   // 1. Place snippets at the top of the completion list:
@@ -451,8 +473,8 @@
   "use_system_window_tabs": false,
   // Titlebar related settings
   "title_bar": {
-    // Whether to show the branch icon beside branch switcher in the titlebar.
-    "show_branch_icon": false,
+    // Whether to show git status indicators on the branch icon in the titlebar.
+    "show_branch_status_icon": false,
     // Whether to show the branch name button in the titlebar.
     "show_branch_name": true,
     // Whether to show the project host and name in the titlebar.
@@ -592,6 +614,8 @@
     "line_numbers": true,
     // Whether to show runnables buttons in the gutter.
     "runnables": true,
+    // Whether to show bookmarks in the gutter.
+    "bookmarks": true,
     // Whether to show breakpoints in the gutter.
     "breakpoints": true,
     // Whether to show fold buttons in the gutter.
@@ -631,6 +655,9 @@
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
+  // Whether to zoom the editor font size with the mouse wheel
+  // while holding the primary modifier key (Cmd on macOS, Ctrl on other platforms).
+  "mouse_wheel_zoom": false,
   // Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling. Fast scrolling
   // happens when a user holds the alt or option key while scrolling.
@@ -712,7 +739,7 @@
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Spacing between worktree entries in the project panel. Can be 'comfortable' or 'standard'.
     "entry_spacing": "comfortable",
     // Whether to show file icons in the project panel.
@@ -787,6 +814,21 @@
     // 3. Show files first, then directories:
     //    "files_first"
     "sort_mode": "directories_first",
+    // Whether to sort file and folder names case-sensitively in the project panel.
+    // This setting can take four values:
+    //
+    // 1. Case-insensitive natural sort with lowercase preferred in ties (default):
+    //    "default"
+    // 2. Uppercase names are grouped before lowercase names,
+    //    with case-insensitive natural sort within each group:
+    //    "upper"
+    // 3. Lowercase names are grouped before uppercase names,
+    //    with case-insensitive natural sort within each group:
+    //    "lower"
+    // 4. Pure Unicode codepoint comparison.
+    //    No case folding, no natural number sorting:
+    //    "unicode"
+    "sort_order": "default",
     // Whether to show error and warning count badges next to file names in the project panel.
     "diagnostic_badges": false,
     // Whether to show the git status indicator next to file names in the project panel.
@@ -814,7 +856,7 @@
     // Default width of the outline panel.
     "default_width": 300,
     // Where to dock the outline panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Whether to show file icons in the outline panel.
     "file_icons": true,
     // Whether to show folder icons or chevrons for directories in the outline panel.
@@ -866,7 +908,7 @@
     // Whether to show the collaboration panel button in the status bar.
     "button": true,
     // Where to dock the collaboration panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Default width of the collaboration panel.
     "default_width": 240,
   },
@@ -874,7 +916,7 @@
     // Whether to show the git panel button in the status bar.
     "button": true,
     // Where to dock the git panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Default width of the git panel.
     "default_width": 360,
     // Style of the git status indicator in the panel.
@@ -931,16 +973,6 @@
     // For example: typing `:wave:` gets replaced with `👋`.
     "auto_replace_emoji_shortcode": true,
   },
-  "notification_panel": {
-    // Whether to show the notification panel button in the status bar.
-    "button": true,
-    // Where to dock the notification panel. Can be 'left' or 'right'.
-    "dock": "right",
-    // Default width of the notification panel.
-    "default_width": 380,
-    // Whether to show a badge on the notification panel icon with the count of unread notifications.
-    "show_count_badge": false,
-  },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
     "inline_assistant_use_streaming_tools": true,
@@ -949,17 +981,24 @@
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
-    "dock": "right",
+    "dock": "left",
     // Whether the agent panel should use flexible (proportional) sizing.
     //
     // Default: true
     "flexible": true,
-    // Where to position the sidebar. Can be 'left' or 'right'.
+    // Where to position the threads sidebar. Can be 'left' or 'right'.
     "sidebar_side": "left",
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
+    // Whether to limit the content width in the agent panel. When enabled,
+    // content will be constrained to `max_content_width` and centered when
+    // the panel is wider, for optimal readability.
+    "limit_content_width": true,
+    // Maximum content width in pixels when limit_content_width is enabled.
+    // Content will be centered within the panel.
+    "max_content_width": 850,
     // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
@@ -1062,7 +1101,7 @@
           "terminal": true,
           "thinking": true,
           "update_plan": true,
-          "web_search": true,
+          "search_web": true,
         },
       },
       "ask": {
@@ -1082,7 +1121,7 @@
           "spawn_agent": true,
           "thinking": true,
           "update_plan": true,
-          "web_search": true,
+          "search_web": true,
         },
       },
       "minimal": {
@@ -1139,6 +1178,11 @@
     //
     // Default: false
     "show_turn_stats": false,
+    // Whether to show the merge conflict indicator in the status bar
+    // that offers to resolve conflicts using the agent.
+    //
+    // Default: true
+    "show_merge_conflict_indicator": true,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
@@ -1353,9 +1397,7 @@
   //      "soft_wrap": "prefer_line", // (deprecated, same as "none")
   // 2. Soft wrap lines that overflow the editor.
   //      "soft_wrap": "editor_width",
-  // 3. Soft wrap lines at the preferred line length.
-  //      "soft_wrap": "preferred_line_length",
-  // 4. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
+  // 3. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
   //      "soft_wrap": "bounded",
   "soft_wrap": "none",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
@@ -2044,10 +2086,10 @@
       "ensure_final_newline_on_save": false,
     },
     "EEx": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "Elixir": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "!emmet-language-server", "..."],
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "!emmet-language-server", "..."],
     },
     "Elm": {
       "tab_size": 4,
@@ -2073,7 +2115,7 @@
       },
     },
     "HEEx": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "HTML": {
       "prettier": {
@@ -2407,6 +2449,7 @@
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_smartcase_find": false,
+    "use_regex_search": true,
     "gdefault": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},

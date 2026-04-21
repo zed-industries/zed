@@ -12,4 +12,4 @@ workspace = true
 path = "src/env_var.rs"
 
 [dependencies]
-gpui.workspace = true
+gpui_shared_string.workspace = true

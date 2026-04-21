@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::Result;
 use client::{Client, proto};
-use futures::{StreamExt, channel::mpsc};
+use futures::channel::mpsc;
 use gpui::{
     Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task,
@@ -39,6 +39,7 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 #[derive(Clone, Copy, Debug)]
 pub struct SaveOptions {
     pub format: bool,
+    pub force_format: bool,
     pub autosave: bool,
 }
 
@@ -46,6 +47,7 @@ impl Default for SaveOptions {
     fn default() -> Self {
         Self {
             format: true,
+            force_format: false,
             autosave: false,
         }
     }
@@ -777,8 +779,8 @@ impl<T: Item> ItemHandle for Entity<T> {
                 send_follower_updates = Some(cx.spawn_in(window, {
                     let pending_update = pending_update.clone();
                     async move |workspace, cx| {
-                        while let Some(mut leader_id) = pending_update_rx.next().await {
-                            while let Ok(Some(id)) = pending_update_rx.try_next() {
+                        while let Ok(mut leader_id) = pending_update_rx.recv().await {
+                            while let Ok(id) = pending_update_rx.try_recv() {
                                 leader_id = id;
                             }
 
@@ -1470,9 +1472,18 @@ pub mod test {
 
     impl TestProjectItem {
         pub fn new(id: u64, path: &str, cx: &mut App) -> Entity<Self> {
+            Self::new_in_worktree(id, path, WorktreeId::from_usize(0), cx)
+        }
+
+        pub fn new_in_worktree(
+            id: u64,
+            path: &str,
+            worktree_id: WorktreeId,
+            cx: &mut App,
+        ) -> Entity<Self> {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
-                worktree_id: WorktreeId::from_usize(0),
+                worktree_id,
                 path: rel_path(path).into(),
             });
             cx.new(|_| Self {

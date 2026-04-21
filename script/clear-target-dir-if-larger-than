@@ -2,8 +2,8 @@
 
 set -euxo pipefail
 
-if [[ $# -ne 1 ]]; then
-    echo "usage: $0 <MAX_SIZE_IN_GB>"
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+    echo "usage: $0 <MAX_SIZE_IN_GB> [SMALL_CLEAN_SIZE_IN_GB]"
     exit 1
 fi
 
@@ -13,6 +13,12 @@ if ! [[ -d target ]]; then
 fi
 
 max_size_gb=$1
+small_clean_size_gb=${2:-}
+
+if [[ -n "${small_clean_size_gb}" && ${small_clean_size_gb} -ge ${max_size_gb} ]]; then
+    echo "error: small clean threshold (${small_clean_size_gb}gb) must be smaller than max size (${max_size_gb}gb)"
+    exit 1
+fi
 
 current_size=$(du -s target | cut -f1)
 current_size_gb=$(( ${current_size} / 1024 / 1024 ))
@@ -23,4 +29,7 @@ if [[ ${current_size_gb} -gt ${max_size_gb} ]]; then
     echo "clearing target directory"
     shopt -s dotglob
     rm -rf target/*
+elif [[ -n "${small_clean_size_gb}" && ${current_size_gb} -gt ${small_clean_size_gb} ]]; then
+    echo "running cargo clean --workspace (size above small clean threshold of ${small_clean_size_gb}gb)"
+    cargo clean --workspace
 fi

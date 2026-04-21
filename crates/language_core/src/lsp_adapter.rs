@@ -1,4 +1,4 @@
-use gpui::SharedString;
+use gpui_shared_string::SharedString;
 use serde::{Deserialize, Serialize};
 
 /// Converts a value into an LSP position.

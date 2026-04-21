@@ -59,7 +59,7 @@ impl WorktreeRoots {
                         let path = TriePath::from(entry.path.as_ref());
                         this.roots.remove(&path);
                     }
-                    WorktreeEvent::Deleted | WorktreeEvent::UpdatedRootRepoCommonDir => {}
+                    WorktreeEvent::Deleted | WorktreeEvent::UpdatedRootRepoCommonDir { .. } => {}
                 }
             }),
         })
