@@ -3,8 +3,8 @@ use crate::{
     sidebar_side_context_menu,
 };
 use gpui::{
-    AnyView, App, Anchor, Context, Decorations, Entity, IntoElement, ParentElement, Render,
-    Styled, Subscription, WeakEntity, Window,
+    Anchor, AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
+    Subscription, WeakEntity, Window,
 };
 use std::any::TypeId;
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;

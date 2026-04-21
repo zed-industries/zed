@@ -6,12 +6,12 @@ use std::{
 };
 
 use gpui::{
-    Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, Anchor,
-    ContentMask, Context, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId,
-    Entity, EntityId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement,
-    IntoElement, IsZero, LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent,
-    Size, Stateful, StatefulInteractiveElement, Style, Styled, Task, UniformListDecoration,
+    Along, Anchor, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask,
+    Context, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId, Entity, EntityId,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
+    LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
+    StatefulInteractiveElement, Style, Styled, Task, UniformListDecoration,
     UniformListScrollHandle, Window, ease_in_out, prelude::FluentBuilder as _, px, quad, relative,
     size,
 };

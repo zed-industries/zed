@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    AnyElement, AnyView, App, Bounds, Anchor, DismissEvent, DispatchPhase, Element, ElementId,
+    Anchor, AnyElement, AnyView, App, Bounds, DismissEvent, DispatchPhase, Element, ElementId,
     Entity, Focusable as _, GlobalElementId, HitboxBehavior, HitboxId, InteractiveElement,
     IntoElement, LayoutId, Length, ManagedView, MouseDownEvent, ParentElement, Pixels, Point,
     Style, Window, anchored, deferred, div, point, prelude::FluentBuilder, px, size,
@@ -264,9 +264,7 @@ impl<M: ManagedView> PopoverMenu<M> {
                 Anchor::TopRight | Anchor::BottomRight | Anchor::RightCenter => {
                     point(offset, px(0.))
                 }
-                Anchor::TopLeft | Anchor::BottomLeft | Anchor::LeftCenter => {
-                    point(-offset, px(0.))
-                }
+                Anchor::TopLeft | Anchor::BottomLeft | Anchor::LeftCenter => point(-offset, px(0.)),
                 Anchor::TopCenter | Anchor::BottomCenter => point(px(0.), px(0.)),
             }
         })

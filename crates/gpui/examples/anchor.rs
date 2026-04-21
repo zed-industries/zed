@@ -1,7 +1,7 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use gpui::{
-    AnchoredPositionMode, App, Axis, Bounds, Anchor, Context, Half as _, InteractiveElement,
+    Anchor, AnchoredPositionMode, App, Axis, Bounds, Context, Half as _, InteractiveElement,
     ParentElement, Pixels, Point, Render, SharedString, Size, Window, WindowBounds, WindowOptions,
     anchored, deferred, div, point, prelude::*, px, rgb, size,
 };

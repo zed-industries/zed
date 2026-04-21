@@ -11,7 +11,7 @@ use editor::{
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt, App, AsyncWindowContext, Anchor, Entity, FocusHandle,
+    Action, Anchor, Animation, AnimationExt, App, AsyncWindowContext, Entity, FocusHandle,
     Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
     ease_in_out, pulsating_between,
 };

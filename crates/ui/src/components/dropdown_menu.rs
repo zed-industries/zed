@@ -1,4 +1,4 @@
-use gpui::{AnyView, Anchor, Entity, Pixels, Point};
+use gpui::{Anchor, AnyView, Entity, Pixels, Point};
 
 use crate::{ButtonLike, ContextMenu, PopoverMenu, prelude::*};
 

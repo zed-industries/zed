@@ -3,7 +3,7 @@ use crate::{
     ListSubHeader, Tooltip, prelude::*, utils::WithRemSize,
 };
 use gpui::{
-    Action, AnyElement, App, Bounds, Anchor, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Action, Anchor, AnyElement, App, Bounds, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Size,
     Subscription, anchored, canvas, prelude::*, px,
 };

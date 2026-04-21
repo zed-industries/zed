@@ -1,7 +1,7 @@
 use smallvec::SmallVec;
 
 use crate::{
-    AnyElement, App, Axis, Bounds, Anchor, Display, Edges, Element, GlobalElementId,
+    Anchor, AnyElement, App, Axis, Bounds, Display, Edges, Element, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, ParentElement, Pixels, Point, Position, Size, Style,
     Window, point, px,
 };
@@ -274,8 +274,7 @@ impl AnchoredPositionMode {
         match self {
             AnchoredPositionMode::Window => {
                 let anchor_position = anchor_position.unwrap_or(bounds.origin);
-                let bounds =
-                    Bounds::from_anchor_and_size(anchor, anchor_position + offset, size);
+                let bounds = Bounds::from_anchor_and_size(anchor, anchor_position + offset, size);
                 (anchor_position, bounds)
             }
             AnchoredPositionMode::Local => {

@@ -1,5 +1,5 @@
 use gpui::{
-    AnyView, Anchor, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Pixels, Point,
+    Anchor, AnyView, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Pixels, Point,
     Subscription,
 };
 use ui::{
