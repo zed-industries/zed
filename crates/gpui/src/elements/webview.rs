@@ -26,13 +26,20 @@ static ACTIVE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicU
 
 // wry::WebView contains raw pointers (not Send/Sync), so we use thread-local
 // storage. All GPUI paint calls happen on the main thread.
-#[cfg(feature = "webview")]
+// Only macOS/Windows use this path; Linux uses GTK-thread storage instead.
+#[cfg(all(
+    feature = "webview",
+    not(any(target_os = "linux", target_os = "freebsd"))
+))]
 thread_local! {
     static CHILD_WEBVIEWS: std::cell::RefCell<HashMap<usize, ChildWebView>> =
         std::cell::RefCell::new(HashMap::new());
 }
 
-#[cfg(feature = "webview")]
+#[cfg(all(
+    feature = "webview",
+    not(any(target_os = "linux", target_os = "freebsd"))
+))]
 struct ChildWebView {
     webview: wry::WebView,
     last_bounds: Bounds<Pixels>,
@@ -77,9 +84,13 @@ mod gtk_thread {
     static CLOSED_BY_USER: std::sync::LazyLock<Mutex<Vec<usize>>> =
         std::sync::LazyLock::new(|| Mutex::new(Vec::new()));
 
-    // gtk::Window isn't Send, so we store them on the GTK thread.
+    // gtk::Window and wry::WebView aren't Send, so we store them on the GTK thread.
+    // The webview is kept alive as long as the window exists; dropping it destroys
+    // the underlying WebKitGTK widget.
     thread_local! {
         static WINDOWS: std::cell::RefCell<HashMap<usize, gtk::Window>> =
+            std::cell::RefCell::new(HashMap::new());
+        static WEBVIEWS: std::cell::RefCell<HashMap<usize, wry::WebView>> =
             std::cell::RefCell::new(HashMap::new());
     }
 
@@ -130,10 +141,9 @@ mod gtk_thread {
             Ok(webview) => {
                 log::info!("WebView #{} created (Wayland/GTK)", id);
                 ACTIVE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                // wry::WebView is dropped when it goes out of scope, which destroys
-                // the underlying WebKitGTK widget. We need it alive as long as the
-                // GTK window exists, but have no shared owner yet.
-                std::mem::forget(webview);
+                WEBVIEWS.with(|webviews| {
+                    webviews.borrow_mut().insert(id, webview);
+                });
             }
             Err(error) => {
                 log::error!("WebView #{}: failed: {}", id, error);
@@ -147,6 +157,9 @@ mod gtk_thread {
             let was_tracked =
                 WINDOWS.with(|windows| windows.borrow_mut().remove(&webview_id).is_some());
             if was_tracked {
+                WEBVIEWS.with(|webviews| {
+                    webviews.borrow_mut().remove(&webview_id);
+                });
                 ACTIVE_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 CLOSED_BY_USER
                     .lock()
@@ -164,6 +177,9 @@ mod gtk_thread {
     fn close_window(id: usize) {
         WINDOWS.with(|windows| {
             if let Some(window) = windows.borrow_mut().remove(&id) {
+                WEBVIEWS.with(|webviews| {
+                    webviews.borrow_mut().remove(&id);
+                });
                 ACTIVE_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 window.close();
             }
@@ -521,8 +537,20 @@ fn create_child_webview(
     }
 
     use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-    let raw_window_handle = window.window_handle().unwrap().as_raw();
-    let display_handle = window.display_handle().unwrap().as_raw();
+    let raw_window_handle = match window.window_handle() {
+        Ok(handle) => handle.as_raw(),
+        Err(error) => {
+            log::error!("WebView #{}: failed to get window handle: {}", id, error);
+            return;
+        }
+    };
+    let display_handle = match window.display_handle() {
+        Ok(handle) => handle.as_raw(),
+        Err(error) => {
+            log::error!("WebView #{}: failed to get display handle: {}", id, error);
+            return;
+        }
+    };
     let handle = RawHandle {
         window: raw_window_handle,
         display: display_handle,
@@ -564,7 +592,9 @@ fn create_child_webview(
                         );
                     });
 
-                    let _ = cx.update(|cx| cx.refresh_windows());
+                    if let Err(error) = cx.update(|cx| cx.refresh_windows()) {
+                        log::error!("WebView #{}: failed to refresh windows: {}", id, error);
+                    }
                 }
                 Err(error) => {
                     log::error!("WebView #{}: build_as_child failed: {}", id, error);
@@ -678,24 +708,29 @@ impl WebView {
 
     /// Destroy a webview by ID, freeing its resources.
     pub fn remove(id: usize) {
-        #[cfg(feature = "webview")]
+        #[cfg(all(
+            feature = "webview",
+            not(any(target_os = "linux", target_os = "freebsd"))
+        ))]
         {
-            // macOS/Windows: child webview on main thread
             let was_child =
                 CHILD_WEBVIEWS.with(|children| children.borrow_mut().remove(&id).is_some());
             if was_child {
                 ACTIVE_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-                return;
             }
+        }
 
-            #[cfg(all(feature = "gtk", any(target_os = "linux", target_os = "freebsd")))]
-            {
-                if is_wayland() {
-                    gtk_thread::remove_created(id);
-                } else {
-                    x11_child_thread::remove_created(id);
-                    ACTIVE_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-                }
+        #[cfg(all(
+            feature = "webview",
+            feature = "gtk",
+            any(target_os = "linux", target_os = "freebsd")
+        ))]
+        {
+            if is_wayland() {
+                gtk_thread::remove_created(id);
+            } else {
+                x11_child_thread::remove_created(id);
+                ACTIVE_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
 
@@ -804,6 +839,9 @@ impl Element for WebView {
     ) {
         #[cfg(feature = "webview")]
         {
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            let _ = &cx;
+
             if is_wayland() {
                 // Wayland: separate GTK window (build_as_child not supported)
                 #[cfg(all(feature = "gtk", any(target_os = "linux", target_os = "freebsd")))]
