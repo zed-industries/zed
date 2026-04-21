@@ -256,7 +256,7 @@ where
     };
 
     for (buffer_snapshot, source_range, source_excerpt_range) in
-        source_snapshot.range_to_buffer_ranges(source_bounds.clone())
+        source_snapshot.range_to_buffer_ranges(source_bounds)
     {
         let buffer_id = buffer_snapshot.remote_id();
 
