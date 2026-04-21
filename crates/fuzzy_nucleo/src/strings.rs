@@ -166,12 +166,13 @@ where
 
     let num_cpus = executor.num_cpus().min(candidates.len());
     let segment_size = candidates.len().div_ceil(num_cpus);
-    let mut segment_results = (0..num_cpus)
+    let num_segments = candidates.len().div_ceil(segment_size);
+    let mut segment_results = (0..num_segments)
         .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
 
     let config = nucleo::Config::DEFAULT;
-    let mut matchers = matcher::get_matchers(num_cpus, config);
+    let mut matchers = matcher::get_matchers(num_segments, config);
 
     executor
         .scoped(|scope| {
