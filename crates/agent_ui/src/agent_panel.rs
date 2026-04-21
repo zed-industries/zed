@@ -349,7 +349,7 @@ pub fn init(cx: &mut App) {
                                 auto_submit: true,
                             }),
                             true,
-                            "agent_panel",
+                            "git_panel",
                             window,
                             cx,
                         );
@@ -376,7 +376,7 @@ pub fn init(cx: &mut App) {
                                     auto_submit: true,
                                 }),
                                 true,
-                                "agent_panel",
+                                "git_panel",
                                 window,
                                 cx,
                             );
@@ -405,7 +405,7 @@ pub fn init(cx: &mut App) {
                                     auto_submit: true,
                                 }),
                                 true,
-                                "agent_panel",
+                                "git_panel",
                                 window,
                                 cx,
                             );
@@ -1172,14 +1172,14 @@ impl AgentPanel {
         let old_view = std::mem::replace(&mut self.base_view, BaseView::Uninitialized);
         self.retain_running_thread(old_view, cx);
         self.clear_overlay_state();
-        self.activate_draft(false, window, cx);
+        self.activate_draft(false, "agent_panel", window, cx);
         self.serialize(cx);
         cx.emit(AgentPanelEvent::ActiveViewChanged);
         cx.notify();
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        self.activate_draft(true, window, cx);
+        self.activate_draft(true, "agent_panel", window, cx);
     }
 
     pub fn new_external_agent_thread(
@@ -1191,11 +1191,17 @@ impl AgentPanel {
         if let Some(agent) = action.agent.clone() {
             self.selected_agent = agent;
         }
-        self.activate_draft(true, window, cx);
+        self.activate_draft(true, "agent_panel", window, cx);
     }
 
-    pub fn activate_draft(&mut self, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let draft = self.ensure_draft(window, cx);
+    pub fn activate_draft(
+        &mut self,
+        focus: bool,
+        source: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let draft = self.ensure_draft(source, window, cx);
         if let BaseView::AgentThread { conversation_view } = &self.base_view {
             if conversation_view.entity_id() == draft.entity_id() {
                 if focus {
@@ -1216,6 +1222,7 @@ impl AgentPanel {
 
     fn ensure_draft(
         &mut self,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ConversationView> {
@@ -1235,7 +1242,7 @@ impl AgentPanel {
             None,
             None,
             previous_content,
-            "agent_panel",
+            source,
             window,
             cx,
         );
@@ -1317,7 +1324,7 @@ impl AgentPanel {
 
         if self.active_thread_id(cx) == Some(id) {
             self.clear_overlay_state();
-            self.activate_draft(false, window, cx);
+            self.activate_draft(false, "agent_panel", window, cx);
             self.serialize(cx);
             cx.emit(AgentPanelEvent::ActiveViewChanged);
             cx.notify();
@@ -2614,7 +2621,7 @@ impl Panel for AgentPanel {
 impl AgentPanel {
     fn ensure_thread_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.base_view, BaseView::Uninitialized) {
-            self.activate_draft(false, window, cx);
+            self.activate_draft(false, "agent_panel", window, cx);
         }
     }
 
@@ -4665,7 +4672,7 @@ mod tests {
         )]);
         panel.update_in(cx, |panel, window, cx| {
             panel.selected_agent = Agent::Stub;
-            panel.activate_draft(true, window, cx);
+            panel.activate_draft(true, "agent_panel", window, cx);
         });
         cx.run_until_parked();
 
@@ -5677,7 +5684,7 @@ mod tests {
 
         // Create a draft with the default NativeAgent.
         panel.update_in(cx, |panel, window, cx| {
-            panel.activate_draft(true, window, cx);
+            panel.activate_draft(true, "agent_panel", window, cx);
         });
 
         let first_draft_id = panel.read_with(cx, |panel, cx| {
@@ -5695,7 +5702,7 @@ mod tests {
         };
         panel.update_in(cx, |panel, window, cx| {
             panel.selected_agent = custom_agent.clone();
-            panel.activate_draft(true, window, cx);
+            panel.activate_draft(true, "agent_panel", window, cx);
         });
 
         panel.read_with(cx, |panel, cx| {
@@ -5719,7 +5726,7 @@ mod tests {
         });
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.activate_draft(true, window, cx);
+            panel.activate_draft(true, "agent_panel", window, cx);
         });
 
         panel.read_with(cx, |panel, _cx| {
@@ -5767,7 +5774,7 @@ mod tests {
         // Create a draft using the Stub agent, which connects synchronously.
         panel.update_in(cx, |panel, window, cx| {
             panel.selected_agent = Agent::Stub;
-            panel.activate_draft(true, window, cx);
+            panel.activate_draft(true, "agent_panel", window, cx);
         });
         cx.run_until_parked();
 
