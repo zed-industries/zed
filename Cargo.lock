@@ -21778,7 +21778,6 @@ dependencies = [
  "postage",
  "pretty_assertions",
  "project",
- "release_channel",
  "remote",
  "schemars",
  "serde",
