@@ -502,7 +502,7 @@ impl LanguageModel for OpenCodeLanguageModel {
             LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => true,
             LanguageModelToolChoice::None => {
                 // Google models don't support None tool choice
-                self.model.protocol() != ApiProtocol::Google
+                self.model.protocol(self.subscription) != ApiProtocol::Google
             }
         }
     }
@@ -563,7 +563,7 @@ impl LanguageModel for OpenCodeLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        match self.model.protocol() {
+        match self.model.protocol(self.subscription) {
             ApiProtocol::Anthropic => {
                 let anthropic_request = into_anthropic(
                     request,

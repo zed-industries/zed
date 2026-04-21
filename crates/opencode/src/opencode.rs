@@ -294,8 +294,18 @@ impl Model {
         }
     }
 
-    pub fn protocol(&self) -> ApiProtocol {
+    pub fn protocol(&self, subscription: OpenCodeSubscription) -> ApiProtocol {
         match self {
+            // Models offered by OpenCode have the same configuration across subscriptions
+            //  with one outlier: non-free MiniMax models
+            Self::MiniMaxM2_7 | Self::MiniMaxM2_5 => {
+                if subscription == OpenCodeSubscription::Zen {
+                    ApiProtocol::OpenAiChat
+                } else {
+                    ApiProtocol::Anthropic
+                }
+            }
+
             Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
             | Self::ClaudeOpus4_5
@@ -324,12 +334,10 @@ impl Model {
 
             Self::Gemini3_1Pro | Self::Gemini3Flash => ApiProtocol::Google,
 
-            Self::MiniMaxM2_5
-            | Self::MiniMaxM2_5Free
+            Self::MiniMaxM2_5Free
             | Self::Glm5
             | Self::Glm5_1
             | Self::KimiK2_5
-            | Self::MiniMaxM2_7
             | Self::MimoV2Pro
             | Self::MimoV2Omni
             | Self::Qwen3_5Plus
