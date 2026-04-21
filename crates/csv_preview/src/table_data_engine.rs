@@ -30,7 +30,7 @@ pub(crate) struct TableDataEngine {
     all_filters: HashMap<AnyColumn, Vec<FilterEntry>>,
     pub applied_sorting: Option<AppliedSorting>,
     d2d_mapping: DisplayToDataMapping,
-    pub contents: TableLikeContent,
+    pub contents: Arc<TableLikeContent>,
 }
 
 impl TableDataEngine {
@@ -38,21 +38,8 @@ impl TableDataEngine {
         &self.d2d_mapping
     }
 
-    pub(crate) fn apply_sort(&mut self) {
-        self.d2d_mapping
-            .apply_sorting(self.applied_sorting, &self.contents.rows);
-        self.d2d_mapping
-            .apply_filtering(&self.filter_stack, &self.contents.rows);
-        self.d2d_mapping.merge_mappings();
-    }
-
-    /// Applies sorting and filtering to the data and produces the display-to-data mapping
-    pub(crate) fn calculate_d2d_mapping(&mut self) {
-        self.d2d_mapping
-            .apply_sorting(self.applied_sorting, &self.contents.rows);
-        self.d2d_mapping
-            .apply_filtering(&self.filter_stack, &self.contents.rows);
-        self.d2d_mapping.merge_mappings();
+    pub(crate) fn set_d2d_mapping(&mut self, mapping: DisplayToDataMapping) {
+        self.d2d_mapping = mapping;
     }
 
     /// Recomputes the unique filter entries for every column from the current table data.
@@ -78,6 +65,20 @@ pub struct DisplayToDataMapping {
 }
 
 impl DisplayToDataMapping {
+    /// Computes the full display-to-data mapping from owned inputs.
+    /// Intended to be called from a background thread.
+    pub(crate) fn compute(
+        contents: &Arc<TableLikeContent>,
+        filter_stack: &FilterStack,
+        sorting: Option<AppliedSorting>,
+    ) -> Self {
+        let mut mapping = Self::default();
+        mapping.apply_sorting(sorting, &contents.rows);
+        mapping.apply_filtering(filter_stack, &contents.rows);
+        mapping.merge_mappings();
+        mapping
+    }
+
     /// Get the data row for a given display row
     pub fn get_data_row(&self, display_row: DisplayRow) -> Option<DataRow> {
         self.mapping.get(&display_row).copied()
@@ -101,11 +102,7 @@ impl DisplayToDataMapping {
         self.sorted_rows = sorted_rows;
     }
 
-    fn apply_filtering(
-        &mut self,
-        filter_stack: &FilterStack,
-        rows: &[TableRow<TableCell>],
-    ) {
+    fn apply_filtering(&mut self, filter_stack: &FilterStack, rows: &[TableRow<TableCell>]) {
         self.retained_rows = retain_rows(rows, filter_stack);
     }
 

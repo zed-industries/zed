@@ -30,7 +30,7 @@ impl FilterEntry {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct FilterStack {
     /// Columns in the order their first filter was applied, used to compute cascade availability
     activation_order: Vec<AnyColumn>,

@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::table_data_engine::TableDataEngine;
+use crate::table_data_engine::{DisplayToDataMapping, TableDataEngine};
 use ui::{
     AbsoluteLength, ResizableColumnsState, SharedString, TableInteractionState,
     TableResizeBehavior, prelude::*,
@@ -41,6 +41,9 @@ pub struct CsvPreviewView {
     pub(crate) table_interaction_state: Entity<TableInteractionState>,
     pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
+    /// Background task computing the display-to-data mapping after a filter/sort change.
+    /// Stored here so that a new change cancels the previous in-flight computation.
+    pub(crate) filter_sort_task: Option<Task<()>>,
     pub(crate) settings: CsvPreviewSettings,
     /// Performance metrics for debugging and monitoring CSV operations.
     pub(crate) performance_metrics: PerformanceMetrics,
@@ -178,6 +181,7 @@ impl CsvPreviewView {
                 table_interaction_state,
                 column_widths: ColumnWidths::new(cx, 1),
                 parsing_task: None,
+                filter_sort_task: None,
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
                     .measure_all(),
@@ -194,35 +198,51 @@ impl CsvPreviewView {
     pub(crate) fn editor_state(&self) -> &EditorState {
         &self.active_editor_state
     }
-    pub(crate) fn apply_sort(&mut self) {
-        self.performance_metrics.record("Sort", || {
-            self.engine.apply_sort();
-        });
+    pub(crate) fn apply_sort(&mut self, cx: &mut Context<Self>) {
+        self.apply_filter_sort(cx);
     }
 
-    pub fn clear_filters(&mut self, col: types::AnyColumn) {
+    pub fn clear_filters(&mut self, col: types::AnyColumn, cx: &mut Context<Self>) {
         self.engine.clear_filters_for_col(col);
-        self.apply_filter_sort();
+        self.apply_filter_sort(cx);
     }
 
-    pub fn toggle_filter(&mut self, col: types::AnyColumn, value: Option<SharedString>) {
+    pub fn toggle_filter(
+        &mut self,
+        col: types::AnyColumn,
+        value: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
         if let Err(err) = self.engine.toggle_filter(col, value) {
             log::error!("Failed to toggle filter: {err}");
             return;
         }
-        self.apply_filter_sort();
+        self.apply_filter_sort(cx);
     }
 
-    /// Update ordered indices when ordering or content changes
-    pub(crate) fn apply_filter_sort(&mut self) {
-        self.performance_metrics.record("Filter&sort", || {
-            self.engine.calculate_d2d_mapping();
-        });
+    /// Spawns a background task to recompute the display-to-data mapping after a filter or sort
+    /// change. Storing the task cancels any previous in-flight computation automatically.
+    pub(crate) fn apply_filter_sort(&mut self, cx: &mut Context<Self>) {
+        let contents = self.engine.contents.clone();
+        let filter_stack = self.engine.filter_stack.clone();
+        let sorting = self.engine.applied_sorting;
 
-        // Update list state with filtered row count
-        let visible_rows = self.engine.d2d_mapping().visible_row_count();
-        self.list_state =
-            gpui::ListState::new(visible_rows, ListAlignment::Top, px(100.)).measure_all();
+        self.filter_sort_task = Some(cx.spawn(async move |this, cx| {
+            let mapping = cx
+                .background_spawn(async move {
+                    DisplayToDataMapping::compute(&contents, &filter_stack, sorting)
+                })
+                .await;
+
+            this.update(cx, |view, cx| {
+                view.engine.set_d2d_mapping(mapping);
+                let visible_rows = view.engine.d2d_mapping().visible_row_count();
+                view.list_state =
+                    gpui::ListState::new(visible_rows, ListAlignment::Top, px(100.)).measure_all();
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     pub fn resolve_active_item_as_csv_editor(

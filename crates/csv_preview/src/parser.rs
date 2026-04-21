@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     CsvPreviewView,
     types::TableLikeContent,
@@ -80,12 +82,12 @@ impl CsvPreviewView {
                     .insert("Parsing", (parse_duration, Instant::now()));
 
                 log::debug!("Parsed {} rows", parsed_csv.rows.len());
-                view.engine.contents = parsed_csv;
+                view.engine.contents = Arc::new(parsed_csv);
                 view.engine.calculate_available_filters();
                 view.sync_column_widths(cx);
                 view.last_parse_end_time = Some(parse_end_time);
 
-                view.apply_filter_sort();
+                view.apply_filter_sort(cx);
                 cx.notify();
             })
         })

@@ -91,7 +91,7 @@ impl CsvPreviewView {
             };
 
             this.engine.applied_sorting = new_sorting;
-            this.apply_sort();
+            this.apply_sort(cx);
             cx.notify();
         }));
         sort_btn
@@ -213,7 +213,7 @@ impl CsvPreviewView {
                         let view_entity = view_entity.clone();
                         move |_window, cx| {
                             view_entity.update(cx, |view, cx| {
-                                view.clear_filters(col);
+                                view.clear_filters(col, cx);
                                 cx.notify();
                             });
                         }
@@ -235,7 +235,7 @@ impl CsvPreviewView {
                     let view_entity = view_entity.clone();
                     move |_window, cx| {
                         view_entity.update(cx, |view, cx| {
-                            view.toggle_filter(col, entry_value.clone());
+                            view.toggle_filter(col, entry_value.clone(), cx);
                             cx.notify();
                         });
                     }
