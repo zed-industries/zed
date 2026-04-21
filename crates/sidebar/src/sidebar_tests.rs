@@ -1679,9 +1679,9 @@ async fn test_search_matches_regardless_of_case(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_escape_clears_search_and_restores_full_list(cx: &mut TestAppContext) {
+async fn test_escape_from_search_focuses_first_thread(cx: &mut TestAppContext) {
     // Scenario: A user searches, finds what they need, then presses Escape
-    // to dismiss the filter and see the full list again.
+    // in the search field to hand keyboard control back to the thread list.
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -1723,8 +1723,8 @@ async fn test_escape_clears_search_and_restores_full_list(cx: &mut TestAppContex
         ]
     );
 
-    // User presses Escape — filter clears, full list is restored.
-    // The selection index (1) now points at the first thread entry.
+    // User presses Escape from the focused search field — the matching result
+    // stays visible, but focus moves to the first thread so sidebar shortcuts work.
     cx.dispatch_action(Cancel);
     cx.run_until_parked();
     assert_eq!(
@@ -1733,9 +1733,13 @@ async fn test_escape_clears_search_and_restores_full_list(cx: &mut TestAppContex
             //
             "v [my-project]",
             "  Alpha thread  <== selected",
-            "  Beta thread",
         ]
     );
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        assert_eq!(sidebar.selection, Some(1));
+        assert!(sidebar.focus_handle.is_focused(window));
+        assert!(!sidebar.filter_editor.read(cx).is_focused(window));
+    });
 }
 
 #[gpui::test]
