@@ -822,9 +822,14 @@ impl SearchableItem for LspLogView {
         })
     }
 
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
+    fn query_suggestion(
+        &mut self,
+        ignore_settings: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
         self.editor
-            .update(cx, |e, cx| e.query_suggestion(window, cx))
+            .update(cx, |e, cx| e.query_suggestion(ignore_settings, window, cx))
     }
 
     fn activate_match(

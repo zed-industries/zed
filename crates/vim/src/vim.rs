@@ -33,9 +33,7 @@ use gpui::{
     KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
-use language::{
-    CharKind, CharScopeContext, CursorShape, Point, Selection, SelectionGoal, TransactionId,
-};
+use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use multi_buffer::ToPoint as _;
@@ -1591,32 +1589,6 @@ impl Vim {
                 .iter()
                 .map(|selection| selection.tail()..selection.head())
                 .collect()
-        })
-        .unwrap_or_default()
-    }
-
-    fn editor_cursor_word(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<String> {
-        self.update_editor(cx, |_, editor, cx| {
-            let snapshot = &editor.snapshot(window, cx);
-            let selection = editor
-                .selections
-                .newest::<MultiBufferOffset>(&snapshot.display_snapshot);
-
-            let snapshot = snapshot.buffer_snapshot();
-            let (range, kind) =
-                snapshot.surrounding_word(selection.start, Some(CharScopeContext::Completion));
-            if kind == Some(CharKind::Word) {
-                let text: String = snapshot.text_for_range(range).collect();
-                if !text.trim().is_empty() {
-                    return Some(text);
-                }
-            }
-
-            None
         })
         .unwrap_or_default()
     }
