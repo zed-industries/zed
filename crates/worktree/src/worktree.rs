@@ -3295,7 +3295,7 @@ impl BackgroundScannerState {
     }
 }
 
-async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
+async fn is_dot_git(path: &Path, fs: &dyn Fs) -> bool {
     if let Some(file_name) = path.file_name()
         && file_name == DOT_GIT
     {
@@ -4291,7 +4291,7 @@ impl BackgroundScanner {
                 let mut dot_git_paths = None;
 
                 for ancestor in abs_path.as_path().ancestors() {
-                    if is_git_dir(ancestor, self.fs.as_ref()).await {
+                    if is_dot_git(ancestor, self.fs.as_ref()).await {
                         let path_in_git_dir = abs_path
                             .as_path()
                             .strip_prefix(ancestor)
@@ -4312,15 +4312,7 @@ impl BackgroundScanner {
                     let is_dot_git_changed = {
                         path_in_git_dir == Path::new("")
                             && event.kind == Some(PathEventKind::Changed)
-                            && abs_path
-                                .strip_prefix(root_canonical_path)
-                                .ok()
-                                .and_then(|it| RelPath::new(it, PathStyle::local()).ok())
-                                .is_some_and(|it| {
-                                    snapshot
-                                        .entry_for_path(&it)
-                                        .is_some_and(|entry| entry.kind == EntryKind::Dir)
-                                })
+                            && self.fs.is_dir(abs_path.as_path()).await
                     };
                     let condition = skipped_files_in_dot_git.iter().any(|skipped| {
                         OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
@@ -5326,16 +5318,13 @@ impl BackgroundScanner {
             match existing_repository_entry {
                 None => {
                     let Ok(relative) = dot_git_dir.strip_prefix(state.snapshot.abs_path()) else {
-                        // This can happen legitimately when `.git` is a
-                        // gitfile (e.g. in a linked worktree or submodule)
-                        // pointing to a directory outside the worktree root.
-                        // Skip it — the repository was already registered
-                        // during the initial scan via `discover_git_paths`.
-                        debug_assert!(
-                            self.fs.is_file(&dot_git_dir).await,
-                            "update_git_repositories: .git path outside worktree root \
-                             is not a gitfile: {dot_git_dir:?}",
-                        );
+                        // A `.git` path outside the worktree root is not
+                        // ours to register. This happens legitimately when
+                        // `.git` is a gitfile pointing outside the worktree
+                        // (linked worktrees and submodules), and also when
+                        // a rescan of a linked worktree's commondir arrives
+                        // after the worktree's repository has already been
+                        // unregistered.
                         continue;
                     };
                     affected_repo_roots.push(dot_git_dir.parent().unwrap().into());

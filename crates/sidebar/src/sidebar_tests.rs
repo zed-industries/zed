@@ -2098,7 +2098,7 @@ async fn test_confirm_on_historical_thread_activates_workspace(cx: &mut TestAppC
     // Switch to workspace 1 so we can verify the confirm switches back.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().nth(1).unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -2597,7 +2597,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
 
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
     cx.run_until_parked();
 
@@ -2653,7 +2653,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().find(|w| *w == &workspace_b).cloned();
         if let Some(workspace) = workspace {
-            mw.activate(workspace, window, cx);
+            mw.activate(workspace, None, window, cx);
         }
     });
     cx.run_until_parked();
@@ -2917,7 +2917,7 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
     // Switch to the worktree workspace.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().nth(1).unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
 
     // Create a non-empty thread in the worktree workspace.
@@ -3521,7 +3521,7 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
     // Switch back to the main workspace before setting up the sidebar.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
 
     // Start a thread in the worktree workspace's panel and keep it
@@ -3614,7 +3614,7 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
 
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
 
     let connection = StubAgentConnection::new();
@@ -3937,7 +3937,7 @@ async fn test_clicking_absorbed_worktree_thread_activates_worktree_workspace(
     // Activate the main workspace before setting up the sidebar.
     let main_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace.clone(), window, cx);
+        mw.activate(workspace.clone(), None, window, cx);
         workspace
     });
 
@@ -4018,7 +4018,7 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
     // Ensure workspace A is active.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -4088,7 +4088,7 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
     // Start with workspace A active.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -4155,7 +4155,7 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
     // Activate workspace B (index 1) to make it the active one.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().nth(1).unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -4557,7 +4557,7 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
     // Activate main workspace so the sidebar tracks the main panel.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
 
     let main_workspace =
@@ -6461,7 +6461,7 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
     cx.run_until_parked();
 
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(workspace_a.clone(), window, cx);
+        mw.activate(workspace_a.clone(), None, window, cx);
     });
     cx.run_until_parked();
 
@@ -6853,7 +6853,7 @@ async fn test_switch_to_workspace_with_archived_thread_shows_no_active_entry(
     let workspace_a =
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().unwrap().clone());
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(workspace_a.clone(), window, cx);
+        mw.activate(workspace_a.clone(), None, window, cx);
     });
     cx.run_until_parked();
 
@@ -7014,7 +7014,7 @@ async fn test_archive_last_thread_on_linked_worktree_does_not_create_new_thread_
 
     // Activate the linked worktree workspace so the sidebar tracks it.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(worktree_workspace.clone(), window, cx);
+        mw.activate(worktree_workspace.clone(), None, window, cx);
     });
 
     // Open a thread in the linked worktree panel and send a message
@@ -7185,7 +7185,7 @@ async fn test_archive_last_thread_on_linked_worktree_with_no_siblings_leaves_gro
 
     // Activate the linked worktree workspace.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(worktree_workspace.clone(), window, cx);
+        mw.activate(worktree_workspace.clone(), None, window, cx);
     });
 
     // Open a thread on the linked worktree — this is the ONLY thread.
@@ -7486,7 +7486,7 @@ async fn test_archive_thread_on_linked_worktree_selects_sibling_thread(cx: &mut 
 
     // Activate the linked worktree workspace.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(worktree_workspace.clone(), window, cx);
+        mw.activate(worktree_workspace.clone(), None, window, cx);
     });
 
     // Open a thread on the linked worktree.
@@ -7641,7 +7641,7 @@ async fn test_linked_worktree_workspace_reachable_and_dismissable(cx: &mut TestA
     // Switch back to the main workspace.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let main_ws = mw.workspaces().next().unwrap().clone();
-        mw.activate(main_ws, window, cx);
+        mw.activate(main_ws, None, window, cx);
     });
     cx.run_until_parked();
 
@@ -7850,7 +7850,9 @@ async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
     );
 
     // Switch to A — B survives. (Switching from one internal workspace, to another)
-    multi_workspace.update_in(cx, |mw, window, cx| mw.activate(workspace_a, window, cx));
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.activate(workspace_a, None, window, cx)
+    });
     cx.run_until_parked();
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
@@ -8318,7 +8320,7 @@ async fn test_project_header_click_restores_last_viewed(cx: &mut TestAppContext)
             .clone()
     });
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(workspace_a.clone(), window, cx);
+        mw.activate(workspace_a.clone(), None, window, cx);
     });
     cx.run_until_parked();
 
@@ -8406,11 +8408,11 @@ async fn test_activating_workspace_with_draft_does_not_create_extras(cx: &mut Te
 
     // Switch away from project-b, then back.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(workspace_a.clone(), window, cx);
+        mw.activate(workspace_a.clone(), None, window, cx);
     });
     cx.run_until_parked();
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(workspace_b.clone(), window, cx);
+        mw.activate(workspace_b.clone(), None, window, cx);
     });
     cx.run_until_parked();
 
@@ -9146,7 +9148,7 @@ mod property_test {
                         .unwrap_or_else(|| mw.workspace().clone())
                 });
                 multi_workspace.update_in(cx, |mw, window, cx| {
-                    mw.activate(workspace, window, cx);
+                    mw.activate(workspace, None, window, cx);
                 });
             }
             Operation::AddLinkedWorktree {
@@ -10921,7 +10923,7 @@ async fn test_cmd_click_project_header_returns_to_last_active_linked_worktree_wo
     // workspaces — what matters for this test is the explicit sequence of
     // activations below.)
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(worktree_workspace_a.clone(), window, cx);
+        mw.activate(worktree_workspace_a.clone(), None, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -10934,7 +10936,7 @@ async fn test_cmd_click_project_header_returns_to_last_active_linked_worktree_wo
     // workspace remains the linked-worktree one (group B getting activated
     // records *its own* last-active workspace, not group A's).
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(workspace_b.clone(), window, cx);
+        mw.activate(workspace_b.clone(), None, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(

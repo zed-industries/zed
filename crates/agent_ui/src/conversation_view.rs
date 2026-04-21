@@ -396,18 +396,18 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
     match event {
         AcpThreadEvent::NewEntry
         | AcpThreadEvent::TitleUpdated
-        | AcpThreadEvent::EntryUpdated(_)
-        | AcpThreadEvent::EntriesRemoved(_)
         | AcpThreadEvent::ToolAuthorizationRequested(_)
         | AcpThreadEvent::ToolAuthorizationReceived(_)
-        | AcpThreadEvent::Retry(_)
         | AcpThreadEvent::Stopped(_)
         | AcpThreadEvent::Error
         | AcpThreadEvent::LoadError(_)
         | AcpThreadEvent::Refusal
         | AcpThreadEvent::WorkingDirectoriesUpdated => true,
         // --
-        AcpThreadEvent::TokenUsageUpdated
+        AcpThreadEvent::EntryUpdated(_)
+        | AcpThreadEvent::EntriesRemoved(_)
+        | AcpThreadEvent::Retry(_)
+        | AcpThreadEvent::TokenUsageUpdated
         | AcpThreadEvent::PromptCapabilitiesUpdated
         | AcpThreadEvent::AvailableCommandsUpdated(_)
         | AcpThreadEvent::ModeUpdated(_)
@@ -2560,7 +2560,12 @@ impl ConversationView {
                                     .update(cx, |multi_workspace, window, cx| {
                                         window.activate_window();
                                         if let Some(workspace) = workspace_handle.upgrade() {
-                                            multi_workspace.activate(workspace.clone(), window, cx);
+                                            multi_workspace.activate(
+                                                workspace.clone(),
+                                                None,
+                                                window,
+                                                cx,
+                                            );
                                             workspace.update(cx, |workspace, cx| {
                                                 workspace.reveal_panel::<AgentPanel>(window, cx);
                                                 if let Some(panel) =
