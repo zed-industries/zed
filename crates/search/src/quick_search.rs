@@ -2440,6 +2440,7 @@ impl PickerDelegate for QuickSearchDelegate {
             .parent()
             .map(|parent| parent.as_std_path().to_string_lossy().to_string())
             .unwrap_or_default();
+        let full_path = path.as_std_path().to_string_lossy().to_string();
 
         let original_line = &search_match.line_text;
         let line_text = original_line.trim_start();
@@ -2545,6 +2546,8 @@ impl PickerDelegate for QuickSearchDelegate {
                                         .flex_1()
                                         .min_w_0()
                                         .overflow_hidden()
+                                        .id(("quick-search-path", ix))
+                                        .tooltip(Tooltip::text(full_path))
                                         .child(div().flex_none().child(format!("{file_name} ")))
                                         .when(!directory.is_empty(), |this| {
                                             this.child(
