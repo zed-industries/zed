@@ -1,4 +1,7 @@
 after next main merge, test this:
+- Arriving this Zednesday: a dedicated action to toggle block comments. 
+`cmd-k, cmd-/` (or `ctrl-k, ctrl-/`)
+- try out bookmarks: <https://bsky.app/profile/zed.dev/post/3mjxczuagbc22>
 - The file finder now matches search terms in any order.
 - With "Focus Follows Mouse" enabled, focus is automatically transferred to whichever panel your mouse is hovering over.
 - https://github.com/zed-industries/zed/pull/49802 (project_panel: Add diagnostic count badges and color priority)
