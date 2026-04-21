@@ -91,6 +91,11 @@ In long conversations, use the scroll arrow buttons at the bottom of the panel t
 
 When focus is in the message editor, you can also use {#kb agent::ScrollOutputPageUp}, {#kb agent::ScrollOutputPageDown}, {#kb agent::ScrollOutputToTop}, {#kb agent::ScrollOutputToBottom}, {#kb agent::ScrollOutputLineUp}, and {#kb agent::ScrollOutputLineDown} to navigate the thread, or {#kb agent::ScrollOutputToPreviousMessage} and {#kb agent::ScrollOutputToNextMessage} to jump between your prompts.
 
+### Thread titles {#thread-titles}
+
+Thread titles are auto-generated based on the content of the conversation.
+But you can also edit them manually by clicking the title and typing, or regenerate them by clicking the "Regenerate Thread Title" button in the ellipsis menu in the top right of the panel.
+
 ### Following the Agent {#following-the-agent}
 
 Follow the agent as it reads and edits files by clicking the crosshair icon at the bottom left of the panel.

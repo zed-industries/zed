@@ -16,18 +16,6 @@ impl FeatureFlag for PanicFeatureFlag {
 }
 register_feature_flag!(PanicFeatureFlag);
 
-pub struct AgentV2FeatureFlag;
-
-impl FeatureFlag for AgentV2FeatureFlag {
-    const NAME: &'static str = "agent-v2";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        true
-    }
-}
-register_feature_flag!(AgentV2FeatureFlag);
-
 /// A feature flag for granting access to beta ACP features.
 ///
 /// We reuse this feature flag for new betas, so don't delete it if it is not currently in use.

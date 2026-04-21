@@ -16,12 +16,11 @@ use project::agent_server_store::{AgentServerCommand, AgentServerStore};
 use project::{AgentId, Project};
 use remote::remote_client::Interactive;
 use serde::Deserialize;
-use settings::Settings as _;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::rc::Rc;
 use std::{any::Any, cell::RefCell};
-use task::{ShellBuilder, SpawnInTerminal};
+use task::{Shell, ShellBuilder, SpawnInTerminal};
 use thiserror::Error;
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -34,7 +33,7 @@ use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntit
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
-use terminal::terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
+use terminal::terminal_settings::{AlternateScroll, CursorShape};
 
 use crate::GEMINI_ID;
 
@@ -251,8 +250,7 @@ impl AcpConnection {
                 )
             });
 
-        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
-        let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
+        let builder = ShellBuilder::new(&Shell::System, cfg!(windows)).non_interactive();
         let mut child = builder.build_std_command(Some(path.clone()), &args);
         child.envs(env.clone());
         if let Some(cwd) = project.read_with(cx, |project, _cx| {

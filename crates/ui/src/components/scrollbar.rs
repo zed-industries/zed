@@ -6,8 +6,8 @@ use std::{
 };
 
 use gpui::{
-    Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context,
-    Corner, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId, Entity, EntityId,
+    Along, Anchor, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask,
+    Context, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId, Entity, EntityId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
     Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
@@ -1122,10 +1122,10 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         .into_iter()
                         .map(|(axis, thumb_range, reserved_space)| {
                             let track_anchor = match axis {
-                                ScrollbarAxis::Horizontal => Corner::BottomLeft,
-                                ScrollbarAxis::Vertical => Corner::TopRight,
+                                ScrollbarAxis::Horizontal => Anchor::BottomLeft,
+                                ScrollbarAxis::Vertical => Anchor::TopRight,
                             };
-                            let Bounds { origin, size } = Bounds::from_corner_and_size(
+                            let Bounds { origin, size } = Bounds::from_anchor_and_size(
                                 track_anchor,
                                 bounds
                                     .corner(track_anchor)

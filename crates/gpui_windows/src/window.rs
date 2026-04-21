@@ -174,7 +174,7 @@ impl WindowsWindowState {
     }
 
     pub(crate) fn is_maximized(&self) -> bool {
-        !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
+        !self.is_fullscreen()
     }
 
     fn bounds(&self) -> Bounds<Pixels> {

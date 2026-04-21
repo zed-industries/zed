@@ -18,7 +18,8 @@ use crate::{
     devcontainer_api::{DevContainerError, DevContainerUp},
     devcontainer_json::{
         ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort,
-        MountDefinition, deserialize_devcontainer_json,
+        MountDefinition, deserialize_devcontainer_json, deserialize_devcontainer_json_from_value,
+        deserialize_devcontainer_json_to_value,
     },
     docker::{
         Docker, DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -131,40 +132,60 @@ impl DevContainerManifest {
         labels
     }
 
-    fn parse_nonremote_vars_for_content(&self, content: &str) -> Result<String, DevContainerError> {
-        let mut replaced_content = content
-            .replace("${devcontainerId}", &self.devcontainer_id())
-            .replace(
-                "${containerWorkspaceFolderBasename}",
-                &self.remote_workspace_base_name().unwrap_or_default(),
-            )
-            .replace(
-                "${localWorkspaceFolderBasename}",
-                &self.local_workspace_base_name()?,
-            )
-            .replace(
-                "${containerWorkspaceFolder}",
-                &self
-                    .remote_workspace_folder()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_default()
-                    .replace('\\', "/"),
-            )
-            .replace(
-                "${localWorkspaceFolder}",
-                &self.local_workspace_folder().replace('\\', "/"),
-            );
-        for (k, v) in &self.local_environment {
-            let find = format!("${{localEnv:{k}}}");
-            replaced_content = replaced_content.replace(&find, &v.replace('\\', "/"));
+    fn parse_nonremote_vars_for_content(
+        &self,
+        content: &str,
+    ) -> Result<serde_json_lenient::Value, DevContainerError> {
+        let mut value = deserialize_devcontainer_json_to_value(content)?;
+        let mut to_visit = vec![&mut value];
+
+        while let Some(value) = to_visit.pop() {
+            use serde_json_lenient::Value;
+
+            match value {
+                Value::String(string) => {
+                    *string = string
+                        .replace("${devcontainerId}", &self.devcontainer_id())
+                        .replace(
+                            "${containerWorkspaceFolderBasename}",
+                            &self.remote_workspace_base_name().unwrap_or_default(),
+                        )
+                        .replace(
+                            "${localWorkspaceFolderBasename}",
+                            &self.local_workspace_base_name()?,
+                        )
+                        .replace(
+                            "${containerWorkspaceFolder}",
+                            &self
+                                .remote_workspace_folder()
+                                .map(|path| path.display().to_string())
+                                .unwrap_or_default()
+                                .replace('\\', "/"),
+                        )
+                        .replace(
+                            "${localWorkspaceFolder}",
+                            &self.local_workspace_folder().replace('\\', "/"),
+                        );
+                    *string = Self::replace_environment_variables(
+                        string,
+                        "localEnv",
+                        &self.local_environment,
+                    );
+                }
+
+                Value::Array(array) => to_visit.extend(array.iter_mut()),
+                Value::Object(object) => to_visit.extend(object.values_mut()),
+
+                Value::Null | Value::Bool(_) | Value::Number(_) => {}
+            }
         }
 
-        Ok(replaced_content)
+        Ok(value)
     }
 
     fn parse_nonremote_vars(&mut self) -> Result<(), DevContainerError> {
         let replaced_content = self.parse_nonremote_vars_for_content(&self.raw_config)?;
-        let parsed_config = deserialize_devcontainer_json(&replaced_content)?;
+        let parsed_config = deserialize_devcontainer_json_from_value(replaced_content)?;
 
         self.config = ConfigStatus::VariableParsed(parsed_config);
 
@@ -178,30 +199,60 @@ impl DevContainerManifest {
         let mut merged_remote_env = container_env.clone();
         // HOME is user-specific, and we will often not run as the image user
         merged_remote_env.remove("HOME");
-        if let Some(remote_env) = self.dev_container().remote_env.clone() {
-            let mut raw = serde_json_lenient::to_string(&remote_env).map_err(|e| {
-                log::error!(
-                    "Unexpected error serializing dev container remote_env: {e} - {:?}",
-                    remote_env
-                );
-                DevContainerError::DevContainerParseFailed
-            })?;
-            for (k, v) in container_env {
-                raw = raw.replace(&format!("${{containerEnv:{k}}}"), v);
-            }
-            let reserialized: HashMap<String, String> = serde_json_lenient::from_str(&raw)
-                .map_err(|e| {
-                    log::error!(
-                        "Unexpected error reserializing dev container remote env: {e} - {:?}",
-                        &raw
-                    );
-                    DevContainerError::DevContainerParseFailed
-                })?;
-            for (k, v) in reserialized {
+        if let Some(mut remote_env) = self.dev_container().remote_env.clone() {
+            remote_env.values_mut().for_each(|value| {
+                *value = Self::replace_environment_variables(value, "containerEnv", &container_env)
+            });
+            for (k, v) in remote_env {
                 merged_remote_env.insert(k, v);
             }
         }
         Ok(merged_remote_env)
+    }
+
+    fn replace_environment_variables(
+        mut orig: &str,
+        environment_source: &str,
+        environment: &HashMap<String, String>,
+    ) -> String {
+        let mut replaced = String::with_capacity(orig.len());
+        let prefix = format!("${{{environment_source}:");
+        while let Some(start) = orig.find(&prefix) {
+            let var_name_start = start + prefix.len();
+            let Some(end) = orig[var_name_start..].find('}') else {
+                // No closing `}` => malformed variable reference => paste as is.
+                break;
+            };
+            let end = var_name_start + end;
+
+            let (var_name_end, default_start) =
+                if let Some(var_name_end) = orig[var_name_start..end].find(':') {
+                    let var_name_end = var_name_start + var_name_end;
+                    (var_name_end, var_name_end + 1)
+                } else {
+                    (end, end)
+                };
+
+            let var_name = &orig[var_name_start..var_name_end];
+            if var_name.is_empty() {
+                // Empty variable name => paste as is.
+                replaced.push_str(&orig[..end + 1]);
+                orig = &orig[end + 1..];
+                continue;
+            }
+            let default = &orig[default_start..end];
+
+            replaced.push_str(&orig[..start]);
+            replaced.push_str(
+                environment
+                    .get(var_name)
+                    .map(|value| value.as_str())
+                    .unwrap_or(default),
+            );
+            orig = &orig[end + 1..];
+        }
+        replaced.push_str(orig);
+        replaced
     }
 
     fn config_file(&self) -> PathBuf {
@@ -478,7 +529,7 @@ impl DevContainerManifest {
             let contents_parsed = self.parse_nonremote_vars_for_content(&contents)?;
 
             let feature_json: DevContainerFeatureJson =
-                serde_json_lenient::from_str(&contents_parsed).map_err(|e| {
+                serde_json_lenient::from_value(contents_parsed).map_err(|e| {
                     log::error!("Failed to parse devcontainer-feature.json: {e}");
                     DevContainerError::ResourceFetchFailed
                 })?;
@@ -2951,7 +3002,9 @@ mod test {
         "REMOTE_WORKSPACE_FOLDER": "${containerWorkspaceFolder}",
         "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}",
         "LOCAL_ENV_VAR_1": "${localEnv:local_env_1}",
-        "LOCAL_ENV_VAR_2": "${localEnv:my_other_env}"
+        "LOCAL_ENV_VAR_2": "${localEnv:my_other_env}",
+        "LOCAL_ENV_VAR_3": "before-${localEnv:missing_local_env}-after",
+        "LOCAL_ENV_VAR_4": "${localEnv:with_defaults:default}"
 
     }
 }
@@ -3045,6 +3098,42 @@ mod test {
                 .and_then(|env| env.get("LOCAL_ENV_VAR_2")),
             Some(&"THISVALUEHERE".to_string())
         );
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("LOCAL_ENV_VAR_3")),
+            Some(&"before--after".to_string())
+        );
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("LOCAL_ENV_VAR_4")),
+            Some(&"default".to_string())
+        );
+    }
+
+    #[test]
+    fn test_replace_environment_variables() {
+        let replaced = DevContainerManifest::replace_environment_variables(
+            "before ${containerEnv:FOUND} middle ${containerEnv:MISSING:default-value} after${containerEnv:MISSING2}",
+            "containerEnv",
+            &HashMap::from([("FOUND".to_string(), "value".to_string())]),
+        );
+
+        assert_eq!(replaced, "before value middle default-value after");
+    }
+
+    #[test]
+    fn test_replace_environment_variables_supports_defaults_with_colons() {
+        let replaced = DevContainerManifest::replace_environment_variables(
+            "before ${containerEnv:MISSING:one:two} after",
+            "containerEnv",
+            &HashMap::new(),
+        );
+
+        assert_eq!(replaced, "before one:two after");
     }
 
     #[gpui::test]
