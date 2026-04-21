@@ -1262,9 +1262,6 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> Entity<ConversationView> {
         let desired_agent = self.selected_agent(cx);
-
-        let previous_content = self.active_initial_content(cx);
-
         if let Some(draft) = &self.draft_thread {
             let agent_matches = *draft.read(cx).agent_key() == desired_agent;
             if agent_matches {
@@ -1273,6 +1270,7 @@ impl AgentPanel {
             self.draft_thread = None;
             self._draft_editor_observation = None;
         }
+        let previous_content = self.active_initial_content(cx);
         let thread = self.create_agent_thread(
             desired_agent,
             None,
