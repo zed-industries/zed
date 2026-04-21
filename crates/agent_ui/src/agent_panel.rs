@@ -723,18 +723,43 @@ impl AgentPanel {
         let selected_agent = self.selected_agent.clone();
 
         let is_draft_active = self.active_thread_is_draft(cx);
-        let last_active_thread = self.active_agent_thread(cx).map(|thread| {
-            let thread = thread.read(cx);
+        let last_active_thread = self
+            .active_agent_thread(cx)
+            .map(|thread| {
+                let thread = thread.read(cx);
 
-            let title = thread.title();
-            let work_dirs = thread.work_dirs().cloned();
-            SerializedActiveThread {
-                session_id: (!is_draft_active).then(|| thread.session_id().0.to_string()),
-                agent_type: self.selected_agent.clone(),
-                title: title.map(|t| t.to_string()),
-                work_dirs: work_dirs.map(|dirs| dirs.serialize()),
-            }
-        });
+                let title = thread.title();
+                let work_dirs = thread.work_dirs().cloned();
+                SerializedActiveThread {
+                    session_id: (!is_draft_active).then(|| thread.session_id().0.to_string()),
+                    agent_type: self.selected_agent.clone(),
+                    title: title.map(|t| t.to_string()),
+                    work_dirs: work_dirs.map(|dirs| dirs.serialize()),
+                }
+            })
+            .or_else(|| {
+                // The active view may be in `Loading` or `LoadError` — for
+                // example, while a restored thread is waiting for a custom
+                // agent to finish registering. Without this fallback, a
+                // stray `serialize()` triggered during that window would
+                // write `session_id=None` and wipe the restored session
+                if is_draft_active {
+                    return None;
+                }
+                let conversation_view = self.active_conversation_view()?;
+                let session_id = conversation_view.read(cx).root_session_id.clone()?;
+                let metadata = ThreadMetadataStore::try_global(cx)
+                    .and_then(|store| store.read(cx).entry_by_session(&session_id).cloned());
+                Some(SerializedActiveThread {
+                    session_id: Some(session_id.0.to_string()),
+                    agent_type: self.selected_agent.clone(),
+                    title: metadata
+                        .as_ref()
+                        .and_then(|m| m.title.as_ref())
+                        .map(|t| t.to_string()),
+                    work_dirs: metadata.map(|m| m.folder_paths().serialize()),
+                })
+            });
 
         let kvp = KeyValueStore::global(cx);
         let draft_thread_prompt = self.draft_thread.as_ref().and_then(|conversation| {
@@ -3755,6 +3780,35 @@ impl AgentPanel {
         self.set_base_view(thread.into(), true, window, cx);
     }
 
+    /// Opens a restored external thread with an arbitrary AgentServer and
+    /// a specific `resume_session_id` — as if we just restored from the KVP.
+    ///
+    /// Test-only helper. Not compiled into production builds.
+    pub fn open_restored_thread_with_server(
+        &mut self,
+        server: Rc<dyn AgentServer>,
+        resume_session_id: acp::SessionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ext_agent = Agent::Custom {
+            id: server.agent_id(),
+        };
+
+        let thread = self.create_agent_thread_with_server(
+            ext_agent,
+            Some(server),
+            Some(resume_session_id),
+            None,
+            None,
+            None,
+            "agent_panel",
+            window,
+            cx,
+        );
+        self.set_base_view(thread.into(), true, window, cx);
+    }
+
     /// Returns the currently active thread view, if any.
     ///
     /// This is a test-only accessor that exposes the private `active_thread_view()`
@@ -4146,6 +4200,115 @@ mod tests {
                 "thread without metadata should not be restored; the panel should have no active thread"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_serialize_preserves_session_id_in_load_error(cx: &mut TestAppContext) {
+        use crate::conversation_view::tests::FlakyAgentServer;
+        use crate::thread_metadata_store::{ThreadId, ThreadMetadata};
+        use chrono::Utc;
+        use project::{AgentId as ProjectAgentId, WorktreePaths};
+
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+        let workspace_id = workspace
+            .read_with(cx, |workspace, _cx| workspace.database_id())
+            .expect("workspace should have a database id");
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        // Simulate a previous run that persisted metadata for this session.
+        let resume_session_id = acp::SessionId::new("persistent-session");
+        cx.update(|_window, cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(
+                    ThreadMetadata {
+                        thread_id: ThreadId::new(),
+                        session_id: Some(resume_session_id.clone()),
+                        agent_id: ProjectAgentId::new("Flaky"),
+                        title: Some("Persistent chat".into()),
+                        updated_at: Utc::now(),
+                        created_at: Some(Utc::now()),
+                        interacted_at: None,
+                        worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
+                        remote_connection: None,
+                        archived: false,
+                    },
+                    cx,
+                );
+            });
+        });
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+        });
+
+        // Open a restored thread using a flaky server so the initial connect
+        // fails and the view lands in LoadError — mirroring the cold-start
+        // race against a custom agent over SSH.
+        let (server, _fail) =
+            FlakyAgentServer::new(StubAgentConnection::new().with_supports_load_session(true));
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_restored_thread_with_server(
+                Rc::new(server),
+                resume_session_id.clone(),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Sanity: the view couldn't connect, so no live AcpThread exists.
+        panel.read_with(cx, |panel, cx| {
+            assert!(
+                panel.active_agent_thread(cx).is_none(),
+                "active_agent_thread should be None while the flaky server is failing"
+            );
+            let conversation_view = panel
+                .active_conversation_view()
+                .expect("panel should still have an active ConversationView");
+            assert_eq!(
+                conversation_view.read(cx).root_session_id.as_ref(),
+                Some(&resume_session_id),
+                "ConversationView should still hold the restored session id"
+            );
+        });
+
+        // Serialize while in LoadError. Before the fix this wrote
+        // `session_id=None` to the KVP and permanently lost the session.
+        panel.update(cx, |panel, cx| panel.serialize(cx));
+        cx.run_until_parked();
+
+        let kvp = cx.update(|_window, cx| KeyValueStore::global(cx));
+        let serialized: Option<SerializedAgentPanel> = cx
+            .background_spawn(async move { read_serialized_panel(workspace_id, &kvp) })
+            .await;
+        let serialized_session_id = serialized
+            .as_ref()
+            .and_then(|p| p.last_active_thread.as_ref())
+            .and_then(|t| t.session_id.clone());
+        assert_eq!(
+            serialized_session_id,
+            Some(resume_session_id.0.to_string()),
+            "serialize() must preserve the restored session id even while the \
+             ConversationView is in LoadError; otherwise the bug survives a \
+             restart because the KVP has been wiped"
+        );
     }
 
     /// Extracts the text from a Text content block, panicking if it's not Text.

@@ -4267,13 +4267,15 @@ pub(crate) mod tests {
     /// Agent server whose `connect()` fails while `fail` is `true` and
     /// returns the wrapped connection otherwise. Used to simulate the
     /// race where an external agent isn't yet registered at startup.
-    struct FlakyAgentServer {
+    pub(crate) struct FlakyAgentServer {
         connection: StubAgentConnection,
         fail: Arc<std::sync::atomic::AtomicBool>,
     }
 
     impl FlakyAgentServer {
-        fn new(connection: StubAgentConnection) -> (Self, Arc<std::sync::atomic::AtomicBool>) {
+        pub(crate) fn new(
+            connection: StubAgentConnection,
+        ) -> (Self, Arc<std::sync::atomic::AtomicBool>) {
             let fail = Arc::new(std::sync::atomic::AtomicBool::new(true));
             (
                 Self {
