@@ -409,7 +409,6 @@ dependencies = [
  "theme",
  "theme_settings",
  "time",
- "time_format",
  "tree-sitter-md",
  "ui",
  "ui_input",
@@ -16170,7 +16169,6 @@ dependencies = [
  "theme_settings",
  "ui",
  "util",
- "vim_mode_setting",
  "workspace",
  "zed_actions",
 ]
@@ -21779,7 +21777,6 @@ dependencies = [
  "postage",
  "pretty_assertions",
  "project",
- "release_channel",
  "remote",
  "schemars",
  "serde",

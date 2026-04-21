@@ -505,7 +505,6 @@ impl Sidebar {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_use_modal_editing(true);
             editor.set_placeholder_text("Search…", window, cx);
             editor
         });
@@ -1170,6 +1169,37 @@ impl Sidebar {
                     }
                     let workspace = resolve_workspace(&row);
                     threads.push(make_thread_entry(row, workspace));
+                }
+
+                // Also surface any thread whose `folder_paths` equals
+                // one of this group's open workspaces' root paths.
+                // The three lookups above can all miss when the
+                // thread's stored `main_worktree_paths` disagree with
+                // the group key (for example, a stale row whose main
+                // paths equal its folder paths for a linked-worktree
+                // workspace). The thread will be rewritten into the
+                // correct shape the next time `handle_conversation_event`
+                // fires, but until then the sidebar should still show
+                // it under the group whose workspace it actually
+                // belongs to.
+                for ws in group_workspaces {
+                    let ws_paths = workspace_path_list(ws, cx);
+                    if ws_paths.paths().is_empty() {
+                        continue;
+                    }
+                    for row in thread_store
+                        .read(cx)
+                        .entries_for_path(&ws_paths, group_host.as_ref())
+                        .cloned()
+                    {
+                        if !seen_thread_ids.insert(row.thread_id) {
+                            continue;
+                        }
+                        threads.push(make_thread_entry(
+                            row,
+                            ThreadEntryWorkspace::Open(ws.clone()),
+                        ));
+                    }
                 }
 
                 // Load any legacy threads for any single linked wortree of this project group.
@@ -2191,6 +2221,23 @@ impl Sidebar {
     }
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if self.filter_editor.read(cx).is_focused(window) {
+            if self.reset_filter_editor_text(window, cx) {
+                self.selection = None;
+                self.update_entries(cx);
+                return;
+            }
+
+            if self.selection.is_none() {
+                self.select_first_entry();
+            }
+            if self.selection.is_some() {
+                self.focus_handle.focus(window, cx);
+                cx.notify();
+            }
+            return;
+        }
+
         if self.reset_filter_editor_text(window, cx) {
             self.update_entries(cx);
         } else {
@@ -2214,15 +2261,6 @@ impl Sidebar {
             });
         } else {
             self.filter_editor.focus_handle(cx).focus(window, cx);
-        }
-
-        // When vim mode is active, the editor defaults to normal mode which
-        // blocks text input. Switch to insert mode so the user can type
-        // immediately.
-        if vim_mode_setting::VimModeSetting::get_global(cx).0 {
-            if let Ok(action) = cx.build_action("vim::SwitchToInsertMode", None) {
-                window.dispatch_action(action, cx);
-            }
         }
 
         cx.notify();
@@ -4086,7 +4124,7 @@ impl Sidebar {
         let draft_id = workspace.update(cx, |workspace, cx| {
             let panel = workspace.panel::<AgentPanel>(cx)?;
             let draft_id = panel.update(cx, |panel, cx| {
-                panel.activate_draft(true, window, cx);
+                panel.activate_draft(true, "sidebar", window, cx);
                 panel.active_thread_id(cx)
             });
             workspace.focus_panel::<AgentPanel>(window, cx);

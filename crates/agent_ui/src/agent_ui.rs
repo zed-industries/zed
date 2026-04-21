@@ -27,8 +27,6 @@ mod terminal_codegen;
 mod terminal_inline_assistant;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
-mod thread_history;
-mod thread_history_view;
 mod thread_import;
 pub mod thread_metadata_store;
 pub mod thread_worktree_archive;
@@ -45,7 +43,7 @@ use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
-use gpui::{Action, App, Context, Entity, SharedString, UpdateGlobal as _, Window, actions};
+use gpui::{Action, App, Context, Entity, SharedString, Window, actions};
 use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
@@ -55,10 +53,9 @@ use language_model::{
 };
 use project::{AgentId, DisableAiSettings};
 use prompt_store::PromptBuilder;
-use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DockPosition, DockSide, LanguageModelSelection, Settings as _, SettingsStore};
+use settings::{LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
 use workspace::Workspace;
 
@@ -73,8 +70,6 @@ pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
-pub(crate) use thread_history::ThreadHistory;
-pub(crate) use thread_history_view::*;
 pub use thread_import::{
     AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,
@@ -89,8 +84,6 @@ actions!(
     [
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
-        /// Toggles the navigation menu for switching between threads and views.
-        ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
         ToggleOptionsMenu,
         /// Toggles the profile or mode selector for switching between agent profiles.
@@ -101,10 +94,6 @@ actions!(
         CycleFavoriteModels,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
-        /// Removes all thread history.
-        RemoveHistory,
-        /// Opens the conversation history view.
-        OpenHistory,
         /// Adds a context server to the configuration.
         AddContextServer,
         /// Archives the currently selected thread.
@@ -510,34 +499,7 @@ pub fn init(
     })
     .detach();
 
-    let agent_v2_enabled = agent_v2_enabled(cx);
-    if agent_v2_enabled {
-        maybe_backfill_editor_layout(fs, is_new_install, cx);
-    }
-
-    SettingsStore::update_global(cx, |store, cx| {
-        store.update_default_settings(cx, |defaults| {
-            if agent_v2_enabled {
-                defaults.agent.get_or_insert_default().dock = Some(DockPosition::Left);
-                defaults.project_panel.get_or_insert_default().dock = Some(DockSide::Right);
-                defaults.outline_panel.get_or_insert_default().dock = Some(DockSide::Right);
-                defaults.collaboration_panel.get_or_insert_default().dock =
-                    Some(DockPosition::Right);
-                defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Right);
-            } else {
-                defaults.agent.get_or_insert_default().dock = Some(DockPosition::Right);
-                defaults.project_panel.get_or_insert_default().dock = Some(DockSide::Left);
-                defaults.outline_panel.get_or_insert_default().dock = Some(DockSide::Left);
-                defaults.collaboration_panel.get_or_insert_default().dock =
-                    Some(DockPosition::Left);
-                defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Left);
-            }
-        });
-    });
-}
-
-fn agent_v2_enabled(cx: &App) -> bool {
-    !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
+    maybe_backfill_editor_layout(fs, is_new_install, cx);
 }
 
 fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut App) {
@@ -565,7 +527,6 @@ fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut 
 fn update_command_palette_filter(cx: &mut App) {
     let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
     let agent_enabled = AgentSettings::get_global(cx).enabled;
-    let agent_v2_enabled = agent_v2_enabled(cx);
 
     let edit_prediction_provider = AllLanguageSettings::get_global(cx)
         .edit_predictions
@@ -633,12 +594,8 @@ fn update_command_palette_filter(cx: &mut App) {
 
             filter.show_namespace("zed_predict_onboarding");
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
-        }
 
-        if agent_v2_enabled {
             filter.show_namespace("multi_workspace");
-        } else {
-            filter.hide_namespace("multi_workspace");
         }
     });
 }
