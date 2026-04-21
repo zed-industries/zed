@@ -398,6 +398,37 @@ requirements.txt
 
 These can be combined to tailor the experience for web servers, test runners, or custom scripts.
 
+#### Debug a Django App
+
+For projects using Django with a structure similar to the following:
+
+```
+my_django_project/
+  manage.py
+  …
+  my_django_app/
+    migrations/
+    templates/
+    models.py
+    urls.py
+    …
+```
+
+…the following configuration can be used:
+
+```json [debug]
+[
+  {
+    "label": "Python: Django",
+    "adapter": "Debugpy",
+    "request": "launch",
+    "program": "manage.py",
+    "args": ["runserver"],
+    "django": true
+  }
+]
+```
+
 ## Troubleshooting
 
 Issues with Python in Zed typically involve virtual environments, language servers, or tooling configuration.

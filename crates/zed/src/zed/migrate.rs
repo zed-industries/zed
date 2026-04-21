@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use gpui::{Entity, EventEmitter, Global, Task, TextStyle, TextStyleRefinement};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::prelude::*;
 use workspace::item::ItemHandle;
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};

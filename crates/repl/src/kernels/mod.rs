@@ -177,6 +177,13 @@ impl PythonEnvKernelSpecification {
             kernelspec: self.kernelspec.clone(),
         }
     }
+
+    pub fn is_uv(&self) -> bool {
+        matches!(
+            self.environment_kind.as_deref(),
+            Some("uv" | "uv (Workspace)")
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -503,11 +510,11 @@ pub fn python_env_kernel_specifications(
             });
 
         #[allow(unused_mut)]
-        let mut kernel_specs: Vec<KernelSpecification> = futures::future::join_all(kernelspecs)
-            .await
-            .into_iter()
-            .flatten()
-            .collect();
+        let mut kernel_specs: Vec<KernelSpecification> = futures::stream::iter(kernelspecs)
+            .buffer_unordered(4)
+            .filter_map(|x| async move { x })
+            .collect::<Vec<_>>()
+            .await;
 
         #[cfg(target_os = "windows")]
         if kernel_specs.is_empty() && !is_remote {

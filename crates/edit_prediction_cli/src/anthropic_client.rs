@@ -292,6 +292,14 @@ impl BatchingLlmClient {
         self.download_finished_batches().await
     }
 
+    pub fn pending_batch_count(&self) -> Result<usize> {
+        let connection = self.connection.lock().unwrap();
+        let counts: Vec<i32> = connection.select(
+            sql!(SELECT COUNT(*) FROM cache WHERE batch_id IS NOT NULL AND response IS NULL),
+        )?()?;
+        Ok(counts.into_iter().next().unwrap_or(0) as usize)
+    }
+
     /// Import batch results from external batch IDs (useful for recovering after database loss)
     pub async fn import_batches(&self, batch_ids: &[String]) -> Result<()> {
         for batch_id in batch_ids {
@@ -827,6 +835,16 @@ impl AnthropicClient {
         match self {
             AnthropicClient::Plain(_) => Ok(()),
             AnthropicClient::Batch(batching_llm_client) => batching_llm_client.sync_batches().await,
+            AnthropicClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
+        }
+    }
+
+    pub fn pending_batch_count(&self) -> Result<usize> {
+        match self {
+            AnthropicClient::Plain(_) => Ok(0),
+            AnthropicClient::Batch(batching_llm_client) => {
+                batching_llm_client.pending_batch_count()
+            }
             AnthropicClient::Dummy => panic!("Dummy LLM client is not expected to be used"),
         }
     }

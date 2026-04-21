@@ -23,7 +23,7 @@ impl BasedPyrightBanner {
                 this.have_basedpyright = true;
             }
         });
-        let dismissed = Self::dismissed();
+        let dismissed = Self::dismissed(cx);
         Self {
             dismissed,
             have_basedpyright: false,
