@@ -11,6 +11,7 @@ use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent,
     Render, SharedString, Task, WeakEntity, Window,
 };
+use itertools::Itertools as _;
 use notifications::status_toast::StatusToast;
 use project::{AgentId, AgentRegistryStore, AgentServerStore};
 use release_channel::ReleaseChannel;
@@ -138,6 +139,7 @@ impl ThreadImportModal {
                     icon_path,
                 }
             })
+            .sorted_unstable_by_key(|entry| entry.display_name.to_lowercase())
             .collect::<Vec<_>>();
 
         Self {
