@@ -761,8 +761,7 @@ impl NativeAgent {
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
                 let should_update_model = thread.model().is_none()
-                    || (thread.is_empty()
-                        && matches!(event, language_model::Event::DefaultModelChanged));
+                    || matches!(event, language_model::Event::DefaultModelChanged);
                 if should_update_model && let Some(model) = default_model.clone() {
                     thread.set_model(model, cx);
                     cx.notify();
