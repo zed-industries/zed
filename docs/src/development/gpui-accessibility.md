@@ -294,6 +294,8 @@ fn handle_action_request(request: ActionRequest, window: &mut Window, cx: &mut A
 
 Mirrors GPUI's existing inspector pattern — gated on `#[cfg(any(feature = "inspector", debug_assertions))]`, zero overhead in release builds.
 
+The method name `accessibility_tree()` follows Apple's own convention: macOS Accessibility API methods are uniformly prefixed with `accessibility` followed by a noun — `accessibilityChildren()`, `accessibilityParent()`, `accessibilityFrame()`. See [NSAccessibility — Apple Developer Documentation](https://developer.apple.com/documentation/appkit/nsaccessibility).
+
 ### API
 
 ```rust
