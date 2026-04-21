@@ -6,7 +6,7 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use editor::{
     Addon, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
@@ -819,7 +819,7 @@ impl ProjectDiff {
                     let _span = ztracing::info_span!("remove_excerpts_for_path");
                     let _enter = _span.enter();
                     editor.remove_excerpts_for_path(path, cx);
-                    drop(_enter);
+                    drop(_span);
                 }
             });
             buffers_to_load
