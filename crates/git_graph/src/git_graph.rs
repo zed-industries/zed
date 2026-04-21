@@ -4216,11 +4216,10 @@ mod tests {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.theme = Box::new(ThemeSettingsContent {
+                    *settings.theme = ThemeSettingsContent {
                         ui_font_size: Some(12.7.into()),
-                        buffer_font_size: Some(13.7.into()),
                         ..Default::default()
-                    })
+                    }
                 });
             })
         });
