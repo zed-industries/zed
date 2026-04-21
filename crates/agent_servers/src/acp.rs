@@ -461,19 +461,25 @@ impl AcpConnection {
         + 'static,
         cx: &mut App,
     ) -> Task<Result<Entity<AcpThread>>> {
-        if let Some(session) = self.sessions.borrow_mut().get_mut(&session_id) {
-            session.ref_count += 1;
-            if let Some(thread) = session.thread.upgrade() {
-                return Task::ready(Ok(thread));
-            }
-        }
-
+        // Check `pending_sessions` before `sessions` because the session is now
+        // inserted into `sessions` before the load RPC completes (so that
+        // notifications dispatched during history replay can find the thread).
+        // Concurrent loads should still wait for the in-flight task so that
+        // ref-counting happens in one place and the caller sees a fully loaded
+        // session.
         if let Some(pending) = self.pending_sessions.borrow_mut().get_mut(&session_id) {
             pending.ref_count += 1;
             let task = pending.task.clone();
             return cx
                 .foreground_executor()
                 .spawn(async move { task.await.map_err(|err| anyhow!(err)) });
+        }
+
+        if let Some(session) = self.sessions.borrow_mut().get_mut(&session_id) {
+            session.ref_count += 1;
+            if let Some(thread) = session.thread.upgrade() {
+                return Task::ready(Ok(thread));
+            }
         }
 
         // TODO: remove this once ACP supports multiple working directories
@@ -503,10 +509,27 @@ impl AcpConnection {
                         )
                     });
 
+                    // Register the session before awaiting the RPC so that any
+                    // `session/update` notifications that arrive during the call
+                    // (e.g. history replay during `session/load`) can find the thread.
+                    // Modes/models/config are filled in once the response arrives.
+                    this.sessions.borrow_mut().insert(
+                        session_id.clone(),
+                        AcpSession {
+                            thread: thread.downgrade(),
+                            suppress_abort_err: false,
+                            session_modes: None,
+                            models: None,
+                            config_options: None,
+                            ref_count: 1,
+                        },
+                    );
+
                     let response =
                         match rpc_call(this.connection.clone(), session_id.clone(), cwd).await {
                             Ok(response) => response,
                             Err(err) => {
+                                this.sessions.borrow_mut().remove(&session_id);
                                 this.pending_sessions.borrow_mut().remove(&session_id);
                                 return Err(Arc::new(err));
                             }
@@ -525,17 +548,12 @@ impl AcpConnection {
                         .remove(&session_id)
                         .map_or(1, |pending| pending.ref_count);
 
-                    this.sessions.borrow_mut().insert(
-                        session_id,
-                        AcpSession {
-                            thread: thread.downgrade(),
-                            suppress_abort_err: false,
-                            session_modes: modes,
-                            models,
-                            config_options: config_options.map(ConfigOptions::new),
-                            ref_count,
-                        },
-                    );
+                    if let Some(session) = this.sessions.borrow_mut().get_mut(&session_id) {
+                        session.session_modes = modes;
+                        session.models = models;
+                        session.config_options = config_options.map(ConfigOptions::new);
+                        session.ref_count = ref_count;
+                    }
 
                     Ok(thread)
                 }
@@ -1789,6 +1807,8 @@ mod tests {
     struct FakeAcpAgent {
         load_session_count: Arc<AtomicUsize>,
         close_session_count: Arc<AtomicUsize>,
+        load_session_updates: Rc<RefCell<Vec<acp::SessionUpdate>>>,
+        client: Rc<RefCell<Option<Rc<acp::AgentSideConnection>>>>,
     }
 
     #[async_trait::async_trait(?Send)]
@@ -1833,9 +1853,30 @@ mod tests {
 
         async fn load_session(
             &self,
-            _: acp::LoadSessionRequest,
+            args: acp::LoadSessionRequest,
         ) -> acp::Result<acp::LoadSessionResponse> {
             self.load_session_count.fetch_add(1, Ordering::SeqCst);
+
+            // Simulate spec-compliant history replay: send notifications to the
+            // client before responding to the load request.
+            let updates = std::mem::take(&mut *self.load_session_updates.borrow_mut());
+            if !updates.is_empty() {
+                let client = self
+                    .client
+                    .borrow()
+                    .clone()
+                    .expect("client should be set before load_session is called");
+                for update in updates {
+                    use acp::Client as _;
+                    client
+                        .session_notification(acp::SessionNotification::new(
+                            args.session_id.clone(),
+                            update,
+                        ))
+                        .await?;
+                }
+            }
+
             Ok(acp::LoadSessionResponse::new())
         }
 
@@ -1855,6 +1896,7 @@ mod tests {
         Entity<project::Project>,
         Arc<AtomicUsize>,
         Arc<AtomicUsize>,
+        Rc<RefCell<Vec<acp::SessionUpdate>>>,
         Task<anyhow::Result<()>>,
     ) {
         cx.update(|cx| {
@@ -1868,6 +1910,10 @@ mod tests {
 
         let load_count = Arc::new(AtomicUsize::new(0));
         let close_count = Arc::new(AtomicUsize::new(0));
+        let load_session_updates: Rc<RefCell<Vec<acp::SessionUpdate>>> =
+            Rc::new(RefCell::new(Vec::new()));
+        let agent_client: Rc<RefCell<Option<Rc<acp::AgentSideConnection>>>> =
+            Rc::new(RefCell::new(None));
 
         let (c2a_writer, c2a_reader) = async_pipe::pipe();
         let (a2c_writer, a2c_reader) = async_pipe::pipe();
@@ -1896,15 +1942,18 @@ mod tests {
         let fake_agent = FakeAcpAgent {
             load_session_count: load_count.clone(),
             close_session_count: close_count.clone(),
+            load_session_updates: load_session_updates.clone(),
+            client: agent_client.clone(),
         };
 
-        let (_, agent_io_task) =
+        let (agent_conn, agent_io_task) =
             acp::AgentSideConnection::new(fake_agent, a2c_writer, c2a_reader, {
                 let foreground = foreground.clone();
                 move |fut| {
                     foreground.spawn(fut).detach();
                 }
             });
+        *agent_client.borrow_mut() = Some(Rc::new(agent_conn));
 
         let client_io_task = cx.background_spawn(client_io_task);
         let agent_io_task = cx.background_spawn(agent_io_task);
@@ -1940,14 +1989,21 @@ mod tests {
             project,
             load_count,
             close_count,
+            load_session_updates,
             keep_agent_alive,
         )
     }
 
     #[gpui::test]
     async fn test_loaded_sessions_keep_state_until_last_close(cx: &mut gpui::TestAppContext) {
-        let (connection, project, load_count, close_count, _keep_agent_alive) =
-            connect_fake_agent(cx).await;
+        let (
+            connection,
+            project,
+            load_count,
+            close_count,
+            _load_session_updates,
+            _keep_agent_alive,
+        ) = connect_fake_agent(cx).await;
 
         let session_id = acp::SessionId::new("session-1");
         let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
@@ -2018,6 +2074,72 @@ mod tests {
         assert!(
             !connection.sessions.borrow().contains_key(&session_id),
             "session should be removed after final close"
+        );
+    }
+
+    // Regression test: per the ACP spec, an agent replays the entire conversation
+    // history as `session/update` notifications *before* responding to the
+    // `session/load` request. These notifications must be applied to the
+    // reconstructed thread, not dropped because the session hasn't been
+    // registered yet.
+    #[gpui::test]
+    async fn test_load_session_replays_notifications_sent_before_response(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (
+            connection,
+            project,
+            _load_count,
+            _close_count,
+            load_session_updates,
+            _keep_agent_alive,
+        ) = connect_fake_agent(cx).await;
+
+        // Queue up some history updates that the fake agent will stream to
+        // the client during the `load_session` call, before responding.
+        *load_session_updates.borrow_mut() = vec![
+            acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
+                acp::TextContent::new(String::from("hello agent")),
+            ))),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(acp::ContentBlock::Text(
+                acp::TextContent::new(String::from("hi user")),
+            ))),
+        ];
+
+        let session_id = acp::SessionId::new("session-replay");
+        let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
+
+        let thread = cx
+            .update(|cx| {
+                connection.clone().load_session(
+                    session_id.clone(),
+                    project.clone(),
+                    work_dirs,
+                    None,
+                    cx,
+                )
+            })
+            .await
+            .expect("load_session failed");
+        cx.run_until_parked();
+
+        let entries = thread.read_with(cx, |thread, _| {
+            thread
+                .entries()
+                .iter()
+                .map(|entry| match entry {
+                    acp_thread::AgentThreadEntry::UserMessage(_) => "user",
+                    acp_thread::AgentThreadEntry::AssistantMessage(_) => "assistant",
+                    acp_thread::AgentThreadEntry::ToolCall(_) => "tool_call",
+                    acp_thread::AgentThreadEntry::CompletedPlan(_) => "plan",
+                })
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            entries,
+            vec!["user", "assistant"],
+            "replayed notifications should be applied to the thread"
         );
     }
 }
