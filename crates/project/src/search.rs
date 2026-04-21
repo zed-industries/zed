@@ -115,7 +115,13 @@ impl SearchQuery {
                 files_to_exclude,
                 false,
                 buffers,
-            );
+            )
+            .map(|mut search_query| {
+                if let Self::Regex { ref mut inner, .. } = search_query {
+                    inner.query = Arc::from(query.as_str());
+                }
+                search_query
+            });
         }
         let search = AhoCorasickBuilder::new()
             .ascii_case_insensitive(!case_sensitive)
