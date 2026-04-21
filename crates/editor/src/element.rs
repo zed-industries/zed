@@ -6026,10 +6026,10 @@ impl EditorElement {
                         cx.theme().colors().editor_wrap_guide
                     };
                     window.paint_quad(fill(
-                        Bounds {
+                        window.pixel_snap_bounds(Bounds {
                             origin: point(*guide_x, layout.position_map.text_hitbox.origin.y),
                             size: size(px(1.), layout.position_map.text_hitbox.size.height),
-                        },
+                        }),
                         color,
                     ));
                 }
@@ -6095,10 +6095,10 @@ impl EditorElement {
             if let Some(requested_line_width) = settings.visible_line_width(indent_guide.active) {
                 if let Some(color) = line_color {
                     window.paint_quad(fill(
-                        Bounds {
+                        window.pixel_snap_bounds(Bounds {
                             origin: indent_guide.origin,
                             size: size(px(requested_line_width as f32), indent_guide.length),
-                        },
+                        }),
                         color,
                     ));
                     line_indicator_width = requested_line_width as f32;
@@ -6108,13 +6108,13 @@ impl EditorElement {
             if let Some(color) = background_color {
                 let width = indent_guide.single_indent_width - px(line_indicator_width);
                 window.paint_quad(fill(
-                    Bounds {
+                    window.pixel_snap_bounds(Bounds {
                         origin: point(
                             indent_guide.origin.x + px(line_indicator_width),
                             indent_guide.origin.y,
                         ),
                         size: size(width, indent_guide.length),
-                    },
+                    }),
                     color,
                 ));
             }
@@ -6721,10 +6721,10 @@ impl EditorElement {
             + sticky_headers.lines.last().unwrap().offset
             + layout.position_map.line_height;
         let separator_height = px(1.);
-        let border_bounds = Bounds::from_corners(
+        let border_bounds = window.pixel_snap_bounds(Bounds::from_corners(
             point(layout.gutter_hitbox.bounds.left(), border_top),
             point(text_bounds.right(), border_top + separator_height),
-        );
+        ));
         window.paint_quad(fill(border_bounds, cx.theme().colors().border_variant));
 
         layout.sticky_headers = Some(sticky_headers);
@@ -12210,7 +12210,7 @@ impl CursorLayout {
     }
 
     pub fn paint(&mut self, origin: gpui::Point<Pixels>, window: &mut Window, cx: &mut App) {
-        let bounds = self.bounds(origin);
+        let bounds = window.pixel_snap_bounds(self.bounds(origin));
 
         //Draw background or border quad
         let cursor = if matches!(self.shape, CursorShape::Hollow) {

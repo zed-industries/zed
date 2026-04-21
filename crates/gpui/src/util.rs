@@ -125,29 +125,15 @@ pub(crate) fn atomic_incr_if_not_zero(counter: &AtomicUsize) -> usize {
     }
 }
 
-/// Rounds to the nearest integer with ±0.5 ties toward zero.
-///
-/// This is the single rounding policy for all device-pixel snapping in the
-/// rendering pipeline. A consistent midpoint rule prevents 1-device-pixel
-/// gaps or overlaps between adjacent elements.
+/// Rounds to the nearest integer with 0.5 ties toward zero.
 #[inline]
 pub(crate) fn round_half_toward_zero(value: f32) -> f32 {
-    if value >= 0.0 {
-        (value - 0.5).ceil()
-    } else {
-        (value + 0.5).floor()
-    }
+    (value.abs() - 0.5).ceil().copysign(value)
 }
 
-/// f64 variant of [`round_half_toward_zero`] for scroll-offset arithmetic
-/// that must preserve f64 precision.
 #[inline]
 pub(crate) fn round_half_toward_zero_f64(value: f64) -> f64 {
-    if value >= 0.0 {
-        (value - 0.5).ceil()
-    } else {
-        (value + 0.5).floor()
-    }
+    (value.abs() - 0.5).ceil().copysign(value)
 }
 
 #[cfg(test)]

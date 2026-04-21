@@ -963,6 +963,7 @@ pub struct Window {
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
+    rounding_debug_last: RefCell<FxHashMap<String, String>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
@@ -1574,6 +1575,7 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
+            rounding_debug_last: RefCell::new(FxHashMap::default()),
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
@@ -2303,85 +2305,82 @@ impl Window {
         self.text_style().line_height_in_pixels(self.rem_size())
     }
 
-    /// Rounds a logical size or coordinate to the nearest device pixel for this window.
-    /// Uses round-half-toward-zero to match the layout engine's rounding policy.
+    // ── Pixel snapping ──────────────────────────────────────────
+    //
+    // We snap painted coordinates to device-pixel boundaries so the
+    // renderer doesn't anti-alias element edges into blurry seams.
+    // See the detailed design comment on `TaffyLayoutEngine::layout_bounds`
+    // in taffy.rs for the full rationale, constraints, and strategy.
+    //
+    // Quick reference for the methods below:
+    //
+    //   pixel_snap / pixel_snap_f64
+    //       Public. Snaps a single value; stays in logical Pixels / f64.
+    //
+    //   pixel_snap_bounds
+    //       Public. Rounds origin and size independently (stable
+    //       dimensions for decorative elements like cursors).
+    //
+    //   snap_edges
+    //       Rounds each edge independently (preserves edge closure
+    //       between adjacent elements). Default for paint_quad,
+    //       paint_svg, paint_surface.
+    //
+    //   outset_bounds / outset_content_mask
+    //       Floor origin, ceil far edge. Ensures the snapped region
+    //       fully covers the logical region (for content masks,
+    //       layers, images).
+    //
+    //   snap_length / snap_nonzero_length / snap_border_widths
+    //       Snap individual lengths. snap_nonzero_length guarantees
+    //       at least 1dp for nonzero input (borders, underlines).
+
+    /// Rounds a logical value to the nearest device pixel.
     #[inline]
     pub fn pixel_snap(&self, value: Pixels) -> Pixels {
         let scale_factor = self.scale_factor();
         px(round_half_toward_zero(value.0 * scale_factor) / scale_factor)
     }
 
-    /// f64 variant of [`Self::pixel_snap`] for scroll-offset
-    /// arithmetic that must preserve f64 precision.
+    /// f64 variant of [`Self::pixel_snap`] for scroll-offset arithmetic.
     #[inline]
     pub fn pixel_snap_f64(&self, value: f64) -> f64 {
         let scale_factor = f64::from(self.scale_factor());
         round_half_toward_zero_f64(value * scale_factor) / scale_factor
     }
 
+    /// Snaps a bounds' origin and size to the nearest device pixel.
     #[inline]
-    fn snap_point(&self, position: Point<Pixels>) -> Point<Pixels> {
-        point(
-            self.pixel_snap(position.x),
-            self.pixel_snap(position.y),
-        )
+    pub fn pixel_snap_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+        Bounds {
+            origin: point(
+                self.pixel_snap(bounds.origin.x),
+                self.pixel_snap(bounds.origin.y),
+            ),
+            size: size(
+                self.pixel_snap(bounds.size.width),
+                self.pixel_snap(bounds.size.height),
+            ),
+        }
+    }
+
+    /// Snaps a point's coordinates to the nearest device pixel.
+    #[inline]
+    pub fn pixel_snap_point(&self, position: Point<Pixels>) -> Point<Pixels> {
+        point(self.pixel_snap(position.x), self.pixel_snap(position.y))
     }
 
     #[inline]
-    fn bounds_from_device_edges(
-        &self,
-        left: f32,
-        top: f32,
-        right: f32,
-        bottom: f32,
-    ) -> Bounds<ScaledPixels> {
-        let right = right.max(left);
-        let bottom = bottom.max(top);
+    fn snap_edges(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
+        let scale_factor = self.scale_factor();
+        let left = round_half_toward_zero(bounds.left().0 * scale_factor);
+        let top = round_half_toward_zero(bounds.top().0 * scale_factor);
+        let right = round_half_toward_zero(bounds.right().0 * scale_factor).max(left);
+        let bottom = round_half_toward_zero(bounds.bottom().0 * scale_factor).max(top);
         Bounds::from_corners(
             point(ScaledPixels(left), ScaledPixels(top)),
             point(ScaledPixels(right), ScaledPixels(bottom)),
         )
-    }
-
-    #[inline]
-    fn snap_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
-        let scale_factor = self.scale_factor();
-        self.bounds_from_device_edges(
-            round_half_toward_zero(bounds.left().0 * scale_factor),
-            round_half_toward_zero(bounds.top().0 * scale_factor),
-            round_half_toward_zero(bounds.right().0 * scale_factor),
-            round_half_toward_zero(bounds.bottom().0 * scale_factor),
-        )
-    }
-
-    #[inline]
-    fn outset_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
-        let scale_factor = self.scale_factor();
-        let left = (bounds.left().0 * scale_factor).floor();
-        let top = (bounds.top().0 * scale_factor).floor();
-        let right = (bounds.right().0 * scale_factor).ceil();
-        let bottom = (bounds.bottom().0 * scale_factor).ceil();
-        self.bounds_from_device_edges(left, top, right, bottom)
-    }
-
-    #[inline]
-    fn outset_content_mask(
-        &self,
-        content_mask: ContentMask<Pixels>,
-    ) -> ContentMask<ScaledPixels> {
-        ContentMask {
-            bounds: self.outset_bounds(content_mask.bounds),
-        }
-    }
-
-    #[inline]
-    fn snap_border_widths(&self, edges: Edges<Pixels>) -> Edges<ScaledPixels> {
-        Edges {
-            top: self.snap_nonzero_length(edges.top),
-            right: self.snap_nonzero_length(edges.right),
-            bottom: self.snap_nonzero_length(edges.bottom),
-            left: self.snap_nonzero_length(edges.left),
-        }
     }
 
     #[inline]
@@ -2397,6 +2396,36 @@ impl Window {
             ScaledPixels(0.0)
         } else {
             ScaledPixels(rounded.max(1.0))
+        }
+    }
+
+    #[inline]
+    fn snap_border_widths(&self, edges: Edges<Pixels>) -> Edges<ScaledPixels> {
+        Edges {
+            top: self.snap_nonzero_length(edges.top),
+            right: self.snap_nonzero_length(edges.right),
+            bottom: self.snap_nonzero_length(edges.bottom),
+            left: self.snap_nonzero_length(edges.left),
+        }
+    }
+
+    #[inline]
+    fn outset_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
+        let scale_factor = self.scale_factor();
+        let left = (bounds.left().0 * scale_factor).floor();
+        let top = (bounds.top().0 * scale_factor).floor();
+        let right = (bounds.right().0 * scale_factor).ceil().max(left);
+        let bottom = (bounds.bottom().0 * scale_factor).ceil().max(top);
+        Bounds::from_corners(
+            point(ScaledPixels(left), ScaledPixels(top)),
+            point(ScaledPixels(right), ScaledPixels(bottom)),
+        )
+    }
+
+    #[inline]
+    fn outset_content_mask(&self, content_mask: ContentMask<Pixels>) -> ContentMask<ScaledPixels> {
+        ContentMask {
+            bounds: self.outset_bounds(content_mask.bounds),
         }
     }
 
@@ -3435,8 +3464,8 @@ impl Window {
     ) {
         self.invalidator.debug_assert_paint();
 
-        let content_mask = self.content_mask();
         let scale_factor = self.scale_factor();
+        let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         for shadow in shadows {
             let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
@@ -3465,17 +3494,40 @@ impl Window {
 
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
-        let rounded_bounds = self.snap_bounds(quad.bounds);
-        let rounded_borders = self.snap_border_widths(quad.border_widths);
+        let raw_bounds = quad.bounds;
+        let snapped_bounds = self.snap_edges(raw_bounds);
+        let snapped_border_widths = self.snap_border_widths(quad.border_widths);
+
+        self.log_rounding_debug("quad", || {
+            format!(
+                "raw=({:.2},{:.2} {:.2}x{:.2}) snap=({:.0},{:.0} {:.0}x{:.0}) bw={:.2},{:.2},{:.2},{:.2}->{:.0},{:.0},{:.0},{:.0}",
+                raw_bounds.origin.x.0,
+                raw_bounds.origin.y.0,
+                raw_bounds.size.width.0,
+                raw_bounds.size.height.0,
+                snapped_bounds.origin.x.0,
+                snapped_bounds.origin.y.0,
+                snapped_bounds.size.width.0,
+                snapped_bounds.size.height.0,
+                quad.border_widths.top.0,
+                quad.border_widths.right.0,
+                quad.border_widths.bottom.0,
+                quad.border_widths.left.0,
+                snapped_border_widths.top.0,
+                snapped_border_widths.right.0,
+                snapped_border_widths.bottom.0,
+                snapped_border_widths.left.0,
+            )
+        });
 
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
-            bounds: rounded_bounds,
+            bounds: snapped_bounds,
             content_mask: self.outset_content_mask(content_mask),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
             corner_radii: quad.corner_radii.scale(self.scale_factor()),
-            border_widths: rounded_borders,
+            border_widths: snapped_border_widths,
             border_style: quad.border_style,
         });
     }
@@ -3635,6 +3687,26 @@ impl Window {
                 ) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
+
+            if Self::rounding_debug_glyphs_enabled() {
+                self.log_rounding_debug("glyph", || {
+                    format!(
+                        "id={glyph_id:?} line=({:.2},{:.2}) glyph=({:.2},{:.2}) dev=({:.0},{:.0} {:.0}x{:.0}) size={:.2} phase={},{}",
+                        origin.x.0,
+                        origin.y.0,
+                        glyph_origin.x.0,
+                        glyph_origin.y.0,
+                        bounds.origin.x.0,
+                        bounds.origin.y.0,
+                        bounds.size.width.0,
+                        bounds.size.height.0,
+                        font_size.0,
+                        subpixel_variant.x,
+                        subpixel_variant.y,
+                    )
+                });
+            }
+
             let content_mask = self.outset_content_mask(self.content_mask());
 
             if subpixel_rendering {
@@ -3669,9 +3741,9 @@ impl Window {
     pub fn paint_glyph_with_raster_bounds(
         &mut self,
         origin: Point<Pixels>,
-        _font_id: FontId,
-        _glyph_id: GlyphId,
-        _font_size: Pixels,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
         color: Hsla,
         raster_bounds: Bounds<DevicePixels>,
         params: &RenderGlyphParams,
@@ -3694,6 +3766,26 @@ impl Window {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
+
+            if Self::rounding_debug_glyphs_enabled() {
+                self.log_rounding_debug("glyph-precomputed", || {
+                    format!(
+                        "id={glyph_id:?} font={font_id:?} line=({:.2},{:.2}) glyph=({:.2},{:.2}) dev=({:.0},{:.0} {:.0}x{:.0}) size={:.2} phase={},{}",
+                        origin.x.0,
+                        origin.y.0,
+                        glyph_origin.x.0,
+                        glyph_origin.y.0,
+                        bounds.origin.x.0,
+                        bounds.origin.y.0,
+                        bounds.size.width.0,
+                        bounds.size.height.0,
+                        font_size.0,
+                        params.subpixel_variant.x,
+                        params.subpixel_variant.y,
+                    )
+                });
+            }
+
             let content_mask = self.content_mask().scale(scale_factor);
             self.next_frame.scene.insert_primitive(MonochromeSprite {
                 order: 0,
@@ -3856,7 +3948,24 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
-        let bounds = self.snap_bounds(bounds);
+        let raw_bounds = bounds;
+        let path_for_log = path.clone();
+        let bounds = self.snap_edges(raw_bounds);
+
+        self.log_rounding_debug("svg", || {
+            format!(
+                "path={path_for_log} raw=({:.2},{:.2} {:.2}x{:.2}) snap=({:.0},{:.0} {:.0}x{:.0})",
+                raw_bounds.origin.x.0,
+                raw_bounds.origin.y.0,
+                raw_bounds.size.width.0,
+                raw_bounds.size.height.0,
+                bounds.origin.x.0,
+                bounds.origin.y.0,
+                bounds.size.width.0,
+                bounds.size.height.0,
+            )
+        });
+
         let params = RenderSvgParams {
             path,
             size: bounds.size.map(|pixels| {
@@ -3963,7 +4072,7 @@ impl Window {
 
         self.invalidator.debug_assert_paint();
 
-        let bounds = self.snap_bounds(bounds);
+        let bounds = self.snap_edges(bounds);
         let content_mask = self.outset_content_mask(self.content_mask());
         self.next_frame.scene.insert_primitive(PaintSurface {
             order: 0,
@@ -4069,7 +4178,21 @@ impl Window {
             .unwrap()
             .layout_bounds(layout_id, scale_factor)
             .map(Into::into);
-        bounds.origin += self.snap_point(self.element_offset());
+        let snapped_offset = self.pixel_snap_point(self.element_offset());
+        bounds.origin += snapped_offset;
+
+        self.log_rounding_debug("layout", || {
+            format!(
+                "rect=({:.2},{:.2} {:.2}x{:.2}) off=({:.2},{:.2})",
+                bounds.origin.x.0,
+                bounds.origin.y.0,
+                bounds.size.width.0,
+                bounds.size.height.0,
+                snapped_offset.x.0,
+                snapped_offset.y.0,
+            )
+        });
+
         bounds
     }
 
