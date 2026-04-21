@@ -46,8 +46,8 @@ use git::{
     },
 };
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    WeakEntity,
+    App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
+    Subscription, Task, WeakEntity,
 };
 use language::{
     Buffer, BufferEvent, Language, LanguageRegistry,
@@ -75,7 +75,7 @@ use std::{
         Arc,
         atomic::{self, AtomicU64},
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 use sum_tree::{Edit, SumTree, TreeMap};
 use task::Shell;
@@ -312,9 +312,14 @@ struct GraphCommitDataHandler {
     commit_data_request: smol::channel::Sender<Oid>,
 }
 
+/// Represents the handler of a git cat-file --batch process within Zed
+/// It's used to lazily fetch commit data as needed (whatever a user is viewing)
 enum GraphCommitHandlerState {
+    /// The handler is starting up the process
     Starting,
+    /// The handler is open and processing requests
     Open(GraphCommitDataHandler),
+    /// The handler closed because it didn't receive any requests in the last 10s
     Closed,
 }
 
@@ -5054,53 +5059,31 @@ impl Repository {
         let background_executor = cx.background_executor().clone();
 
         cx.background_spawn(async move {
-            let backend = match state.await {
-                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => backend,
-                Ok(RepositoryState::Remote(_)) => {
-                    log::error!("commit_data_reader not supported for remote repositories");
-                    return;
+            match state.await {
+                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
+                    Self::local_commit_data_reader(
+                        backend,
+                        request_rx,
+                        result_tx,
+                        background_executor,
+                    )
+                    .await;
+                }
+                Ok(RepositoryState::Remote(RemoteRepositoryState { project_id, client })) => {
+                    Self::remote_commit_data_reader(
+                        project_id,
+                        client,
+                        request_rx,
+                        result_tx,
+                        background_executor,
+                    )
+                    .await;
                 }
                 Err(error) => {
                     log::error!("failed to get repository state: {error}");
                     return;
                 }
             };
-
-            let reader = match backend.commit_data_reader() {
-                Ok(reader) => reader,
-                Err(error) => {
-                    log::error!("failed to create commit data reader: {error:?}");
-                    return;
-                }
-            };
-
-            loop {
-                let timeout = background_executor.timer(std::time::Duration::from_secs(10));
-
-                futures::select_biased! {
-                    sha = futures::FutureExt::fuse(request_rx.recv()) => {
-                        let Ok(sha) = sha else {
-                            break;
-                        };
-
-                        match reader.read(sha).await {
-                            Ok(commit_data) => {
-                                if result_tx.send((sha, commit_data)).await.is_err() {
-                                    break;
-                                }
-                            }
-                            Err(error) => {
-                                log::error!("failed to read commit data for {sha}: {error:?}");
-                            }
-                        }
-                    }
-                    _ = futures::FutureExt::fuse(timeout) => {
-                        break;
-                    }
-                }
-            }
-
-            drop(result_tx);
         })
         .detach();
 
@@ -5108,6 +5091,93 @@ impl Repository {
             _task: foreground_task,
             commit_data_request: request_tx_for_handler,
         });
+    }
+
+    async fn local_commit_data_reader(
+        backend: Arc<dyn GitRepository>,
+        request_rx: smol::channel::Receiver<Oid>,
+        result_tx: smol::channel::Sender<(Oid, GraphCommitData)>,
+        background_executor: BackgroundExecutor,
+    ) {
+        let reader = match backend.commit_data_reader() {
+            Ok(reader) => reader,
+            Err(error) => {
+                log::error!("failed to create commit data reader: {error:?}");
+                return;
+            }
+        };
+
+        loop {
+            let timeout = background_executor.timer(std::time::Duration::from_secs(10));
+
+            futures::select_biased! {
+                sha = futures::FutureExt::fuse(request_rx.recv()) => {
+                    let Ok(sha) = sha else {
+                        break;
+                    };
+
+                    match reader.read(sha).await {
+                        Ok(commit_data) => {
+                            if result_tx.send((sha, commit_data)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            log::error!("failed to read commit data for {sha}: {error:?}");
+                        }
+                    }
+                }
+                _ = futures::FutureExt::fuse(timeout) => {
+                    break;
+                }
+            }
+        }
+
+        drop(result_tx);
+    }
+
+    async fn remote_commit_data_reader(
+        project_id: ProjectId,
+        client: AnyProtoClient,
+        request_rx: smol::channel::Receiver<Oid>,
+        result_tx: smol::channel::Sender<(Oid, GraphCommitData)>,
+        background_executor: BackgroundExecutor,
+    ) {
+        loop {
+            let mut queued_shas = Vec::with_capacity(64);
+
+            loop {
+                if queued_shas.len() >= 64 {
+                    break;
+                }
+
+                let timeout = background_executor.timer(std::time::Duration::from_millis(5));
+
+                futures::select_biased! {
+                    sha = futures::FutureExt::fuse(request_rx.recv()) => {
+                        let Ok(sha) = sha else {
+                            break;
+                        };
+
+                        queued_shas.push(sha);
+
+                    }
+                    _ = futures::FutureExt::fuse(timeout) => {
+                        break;
+                    }
+                }
+            }
+
+            if queued_shas.is_empty() {
+                break;
+            }
+
+            let result = client.request(request).await;
+            result_tx.send(msg)
+
+            background_executor.timer(Duration::from_millis(2)).await;
+
+        }
     }
 
     fn buffer_store(&self, cx: &App) -> Option<Entity<BufferStore>> {
