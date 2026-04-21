@@ -1,5 +1,5 @@
 use gpui::ElementId;
-use ui::{ContextMenu, PopoverMenu, Tooltip, prelude::*};
+use ui::{ContextMenu, IconButton, IconName, IconSize, PopoverMenu, Tooltip, prelude::*};
 
 use crate::{
     CsvPreviewView,
@@ -109,16 +109,17 @@ impl CsvPreviewView {
             col.get() as u64,
         ))
         .trigger_with_tooltip(
-            Button::new(
+            IconButton::new(
                 ElementId::NamedInteger("filter-button".into(), col.get() as u64),
-                if has_active_filters { "⛊" } else { "⛉" },
+                IconName::Filter,
             )
-            .size(ButtonSize::Compact)
+            .icon_size(IconSize::Small)
             .style(if has_active_filters {
                 ButtonStyle::Filled
             } else {
                 ButtonStyle::Subtle
-            }),
+            })
+            .toggle_state(has_active_filters),
             Tooltip::text(if has_active_filters {
                 "Column has active filters. Click to manage"
             } else {
