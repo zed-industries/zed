@@ -35,6 +35,7 @@ use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 use super::*;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
+const USER_MESSAGE_ROW_BOTTOM_PADDING: Pixels = px(12.0);
 const STICKY_USER_MESSAGE_HEADER_HEIGHT: Pixels = px(36.0);
 
 #[derive(Default)]
@@ -5539,7 +5540,7 @@ impl ThreadView {
                             this.pt_2()
                         }
                     })
-                    .pb_3()
+                    .pb(USER_MESSAGE_ROW_BOTTOM_PADDING)
                     .px_2()
                     .gap_1p5()
                     .w_full()
@@ -8500,9 +8501,12 @@ impl ThreadView {
         viewport_top: Pixels,
     ) -> Option<usize> {
         if top_user_bounds.is_some_and(|bounds| {
+            // User message rows include bottom padding outside the visible card. Account for that
+            // so the sticky row replaces the request when the card reaches sticky height rather
+            // than after the padded row has already collapsed past it.
             bounds.top() < viewport_top
                 && (bounds.bottom() - viewport_top).max(px(0.0))
-                    <= STICKY_USER_MESSAGE_HEADER_HEIGHT
+                    <= STICKY_USER_MESSAGE_HEADER_HEIGHT + USER_MESSAGE_ROW_BOTTOM_PADDING
         }) {
             Some(top_item_index)
         } else {
