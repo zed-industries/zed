@@ -5899,7 +5899,7 @@ fn test_range_to_buffer_ranges_zero_length_at_excerpt_boundary(cx: &mut App) {
         .into_iter()
         .map(|tup| tup.1)
         .collect_vec();
-    
+
     assert_eq!(
         ranges, expected_ranges,
         "Zero-length range at excerpt boundary should return the excerpt at that point"

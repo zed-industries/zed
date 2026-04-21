@@ -208,14 +208,11 @@ where
         };
 
         let source_buffer_id = first.source_buffer_snapshot.remote_id();
-        let Some(diff) =
-            source_snapshot.diff_for_buffer_id(source_buffer_id)
-        else {
+        let Some(diff) = source_snapshot.diff_for_buffer_id(source_buffer_id) else {
             pending.clear();
             return;
         };
-        let source_is_lhs =
-            source_buffer_id == diff.base_text().remote_id();
+        let source_is_lhs = source_buffer_id == diff.base_text().remote_id();
         let target_buffer_id = if source_is_lhs {
             diff.buffer_id()
         } else {
