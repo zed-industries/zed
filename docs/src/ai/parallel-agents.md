@@ -41,11 +41,9 @@ If you have external agents installed, Zed will detect whether you have existing
 
 ## Running Multiple Threads {#running-multiple-threads}
 
-Start a new thread with {#action agent::NewThread}. Each thread runs independently, so you can send a prompt, open a second thread, and give it a different task while the first continues working.
+Each thread runs independently, so you can send a prompt, open a second thread, and give it a different task while the first continues working. To scope a new thread to a specific project, hover over that project's header in the Threads Sidebar and click the `+` button, or use {#action agents_sidebar::NewThreadInGroup} from the keyboard. See [Creating New Threads](./agent-panel.md#new-thread) for the other entry points.
 
-To start a new thread scoped to the currently selected project in the sidebar, use {#action agents_sidebar::NewThreadInGroup}.
-
-Each thread can use a different agent. Click the new thread menu in the Agent Panel toolbar to choose between Zed Agent and any installed [external agents](./external-agents.md). You might run Zed's built-in agent in one thread and an external agent like Claude Code or Codex in another.
+Each thread can use a different agent, so you can run Zed's built-in agent in one thread and an [external agent](./external-agents.md) like Claude Code or Codex in another.
 
 ## Multiple Projects {#multiple-projects}
 
