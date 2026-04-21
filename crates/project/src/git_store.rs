@@ -601,6 +601,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_get_head_sha);
         client.add_entity_request_handler(Self::handle_edit_ref);
         client.add_entity_request_handler(Self::handle_repair_worktrees);
+        client.add_entity_request_handler(Self::handle_get_commit_data);
     }
 
     pub fn is_local(&self) -> bool {
@@ -2529,6 +2530,23 @@ impl GitStore {
             .await??;
 
         Ok(proto::GitGetHeadShaResponse { sha: head_sha })
+    }
+
+    async fn handle_get_commit_data(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetGraphCommitData>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetGraphCommitDataResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        repository_handle
+            .update(&mut cx, |repository, _| {
+                repository.fetch_commit_data(sha, cx)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
     }
 
     async fn handle_edit_ref(
