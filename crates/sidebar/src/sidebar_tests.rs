@@ -1723,8 +1723,8 @@ async fn test_escape_from_search_focuses_first_thread(cx: &mut TestAppContext) {
         ]
     );
 
-    // User presses Escape from the focused search field — the matching result
-    // stays visible, but focus moves to the first thread so sidebar shortcuts work.
+    // First Escape clears the search text, restoring the full list.
+    // Focus stays on the filter editor.
     cx.dispatch_action(Cancel);
     cx.run_until_parked();
     assert_eq!(
@@ -1732,9 +1732,18 @@ async fn test_escape_from_search_focuses_first_thread(cx: &mut TestAppContext) {
         vec![
             //
             "v [my-project]",
-            "  Alpha thread  <== selected",
+            "  Alpha thread",
+            "  Beta thread",
         ]
     );
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        assert!(sidebar.filter_editor.read(cx).is_focused(window));
+        assert!(!sidebar.focus_handle.is_focused(window));
+    });
+
+    // Second Escape moves focus from the empty search field to the thread list.
+    cx.dispatch_action(Cancel);
+    cx.run_until_parked();
     sidebar.update_in(cx, |sidebar, window, cx| {
         assert_eq!(sidebar.selection, Some(1));
         assert!(sidebar.focus_handle.is_focused(window));
