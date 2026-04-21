@@ -6,7 +6,7 @@ use crate::{
     git::{CommitDetails, CommitList},
     github::{
         CommitAuthor, GithubClient, GithubLogin, PullRequestComment, PullRequestData,
-        PullRequestReview, Repository, ReviewState,
+        PullRequestReview, Repository, ReviewState, ZED_ZIPPY_AUTHOR,
     },
     report::Report,
 };
@@ -106,6 +106,10 @@ impl<'a> Reporter<'a> {
         commit: &CommitDetails,
     ) -> Result<ReviewSuccess, ReviewFailure> {
         let Some(pr_number) = commit.pr_number() else {
+            if commit.author().name().contains("Zed Zippy") && commit.title().starts_with("Bump to")
+            {
+                return Ok(ReviewSuccess::CoAuthored(vec![ZED_ZIPPY_AUTHOR.clone()]));
+            }
             return Err(ReviewFailure::NoPullRequestFound);
         };
 
