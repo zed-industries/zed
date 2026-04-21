@@ -275,13 +275,34 @@ impl AgentSettingsContent {
     }
 
     pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
-        if !self.favorite_models.contains(&model) {
+        // Note: this is intentional to not compare using `PartialEq`here.
+        // Full equality would treat entries that differ just in thinking/effort/speed
+        // as distinct and silently produce duplicates.
+        if !self
+            .favorite_models
+            .iter()
+            .any(|m| m.provider == model.provider && m.model == model.model)
+        {
             self.favorite_models.push(model);
         }
     }
 
     pub fn remove_favorite_model(&mut self, model: &LanguageModelSelection) {
-        self.favorite_models.retain(|m| m != model);
+        self.favorite_models
+            .retain(|m| !(m.provider == model.provider && m.model == model.model));
+    }
+
+    pub fn update_favorite_model<F>(&mut self, provider: &str, model: &str, f: F)
+    where
+        F: FnOnce(&mut LanguageModelSelection),
+    {
+        if let Some(entry) = self
+            .favorite_models
+            .iter_mut()
+            .find(|m| m.provider.0 == provider && m.model == model)
+        {
+            f(entry);
+        }
     }
 
     pub fn set_tool_default_permission(&mut self, tool_id: &str, mode: ToolPermissionMode) {

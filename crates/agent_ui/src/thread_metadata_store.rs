@@ -191,7 +191,7 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
             return Ok(());
         }
 
-        let recent_workspaces = workspace_db.recent_workspaces_on_disk(fs.as_ref()).await?;
+        let recent_workspaces = workspace_db.recent_project_workspaces(fs.as_ref()).await?;
 
         let mut local_path_lists = HashSet::<PathList>::default();
         let mut remote_path_lists = HashMap::<PathList, RemoteConnectionOptions>::default();
@@ -1176,7 +1176,9 @@ impl ThreadMetadataStore {
             .and_then(|t| t.created_at)
             .unwrap_or_else(|| updated_at);
 
-        let interacted_at = existing_thread.and_then(|t| t.interacted_at);
+        let interacted_at = existing_thread
+            .map(|t| t.interacted_at)
+            .unwrap_or(Some(updated_at));
 
         let agent_id = thread_ref.connection().agent_id();
 

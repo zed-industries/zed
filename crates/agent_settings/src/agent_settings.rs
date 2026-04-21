@@ -210,7 +210,48 @@ impl AgentSettings {
             .map(|sel| ModelId::new(format!("{}/{}", sel.provider.0, sel.model)))
             .collect()
     }
+}
 
+pub fn language_model_to_selection(
+    model: &Arc<dyn LanguageModel>,
+    override_selection: Option<&LanguageModelSelection>,
+) -> LanguageModelSelection {
+    let provider = model.provider_id().0.to_string().into();
+    let model_name = model.id().0.to_string();
+    match override_selection {
+        Some(current) => LanguageModelSelection {
+            provider,
+            model: model_name,
+            enable_thinking: current.enable_thinking && model.supports_thinking(),
+            effort: current
+                .effort
+                .clone()
+                .filter(|value| {
+                    model
+                        .supported_effort_levels()
+                        .iter()
+                        .any(|level| level.value.as_ref() == value.as_str())
+                })
+                .or_else(|| {
+                    model
+                        .default_effort_level()
+                        .map(|effort| effort.value.to_string())
+                }),
+            speed: current.speed.filter(|_| model.supports_fast_mode()),
+        },
+        None => LanguageModelSelection {
+            provider,
+            model: model_name,
+            enable_thinking: model.supports_thinking(),
+            effort: model
+                .default_effort_level()
+                .map(|effort| effort.value.to_string()),
+            speed: None,
+        },
+    }
+}
+
+impl AgentSettings {
     pub fn get_layout(cx: &App) -> WindowLayout {
         let store = cx.global::<SettingsStore>();
         let merged = store.merged_settings();

@@ -1889,7 +1889,10 @@ impl FakeFs {
 
             drop(repo_state);
             if emit_git_event {
-                state.emit_event([(dot_git, Some(PathEventKind::Changed))]);
+                state.emit_event([(
+                    dot_git.join("fake_git_repo_event"),
+                    Some(PathEventKind::Changed),
+                )]);
             }
 
             Ok(result)
@@ -1944,7 +1947,10 @@ impl FakeFs {
 
             if emit_git_event {
                 drop(repo_state);
-                state.emit_event([(canonical_path, Some(PathEventKind::Changed))]);
+                state.emit_event([(
+                    canonical_path.join("fake_git_repo_event"),
+                    Some(PathEventKind::Changed),
+                )]);
             }
 
             Ok(result)

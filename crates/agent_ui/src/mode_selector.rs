@@ -197,7 +197,7 @@ impl Render for ModeSelector {
                     }
                 }),
             )
-            .anchor(gpui::Corner::BottomRight)
+            .anchor(gpui::Anchor::BottomRight)
             .with_handle(self.menu_handle.clone())
             .offset(gpui::Point {
                 x: px(0.0),

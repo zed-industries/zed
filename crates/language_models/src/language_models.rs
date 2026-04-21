@@ -119,19 +119,6 @@ pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
         );
     });
 
-    cx.subscribe(
-        &registry,
-        |_registry, event: &language_model::Event, cx| match event {
-            language_model::Event::ProviderStateChanged(_)
-            | language_model::Event::AddedProvider(_)
-            | language_model::Event::RemovedProvider(_) => {
-                update_environment_fallback_model(cx);
-            }
-            _ => {}
-        },
-    )
-    .detach();
-
     let registry = registry.downgrade();
     cx.observe_global::<SettingsStore>(move |cx| {
         let Some(registry) = registry.upgrade() else {

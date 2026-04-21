@@ -11,7 +11,7 @@ use editor::{
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt, App, AsyncWindowContext, Corner, Entity, FocusHandle,
+    Action, Anchor, Animation, AnimationExt, App, AsyncWindowContext, Entity, FocusHandle,
     Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
     ease_in_out, pulsating_between,
 };
@@ -172,7 +172,7 @@ impl Render for EditPredictionButton {
                             }
                             .ok()
                         })
-                        .anchor(Corner::BottomRight)
+                        .anchor(Anchor::BottomRight)
                         .trigger_with_tooltip(
                             IconButton::new("copilot-icon", icon),
                             |_window, cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx),
@@ -216,7 +216,7 @@ impl Render for EditPredictionButton {
                             })
                             .ok()
                         })
-                        .anchor(Corner::BottomRight)
+                        .anchor(Anchor::BottomRight)
                         .trigger_with_tooltip(
                             IconButton::new("codestral-icon", IconName::AiMistral)
                                 .shape(IconButtonShape::Square)
@@ -260,7 +260,7 @@ impl Render for EditPredictionButton {
                             })
                             .ok()
                         })
-                        .anchor(Corner::BottomRight)
+                        .anchor(Anchor::BottomRight)
                         .trigger(
                             IconButton::new("openai-compatible-api-icon", IconName::AiOpenAiCompat)
                                 .shape(IconButtonShape::Square)
@@ -290,7 +290,7 @@ impl Render for EditPredictionButton {
                             })
                             .ok()
                         })
-                        .anchor(Corner::BottomRight)
+                        .anchor(Anchor::BottomRight)
                         .trigger_with_tooltip(
                             IconButton::new("ollama-icon", IconName::AiOllama)
                                 .shape(IconButtonShape::Square)
@@ -485,7 +485,7 @@ impl Render for EditPredictionButton {
                             .ok()
                         })
                     })
-                    .anchor(Corner::BottomRight)
+                    .anchor(Anchor::BottomRight)
                     .with_handle(self.popover_menu_handle.clone());
 
                 let is_refreshing = self
