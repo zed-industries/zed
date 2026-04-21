@@ -3525,4 +3525,33 @@ mod tests {
             }
         }
     }
+
+    #[gpui::test]
+    fn test_heading_font_sizes_are_distinct(cx: &mut TestAppContext) {
+        let rendered = render_markdown("# H1\n\n## H2\n\n### H3\n\nBody text", cx);
+
+        assert!(
+            rendered.lines.len() >= 4,
+            "expected at least 4 rendered lines, got {}",
+            rendered.lines.len()
+        );
+
+        let h1_line_height = rendered.lines[0].layout.line_height();
+        let h2_line_height = rendered.lines[1].layout.line_height();
+        let h3_line_height = rendered.lines[2].layout.line_height();
+        let body_line_height = rendered.lines[3].layout.line_height();
+
+        assert!(
+            h1_line_height > h2_line_height,
+            "H1 line height ({h1_line_height:?}) should be greater than H2 ({h2_line_height:?})"
+        );
+        assert!(
+            h2_line_height > h3_line_height,
+            "H2 line height ({h2_line_height:?}) should be greater than H3 ({h3_line_height:?})"
+        );
+        assert!(
+            h3_line_height > body_line_height,
+            "H3 line height ({h3_line_height:?}) should be greater than body text ({body_line_height:?})"
+        );
+    }
 }
