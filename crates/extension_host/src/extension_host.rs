@@ -1743,7 +1743,7 @@ impl ExtensionStore {
             }
 
             for (adapter_name, meta) in loaded_extension.manifest.debug_adapters.iter() {
-                let schema_path = extension::build_debug_adapter_schema_path(adapter_name, meta);
+                let schema_path = extension::build_debug_adapter_schema_path(adapter_name, meta)?;
 
                 if fs.is_file(&src_dir.join(&schema_path)).await {
                     if let Some(parent) = schema_path.parent() {

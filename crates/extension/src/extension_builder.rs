@@ -108,7 +108,7 @@ impl ExtensionBuilder {
 
         for (debug_adapter_name, meta) in &mut extension_manifest.debug_adapters {
             let debug_adapter_schema_path =
-                extension_dir.join(build_debug_adapter_schema_path(debug_adapter_name, meta));
+                extension_dir.join(build_debug_adapter_schema_path(debug_adapter_name, meta)?);
 
             let debug_adapter_schema = fs::read_to_string(&debug_adapter_schema_path)
                 .with_context(|| {

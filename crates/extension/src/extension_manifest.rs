@@ -196,13 +196,13 @@ impl ExtensionManifest {
 pub fn build_debug_adapter_schema_path(
     adapter_name: &Arc<str>,
     meta: &DebugAdapterManifestEntry,
-) -> RelPathBuf {
-    meta.schema_path.clone().unwrap_or_else(|| {
-        Path::new("debug_adapter_schemas")
+) -> anyhow::Result<RelPathBuf> {
+    match &meta.schema_path {
+        Some(path) => Ok(path.clone()),
+        None => Path::new("debug_adapter_schemas")
             .join(Path::new(adapter_name.as_ref()).with_extension("json"))
-            .to_rel_path_buf()
-            .expect("debug adapter schema path should be a valid relative path")
-    })
+            .to_rel_path_buf(),
+    }
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -486,7 +486,7 @@ mod tests {
             schema_path: Some(rel_path_buf("foo/bar")),
         };
 
-        let path = build_debug_adapter_schema_path(&adapter_name, &entry);
+        let path = build_debug_adapter_schema_path(&adapter_name, &entry).unwrap();
         assert_eq!(path, rel_path_buf("foo/bar"));
     }
 
@@ -495,7 +495,7 @@ mod tests {
         let adapter_name = Arc::from("my_adapter");
         let entry = DebugAdapterManifestEntry { schema_path: None };
 
-        let path = build_debug_adapter_schema_path(&adapter_name, &entry);
+        let path = build_debug_adapter_schema_path(&adapter_name, &entry).unwrap();
         assert_eq!(path, rel_path_buf("debug_adapter_schemas/my_adapter.json"));
     }
 

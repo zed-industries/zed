@@ -247,7 +247,7 @@ async fn copy_extension_resources(
 
     if !manifest.debug_adapters.is_empty() {
         for (debug_adapter, entry) in &manifest.debug_adapters {
-            let schema_path = extension::build_debug_adapter_schema_path(debug_adapter, entry);
+            let schema_path = extension::build_debug_adapter_schema_path(debug_adapter, entry)?;
             let parent = schema_path
                 .parent()
                 .with_context(|| format!("invalid empty schema path for {debug_adapter}"))?;
