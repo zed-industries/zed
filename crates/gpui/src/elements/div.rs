@@ -733,6 +733,78 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Set the WAI-ARIA role for this element.
+    fn role(mut self, role: crate::Role) -> Self {
+        self.interactivity().accessibility().role = Some(role);
+        self
+    }
+
+    /// Set `aria-label` — the accessible name for this element.
+    fn aria_label(mut self, label: impl Into<crate::SharedString>) -> Self {
+        self.interactivity().accessibility().label = Some(label.into());
+        self
+    }
+
+    /// Set `aria-description`.
+    fn aria_description(mut self, desc: impl Into<crate::SharedString>) -> Self {
+        self.interactivity().accessibility().description = Some(desc.into());
+        self
+    }
+
+    /// Set `aria-checked` (maps to accesskit `Toggled`).
+    fn aria_checked(mut self, checked: bool) -> Self {
+        self.interactivity().accessibility().checked = Some(checked);
+        self
+    }
+
+    /// Set `aria-disabled`.
+    fn aria_disabled(mut self, disabled: bool) -> Self {
+        self.interactivity().accessibility().disabled = Some(disabled);
+        self
+    }
+
+    /// Set `aria-expanded`.
+    fn aria_expanded(mut self, expanded: bool) -> Self {
+        self.interactivity().accessibility().expanded = Some(expanded);
+        self
+    }
+
+    /// Set `aria-hidden` — exclude this element from the accessibility tree.
+    fn aria_hidden(mut self) -> Self {
+        self.interactivity().accessibility().hidden = true;
+        self
+    }
+
+    /// Set `aria-pressed` (maps to accesskit `Toggled`).
+    fn aria_pressed(mut self, pressed: bool) -> Self {
+        self.interactivity().accessibility().pressed = Some(pressed);
+        self
+    }
+
+    /// Set `aria-readonly`.
+    fn aria_readonly(mut self, readonly: bool) -> Self {
+        self.interactivity().accessibility().readonly = Some(readonly);
+        self
+    }
+
+    /// Set `aria-required`.
+    fn aria_required(mut self, required: bool) -> Self {
+        self.interactivity().accessibility().required = Some(required);
+        self
+    }
+
+    /// Set `aria-selected`.
+    fn aria_selected(mut self, selected: bool) -> Self {
+        self.interactivity().accessibility().selected = Some(selected);
+        self
+    }
+
+    /// Set the `aria-live` region behavior.
+    fn aria_live(mut self, live: crate::Live) -> Self {
+        self.interactivity().accessibility().live = Some(live);
+        self
+    }
+
     /// Set the keymap context for this element. This will be used to determine
     /// which action to dispatch from the keymap.
     fn key_context<C, E>(mut self, key_context: C) -> Self
@@ -1718,6 +1790,7 @@ pub struct Interactivity {
     pub(crate) tab_index: Option<isize>,
     pub(crate) tab_group: bool,
     pub(crate) tab_stop: bool,
+    pub(crate) accessibility: Option<Box<crate::Accessibility>>,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1727,6 +1800,10 @@ pub struct Interactivity {
 }
 
 impl Interactivity {
+    fn accessibility(&mut self) -> &mut crate::Accessibility {
+        self.accessibility.get_or_insert_with(Default::default)
+    }
+
     /// Layout this element according to this interactivity state's configured styles
     pub fn request_layout(
         &mut self,
@@ -1879,7 +1956,34 @@ impl Interactivity {
 
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
+
+                            let pushed_a11y = if let Some(props) = &self.accessibility {
+                                if !props.hidden {
+                                    let node_id = window.next_accessibility_node_id();
+                                    let parent_id =
+                                        window.accessibility_node_stack.last().copied();
+                                    let is_focused = self
+                                        .tracked_focus_handle
+                                        .as_ref()
+                                        .map(|h| window.focus == Some(h.id))
+                                        .unwrap_or(false);
+                                    let node = props.to_node(bounds, is_focused, None);
+                                    window.push_accessibility_node(node_id, node, parent_id);
+                                    window.accessibility_node_stack.push(node_id);
+                                    true
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+
                             let result = f(&style, scroll_offset, hitbox, window, cx);
+
+                            if pushed_a11y {
+                                window.accessibility_node_stack.pop();
+                            }
+
                             (result, element_state)
                         },
                     )

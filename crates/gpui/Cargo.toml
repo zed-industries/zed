@@ -45,6 +45,7 @@ path = "src/gpui.rs"
 doctest = false
 
 [dependencies]
+accesskit = "0.24"
 anyhow.workspace = true
 async-task = "4.7"
 backtrace = { workspace = true, optional = true }
@@ -247,3 +248,7 @@ path = "examples/list_example.rs"
 [[example]]
 name = "mouse_pressure"
 path = "examples/mouse_pressure.rs"
+
+[[example]]
+name = "accessibility"
+path = "examples/accessibility.rs"

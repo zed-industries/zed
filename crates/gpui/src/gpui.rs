@@ -9,6 +9,7 @@ extern crate self as gpui;
 pub static GPUI_MANIFEST_DIR: &'static str = env!("CARGO_MANIFEST_DIR");
 #[macro_use]
 mod action;
+mod accessibility;
 mod app;
 
 mod arena;
@@ -86,6 +87,10 @@ pub use ctor::ctor;
 pub use element::*;
 pub use elements::*;
 pub use executor::*;
+pub use accessibility::Accessibility;
+pub use accesskit::{Live, Role};
+#[cfg(any(feature = "inspector", debug_assertions))]
+pub use window::AccessibilityTree;
 pub use geometry::*;
 pub use global::*;
 pub use gpui_macros::{

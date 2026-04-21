@@ -930,6 +930,17 @@ enum InputModality {
     Keyboard,
 }
 
+/// A snapshot of the accessibility tree, returned by [`Window::accessibility_tree`].
+#[cfg(any(feature = "inspector", debug_assertions))]
+pub struct AccessibilityTree(pub String);
+
+#[cfg(any(feature = "inspector", debug_assertions))]
+impl std::fmt::Display for AccessibilityTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
@@ -997,6 +1008,13 @@ pub struct Window {
     /// The hitbox that has captured the pointer, if any.
     /// While captured, mouse events route to this hitbox regardless of hit testing.
     captured_hitbox: Option<HitboxId>,
+    pub(crate) accessibility_frame: crate::accessibility::AccessibilityFrame,
+    pub(crate) accessibility_node_stack: Vec<accesskit::NodeId>,
+    pub(crate) accessibility_node_counter: u64,
+    pub(crate) accessibility_adapter:
+        Option<Box<dyn crate::accessibility::AccessibilityAdapter>>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) last_accessibility_frame: Option<crate::accessibility::AccessibilityFrame>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
 }
@@ -1604,6 +1622,12 @@ impl Window {
             client_inset: None,
             image_cache_stack: Vec::new(),
             captured_hitbox: None,
+            accessibility_frame: crate::accessibility::AccessibilityFrame::new(),
+            accessibility_node_stack: Vec::new(),
+            accessibility_node_counter: 1,
+            accessibility_adapter: None,
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            last_accessibility_frame: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
         })
@@ -1650,6 +1674,31 @@ impl ContentMask<Pixels> {
 }
 
 impl Window {
+    pub(crate) fn next_accessibility_node_id(&mut self) -> accesskit::NodeId {
+        let id = self.accessibility_node_counter;
+        self.accessibility_node_counter += 1;
+        accesskit::NodeId(id)
+    }
+
+    pub(crate) fn push_accessibility_node(
+        &mut self,
+        node_id: accesskit::NodeId,
+        node: accesskit::Node,
+        parent_id: Option<accesskit::NodeId>,
+    ) {
+        self.accessibility_frame
+            .entries
+            .push(crate::accessibility::AccessibilityEntry { node_id, node, parent_id });
+    }
+
+    fn take_accessibility_frame(&mut self) -> crate::accessibility::AccessibilityFrame {
+        self.accessibility_node_counter = 1;
+        std::mem::replace(
+            &mut self.accessibility_frame,
+            crate::accessibility::AccessibilityFrame::new(),
+        )
+    }
+
     fn mark_view_dirty(&mut self, view_id: EntityId) {
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
         // should already be dirty.
@@ -2451,7 +2500,30 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::None);
         self.needs_present.set(true);
 
+        self.commit_accessibility_frame();
+
         ArenaClearNeeded::new(&cx.element_arena)
+    }
+
+    fn commit_accessibility_frame(&mut self) {
+        let frame = self.take_accessibility_frame();
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            self.last_accessibility_frame = if frame.is_empty() {
+                None
+            } else {
+                Some(crate::accessibility::AccessibilityFrame {
+                    entries: frame.entries.clone(),
+                    root_id: frame.root_id,
+                    focus: frame.focus,
+                })
+            };
+        }
+        if let Some(adapter) = &mut self.accessibility_adapter {
+            if !frame.is_empty() {
+                adapter.update(frame.into_tree_update());
+            }
+        }
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
@@ -2483,6 +2555,18 @@ impl Window {
         self.input_latency_tracker.record_frame_presented();
         self.needs_present.set(false);
         profiling::finish_frame!();
+    }
+
+    /// Returns the current accessibility tree as indented text.
+    ///
+    /// Only available in debug builds. Follows Apple's naming convention:
+    /// <https://developer.apple.com/documentation/appkit/nsaccessibility>
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn accessibility_tree(&self) -> AccessibilityTree {
+        match &self.last_accessibility_frame {
+            Some(frame) => AccessibilityTree(frame.format_tree()),
+            None => AccessibilityTree(String::from("[no accessibility frame]")),
+        }
     }
 
     /// Returns a snapshot of the current input-latency histograms.
