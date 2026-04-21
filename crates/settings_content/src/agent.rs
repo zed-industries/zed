@@ -326,6 +326,13 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub show_turn_stats: Option<bool>,
+    /// Whether to keep the most recent user message visible as a sticky header
+    /// when it has scrolled out of view in the agent thread.
+    ///
+    /// Clicking the sticky header scrolls back to the original message.
+    ///
+    /// Default: false
+    pub sticky_user_messages: Option<bool>,
     /// Whether to show the merge conflict indicator in the status bar
     /// that offers to resolve conflicts using the agent.
     ///

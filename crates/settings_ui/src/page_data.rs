@@ -8223,6 +8223,25 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Sticky User Messages",
+                description: "Whether to keep the most recent user message visible as a sticky header when it has scrolled out of view in the agent thread.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("agent.sticky_user_messages"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.sticky_user_messages.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .sticky_user_messages = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Show Merge Conflict Indicator",
                 description: "Whether to show the merge conflict indicator in the status bar that offers to resolve conflicts using the agent.",
                 field: Box::new(SettingField {

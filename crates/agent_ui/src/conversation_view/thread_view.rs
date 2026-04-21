@@ -22,9 +22,7 @@ use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
 
 use db::kvp::KeyValueStore;
-use gpui::List;
-use gpui::Stateful;
-use gpui::TaskExt;
+use gpui::{Bounds, List, ListOffset, Stateful, TaskExt};
 use heapless::Vec as ArrayVec;
 use language_model::{
     FastModeConfirmation, LanguageModel, LanguageModelEffortLevel, LanguageModelId,
@@ -41,11 +39,19 @@ use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 use super::*;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
+const STICKY_USER_MESSAGE_HEADER_HEIGHT: Pixels = px(36.0);
 
 #[derive(Default)]
 struct ThreadFeedbackState {
     feedback: Option<ThreadFeedback>,
     comments_editor: Option<Entity<Editor>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct StickyUserMessageState {
+    pub(crate) message_index: usize,
+    pub(crate) message_preview: String,
+    pub(crate) has_more_message_content: bool,
 }
 
 impl ThreadFeedbackState {
@@ -8912,6 +8918,203 @@ impl ThreadView {
             }))
     }
 
+    fn sticky_user_message_preview(markdown: &str) -> (String, bool) {
+        let mut first_non_empty_line = None;
+        let mut has_more_message_content = false;
+
+        for line in markdown.lines() {
+            let trimmed_line = line.trim();
+            if trimmed_line.is_empty() {
+                continue;
+            }
+
+            if first_non_empty_line.is_none() {
+                first_non_empty_line = Some(trimmed_line.to_string());
+            } else {
+                has_more_message_content = true;
+                break;
+            }
+        }
+
+        (
+            first_non_empty_line.unwrap_or_else(|| "Message".to_string()),
+            has_more_message_content,
+        )
+    }
+
+    fn sticky_user_message_candidate_index(
+        entry_count: usize,
+        mut is_user_message: impl FnMut(usize) -> bool,
+        top_item_index: usize,
+        top_user_bounds: Option<Bounds<Pixels>>,
+        viewport_top: Pixels,
+    ) -> Option<usize> {
+        if top_user_bounds.is_some_and(|bounds| {
+            bounds.top() < viewport_top
+                && (bounds.bottom() - viewport_top).max(px(0.0))
+                    <= STICKY_USER_MESSAGE_HEADER_HEIGHT
+        }) {
+            Some(top_item_index)
+        } else {
+            let search_end = top_item_index.min(entry_count);
+            (0..search_end).rev().find(|&index| is_user_message(index))
+        }
+    }
+
+    fn sticky_user_message_hidden_by_next_message(
+        next_visible_user_top: Option<Pixels>,
+        viewport_top: Pixels,
+    ) -> bool {
+        next_visible_user_top
+            .is_some_and(|top| top < viewport_top + STICKY_USER_MESSAGE_HEADER_HEIGHT)
+    }
+
+    pub(crate) fn sticky_user_message_state(&self, cx: &App) -> Option<StickyUserMessageState> {
+        if !AgentSettings::get_global(cx).sticky_user_messages {
+            return None;
+        }
+
+        let entries = self.thread.read(cx).entries();
+        if entries.is_empty() {
+            return None;
+        }
+
+        let top_item_index = self.list_state.logical_scroll_top().item_ix;
+        let viewport_top = self.list_state.viewport_bounds().top();
+        let top_user_bounds = entries
+            .get(top_item_index)
+            .filter(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+            .and_then(|_| self.list_state.bounds_for_item(top_item_index));
+
+        let message_index = Self::sticky_user_message_candidate_index(
+            entries.len(),
+            |index| matches!(entries.get(index), Some(AgentThreadEntry::UserMessage(_))),
+            top_item_index,
+            top_user_bounds,
+            viewport_top,
+        )?;
+
+        let next_visible_user_index = ((message_index + 1).max(top_item_index).min(entries.len())
+            ..entries.len())
+            .find(|&index| matches!(entries.get(index), Some(AgentThreadEntry::UserMessage(_))));
+
+        if Self::sticky_user_message_hidden_by_next_message(
+            next_visible_user_index
+                .and_then(|index| self.list_state.bounds_for_item(index))
+                .map(|bounds| bounds.top()),
+            viewport_top,
+        ) {
+            return None;
+        }
+
+        let message = match entries.get(message_index) {
+            Some(AgentThreadEntry::UserMessage(message)) => message,
+            _ => return None,
+        };
+
+        let (message_preview, has_more_message_content) =
+            Self::sticky_user_message_preview(&message.content.to_markdown(cx));
+
+        Some(StickyUserMessageState {
+            message_index,
+            message_preview,
+            has_more_message_content,
+        })
+    }
+
+    fn render_sticky_user_message(
+        &self,
+        state: StickyUserMessageState,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let max_content_width = AgentSettings::get_global(cx).max_content_width;
+        let StickyUserMessageState {
+            message_index,
+            message_preview,
+            has_more_message_content,
+        } = state;
+
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .child(
+                h_flex().w_full().justify_center().child(
+                    h_flex()
+                        .id("sticky-user-request-header")
+                        .cursor_pointer()
+                        .w_full()
+                        .when_some(max_content_width, |this, max_w| this.max_w(max_w))
+                        .px_2()
+                        .h(STICKY_USER_MESSAGE_HEADER_HEIGHT)
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .h_full()
+                                .items_center()
+                                .justify_between()
+                                .gap_3()
+                                .px_3()
+                                .rounded_b_md()
+                                .bg(cx.theme().colors().editor_background)
+                                .border_1()
+                                .border_t_0()
+                                .border_color(cx.theme().colors().border)
+                                .hover(|style| {
+                                    style.border_color(
+                                        cx.theme().colors().border_focused.opacity(0.8),
+                                    )
+                                })
+                                .child(
+                                    h_flex()
+                                        .min_w_0()
+                                        .flex_1()
+                                        .gap_1()
+                                        .items_center()
+                                        .child(
+                                            Label::new(message_preview)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Default)
+                                                .truncate(),
+                                        )
+                                        .when(has_more_message_content, |this| {
+                                            this.child(
+                                                Label::new("…")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                        }),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .flex_shrink_0()
+                                        .child(
+                                            Label::new("Jump to Message")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Icon::new(IconName::ForwardArrowUp)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                ),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.list_state.scroll_to(ListOffset {
+                                item_ix: message_index,
+                                offset_in_item: px(0.0),
+                            });
+                            cx.notify();
+                        })),
+                ),
+            )
+            .into_any_element()
+    }
+
     fn render_diff_loading(&self, cx: &Context<Self>) -> AnyElement {
         let bar = |n: u64, width_class: &str| {
             let bg_color = cx.theme().colors().element_active;
@@ -10992,6 +11195,9 @@ impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
         let list_state = self.list_state.clone();
+        let sticky_user_message = self
+            .sticky_user_message_state(cx)
+            .map(|state| self.render_sticky_user_message(state, cx));
 
         let conversation = v_flex()
             .when(self.resumed_without_history, |this| {
@@ -11001,8 +11207,17 @@ impl Render for ThreadView {
                 if has_messages {
                     this.flex_1()
                         .size_full()
-                        .child(self.render_entries(cx))
-                        .vertical_scrollbar_for(&list_state, window, cx)
+                        .child(
+                            v_flex()
+                                .relative()
+                                .flex_1()
+                                .overflow_hidden()
+                                .child(self.render_entries(cx).size_full())
+                                .when_some(sticky_user_message, |this, sticky_header| {
+                                    this.child(sticky_header)
+                                })
+                                .vertical_scrollbar_for(&list_state, window, cx),
+                        )
                         .into_any()
                 } else {
                     this.into_any()
@@ -11628,4 +11843,75 @@ pub(crate) fn reset_fast_mode_warnings(cx: &mut App) {
             .log_err();
     })
     .detach();
+}
+
+#[cfg(test)]
+mod sticky_user_message_tests {
+    use super::*;
+    use gpui::point;
+
+    #[test]
+    fn sticky_user_message_stays_hidden_while_top_message_is_still_fully_visible() {
+        let viewport_top = px(100.0);
+        let top_user_bounds = Some(Bounds::from_corners(
+            point(px(0.0), viewport_top),
+            point(px(400.0), viewport_top + px(24.0)),
+        ));
+
+        let candidate = ThreadView::sticky_user_message_candidate_index(
+            4,
+            |index| matches!(index, 0 | 2),
+            2,
+            top_user_bounds,
+            viewport_top,
+        );
+
+        assert_eq!(candidate, Some(0));
+        assert!(ThreadView::sticky_user_message_hidden_by_next_message(
+            Some(viewport_top),
+            viewport_top
+        ));
+    }
+
+    #[test]
+    fn sticky_user_message_replaces_top_message_once_only_header_height_remains() {
+        let viewport_top = px(100.0);
+        let top_user_bounds = Some(Bounds::from_corners(
+            point(px(0.0), viewport_top - px(8.0)),
+            point(px(400.0), viewport_top + px(28.0)),
+        ));
+
+        let candidate = ThreadView::sticky_user_message_candidate_index(
+            4,
+            |index| matches!(index, 0 | 2),
+            2,
+            top_user_bounds,
+            viewport_top,
+        );
+
+        assert_eq!(candidate, Some(2));
+        assert!(!ThreadView::sticky_user_message_hidden_by_next_message(
+            None,
+            viewport_top
+        ));
+    }
+
+    #[test]
+    fn sticky_user_message_hides_when_next_message_enters_sticky_zone() {
+        let viewport_top = px(100.0);
+
+        let candidate = ThreadView::sticky_user_message_candidate_index(
+            4,
+            |index| matches!(index, 0 | 2),
+            1,
+            None,
+            viewport_top,
+        );
+
+        assert_eq!(candidate, Some(0));
+        assert!(ThreadView::sticky_user_message_hidden_by_next_message(
+            Some(viewport_top + px(20.0)),
+            viewport_top
+        ));
+    }
 }
