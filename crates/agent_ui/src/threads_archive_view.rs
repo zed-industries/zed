@@ -325,9 +325,7 @@ impl ThreadsArchiveView {
         self.list_state.reset(items.len());
         self.items = items;
 
-        if !preserve {
-            self.hovered_index = None;
-        } else if let Some(ix) = self.hovered_index {
+        if let Some(ix) = self.hovered_index {
             if ix >= self.items.len() || !self.is_selectable_item(ix) {
                 self.hovered_index = None;
             }
@@ -649,12 +647,15 @@ impl ThreadsArchiveView {
                     .focused(is_focused)
                     .hovered(is_hovered)
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                        if *is_hovered {
-                            this.hovered_index = Some(ix);
-                        } else if this.hovered_index == Some(ix) {
-                            this.hovered_index = None;
+                        let previously_hovered = this.hovered_index;
+                        this.hovered_index = if *is_hovered {
+                            Some(ix)
+                        } else {
+                            previously_hovered.filter(|&i| i != ix)
+                        };
+                        if this.hovered_index != previously_hovered {
+                            cx.notify();
                         }
-                        cx.notify();
                     }));
 
                 if is_restoring {
