@@ -180,6 +180,20 @@ struct PendingThreadRestoration {
     _subscription: Subscription,
 }
 
+fn agent_is_registered(agent: &Agent, project: &Entity<Project>, cx: &App) -> bool {
+    match agent {
+        Agent::NativeAgent => true,
+        Agent::Custom { id } => project
+            .read(cx)
+            .agent_server_store()
+            .read(cx)
+            .agent_source(id)
+            .is_some(),
+        #[cfg(any(test, feature = "test-support"))]
+        Agent::Stub => true,
+    }
+}
+
 pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
@@ -888,14 +902,7 @@ impl AgentPanel {
                         panel.update(cx, |panel, cx| {
                             panel.selected_agent = agent.clone();
 
-                            let is_ready = agent.is_native()
-                                || panel
-                                    .project
-                                    .read(cx)
-                                    .agent_server_store()
-                                    .read(cx)
-                                    .agent_source(&agent.id())
-                                    .is_some();
+                            let is_ready = agent_is_registered(&agent, &panel.project, cx);
 
                             if is_ready {
                                 panel.load_agent_thread(
@@ -2288,16 +2295,7 @@ impl AgentPanel {
         let thread_info = &pending.thread_info;
         let agent = thread_info.agent_type.clone();
 
-        let is_ready = agent.is_native()
-            || self
-                .project
-                .read(cx)
-                .agent_server_store()
-                .read(cx)
-                .agent_source(&agent.id())
-                .is_some();
-
-        if !is_ready {
+        if !agent_is_registered(&agent, &self.project, cx) {
             self.pending_thread_restoration = Some(pending);
             return;
         }
@@ -3912,6 +3910,9 @@ mod tests {
     use gpui::{App, TestAppContext, VisualTestContext};
     use parking_lot::Mutex;
     use project::Project;
+    use project::agent_server_store::{
+        AgentServerCommand, ExternalAgentEntry, ExternalAgentServer, ExternalAgentSource,
+    };
     use std::any::Any;
 
     use serde_json::json;
@@ -3919,6 +3920,47 @@ mod tests {
     use std::sync::Arc;
     use std::time::Instant;
     use workspace::MultiWorkspace;
+
+    fn register_stub_external_agent(
+        project: &Entity<Project>,
+        agent_id: AgentId,
+        cx: &mut VisualTestContext,
+    ) {
+        struct StubExternalAgentServer;
+
+        impl ExternalAgentServer for StubExternalAgentServer {
+            fn get_command(
+                &self,
+                _extra_args: Vec<String>,
+                _extra_env: HashMap<String, String>,
+                _cx: &mut gpui::AsyncApp,
+            ) -> gpui::Task<Result<AgentServerCommand>> {
+                gpui::Task::ready(Err(anyhow!("stub external agent is not runnable")))
+            }
+
+            fn as_any(&self) -> &dyn Any {
+                self
+            }
+
+            fn as_any_mut(&mut self) -> &mut dyn Any {
+                self
+            }
+        }
+
+        project.update(cx, |project, cx| {
+            project.agent_server_store().update(cx, |store, _cx| {
+                store.external_agents.insert(
+                    agent_id,
+                    ExternalAgentEntry::new(
+                        Box::new(StubExternalAgentServer),
+                        ExternalAgentSource::Custom,
+                        None,
+                        None,
+                    ),
+                );
+            });
+        });
+    }
 
     #[derive(Clone, Default)]
     struct SessionTrackingConnection {
@@ -4146,6 +4188,8 @@ mod tests {
         panel_a.update(cx, |panel, cx| panel.serialize(cx));
         panel_b.update(cx, |panel, cx| panel.serialize(cx));
         cx.run_until_parked();
+
+        register_stub_external_agent(&project_a, "Test".into(), cx);
 
         // Load fresh panels for each workspace and verify independent state.
         let async_cx = cx.update(|window, cx| window.to_async(cx));
