@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use ui::{div, prelude::*};
+use ui::{SpinnerLabel, div, prelude::*};
 
 use crate::CsvPreviewView;
 
@@ -15,7 +15,8 @@ impl Render for CsvPreviewView {
             .track_focus(&self.focus_handle)
             .child(self.render_settings_panel(window, cx))
             .child({
-                if self.engine.contents.number_of_cols == 0 {
+                let is_parsing = self.is_parsing;
+                if is_parsing || self.engine.contents.number_of_cols == 0 {
                     div()
                         .flex()
                         .items_center()
@@ -24,7 +25,15 @@ impl Render for CsvPreviewView {
                         .text_ui(cx)
                         .font_buffer(cx)
                         .text_color(cx.theme().colors().text_muted)
-                        .child("No CSV content to display")
+                        .when(is_parsing, |div| {
+                            div.child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(SpinnerLabel::new())
+                                    .child("Loading…"),
+                            )
+                        })
+                        .when(!is_parsing, |div| div.child("No CSV content to display"))
                         .into_any_element()
                 } else {
                     self.create_table(&self.column_widths.widths, cx)

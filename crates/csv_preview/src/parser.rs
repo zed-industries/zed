@@ -25,6 +25,7 @@ impl CsvPreviewView {
         cx: &mut Context<Self>,
     ) {
         let editor = self.active_editor_state.editor.clone();
+        self.is_parsing = true;
         self.parsing_task = Some(self.parse_csv_in_background(wait_for_debounce, editor, cx));
     }
 
@@ -87,6 +88,7 @@ impl CsvPreviewView {
                 view.sync_column_widths(cx);
                 view.last_parse_end_time = Some(parse_end_time);
 
+                view.is_parsing = false;
                 view.apply_filter_sort(cx);
                 cx.notify();
             })
