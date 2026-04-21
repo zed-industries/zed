@@ -30,8 +30,7 @@ use tree_sitter::{
 /// Tree-sitter walks the subtree of the root node that's intersected by the
 /// containing range, so keeping this bounded matters when a file contains a
 /// large malformed region (e.g. an ERROR node that covers thousands of
-/// lines). The value is chosen so that a small viewport-sized query ends up
-/// with roughly a 16 KiB traversal window.
+/// lines).
 pub const MAX_CONTEXT_BYTES: usize = 8 * 1024;
 
 pub struct SyntaxMap {
