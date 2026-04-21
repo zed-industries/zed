@@ -93,7 +93,9 @@ impl ReportSummary {
                 .filter(|entry| {
                     matches!(
                         entry.reason,
-                        Err(ReviewFailure::NoPullRequestFound | ReviewFailure::Unreviewed)
+                        Err(ReviewFailure::NoPullRequestFound
+                            | ReviewFailure::Unreviewed
+                            | ReviewFailure::UnexpectedZippyAction(_))
                     )
                 })
                 .count(),

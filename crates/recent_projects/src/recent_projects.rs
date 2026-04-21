@@ -96,7 +96,7 @@ pub async fn get_recent_projects(
     db: &WorkspaceDb,
 ) -> Vec<RecentProjectEntry> {
     let workspaces = db
-        .recent_workspaces_on_disk(fs.as_ref())
+        .recent_project_workspaces(fs.as_ref())
         .await
         .unwrap_or_default();
 
@@ -610,7 +610,7 @@ impl RecentProjects {
         cx.spawn_in(window, async move |this, cx| {
             let Some(fs) = fs else { return };
             let workspaces = db
-                .recent_workspaces_on_disk(fs.as_ref())
+                .recent_project_workspaces(fs.as_ref())
                 .await
                 .log_err()
                 .unwrap_or_default();
@@ -780,7 +780,7 @@ impl RecentProjects {
                         let paths_to_add = paths.paths().to_vec();
                         picker
                             .delegate
-                            .add_project_to_workspace(paths_to_add, window, cx);
+                            .add_paths_to_project(paths_to_add, window, cx);
                     }
                 }
             }
@@ -1509,7 +1509,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .icon_size(IconSize::Small)
                                 .tooltip(move |_, cx| {
                                     Tooltip::with_meta(
-                                        "Add Project to this Workspace",
+                                        "Add Folders to this Project",
                                         None,
                                         "As a multi-root folder project",
                                         cx,
@@ -1520,7 +1520,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     cx.listener(move |picker, _event, window, cx| {
                                         cx.stop_propagation();
                                         window.prevent_default();
-                                        picker.delegate.add_project_to_workspace(
+                                        picker.delegate.add_paths_to_project(
                                             paths_to_add.clone(),
                                             window,
                                             cx,
@@ -1982,7 +1982,7 @@ fn open_local_project(
 }
 
 impl RecentProjectsDelegate {
-    fn add_project_to_workspace(
+    fn add_paths_to_project(
         &mut self,
         paths: Vec<PathBuf>,
         window: &mut Window,
@@ -2039,7 +2039,7 @@ impl RecentProjectsDelegate {
                 db.delete_workspace_by_id(workspace_id).await.log_err();
                 let Some(fs) = fs else { return };
                 let workspaces = db
-                    .recent_workspaces_on_disk(fs.as_ref())
+                    .recent_project_workspaces(fs.as_ref())
                     .await
                     .unwrap_or_default();
                 let workspaces =

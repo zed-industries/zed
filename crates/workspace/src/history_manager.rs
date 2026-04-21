@@ -44,7 +44,7 @@ impl HistoryManager {
         let db = WorkspaceDb::global(cx);
         cx.spawn(async move |cx| {
             let recent_folders = db
-                .recent_workspaces_on_disk(fs.as_ref())
+                .recent_project_workspaces(fs.as_ref())
                 .await
                 .unwrap_or_default()
                 .into_iter()
