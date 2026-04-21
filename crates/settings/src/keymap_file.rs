@@ -102,6 +102,32 @@ impl KeymapSection {
     }
 }
 
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(transparent)]
+pub struct ActionName(String);
+
+impl JsonSchema for ActionName {
+    fn schema_name() -> Cow<'static, str> {
+        "ActionName".into()
+    }
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!(true)
+    }
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(transparent)]
+pub struct ActionWithArguments(Value);
+
+impl JsonSchema for ActionWithArguments {
+    fn schema_name() -> Cow<'static, str> {
+        "ActionWithArguments".into()
+    }
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!(true)
+    }
+}
+
 /// Keymap action as a JSON value, since it can either be null for no action, or the name of the
 /// action, or an array of the name of the action and the action input.
 ///
@@ -698,10 +724,8 @@ impl KeymapFile {
             "minItems": 2,
             "maxItems": 2
         });
-        let mut keymap_action_alternatives = vec![
-            empty_action_name.clone(),
-            empty_action_name_with_input.clone(),
-        ];
+        let mut action_name_alternatives = vec![empty_action_name.clone()];
+        let mut action_with_arguments_alternatives = vec![empty_action_name_with_input.clone()];
         let mut unbind_target_action_alternatives =
             vec![empty_action_name, empty_action_name_with_input];
 
@@ -731,7 +755,7 @@ impl KeymapFile {
             if let Some(description) = &description {
                 add_description(&mut plain_action, description);
             }
-            keymap_action_alternatives.push(plain_action.clone());
+            action_name_alternatives.push(plain_action.clone());
             if include_in_unbind_target_schema {
                 unbind_target_action_alternatives.push(plain_action);
             }
@@ -760,7 +784,7 @@ impl KeymapFile {
                     "minItems": 2,
                     "maxItems": 2
                 });
-                keymap_action_alternatives.push(action_with_input.clone());
+                action_with_arguments_alternatives.push(action_with_input.clone());
                 if include_in_unbind_target_schema {
                     unbind_target_action_alternatives.push(action_with_input);
                 }
@@ -789,7 +813,7 @@ impl KeymapFile {
                 "This action does not take input - just the action name string should be used."
                     .to_string(),
             );
-            keymap_action_alternatives.push(actions_with_empty_input);
+            action_with_arguments_alternatives.push(actions_with_empty_input);
         }
 
         if !empty_schema_unbind_target_action_names.is_empty() {
@@ -812,17 +836,22 @@ impl KeymapFile {
             unbind_target_action_alternatives.push(actions_with_empty_input);
         }
 
-        // Placing null first causes json-language-server to default assuming actions should be
-        // null, so place it last.
-        keymap_action_alternatives.push(json_schema!({
-            "type": "null"
-        }));
+        generator.definitions_mut().insert(
+            ActionName::schema_name().to_string(),
+            json!({ "anyOf": action_name_alternatives }),
+        );
+        generator.definitions_mut().insert(
+            ActionWithArguments::schema_name().to_string(),
+            json!({ "anyOf": action_with_arguments_alternatives }),
+        );
 
         generator.definitions_mut().insert(
             KeymapAction::schema_name().to_string(),
-            json!({
-                "anyOf": keymap_action_alternatives
-            }),
+            json!({ "anyOf": [
+                { "$ref": format!("#/$defs/{}", ActionName::schema_name().to_string()) },
+                { "$ref": format!("#/$defs/{}", ActionWithArguments::schema_name().to_string()) },
+                { "type": "null" }
+            ] }),
         );
         generator.definitions_mut().insert(
             UnbindTargetAction::schema_name().to_string(),
