@@ -27,7 +27,6 @@ use search::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, buffer_search,
 };
-use settings::Settings;
 use smallvec::{SmallVec, smallvec};
 use std::{
     cell::Cell,
@@ -37,7 +36,6 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::AccentColors;
-use theme_settings::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
     ButtonLike, Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, DiffStat, Divider,
@@ -58,6 +56,9 @@ const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(1.5);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
+// Extra vertical breathing room added to the UI line height when computing
+// the git graph's row height, so commit dots and lines have space around them.
+const ROW_VERTICAL_PADDING: Pixels = px(4.0);
 
 struct CopiedState {
     copied_at: Option<Instant>,
@@ -901,7 +902,6 @@ pub struct GitGraph {
     git_store: Entity<GitStore>,
     workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
-    row_height: Pixels,
     table_interaction_state: Entity<TableInteractionState>,
     column_widths: Entity<RedistributableColumnsState>,
     selected_entry_idx: Option<usize>,
@@ -927,10 +927,16 @@ impl GitGraph {
         cx.notify();
     }
 
-    fn row_height(window: &Window, cx: &App) -> Pixels {
-        let settings = ThemeSettings::get_global(cx);
-        let font_size = settings.buffer_font_size(cx);
-        let raw = font_size + px(12.0);
+    /// Computes the height of a single commit row in the git graph.
+    ///
+    /// The returned value is snapped to the nearest physical pixel. This is
+    /// required so that the canvas's float math and the `uniform_list` layout
+    /// (which snaps to device pixels) agree on row positions; otherwise rows
+    /// drift apart as the user scrolls when `ui_font_size` is fractional.
+    fn row_height(window: &Window, _cx: &App) -> Pixels {
+        let rem_size = window.rem_size();
+        let line_height = window.text_style().line_height_in_pixels(rem_size);
+        let raw = line_height + ROW_VERTICAL_PADDING;
         let scale = window.scale_factor();
 
         (raw * scale).round() / scale
@@ -1043,7 +1049,9 @@ impl GitGraph {
         cx.observe_global_in::<settings::SettingsStore>(window, move |this, window, cx| {
             let new_row_height = Self::row_height(window, cx);
             if new_row_height != row_height {
-                this.row_height = new_row_height;
+                // The `uniform_list` powering the table caches the item size
+                // from its last layout; invalidate it so it re-measures with
+                // the new row height on the next frame.
                 this.table_interaction_state.update(cx, |state, _cx| {
                     state.scroll_handle.0.borrow_mut().last_item_size = None;
                 });
@@ -1067,7 +1075,6 @@ impl GitGraph {
             graph_data: graph,
             _commit_diff_task: None,
             context_menu: None,
-            row_height,
             table_interaction_state,
             column_widths,
             selected_entry_idx: None,
@@ -1219,7 +1226,7 @@ impl GitGraph {
     fn render_table_rows(
         &mut self,
         range: Range<usize>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Vec<AnyElement>> {
         let repository = self.get_repository(cx);
@@ -1232,7 +1239,7 @@ impl GitGraph {
                 .map(|branch| SharedString::from(branch.name().to_string()))
         });
 
-        let row_height = self.row_height;
+        let row_height = Self::row_height(window, cx);
 
         // We fetch data outside the visible viewport to avoid loading entries when
         // users scroll through the git graph
@@ -2171,7 +2178,7 @@ impl GitGraph {
     }
 
     pub fn render_graph(&self, window: &Window, cx: &mut Context<GitGraph>) -> impl IntoElement {
-        let row_height = self.row_height;
+        let row_height = Self::row_height(window, cx);
         let table_state = self.table_interaction_state.read(cx);
         let viewport_height = table_state
             .scroll_handle
@@ -2437,7 +2444,12 @@ impl GitGraph {
         .h_full()
     }
 
-    fn row_at_position(&self, position_y: Pixels, cx: &Context<Self>) -> Option<usize> {
+    fn row_at_position(
+        &self,
+        position_y: Pixels,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<usize> {
         let canvas_bounds = self.graph_canvas_bounds.get()?;
         let table_state = self.table_interaction_state.read(cx);
         let scroll_offset_y = -table_state.scroll_offset().y;
@@ -2446,7 +2458,8 @@ impl GitGraph {
 
         if local_y >= px(0.) && local_y < canvas_bounds.size.height {
             let absolute_y = local_y + scroll_offset_y;
-            let absolute_row = (absolute_y / self.row_height).floor() as usize;
+            let row_height = Self::row_height(window, cx);
+            let absolute_row = (absolute_y / row_height).floor() as usize;
 
             if absolute_row < self.graph_data.commits.len() {
                 return Some(absolute_row);
@@ -2459,10 +2472,10 @@ impl GitGraph {
     fn handle_graph_mouse_move(
         &mut self,
         event: &gpui::MouseMoveEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(row) = self.row_at_position(event.position.y, cx) {
+        if let Some(row) = self.row_at_position(event.position.y, window, cx) {
             if self.hovered_entry_idx != Some(row) {
                 self.hovered_entry_idx = Some(row);
                 cx.notify();
@@ -2479,7 +2492,7 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(row) = self.row_at_position(event.position().y, cx) {
+        if let Some(row) = self.row_at_position(event.position().y, window, cx) {
             self.select_entry(row, ScrollStrategy::Nearest, cx);
             if event.click_count() >= 2 {
                 self.open_commit_view(row, window, cx);
@@ -2505,7 +2518,7 @@ impl GitGraph {
             AllCommitCount::Loaded(count) => count,
             AllCommitCount::NotLoaded => self.graph_data.commits.len(),
         };
-        let content_height = self.row_height * commit_count;
+        let content_height = Self::row_height(window, cx) * commit_count;
         let max_vertical_scroll = (viewport_height - content_height).min(px(0.));
 
         let new_y = (current_offset.y + delta.y).clamp(max_vertical_scroll, px(0.));
@@ -2663,7 +2676,7 @@ impl Render for GitGraph {
                             cx,
                         ))
                         .child({
-                            let row_height = self.row_height;
+                            let row_height = Self::row_height(window, cx);
                             let selected_entry_idx = self.selected_entry_idx;
                             let hovered_entry_idx = self.hovered_entry_idx;
                             let weak_self = cx.weak_entity();
@@ -4166,24 +4179,27 @@ mod tests {
         });
         cx.run_until_parked();
 
-        git_graph.update(cx, |graph, cx| {
+        git_graph.update_in(cx, |graph, window, cx| {
             assert!(
                 graph.graph_data.commits.len() >= 10,
                 "graph should load dummy commits"
             );
 
-            graph.row_height = px(20.0);
+            let row_height = GitGraph::row_height(window, cx);
             let origin_y = px(100.0);
             graph.graph_canvas_bounds.set(Some(Bounds {
                 origin: point(px(0.0), origin_y),
-                size: gpui::size(px(100.0), px(1000.0)),
+                size: gpui::size(px(100.0), row_height * 50.0),
             }));
 
+            // Scroll down by half a row so the row under a position near the
+            // top of the canvas is row 1 rather than row 0.
+            let scroll_offset = row_height * 0.75;
             graph.table_interaction_state.update(cx, |state, _| {
-                state.set_scroll_offset(point(px(0.0), px(-15.0)))
+                state.set_scroll_offset(point(px(0.0), -scroll_offset))
             });
-            let pos_y = origin_y + px(10.0);
-            let absolute_calc_row = graph.row_at_position(pos_y, cx);
+            let pos_y = origin_y + row_height * 0.5;
+            let absolute_calc_row = graph.row_at_position(pos_y, window, cx);
 
             assert_eq!(
                 absolute_calc_row,
@@ -4257,7 +4273,7 @@ mod tests {
         );
         cx.run_until_parked();
 
-        git_graph.read_with(&*cx, |graph, cx| {
+        git_graph.update_in(cx, |graph, window, cx| {
             let commit_count = graph.graph_data.commits.len();
             assert!(
                 commit_count > 0,
@@ -4271,13 +4287,14 @@ mod tests {
             );
 
             let measured_item_height = item_size.contents.height / commit_count as f32;
+            let computed_row_height = GitGraph::row_height(window, cx);
 
             assert_eq!(
-                graph.row_height, measured_item_height,
+                computed_row_height, measured_item_height,
                 "GitGraph::row_height ({}) must exactly match the height that \
                  uniform_list measured for each table row ({}). \
                  A mismatch means the canvas and table rows will drift when scrolling.",
-                graph.row_height, measured_item_height,
+                computed_row_height, measured_item_height,
             );
         });
     }
