@@ -646,3 +646,1381 @@ pub fn compute_prediction_reversal_ratio_from_history(
     let overlap = compute_reversal_overlap(&original_content, current_content, predicted_content);
     overlap.ratio()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indoc::indoc;
+    use zeta_prompt::udiff::apply_diff_to_string;
+    use zeta_prompt::{ExcerptRanges, ZetaPromptInput};
+
+    fn compute_prediction_reversal_ratio(
+        prompt_inputs: &ZetaPromptInput,
+        predicted_content: &str,
+        cursor_path: &Path,
+    ) -> f32 {
+        compute_prediction_reversal_ratio_from_history(
+            prompt_inputs.cursor_excerpt.as_ref(),
+            &prompt_inputs.events,
+            prompt_inputs.excerpt_start_row,
+            predicted_content,
+            cursor_path,
+        )
+    }
+
+    fn make_test_prompt_inputs(
+        content: &str,
+        events: Vec<Arc<zeta_prompt::Event>>,
+        excerpt_start_row: Option<u32>,
+    ) -> ZetaPromptInput {
+        ZetaPromptInput {
+            cursor_path: Arc::from(Path::new("src/test.rs")),
+            cursor_excerpt: content.into(),
+            cursor_offset_in_excerpt: 0,
+            excerpt_start_row,
+            events,
+            related_files: Some(Vec::new()),
+            active_buffer_diagnostics: Vec::new(),
+            excerpt_ranges: ExcerptRanges {
+                editable_150: 0..content.len(),
+                editable_180: 0..content.len(),
+                editable_350: 0..content.len(),
+                editable_150_context_350: 0..content.len(),
+                editable_180_context_350: 0..content.len(),
+                editable_350_context_150: 0..content.len(),
+                ..Default::default()
+            },
+            syntax_ranges: None,
+            in_open_source_repo: false,
+            can_collect_data: false,
+            repo_url: None,
+        }
+    }
+
+    #[test]
+    fn test_reversal_overlap() {
+        struct Case {
+            name: &'static str,
+            original: &'static str,
+            current: &'static str,
+            predicted: &'static str,
+            expected_reversal_chars: usize,
+            expected_total_chars: usize,
+        }
+
+        let cases = [
+            Case {
+                name: "user_adds_line_prediction_removes_it",
+                original: indoc! {"
+                     a
+                     b
+                     c"},
+                current: indoc! {"
+                     a
+                     new line
+                     b
+                     c"},
+                predicted: indoc! {"
+                     a
+                     b
+                     c"},
+                expected_reversal_chars: 9,
+                expected_total_chars: 9,
+            },
+            Case {
+                name: "user_deletes_line_prediction_restores_it",
+                original: indoc! {"
+                     a
+                     deleted
+                     b"},
+                current: indoc! {"
+                     a
+                     b"},
+                predicted: indoc! {"
+                     a
+                     deleted
+                     b"},
+                expected_reversal_chars: 8,
+                expected_total_chars: 8,
+            },
+            Case {
+                name: "user_deletes_text_prediction_restores_partial",
+                original: "hello beautiful world",
+                current: "hello world",
+                predicted: "hello beautiful world",
+                expected_reversal_chars: 10,
+                expected_total_chars: 10,
+            },
+            Case {
+                name: "user_deletes_foo_prediction_adds_bar",
+                original: "foo",
+                current: "",
+                predicted: "bar",
+                expected_reversal_chars: 0,
+                expected_total_chars: 3,
+            },
+            Case {
+                name: "independent_edits_different_locations",
+                original: indoc! {"
+                     line1
+                     line2
+                     line3"},
+                current: indoc! {"
+                     LINE1
+                     line2
+                     line3"},
+                predicted: indoc! {"
+                     LINE1
+                     line2
+                     LINE3"},
+                expected_reversal_chars: 0,
+                expected_total_chars: 10,
+            },
+            Case {
+                name: "no_history_edits",
+                original: "same",
+                current: "same",
+                predicted: "different",
+                expected_reversal_chars: 0,
+                expected_total_chars: 13,
+            },
+            Case {
+                name: "user_replaces_text_prediction_reverses",
+                original: indoc! {"
+                     keep
+                     delete_me
+                     keep2"},
+                current: indoc! {"
+                     keep
+                     added
+                     keep2"},
+                predicted: indoc! {"
+                     keep
+                     delete_me
+                     keep2"},
+                expected_reversal_chars: 14,
+                expected_total_chars: 14,
+            },
+            Case {
+                name: "user_modifies_word_prediction_modifies_differently",
+                original: "the quick brown fox",
+                current: "the slow brown fox",
+                predicted: "the fast brown fox",
+                expected_reversal_chars: 4,
+                expected_total_chars: 8,
+            },
+            Case {
+                name: "user finishes function name (suffix)",
+                original: "",
+                current: "epr",
+                predicted: "eprintln!()",
+                expected_reversal_chars: 0,
+                expected_total_chars: 8,
+            },
+            Case {
+                name: "user starts function name (prefix)",
+                original: "",
+                current: "my_function()",
+                predicted: "test_my_function()",
+                expected_reversal_chars: 0,
+                expected_total_chars: 5,
+            },
+            Case {
+                name: "user types partial, prediction extends in multiple places",
+                original: "",
+                current: "test_my_function",
+                predicted: "a_test_for_my_special_function_plz",
+                expected_reversal_chars: 0,
+                expected_total_chars: 18,
+            },
+            // Edge cases for subsequence matching
+            Case {
+                name: "subsequence with interleaved underscores",
+                original: "",
+                current: "a_b_c",
+                predicted: "_a__b__c__",
+                expected_reversal_chars: 0,
+                expected_total_chars: 5,
+            },
+            Case {
+                name: "not a subsequence - different characters",
+                original: "",
+                current: "abc",
+                predicted: "xyz",
+                expected_reversal_chars: 3,
+                expected_total_chars: 6,
+            },
+            Case {
+                name: "not a subsequence - wrong order",
+                original: "",
+                current: "abc",
+                predicted: "cba",
+                expected_reversal_chars: 3,
+                expected_total_chars: 6,
+            },
+            Case {
+                name: "partial subsequence - only some chars match",
+                original: "",
+                current: "abcd",
+                predicted: "axbx",
+                expected_reversal_chars: 4,
+                expected_total_chars: 8,
+            },
+            // Common completion patterns
+            Case {
+                name: "completing a method call",
+                original: "",
+                current: "vec.pu",
+                predicted: "vec.push(item)",
+                expected_reversal_chars: 0,
+                expected_total_chars: 8,
+            },
+            Case {
+                name: "completing an import statement",
+                original: "",
+                current: "use std::col",
+                predicted: "use std::collections::HashMap",
+                expected_reversal_chars: 0,
+                expected_total_chars: 17,
+            },
+            Case {
+                name: "completing a struct field",
+                original: "",
+                current: "name: St",
+                predicted: "name: String",
+                expected_reversal_chars: 0,
+                expected_total_chars: 4,
+            },
+            Case {
+                name: "prediction replaces with completely different text",
+                original: "",
+                current: "hello",
+                predicted: "world",
+                expected_reversal_chars: 5,
+                expected_total_chars: 10,
+            },
+            Case {
+                name: "empty prediction removes user text",
+                original: "",
+                current: "mistake",
+                predicted: "",
+                expected_reversal_chars: 7,
+                expected_total_chars: 7,
+            },
+            Case {
+                name: "fixing typo is not reversal",
+                original: "",
+                current: "<dv",
+                predicted: "<div>",
+                expected_reversal_chars: 0,
+                expected_total_chars: 2,
+            },
+            Case {
+                name: "infix insertion not reversal",
+                original: indoc! {"
+                     from my_project import Foo
+                 "},
+                current: indoc! {"
+                     ifrom my_project import Foo
+                 "},
+                predicted: indoc! {"
+                     import
+                     from my_project import Foo
+                 "},
+                expected_reversal_chars: 0,
+                expected_total_chars: 6,
+            },
+            Case {
+                name: "non-word based reversal",
+                original: "from",
+                current: "ifrom",
+                predicted: "from",
+                expected_reversal_chars: 1,
+                expected_total_chars: 1,
+            },
+            Case {
+                name: "multiple insertions no reversal",
+                original: "print(\"Hello, World!\")",
+                current: "sys.(\"Hello, World!\")",
+                predicted: "sys.stdout.write(\"Hello, World!\\n\")",
+                expected_reversal_chars: 0,
+                expected_total_chars: 14,
+            },
+        ];
+
+        for case in &cases {
+            let overlap = compute_reversal_overlap(case.original, case.current, case.predicted);
+            assert_eq!(
+                overlap.chars_reversing_user_edits, case.expected_reversal_chars,
+                "Test '{}': expected {} reversal chars, got {}",
+                case.name, case.expected_reversal_chars, overlap.chars_reversing_user_edits
+            );
+            assert_eq!(
+                overlap.total_chars_in_prediction, case.expected_total_chars,
+                "Test '{}': expected {} total chars, got {}",
+                case.name, case.expected_total_chars, overlap.total_chars_in_prediction
+            );
+        }
+    }
+
+    #[test]
+    fn test_reverse_diff() {
+        let forward_diff = indoc! {"
+             --- a/file.rs
+             +++ b/file.rs
+             @@ -1,3 +1,4 @@
+              fn main() {
+             +    let x = 42;
+                  println!(\"hello\");
+             }"};
+
+        let reversed = reverse_diff(forward_diff);
+
+        assert!(
+            reversed.contains("+++ a/file.rs"),
+            "Should have +++ for old path"
+        );
+        assert!(
+            reversed.contains("--- b/file.rs"),
+            "Should have --- for new path"
+        );
+        assert!(
+            reversed.contains("-    let x = 42;"),
+            "Added line should become deletion"
+        );
+        assert!(
+            reversed.contains(" fn main()"),
+            "Context lines should be unchanged"
+        );
+    }
+
+    #[test]
+    fn test_reverse_diff_roundtrip() {
+        // Applying a diff and then its reverse should get back to original
+        let original = indoc! {"
+             first line
+             hello world
+             last line
+         "};
+        let modified = indoc! {"
+             first line
+             hello beautiful world
+             last line
+         "};
+
+        // unified_diff doesn't include file headers, but apply_diff_to_string needs them
+        let diff_body = language::unified_diff(original, modified);
+        let forward_diff = format!("--- a/file\n+++ b/file\n{}", diff_body);
+        let reversed_diff = reverse_diff(&forward_diff);
+
+        // Apply forward diff to original
+        let after_forward = apply_diff_to_string(&forward_diff, original).unwrap();
+        assert_eq!(after_forward, modified);
+
+        // Apply reversed diff to modified
+        let after_reverse = apply_diff_to_string(&reversed_diff, &after_forward).unwrap();
+        assert_eq!(after_reverse, original);
+    }
+
+    #[test]
+    fn test_filter_edit_history_by_path() {
+        // Test that filter_edit_history_by_path correctly matches paths when
+        // the edit history has paths with a repo prefix (e.g., "repo/src/file.rs")
+        // but the cursor_path doesn't have the repo prefix (e.g., "src/file.rs")
+        let events = vec![
+            Arc::new(zeta_prompt::Event::BufferChange {
+                path: Arc::from(Path::new("myrepo/src/file.rs")),
+                old_path: Arc::from(Path::new("myrepo/src/file.rs")),
+                diff: indoc! {"
+                     @@ -1 +1 @@
+                     -old
+                     +new"}
+                .into(),
+                predicted: false,
+                in_open_source_repo: true,
+            }),
+            Arc::new(zeta_prompt::Event::BufferChange {
+                path: Arc::from(Path::new("myrepo/other.rs")),
+                old_path: Arc::from(Path::new("myrepo/other.rs")),
+                diff: indoc! {"
+                     @@ -1 +1 @@
+                     -a
+                     +b"}
+                .into(),
+                predicted: false,
+                in_open_source_repo: true,
+            }),
+            Arc::new(zeta_prompt::Event::BufferChange {
+                path: Arc::from(Path::new("src/file.rs")),
+                old_path: Arc::from(Path::new("src/file.rs")),
+                diff: indoc! {"
+                     @@ -1 +1 @@
+                     -x
+                     +y"}
+                .into(),
+                predicted: false,
+                in_open_source_repo: true,
+            }),
+        ];
+
+        // "myrepo/src/file.rs" stripped -> "src/file.rs" matches cursor_path
+        // "src/file.rs" exact match
+        let cursor_path = Path::new("src/file.rs");
+        let filtered = filter_edit_history_by_path(&events, cursor_path);
+        assert_eq!(
+            filtered.len(),
+            2,
+            "Should match myrepo/src/file.rs (stripped) and src/file.rs (exact)"
+        );
+
+        // "myrepo/src/file.rs" stripped -> "src/file.rs" != "file.rs"
+        // "src/file.rs" stripped -> "file.rs" == "file.rs"
+        let cursor_path = Path::new("file.rs");
+        let filtered = filter_edit_history_by_path(&events, cursor_path);
+        assert_eq!(
+            filtered.len(),
+            1,
+            "Should only match src/file.rs (stripped to file.rs)"
+        );
+
+        // "myrepo/other.rs" stripped -> "other.rs" == "other.rs"
+        let cursor_path = Path::new("other.rs");
+        let filtered = filter_edit_history_by_path(&events, cursor_path);
+        assert_eq!(filtered.len(), 1, "Should match only myrepo/other.rs");
+    }
+
+    #[test]
+    fn test_reverse_diff_preserves_trailing_newline() {
+        let diff_with_trailing_newline = indoc! {"
+             --- a/file
+             +++ b/file
+             @@ -1 +1 @@
+             -old
+             +new
+         "};
+        let reversed = reverse_diff(diff_with_trailing_newline);
+        assert!(
+            reversed.ends_with('\n'),
+            "Reversed diff should preserve trailing newline"
+        );
+
+        let diff_without_trailing_newline = indoc! {"
+             --- a/file
+             +++ b/file
+             @@ -1 +1 @@
+             -old
+             +new"};
+        let reversed = reverse_diff(diff_without_trailing_newline);
+        assert!(
+            !reversed.ends_with('\n'),
+            "Reversed diff should not add trailing newline if original didn't have one"
+        );
+    }
+
+    #[test]
+    fn test_filter_hunks_by_excerpt_region() {
+        struct Case {
+            name: &'static str,
+            diff: &'static str,
+            excerpt_start_row: u32,
+            excerpt_row_count: u32,
+            expected_filtered_diff: &'static str,
+            expected_line_offset: i32,
+        }
+
+        let cases = [
+            Case {
+                name: "hunk_entirely_before_excerpt",
+                diff: indoc! {"
+                     @@ -1,3 +1,4 @@
+                      line1
+                     +inserted
+                      line2
+                      line3
+                 "},
+                excerpt_start_row: 10,
+                excerpt_row_count: 5,
+                expected_filtered_diff: "",
+                expected_line_offset: 1,
+            },
+            Case {
+                name: "hunk_entirely_inside_excerpt",
+                diff: indoc! {"
+                     @@ -12,3 +12,4 @@
+                      line12
+                     +inserted
+                      line13
+                      line14
+                 "},
+                excerpt_start_row: 10,
+                excerpt_row_count: 10,
+                expected_filtered_diff: indoc! {"
+                     @@ -2,3 +2,4 @@
+                      line12
+                     +inserted
+                      line13
+                      line14
+                 "},
+                expected_line_offset: 1,
+            },
+            Case {
+                name: "hunk_entirely_after_excerpt",
+                diff: indoc! {"
+                     @@ -50,3 +50,4 @@
+                      line50
+                     +inserted
+                      line51
+                      line52
+                 "},
+                excerpt_start_row: 10,
+                excerpt_row_count: 5,
+                expected_filtered_diff: "",
+                expected_line_offset: 0,
+            },
+            Case {
+                name: "hunk_straddles_excerpt_start",
+                diff: indoc! {"
+                     @@ -8,5 +8,6 @@
+                      line8
+                      line9
+                     +inserted
+                      line10
+                      line11
+                      line12
+                 "},
+                excerpt_start_row: 10,
+                excerpt_row_count: 10,
+                expected_filtered_diff: indoc! {"
+                     @@ -1,3 +1,3 @@
+                      line10
+                      line11
+                      line12
+                 "},
+                expected_line_offset: 1,
+            },
+            Case {
+                name: "hunk_straddles_excerpt_end",
+                diff: indoc! {"
+                     @@ -18,5 +18,6 @@
+                      line18
+                      line19
+                     +inserted
+                      line20
+                      line21
+                      line22
+                 "},
+                excerpt_start_row: 10,
+                excerpt_row_count: 10,
+                expected_filtered_diff: indoc! {"
+                     @@ -8,2 +8,3 @@
+                      line18
+                      line19
+                     +inserted
+                 "},
+                expected_line_offset: 1,
+            },
+            Case {
+                name: "multiple_hunks_mixed",
+                diff: indoc! {"
+                     @@ -1,2 +1,3 @@
+                      line1
+                     +before_excerpt
+                      line2
+                     @@ -12,2 +13,3 @@
+                      line12
+                     +inside_excerpt
+                      line13
+                     @@ -50,2 +52,3 @@
+                      line50
+                     +after_excerpt
+                      line51
+                 "},
+                excerpt_start_row: 10,
+                excerpt_row_count: 10,
+                expected_filtered_diff: indoc! {"
+                     @@ -3,2 +3,3 @@
+                      line12
+                     +inside_excerpt
+                      line13
+                 "},
+                expected_line_offset: 2,
+            },
+            Case {
+                name: "deletion_before_excerpt",
+                diff: indoc! {"
+                     @@ -1,4 +1,3 @@
+                      line1
+                     -deleted
+                      line2
+                      line3
+                 "},
+                excerpt_start_row: 10,
+                excerpt_row_count: 5,
+                expected_filtered_diff: "",
+                expected_line_offset: -1,
+            },
+            Case {
+                name: "deletion_inside_excerpt",
+                diff: indoc! {"
+                     @@ -12,4 +12,3 @@
+                      line12
+                     -deleted
+                      line13
+                      line14
+                 "},
+                excerpt_start_row: 10,
+                excerpt_row_count: 10,
+                expected_filtered_diff: indoc! {"
+                     @@ -2,4 +2,3 @@
+                      line12
+                     -deleted
+                      line13
+                      line14
+                 "},
+                expected_line_offset: -1,
+            },
+            Case {
+                name: "empty_diff",
+                diff: "",
+                excerpt_start_row: 10,
+                excerpt_row_count: 5,
+                expected_filtered_diff: "",
+                expected_line_offset: 0,
+            },
+            Case {
+                name: "hunk_spans_entire_excerpt",
+                diff: indoc! {"
+                     @@ -8,10 +8,12 @@
+                      line8
+                      line9
+                      line10
+                      line11
+                     +inserted1
+                      line12
+                      line13
+                     +inserted2
+                      line14
+                      line15
+                      line16
+                      line17
+                 "},
+                excerpt_start_row: 10,
+                excerpt_row_count: 5,
+                expected_filtered_diff: indoc! {"
+                     @@ -1,3 +1,5 @@
+                      line11
+                     +inserted1
+                      line12
+                      line13
+                     +inserted2
+                 "},
+                expected_line_offset: 2,
+            },
+            Case {
+                name: "replacement_inside_excerpt",
+                diff: indoc! {"
+                     @@ -12,3 +12,3 @@
+                      line12
+                     -old_text
+                     +new_text
+                      line14
+                 "},
+                excerpt_start_row: 10,
+                excerpt_row_count: 10,
+                expected_filtered_diff: indoc! {"
+                     @@ -2,3 +2,3 @@
+                      line12
+                     -old_text
+                     +new_text
+                      line14
+                 "},
+                expected_line_offset: 0,
+            },
+        ];
+
+        for case in &cases {
+            let (filtered, line_offset) = filter_diff_hunks_by_excerpt(
+                case.diff,
+                case.excerpt_start_row,
+                case.excerpt_row_count,
+            );
+            assert_eq!(
+                filtered, case.expected_filtered_diff,
+                "Test '{}': filtered diff mismatch.\nExpected:\n{}\nGot:\n{}",
+                case.name, case.expected_filtered_diff, filtered
+            );
+            assert_eq!(
+                line_offset, case.expected_line_offset,
+                "Test '{}': line offset mismatch. Expected {}, got {}",
+                case.name, case.expected_line_offset, line_offset
+            );
+        }
+    }
+
+    #[test]
+    fn test_excerpt_aware_reversal_tracking() {
+        struct Case {
+            name: &'static str,
+            edit_history_diffs: Vec<&'static str>,
+            excerpt_content: &'static str,
+            excerpt_start_row: u32,
+            predicted_content: &'static str,
+            expected_reversal_chars: usize,
+            expected_total_chars: usize,
+        }
+
+        let cases = [
+            Case {
+                name: "edit_outside_excerpt_no_reversal",
+                edit_history_diffs: vec![indoc! {"
+                     @@ -1,2 +1,3 @@
+                      line1
+                     +added_outside
+                      line2
+                 "}],
+                excerpt_content: indoc! {"
+                     line10
+                     line11
+                     line12
+                 "},
+                excerpt_start_row: 10,
+                predicted_content: indoc! {"
+                     line10
+                     modified
+                     line12
+                 "},
+                expected_reversal_chars: 0,
+                expected_total_chars: 14,
+            },
+            Case {
+                name: "edit_inside_excerpt_with_reversal",
+                edit_history_diffs: vec![indoc! {"
+                     @@ -10,3 +10,4 @@
+                      line10
+                     +user_added
+                      line11
+                      line12
+                 "}],
+                excerpt_content: indoc! {"
+                     line10
+                     user_added
+                     line11
+                     line12
+                 "},
+                excerpt_start_row: 10,
+                predicted_content: indoc! {"
+                     line10
+                     line11
+                     line12
+                 "},
+                expected_reversal_chars: 11,
+                expected_total_chars: 11,
+            },
+            Case {
+                name: "straddling_edit_partial_reversal",
+                edit_history_diffs: vec![indoc! {"
+                     @@ -8,6 +8,8 @@
+                      line8
+                      line9
+                     +before_excerpt
+                      line10
+                     +inside_excerpt
+                      line11
+                      line12
+                      line13
+                 "}],
+                excerpt_content: indoc! {"
+                     line10
+                     inside_excerpt
+                     line11
+                     line12
+                     line13
+                 "},
+                excerpt_start_row: 10,
+                predicted_content: indoc! {"
+                     line10
+                     line11
+                     line12
+                     line13
+                 "},
+                expected_reversal_chars: 15,
+                expected_total_chars: 15,
+            },
+            Case {
+                name: "multiple_edits_mixed_locations",
+                edit_history_diffs: vec![
+                    indoc! {"
+                         @@ -1,2 +1,3 @@
+                          line1
+                         +outside1
+                          line2
+                     "},
+                    indoc! {"
+                         @@ -11,2 +12,3 @@
+                          line11
+                         +inside1
+                          line12
+                     "},
+                ],
+                excerpt_content: indoc! {"
+                     line10
+                     line11
+                     inside1
+                     line12
+                     line13
+                 "},
+                excerpt_start_row: 10,
+                predicted_content: indoc! {"
+                     line10
+                     line11
+                     line12
+                     line13
+                 "},
+                expected_reversal_chars: 8,
+                expected_total_chars: 8,
+            },
+            Case {
+                name: "no_edit_history",
+                edit_history_diffs: vec![],
+                excerpt_content: indoc! {"
+                     line10
+                     line11
+                     line12
+                 "},
+                excerpt_start_row: 10,
+                predicted_content: indoc! {"
+                     line10
+                     modified
+                     line12
+                 "},
+                expected_reversal_chars: 0,
+                expected_total_chars: 14,
+            },
+            Case {
+                name: "edit_after_excerpt_no_effect",
+                edit_history_diffs: vec![indoc! {"
+                     @@ -50,2 +50,3 @@
+                      line50
+                     +added_after
+                      line51
+                 "}],
+                excerpt_content: indoc! {"
+                     line10
+                     line11
+                     line12
+                 "},
+                excerpt_start_row: 10,
+                predicted_content: indoc! {"
+                     line10
+                     changed
+                     line12
+                 "},
+                expected_reversal_chars: 0,
+                expected_total_chars: 13,
+            },
+            Case {
+                name: "line_offset_tracking_across_hunks",
+                edit_history_diffs: vec![
+                    indoc! {"
+                         @@ -1,2 +1,4 @@
+                          line1
+                         +added1
+                         +added2
+                          line2
+                     "},
+                    indoc! {"
+                         @@ -12,2 +14,3 @@
+                          line12
+                         +inside_after_offset
+                          line13
+                     "},
+                ],
+                excerpt_content: indoc! {"
+                     line10
+                     line11
+                     line12
+                     inside_after_offset
+                     line13
+                 "},
+                excerpt_start_row: 10,
+                predicted_content: indoc! {"
+                     line10
+                     line11
+                     line12
+                     line13
+                 "},
+                expected_reversal_chars: 20,
+                expected_total_chars: 20,
+            },
+        ];
+
+        for case in &cases {
+            let overlap = compute_excerpt_aware_reversal_overlap(
+                &case.edit_history_diffs,
+                case.excerpt_content,
+                case.excerpt_start_row,
+                case.predicted_content,
+            );
+            assert_eq!(
+                overlap.chars_reversing_user_edits, case.expected_reversal_chars,
+                "Test '{}': expected {} reversal chars, got {}",
+                case.name, case.expected_reversal_chars, overlap.chars_reversing_user_edits
+            );
+            assert_eq!(
+                overlap.total_chars_in_prediction, case.expected_total_chars,
+                "Test '{}': expected {} total chars, got {}",
+                case.name, case.expected_total_chars, overlap.total_chars_in_prediction
+            );
+        }
+    }
+
+    #[test]
+    fn test_lenient_diff_application() {
+        struct Case {
+            name: &'static str,
+            diff: &'static str,
+            content: &'static str,
+            expected_result: &'static str,
+        }
+
+        let cases = [
+            Case {
+                name: "hunk_context_not_found_skipped",
+                diff: indoc! {"
+                     @@ -1,3 +1,4 @@
+                      context_not_in_content
+                     +added_line
+                      more_context
+                      final_context
+                 "},
+                content: indoc! {"
+                     completely
+                     different
+                     content
+                 "},
+                expected_result: indoc! {"
+                     completely
+                     different
+                     content
+                 "},
+            },
+            Case {
+                name: "hunk_context_found_applied",
+                diff: indoc! {"
+                     @@ -1,3 +1,4 @@
+                      line1
+                     +inserted
+                      line2
+                      line3
+                 "},
+                content: indoc! {"
+                     line1
+                     line2
+                     line3
+                 "},
+                expected_result: indoc! {"
+                     line1
+                     inserted
+                     line2
+                     line3
+                 "},
+            },
+            Case {
+                name: "multiple_hunks_partial_match",
+                diff: indoc! {"
+                     @@ -1,2 +1,3 @@
+                      not_found
+                     +skipped
+                      also_not_found
+                     @@ -5,2 +6,3 @@
+                      line5
+                     +applied
+                      line6
+                 "},
+                content: indoc! {"
+                     line1
+                     line2
+                     line3
+                     line4
+                     line5
+                     line6
+                 "},
+                expected_result: indoc! {"
+                     line1
+                     line2
+                     line3
+                     line4
+                     line5
+                     applied
+                     line6
+                 "},
+            },
+            Case {
+                name: "empty_diff",
+                diff: "",
+                content: indoc! {"
+                     unchanged
+                     content
+                 "},
+                expected_result: indoc! {"
+                     unchanged
+                     content
+                 "},
+            },
+        ];
+
+        for case in &cases {
+            let result = apply_diff_to_string_lenient(case.diff, case.content);
+            assert_eq!(
+                result, case.expected_result,
+                "Test '{}': expected:\n{}\ngot:\n{}",
+                case.name, case.expected_result, result
+            );
+        }
+    }
+
+    #[test]
+    fn test_unicode_reversal_overlap() {
+        struct Case {
+            name: &'static str,
+            original: &'static str,
+            current: &'static str,
+            predicted: &'static str,
+            expected_reversal_chars: usize,
+            expected_total_chars: usize,
+        }
+
+        let cases = [
+            Case {
+                name: "unicode_extension_cjk",
+                original: "",
+                current: "日",       // 1 char
+                predicted: "日本語", // 3 chars, adds 2 chars
+                expected_reversal_chars: 0,
+                expected_total_chars: 2, // "本語" = 2 chars added
+            },
+            Case {
+                name: "unicode_extension_emoji",
+                original: "",
+                current: "🎉",       // 1 char
+                predicted: "🎉🎊🎈", // 3 chars, adds 2 chars
+                expected_reversal_chars: 0,
+                expected_total_chars: 2, // "🎊🎈" = 2 chars added
+            },
+            Case {
+                name: "unicode_deletion_restored",
+                original: "héllo wörld",    // 11 chars
+                current: "héllo",           // 5 chars
+                predicted: "héllo wörld",   // restores " wörld" = 6 chars
+                expected_reversal_chars: 6, // LCS(" wörld", " wörld") = 6 chars
+                expected_total_chars: 6,
+            },
+            Case {
+                name: "unicode_addition_reversed",
+                original: "café",           // 4 chars
+                current: "café latté",      // 10 chars, added " latté" = 6 chars
+                predicted: "café",          // removes " latté"
+                expected_reversal_chars: 6, // 6 chars removed
+                expected_total_chars: 6,
+            },
+            Case {
+                name: "mixed_ascii_unicode",
+                original: "",
+                current: "test日本",         // 6 chars
+                predicted: "test日本語です", // 9 chars
+                expected_reversal_chars: 0,
+                expected_total_chars: 3, // 3 new chars after subsequence normalization
+            },
+            Case {
+                name: "unicode_replacement_not_subsequence",
+                original: "",
+                current: "日本",            // 2 chars
+                predicted: "中国",          // 2 chars, different
+                expected_reversal_chars: 2, // removes "日本" = 2 chars
+                expected_total_chars: 4,    // 2 removed + 2 added
+            },
+        ];
+
+        for case in &cases {
+            let overlap = compute_reversal_overlap(case.original, case.current, case.predicted);
+            assert_eq!(
+                overlap.chars_reversing_user_edits, case.expected_reversal_chars,
+                "Test '{}': expected {} reversal chars, got {}",
+                case.name, case.expected_reversal_chars, overlap.chars_reversing_user_edits
+            );
+            assert_eq!(
+                overlap.total_chars_in_prediction, case.expected_total_chars,
+                "Test '{}': expected {} total chars, got {}",
+                case.name, case.expected_total_chars, overlap.total_chars_in_prediction
+            );
+        }
+    }
+
+    #[test]
+    fn test_compute_lcs_length() {
+        assert_eq!(compute_lcs_length("", ""), 0);
+        assert_eq!(compute_lcs_length("abc", ""), 0);
+        assert_eq!(compute_lcs_length("", "abc"), 0);
+        assert_eq!(compute_lcs_length("abc", "abc"), 3);
+        assert_eq!(compute_lcs_length("abc", "def"), 0);
+        assert_eq!(compute_lcs_length("abcdef", "ace"), 3);
+        assert_eq!(compute_lcs_length("AGGTAB", "GXTXAYB"), 4);
+        assert_eq!(compute_lcs_length("日本語", "日語"), 2);
+    }
+
+    #[test]
+    fn test_compute_prediction_reversal_ratio_full_file() {
+        let prompt_inputs = make_test_prompt_inputs(
+            indoc! {"
+                 line1
+                 user_added
+                 line2
+             "},
+            vec![Arc::new(zeta_prompt::Event::BufferChange {
+                path: Arc::from(Path::new("src/test.rs")),
+                old_path: Arc::from(Path::new("src/test.rs")),
+                diff: indoc! {"
+                     @@ -1,2 +1,3 @@
+                      line1
+                     +user_added
+                      line2
+                 "}
+                .into(),
+                predicted: false,
+                in_open_source_repo: false,
+            })],
+            None,
+        );
+
+        let predicted = indoc! {"
+             line1
+             line2
+         "};
+        let ratio =
+            compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
+
+        assert!(
+            ratio > 0.9,
+            "Expected high reversal ratio when prediction removes user addition, got {}",
+            ratio
+        );
+    }
+
+    #[test]
+    fn test_compute_prediction_reversal_ratio_with_excerpt() {
+        let prompt_inputs = make_test_prompt_inputs(
+            indoc! {"
+                 line10
+                 user_added
+                 line11
+             "},
+            vec![Arc::new(zeta_prompt::Event::BufferChange {
+                path: Arc::from(Path::new("src/test.rs")),
+                old_path: Arc::from(Path::new("src/test.rs")),
+                diff: indoc! {"
+                     @@ -10,2 +10,3 @@
+                      line10
+                     +user_added
+                      line11
+                 "}
+                .into(),
+                predicted: false,
+                in_open_source_repo: false,
+            })],
+            Some(10),
+        );
+
+        let predicted = indoc! {"
+             line10
+             line11
+         "};
+        let ratio =
+            compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
+
+        assert!(
+            ratio > 0.9,
+            "Expected high reversal ratio for excerpt-aware computation, got {}",
+            ratio
+        );
+    }
+
+    #[test]
+    fn test_compute_prediction_reversal_ratio_no_history() {
+        let prompt_inputs = make_test_prompt_inputs(
+            indoc! {"
+                 original content
+             "},
+            vec![],
+            None,
+        );
+
+        let predicted = indoc! {"
+             completely different
+         "};
+        let ratio =
+            compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
+
+        assert_eq!(
+            ratio, 0.0,
+            "Expected zero reversal ratio with no edit history"
+        );
+    }
+
+    #[test]
+    fn test_compute_prediction_reversal_ratio_path_filtering() {
+        let prompt_inputs = make_test_prompt_inputs(
+            indoc! {"
+                 line1
+                 user_added
+                 line2
+             "},
+            vec![Arc::new(zeta_prompt::Event::BufferChange {
+                path: Arc::from(Path::new("src/other.rs")),
+                old_path: Arc::from(Path::new("src/other.rs")),
+                diff: indoc! {"
+                     @@ -1,2 +1,3 @@
+                      line1
+                     +user_added
+                      line2
+                 "}
+                .into(),
+                predicted: false,
+                in_open_source_repo: false,
+            })],
+            None,
+        );
+
+        let predicted = indoc! {"
+             line1
+             line2
+         "};
+        let ratio =
+            compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
+
+        assert_eq!(
+            ratio, 0.0,
+            "Expected zero reversal when edit history is for different file"
+        );
+    }
+
+    #[test]
+    fn test_compute_prediction_reversal_ratio_lenient_fallback() {
+        let prompt_inputs = make_test_prompt_inputs(
+            indoc! {"
+                 actual_line1
+                 user_added
+                 actual_line2
+             "},
+            vec![Arc::new(zeta_prompt::Event::BufferChange {
+                path: Arc::from(Path::new("src/test.rs")),
+                old_path: Arc::from(Path::new("src/test.rs")),
+                diff: indoc! {"
+                     @@ -1,2 +1,3 @@
+                      wrong_context
+                     +user_added
+                      more_wrong
+                 "}
+                .into(),
+                predicted: false,
+                in_open_source_repo: false,
+            })],
+            None,
+        );
+
+        let predicted = indoc! {"
+             actual_line1
+             actual_line2
+         "};
+        let ratio =
+            compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
+
+        assert!(
+            ratio >= 0.0 && ratio <= 1.0,
+            "Ratio should be valid even with lenient fallback, got {}",
+            ratio
+        );
+    }
+
+    #[test]
+    fn test_excerpt_aware_reversal_error_recovery() {
+        let diffs = vec![indoc! {"
+             @@ -1,2 +1,3 @@
+              nonexistent_context
+             +added
+              more_nonexistent
+         "}];
+        let excerpt_content = indoc! {"
+             completely
+             different
+             content
+         "};
+        let predicted_content = indoc! {"
+             completely
+             modified
+             content
+         "};
+
+        let overlap =
+            compute_excerpt_aware_reversal_overlap(&diffs, excerpt_content, 0, predicted_content);
+
+        assert!(
+            overlap.ratio() >= 0.0 && overlap.ratio() <= 1.0,
+            "Should handle failed diff application gracefully"
+        );
+    }
+
+    #[test]
+    fn test_only_most_recent_edit_tracked() {
+        let prompt_inputs = make_test_prompt_inputs(
+            indoc! {"
+                 line1
+                 first_add
+                 second_add
+                 line2
+             "},
+            vec![
+                Arc::new(zeta_prompt::Event::BufferChange {
+                    path: Arc::from(Path::new("src/test.rs")),
+                    old_path: Arc::from(Path::new("src/test.rs")),
+                    diff: indoc! {"
+                         @@ -1,2 +1,3 @@
+                          line1
+                         +first_add
+                          line2
+                     "}
+                    .into(),
+                    predicted: false,
+                    in_open_source_repo: false,
+                }),
+                Arc::new(zeta_prompt::Event::BufferChange {
+                    path: Arc::from(Path::new("src/test.rs")),
+                    old_path: Arc::from(Path::new("src/test.rs")),
+                    diff: indoc! {"
+                         @@ -2,2 +2,3 @@
+                          first_add
+                         +second_add
+                          line2
+                     "}
+                    .into(),
+                    predicted: false,
+                    in_open_source_repo: false,
+                }),
+            ],
+            None,
+        );
+
+        let predicted = indoc! {"
+             line1
+             first_add
+             line2
+         "};
+        let ratio =
+            compute_prediction_reversal_ratio(&prompt_inputs, predicted, Path::new("src/test.rs"));
+
+        assert!(
+            ratio > 0.9,
+            "Expected high reversal ratio when prediction exactly reverses the most recent edit, got {}",
+            ratio
+        );
+    }
+}

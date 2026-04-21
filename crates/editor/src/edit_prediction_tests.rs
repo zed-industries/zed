@@ -1,6 +1,7 @@
 use edit_prediction_types::{
     EditPredictionDelegate, EditPredictionIconSet, PredictedCursorPosition,
 };
+use futures::StreamExt;
 use gpui::{
     Entity, KeyBinding, KeybindingKeystroke, Keystroke, Modifiers, NoAction, Task, prelude::*,
 };
@@ -25,7 +26,7 @@ use crate::{
     EditPredictionKeybindAction, EditPredictionKeybindSurface, MenuEditPredictionsPolicy,
     ShowCompletions,
     editor_tests::{init_test, update_test_language_settings},
-    test::editor_test_context::EditorTestContext,
+    test::{editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext},
 };
 use rpc::proto::PeerId;
 use workspace::CollaboratorId;
@@ -534,6 +535,172 @@ async fn test_edit_prediction_preview_activates_when_prediction_arrives_with_mod
             editor.edit_prediction_preview_is_active(),
             "prediction preview should activate immediately when the prediction arrives while the preview modifier is still held",
         );
+    });
+}
+
+#[gpui::test]
+async fn test_edit_prediction_preview_does_not_hide_code_actions_on_modifier_press(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+    update_test_language_settings(cx, &|settings| {
+        settings.edit_predictions.get_or_insert_default().mode = Some(EditPredictionsMode::Subtle);
+    });
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "ctrl-enter",
+            AcceptEditPrediction,
+            Some("Editor && edit_prediction && !showing_completions"),
+        )]);
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state(indoc! {"
+        fn main() {
+            let valueˇ = 1;
+        }
+    "});
+
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    cx.update_editor(|editor, window, cx| {
+        editor.set_edit_prediction_provider(Some(provider.clone()), window, cx);
+    });
+
+    let snapshot = cx.buffer_snapshot();
+    let edit_position = snapshot.anchor_after(Point::new(1, 13));
+    cx.update(|_, cx| {
+        provider.update(cx, |provider, _| {
+            provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
+                id: None,
+                edits: vec![(edit_position..edit_position, " + 1".into())],
+                cursor_position: None,
+                edit_preview: None,
+            }))
+        })
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.set_menu_edit_predictions_policy(MenuEditPredictionsPolicy::ByProvider);
+        editor.update_visible_edit_prediction(window, cx);
+    });
+    cx.update_editor(|editor, _, _| {
+        assert!(editor.has_active_edit_prediction());
+        assert!(editor.stale_edit_prediction_in_menu.is_none());
+    });
+
+    let mut code_action_requests = cx.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+        move |_, _, _| async move {
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    title: "Inline value".to_string(),
+                    kind: Some(lsp::CodeActionKind::QUICKFIX),
+                    ..Default::default()
+                },
+            )]))
+        },
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_code_actions(
+            &crate::actions::ToggleCodeActions {
+                deployed_from: None,
+                quick_launch: false,
+            },
+            window,
+            cx,
+        );
+    });
+    code_action_requests.next().await;
+    cx.run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+
+    cx.update_editor(|editor, _, _| {
+        assert!(!editor.has_active_edit_prediction());
+        assert!(editor.stale_edit_prediction_in_menu.is_some());
+        assert!(editor.context_menu_visible());
+        assert!(matches!(
+            editor.context_menu.borrow().as_ref(),
+            Some(crate::code_context_menus::CodeContextMenu::CodeActions(_))
+        ));
+        assert!(!editor.edit_prediction_preview_is_active());
+    });
+
+    cx.simulate_modifiers_change(Modifiers::control());
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            !editor.edit_prediction_preview_is_active(),
+            "modifier-only press should not activate edit prediction preview while code actions are open"
+        );
+        assert!(
+            editor.context_menu_visible(),
+            "modifier-only press should not hide the code actions menu"
+        );
+        assert!(matches!(
+            editor.context_menu.borrow().as_ref(),
+            Some(crate::code_context_menus::CodeContextMenu::CodeActions(_))
+        ));
+    });
+}
+
+#[gpui::test]
+async fn test_edit_prediction_preview_supersedes_completions_menu(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_language_settings(cx, &|settings| {
+        settings.edit_predictions.get_or_insert_default().mode = Some(EditPredictionsMode::Subtle);
+    });
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "ctrl-enter",
+            AcceptEditPrediction,
+            Some("Editor && edit_prediction && showing_completions"),
+        )]);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    assign_editor_completion_menu_provider(&mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| {
+        editor.set_menu_edit_predictions_policy(MenuEditPredictionsPolicy::ByProvider);
+        editor.update_visible_edit_prediction(window, cx);
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions, window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.editor(|editor, _, _| {
+        assert!(editor.has_active_edit_prediction());
+        assert!(editor.context_menu_visible());
+        assert!(matches!(
+            editor.context_menu.borrow().as_ref(),
+            Some(crate::code_context_menus::CodeContextMenu::Completions(_))
+        ));
+        assert!(!editor.edit_prediction_preview_is_active());
+    });
+
+    cx.simulate_modifiers_change(Modifiers::control());
+    cx.run_until_parked();
+
+    cx.editor(|editor, _, _| {
+        assert!(editor.edit_prediction_preview_is_active());
+        assert!(!editor.context_menu_visible());
+        assert!(matches!(
+            editor.context_menu.borrow().as_ref(),
+            Some(crate::code_context_menus::CodeContextMenu::Completions(_))
+        ));
     });
 }
 
@@ -1286,21 +1453,25 @@ impl CompletionProvider for FakeCompletionMenuProvider {
         _window: &mut Window,
         cx: &mut Context<crate::Editor>,
     ) -> Task<anyhow::Result<Vec<CompletionResponse>>> {
-        let completion = Completion {
-            replace_range: text::Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
-            new_text: "fake_completion".to_string(),
-            label: CodeLabel::plain("fake_completion".to_string(), None),
-            documentation: None,
-            source: CompletionSource::Custom,
-            icon_path: None,
-            match_start: None,
-            snippet_deduplication_key: None,
-            insert_text_mode: None,
-            confirm: None,
-        };
+        let replace_range = text::Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id());
+        let completions = ["fake_completion", "fake_completion_2"]
+            .into_iter()
+            .map(|label| Completion {
+                replace_range: replace_range.clone(),
+                new_text: label.to_string(),
+                label: CodeLabel::plain(label.to_string(), None),
+                documentation: None,
+                source: CompletionSource::Custom,
+                icon_path: None,
+                match_start: None,
+                snippet_deduplication_key: None,
+                insert_text_mode: None,
+                confirm: None,
+            })
+            .collect();
 
         Task::ready(Ok(vec![CompletionResponse {
-            completions: vec![completion],
+            completions,
             display_options: Default::default(),
             is_incomplete: false,
         }]))

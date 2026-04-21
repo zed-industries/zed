@@ -11,7 +11,7 @@ use editor::{
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt, App, AsyncWindowContext, Corner, Entity, FocusHandle,
+    Action, Anchor, Animation, AnimationExt, App, AsyncWindowContext, Entity, FocusHandle,
     Focusable, IntoElement, ParentElement, Render, Subscription, WeakEntity, actions, div,
     ease_in_out, pulsating_between,
 };
@@ -172,7 +172,7 @@ impl Render for EditPredictionButton {
                             }
                             .ok()
                         })
-                        .anchor(Corner::BottomRight)
+                        .anchor(Anchor::BottomRight)
                         .trigger_with_tooltip(
                             IconButton::new("copilot-icon", icon),
                             |_window, cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx),
@@ -216,7 +216,7 @@ impl Render for EditPredictionButton {
                             })
                             .ok()
                         })
-                        .anchor(Corner::BottomRight)
+                        .anchor(Anchor::BottomRight)
                         .trigger_with_tooltip(
                             IconButton::new("codestral-icon", IconName::AiMistral)
                                 .shape(IconButtonShape::Square)
@@ -260,7 +260,7 @@ impl Render for EditPredictionButton {
                             })
                             .ok()
                         })
-                        .anchor(Corner::BottomRight)
+                        .anchor(Anchor::BottomRight)
                         .trigger(
                             IconButton::new("openai-compatible-api-icon", IconName::AiOpenAiCompat)
                                 .shape(IconButtonShape::Square)
@@ -290,7 +290,7 @@ impl Render for EditPredictionButton {
                             })
                             .ok()
                         })
-                        .anchor(Corner::BottomRight)
+                        .anchor(Anchor::BottomRight)
                         .trigger_with_tooltip(
                             IconButton::new("ollama-icon", IconName::AiOllama)
                                 .shape(IconButtonShape::Square)
@@ -374,7 +374,7 @@ impl Render for EditPredictionButton {
                     let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
                         "Choose a Plan"
                     } else {
-                        "Sign In To Use"
+                        "Configure a Provider"
                     };
 
                     return div().child(
@@ -442,7 +442,7 @@ impl Render for EditPredictionButton {
                                 if show_editor_predictions {
                                     tooltip_meta
                                 } else if user.is_none() {
-                                    "Sign In To Use"
+                                    "Sign In Or Configure a Provider"
                                 } else {
                                     "Hidden For This File"
                                 }
@@ -485,7 +485,7 @@ impl Render for EditPredictionButton {
                             .ok()
                         })
                     })
-                    .anchor(Corner::BottomRight)
+                    .anchor(Anchor::BottomRight)
                     .with_handle(self.popover_menu_handle.clone());
 
                 let is_refreshing = self
@@ -630,6 +630,28 @@ impl EditPredictionButton {
         menu
     }
 
+    fn add_configure_providers_item(&self, menu: ContextMenu) -> ContextMenu {
+        menu.separator().item(
+            ContextMenuEntry::new("Configure Providers")
+                .icon(IconName::Settings)
+                .icon_position(IconPosition::Start)
+                .icon_color(Color::Muted)
+                .handler(move |window, cx| {
+                    telemetry::event!(
+                        "Edit Prediction Menu Action",
+                        action = "configure_providers",
+                    );
+                    window.dispatch_action(
+                        OpenSettingsAt {
+                            path: "edit_predictions.providers".to_string(),
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
+                }),
+        )
+    }
+
     pub fn build_copilot_start_menu(
         &mut self,
         window: &mut Window,
@@ -637,39 +659,38 @@ impl EditPredictionButton {
     ) -> Entity<ContextMenu> {
         let fs = self.fs.clone();
         let project = self.project.clone();
-        ContextMenu::build(window, cx, |menu, _, _| {
-            menu.entry("Sign In to Copilot", None, move |window, cx| {
-                telemetry::event!(
-                    "Edit Prediction Menu Action",
-                    action = "sign_in",
-                    provider = "copilot",
-                );
-                if let Some(copilot) = EditPredictionStore::try_global(cx).and_then(|store| {
-                    store.update(cx, |this, cx| {
-                        this.start_copilot_for_project(&project.upgrade()?, cx)
-                    })
-                }) {
-                    copilot_ui::initiate_sign_in(copilot, window, cx);
-                }
-            })
-            .entry("Disable Copilot", None, {
-                let fs = fs.clone();
-                move |_window, cx| {
+        ContextMenu::build(window, cx, |menu, _, cx| {
+            let menu = menu
+                .entry("Sign In to Copilot", None, move |window, cx| {
                     telemetry::event!(
                         "Edit Prediction Menu Action",
-                        action = "disable_provider",
+                        action = "sign_in",
                         provider = "copilot",
                     );
-                    hide_copilot(fs.clone(), cx)
-                }
-            })
-            .separator()
-            .entry("Use Zed AI", None, {
-                let fs = fs.clone();
-                move |_window, cx| {
-                    set_completion_provider(fs.clone(), cx, EditPredictionProvider::Zed)
-                }
-            })
+                    if let Some(copilot) = EditPredictionStore::try_global(cx).and_then(|store| {
+                        store.update(cx, |this, cx| {
+                            this.start_copilot_for_project(&project.upgrade()?, cx)
+                        })
+                    }) {
+                        copilot_ui::initiate_sign_in(copilot, window, cx);
+                    }
+                })
+                .entry("Disable Copilot", None, {
+                    let fs = fs.clone();
+                    move |_window, cx| {
+                        telemetry::event!(
+                            "Edit Prediction Menu Action",
+                            action = "disable_provider",
+                            provider = "copilot",
+                        );
+                        hide_copilot(fs.clone(), cx)
+                    }
+                });
+
+            let menu =
+                self.add_provider_switching_section(menu, EditPredictionProvider::Copilot, cx);
+            let menu = self.add_configure_providers_item(menu);
+            menu
         })
     }
 
@@ -1008,7 +1029,9 @@ impl EditPredictionButton {
             let menu =
                 self.add_provider_switching_section(menu, EditPredictionProvider::Copilot, cx);
 
-            menu.separator()
+            let menu = self.add_configure_providers_item(menu);
+            let menu = menu
+                .separator()
                 .item(
                     ContextMenuEntry::new("Copilot: Next Edit Suggestions")
                         .toggleable(IconPosition::Start, next_edit_suggestions)
@@ -1034,7 +1057,8 @@ impl EditPredictionButton {
                     "Go to Copilot Settings",
                     OpenBrowser { url: settings_url }.boxed_clone(),
                 )
-                .action("Sign Out", copilot::SignOut.boxed_clone())
+                .action("Sign Out", copilot::SignOut.boxed_clone());
+            menu
         })
     }
 
@@ -1048,6 +1072,7 @@ impl EditPredictionButton {
             let menu =
                 self.add_provider_switching_section(menu, EditPredictionProvider::Codestral, cx);
 
+            let menu = self.add_configure_providers_item(menu);
             menu
         })
     }
@@ -1290,26 +1315,7 @@ impl EditPredictionButton {
                 }
             }
 
-            menu = menu.separator().item(
-                ContextMenuEntry::new("Configure Providers")
-                    .icon(IconName::Settings)
-                    .icon_position(IconPosition::Start)
-                    .icon_color(Color::Muted)
-                    .handler(move |window, cx| {
-                        telemetry::event!(
-                            "Edit Prediction Menu Action",
-                            action = "configure_providers",
-                        );
-                        window.dispatch_action(
-                            OpenSettingsAt {
-                                path: "edit_predictions.providers".to_string(),
-                            }
-                            .boxed_clone(),
-                            cx,
-                        );
-                    }),
-            );
-
+            let menu = self.add_configure_providers_item(menu);
             menu
         })
     }

@@ -2,7 +2,7 @@ use collections::VecDeque;
 use edit_prediction::EditPredictionStore;
 use editor::{Editor, EditorEvent, MultiBufferOffset, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
-    App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
+    Anchor, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
     Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
 };
 use itertools::Itertools as _;
@@ -956,7 +956,7 @@ impl Render for LspLogToolbarItemView {
         let log_toolbar_view = cx.weak_entity();
 
         let lsp_menu = PopoverMenu::new("LspLogView")
-            .anchor(Corner::TopLeft)
+            .anchor(Anchor::TopLeft)
             .trigger(
                 Button::new(
                     "language_server_menu_header",
@@ -1031,7 +1031,7 @@ impl Render for LspLogToolbarItemView {
                 LogKind::ServerInfo => SERVER_INFO,
             };
             PopoverMenu::new("LspViewSelector")
-                .anchor(Corner::TopLeft)
+                .anchor(Anchor::TopLeft)
                 .trigger(
                     Button::new("language_server_menu_header", label).end_icon(
                         Icon::new(IconName::ChevronDown)
@@ -1123,7 +1123,7 @@ impl Render for LspLogToolbarItemView {
                                 let log_view = log_view.clone();
                                 div().child(
                                     PopoverMenu::new("lsp-trace-level-menu")
-                                        .anchor(Corner::TopLeft)
+                                        .anchor(Anchor::TopLeft)
                                         .trigger(
                                             Button::new(
                                                 "language_server_trace_level_selector",
@@ -1193,7 +1193,7 @@ impl Render for LspLogToolbarItemView {
                                 let log_view = log_view.clone();
                                 div().child(
                                     PopoverMenu::new("lsp-log-level-menu")
-                                        .anchor(Corner::TopLeft)
+                                        .anchor(Anchor::TopLeft)
                                         .trigger(
                                             Button::new(
                                                 "language_server_log_level_selector",
@@ -1294,6 +1294,7 @@ fn initialize_new_editor(
         editor.set_text(content, window, cx);
         editor.set_show_git_diff_gutter(false, cx);
         editor.set_show_runnables(false, cx);
+        editor.set_show_bookmarks(false, cx);
         editor.set_show_breakpoints(false, cx);
         editor.set_read_only(true);
         editor.set_show_edit_predictions(Some(false), window, cx);

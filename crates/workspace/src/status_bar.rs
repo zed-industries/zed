@@ -3,7 +3,7 @@ use crate::{
     sidebar_side_context_menu,
 };
 use gpui::{
-    AnyView, App, Context, Corner, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
+    Anchor, AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
     Subscription, WeakEntity, Window,
 };
 use std::any::TypeId;
@@ -144,14 +144,14 @@ impl StatusBar {
 
         let toggle = sidebar_side_context_menu("sidebar-status-toggle-menu", cx)
             .anchor(if on_right {
-                Corner::BottomRight
+                Anchor::BottomRight
             } else {
-                Corner::BottomLeft
+                Anchor::BottomLeft
             })
             .attach(if on_right {
-                Corner::TopRight
+                Anchor::TopRight
             } else {
-                Corner::TopLeft
+                Anchor::TopLeft
             })
             .trigger(move |_is_active, _window, _cx| {
                 IconButton::new(

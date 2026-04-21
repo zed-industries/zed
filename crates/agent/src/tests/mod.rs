@@ -3161,6 +3161,66 @@ async fn test_title_generation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_title_generation_failure_allows_retry(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let summary_model = Arc::new(FakeLanguageModel::default());
+    let fake_summary_model = summary_model.as_fake();
+    thread.update(cx, |thread, cx| {
+        thread.set_summarization_model(Some(summary_model.clone()), cx)
+    });
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Hey!");
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    fake_summary_model.send_last_completion_stream_error(
+        LanguageModelCompletionError::UpstreamProviderError {
+            message: "Internal server error".to_string(),
+            status: gpui::http_client::StatusCode::INTERNAL_SERVER_ERROR,
+            retry_after: None,
+        },
+    );
+    fake_summary_model.end_last_completion_stream();
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), None);
+        assert!(thread.has_failed_title_generation());
+        assert!(!thread.is_generating_title());
+    });
+
+    thread.update(cx, |thread, cx| {
+        thread.generate_title(cx);
+    });
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert!(!thread.has_failed_title_generation());
+        assert!(thread.is_generating_title());
+    });
+
+    fake_summary_model.send_last_completion_stream_text_chunk("Retried title");
+    fake_summary_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Retried title".into()));
+        assert!(!thread.has_failed_title_generation());
+        assert!(!thread.is_generating_title());
+    });
+}
+
+#[gpui::test]
 async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
