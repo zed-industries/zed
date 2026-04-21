@@ -103,7 +103,7 @@ impl Reporter {
     pub async fn result_for_commit(
         commit: CommitDetails,
         github_client: Rc<dyn GithubApiClient>,
-    ) -> Result<ReviewSuccess, ReviewFailure> {
+    ) -> ReviewResult {
         Self::new(Default::default(), github_client)
             .check_commit(&commit)
             .await

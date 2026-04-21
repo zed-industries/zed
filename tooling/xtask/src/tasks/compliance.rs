@@ -30,10 +30,13 @@ pub(crate) enum ComplianceMode {
 #[derive(Parser)]
 pub(crate) struct VersionArgs {
     #[arg(value_parser = VersionTag::parse)]
+    // The version to be on the lookout for
     version_tag: VersionTag,
     #[arg(long)]
+    // The markdown file to write the compliance report to
     report_path: PathBuf,
     #[arg(long)]
+    // An optional branch to use instead of the determined version branch
     branch: Option<String>,
 }
 
