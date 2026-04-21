@@ -75,8 +75,8 @@ use terminal::terminal_settings::TerminalSettings;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
-    Button, Callout, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle,
-    Tab, Tooltip, prelude::*, utils::WithRemSize,
+    Button, Callout, ContextMenu, ContextMenuEntry, IconButton, KeyBinding, PopoverMenu,
+    PopoverMenuHandle, Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
@@ -1619,6 +1619,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Keep AgentPanel as the active key context when opening the menu so
+        // context-specific shortcuts (e.g. Rules) do not fall back to globals.
+        window.focus(&self.focus_handle, cx);
         self.agent_panel_menu_handle.toggle(window, cx);
     }
 
@@ -3053,6 +3056,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
+        let agent_panel_focus_handle = self.focus_handle.clone();
 
         let conversation_view = match &self.base_view {
             BaseView::AgentThread { conversation_view } => Some(conversation_view.clone()),
@@ -3094,7 +3098,7 @@ impl AgentPanel {
             .menu({
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
-                        menu = menu.context(focus_handle.clone());
+                        menu = menu.context(focus_handle.clone()).key_context("AgentPanel");
 
                         if can_regenerate_thread_title {
                             menu = menu.header("Current Thread");
@@ -3126,10 +3130,75 @@ impl AgentPanel {
                                 }),
                             )
                             .action("Add Custom Server…", Box::new(AddContextServer))
-                            .separator()
-                            .action("Rules", Box::new(OpenRulesLibrary::default()))
-                            .action("Profiles", Box::new(ManageProfiles::default()))
-                            .action("Settings", Box::new(OpenSettings))
+                            .separator();
+
+                        menu = menu
+                            .custom_entry(
+                                {
+                                    let agent_panel_focus_handle = agent_panel_focus_handle.clone();
+                                    move |_window, cx| {
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(Label::new("Rules"))
+                                            .child(KeyBinding::for_action_in(
+                                                &OpenRulesLibrary::default(),
+                                                &agent_panel_focus_handle,
+                                                cx,
+                                            ))
+                                            .into_any_element()
+                                    }
+                                },
+                                move |window, cx| {
+                                    window.dispatch_action(
+                                        OpenRulesLibrary::default().boxed_clone(),
+                                        cx,
+                                    );
+                                },
+                            )
+                            .custom_entry(
+                                {
+                                    let agent_panel_focus_handle = agent_panel_focus_handle.clone();
+                                    move |_window, cx| {
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(Label::new("Profiles"))
+                                            .child(KeyBinding::for_action_in(
+                                                &ManageProfiles::default(),
+                                                &agent_panel_focus_handle,
+                                                cx,
+                                            ))
+                                            .into_any_element()
+                                    }
+                                },
+                                move |window, cx| {
+                                    window.dispatch_action(
+                                        ManageProfiles::default().boxed_clone(),
+                                        cx,
+                                    );
+                                },
+                            )
+                            .custom_entry(
+                                {
+                                    let agent_panel_focus_handle = agent_panel_focus_handle.clone();
+                                    move |_window, cx| {
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(Label::new("Settings"))
+                                            .child(KeyBinding::for_action_in(
+                                                &OpenSettings,
+                                                &agent_panel_focus_handle,
+                                                cx,
+                                            ))
+                                            .into_any_element()
+                                    }
+                                },
+                                move |window, cx| {
+                                    window.dispatch_action(OpenSettings.boxed_clone(), cx);
+                                },
+                            )
                             .separator()
                             .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar));
 
