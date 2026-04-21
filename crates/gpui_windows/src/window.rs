@@ -174,7 +174,7 @@ impl WindowsWindowState {
     }
 
     pub(crate) fn is_maximized(&self) -> bool {
-        !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
+        !self.is_fullscreen()
     }
 
     fn bounds(&self) -> Bounds<Pixels> {
@@ -540,10 +540,9 @@ impl rwh::HasWindowHandle for WindowsWindow {
     }
 }
 
-// todo(windows)
 impl rwh::HasDisplayHandle for WindowsWindow {
     fn display_handle(&self) -> std::result::Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        Ok(rwh::DisplayHandle::windows())
     }
 }
 

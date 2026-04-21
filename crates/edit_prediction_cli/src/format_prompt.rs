@@ -33,17 +33,17 @@ pub async fn run_format_prompt(
         .context("prompt_inputs must be set after context retrieval")?;
 
     match args.provider {
-        PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
+        PredictionProvider::Teacher(_, zeta_format)
+        | PredictionProvider::TeacherNonBatching(_, zeta_format) => {
             step_progress.set_substatus("formatting teacher prompt");
 
-            let zeta_format = ZetaFormat::default();
             let (editable_range, context_range) =
                 excerpt_range_for_format(zeta_format, &prompt_inputs.excerpt_ranges);
 
             let prompt = TeacherPrompt::format_prompt(example, editable_range, context_range);
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
-                expected_output: String::new(),
+                expected_output: None,
                 rejected_output: None,
                 prefill: None,
                 provider: args.provider,
@@ -61,7 +61,7 @@ pub async fn run_format_prompt(
                 TeacherMultiRegionPrompt::format_prompt(example, editable_range, context_range);
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
-                expected_output: String::new(),
+                expected_output: None,
                 rejected_output: None,
                 prefill: None,
                 provider: args.provider,
@@ -85,8 +85,7 @@ pub async fn run_format_prompt(
                         zeta_format,
                     )
                     .ok()
-                })
-                .unwrap_or_default();
+                });
 
             let rejected_output = example.spec.rejected_patch.as_ref().and_then(|patch| {
                 zeta2_output_for_patch(prompt_inputs, patch, None, zeta_format).ok()
@@ -161,6 +160,20 @@ pub fn zeta2_output_for_patch(
             cursor_in_new,
             zeta_prompt::CURSOR_MARKER,
             multi_region::V0318_END_MARKER,
+        );
+    }
+
+    if version == ZetaFormat::V0327SingleFile {
+        let cursor_in_new = cursor_offset.map(|cursor_offset| {
+            let hunk_start = first_hunk_offset.unwrap_or(0);
+            result.floor_char_boundary((hunk_start + cursor_offset).min(result.len()))
+        });
+        return multi_region::encode_from_old_and_new_v0318(
+            &old_editable_region,
+            &result,
+            cursor_in_new,
+            zeta_prompt::CURSOR_MARKER,
+            multi_region::V0327_END_MARKER,
         );
     }
 

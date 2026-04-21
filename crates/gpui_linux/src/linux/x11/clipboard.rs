@@ -87,7 +87,7 @@ x11rb::atom_manager! {
         BMP__MIME: ImageFormat::mime_type(ImageFormat::Bmp ).as_bytes(),
         TIFF_MIME: ImageFormat::mime_type(ImageFormat::Tiff).as_bytes(),
         ICO__MIME: ImageFormat::mime_type(ImageFormat::Ico ).as_bytes(),
-
+        PNM__MIME: ImageFormat::mime_type(ImageFormat::Pnm ).as_bytes(),
         // This is just some random name for the property on our window, into which
         // the clipboard owner writes the data we requested.
         ARBOARD_CLIPBOARD,
@@ -1005,6 +1005,7 @@ impl Clipboard {
             ImageFormat::Bmp => self.inner.atoms.BMP__MIME,
             ImageFormat::Tiff => self.inner.atoms.TIFF_MIME,
             ImageFormat::Ico => self.inner.atoms.ICO__MIME,
+            ImageFormat::Pnm => self.inner.atoms.PNM__MIME,
         };
         let data = vec![ClipboardData {
             bytes: image.bytes,
