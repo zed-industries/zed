@@ -259,12 +259,14 @@ impl FeatureFlagAppExt for App {
     {
         self.observe_global::<FeatureFlagStore>(move |cx| {
             let store = cx.global::<FeatureFlagStore>();
-            callback(
-                OnFlagsReady {
-                    is_staff: store.is_staff(),
-                },
-                cx,
-            );
+            if store.server_flags_received() {
+                callback(
+                    OnFlagsReady {
+                        is_staff: store.is_staff(),
+                    },
+                    cx,
+                );
+            }
         })
     }
 

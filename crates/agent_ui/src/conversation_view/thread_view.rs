@@ -206,7 +206,7 @@ impl RenderOnce for GeneratingSpinnerElement {
 }
 
 pub enum AcpThreadViewEvent {
-    MessageSentOrQueued,
+    Interacted,
 }
 
 impl EventEmitter<AcpThreadViewEvent> for ThreadView {}
@@ -954,7 +954,6 @@ impl ThreadView {
         let has_queued = self.has_queued_messages();
         if is_editor_empty && self.can_fast_track_queue && has_queued {
             self.can_fast_track_queue = false;
-            cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
             self.send_queued_message_at_index(0, true, window, cx);
             return;
         }
@@ -964,7 +963,7 @@ impl ThreadView {
         }
 
         if is_generating {
-            cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
+            cx.emit(AcpThreadViewEvent::Interacted);
             self.queue_message(message_editor, window, cx);
             return;
         }
@@ -1006,7 +1005,7 @@ impl ThreadView {
             }
         }
 
-        cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
+        cx.emit(AcpThreadViewEvent::Interacted);
         self.send_impl(message_editor, window, cx)
     }
 
@@ -1209,6 +1208,8 @@ impl ThreadView {
             return;
         }
 
+        cx.emit(AcpThreadViewEvent::Interacted);
+
         let message_editor = self.message_editor.clone();
         if thread.read(cx).status() == ThreadStatus::Idle {
             self.send_impl(message_editor, window, cx);
@@ -1371,6 +1372,7 @@ impl ThreadView {
         }
 
         let task = thread.update(cx, |thread, cx| thread.retry(cx));
+        cx.emit(AcpThreadViewEvent::Interacted);
         self.sync_generating_indicator(cx);
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -1430,6 +1432,7 @@ impl ThreadView {
                 .update(cx, |thread, cx| thread.rewind(user_message_id, cx))
                 .await?;
             this.update_in(cx, |thread, window, cx| {
+                cx.emit(AcpThreadViewEvent::Interacted);
                 thread.send_impl(message_editor, window, cx);
                 thread.focus_handle(cx).focus(window, cx);
             })?;
@@ -1521,6 +1524,8 @@ impl ThreadView {
         let Some(queued) = self.remove_from_queue(index, cx) else {
             return;
         };
+
+        cx.emit(AcpThreadViewEvent::Interacted);
 
         self.message_editor.focus_handle(cx).focus(window, cx);
 
@@ -2289,7 +2294,8 @@ impl ThreadView {
             .justify_center()
             .child(
                 v_flex()
-                    .flex_basis(max_content_width)
+                    .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
+                    .when(max_content_width.is_none(), |this| this.w_full())
                     .flex_shrink()
                     .flex_grow_0()
                     .max_w_full()
@@ -3195,8 +3201,7 @@ impl ThreadView {
                 .child(
                     h_flex()
                         .size_full()
-                        .max_w(max_content_width)
-                        .mx_auto()
+                        .when_some(max_content_width, |this, max_w| this.max_w(max_w).mx_auto())
                         .pl_2()
                         .pr_1()
                         .flex_shrink_0()
@@ -3293,7 +3298,8 @@ impl ThreadView {
             })
             .child(
                 v_flex()
-                    .flex_basis(max_content_width)
+                    .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
+                    .when(max_content_width.is_none(), |this| this.w_full())
                     .flex_shrink()
                     .flex_grow_0()
                     .when(fills_container, |this| this.h_full())
@@ -3836,12 +3842,22 @@ impl ThreadView {
                         let enable_thinking = !thread.thinking_enabled();
                         thread.set_thinking_enabled(enable_thinking, cx);
 
+                        let favorite_key = thread.model().map(|model| {
+                            (model.provider_id().0.to_string(), model.id().0.to_string())
+                        });
                         let fs = thread.project().read(cx).fs().clone();
                         update_settings_file(fs, cx, move |settings, _| {
-                            if let Some(agent) = settings.agent.as_mut()
-                                && let Some(default_model) = agent.default_model.as_mut()
-                            {
-                                default_model.enable_thinking = enable_thinking;
+                            if let Some(agent) = settings.agent.as_mut() {
+                                if let Some(default_model) = agent.default_model.as_mut() {
+                                    default_model.enable_thinking = enable_thinking;
+                                }
+                                if let Some((provider_id, model_id)) = &favorite_key {
+                                    agent.update_favorite_model(
+                                        provider_id,
+                                        model_id,
+                                        |favorite| favorite.enable_thinking = enable_thinking,
+                                    );
+                                }
                             }
                         });
                     });
@@ -3972,14 +3988,33 @@ impl ThreadView {
                                                     cx,
                                                 );
 
+                                                let favorite_key = thread.model().map(|model| {
+                                                    (
+                                                        model.provider_id().0.to_string(),
+                                                        model.id().0.to_string(),
+                                                    )
+                                                });
                                                 let fs = thread.project().read(cx).fs().clone();
                                                 update_settings_file(fs, cx, move |settings, _| {
-                                                    if let Some(agent) = settings.agent.as_mut()
-                                                        && let Some(default_model) =
+                                                    if let Some(agent) = settings.agent.as_mut() {
+                                                        if let Some(default_model) =
                                                             agent.default_model.as_mut()
-                                                    {
-                                                        default_model.effort =
-                                                            Some(effort.to_string());
+                                                        {
+                                                            default_model.effort =
+                                                                Some(effort.to_string());
+                                                        }
+                                                        if let Some((provider_id, model_id)) =
+                                                            &favorite_key
+                                                        {
+                                                            agent.update_favorite_model(
+                                                                provider_id,
+                                                                model_id,
+                                                                |favorite| {
+                                                                    favorite.effort =
+                                                                        Some(effort.to_string())
+                                                                },
+                                                            );
+                                                        }
                                                     }
                                                 });
                                             });
@@ -4481,10 +4516,12 @@ impl ThreadView {
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let centered_container = move |content: AnyElement| {
-            h_flex()
-                .w_full()
-                .justify_center()
-                .child(div().max_w(max_content_width).w_full().child(content))
+            h_flex().w_full().justify_center().child(
+                div()
+                    .when_some(max_content_width, |this, max_w| this.max_w(max_w))
+                    .w_full()
+                    .child(content),
+            )
         };
 
         list(
@@ -7707,6 +7744,7 @@ impl ThreadView {
                 gpui::ImageFormat::Bmp => "BMP",
                 gpui::ImageFormat::Tiff => "TIFF",
                 gpui::ImageFormat::Ico => "ICO",
+                gpui::ImageFormat::Pnm => "PNM",
             };
             let dimensions = image::ImageReader::new(std::io::Cursor::new(image.bytes()))
                 .with_guessed_format()
@@ -8872,12 +8910,20 @@ impl ThreadView {
                 .unwrap_or(Speed::Fast);
             thread.set_speed(new_speed, cx);
 
+            let favorite_key = thread
+                .model()
+                .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
             let fs = thread.project().read(cx).fs().clone();
             update_settings_file(fs, cx, move |settings, _| {
-                if let Some(agent) = settings.agent.as_mut()
-                    && let Some(default_model) = agent.default_model.as_mut()
-                {
-                    default_model.speed = Some(new_speed);
+                if let Some(agent) = settings.agent.as_mut() {
+                    if let Some(default_model) = agent.default_model.as_mut() {
+                        default_model.speed = Some(new_speed);
+                    }
+                    if let Some((provider_id, model_id)) = &favorite_key {
+                        agent.update_favorite_model(provider_id, model_id, |favorite| {
+                            favorite.speed = Some(new_speed)
+                        });
+                    }
                 }
             });
         });
@@ -8918,12 +8964,20 @@ impl ThreadView {
         thread.update(cx, |thread, cx| {
             thread.set_thinking_effort(Some(next_effort.clone()), cx);
 
+            let favorite_key = thread
+                .model()
+                .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
             let fs = thread.project().read(cx).fs().clone();
             update_settings_file(fs, cx, move |settings, _| {
-                if let Some(agent) = settings.agent.as_mut()
-                    && let Some(default_model) = agent.default_model.as_mut()
-                {
-                    default_model.effort = Some(next_effort);
+                if let Some(agent) = settings.agent.as_mut() {
+                    if let Some(default_model) = agent.default_model.as_mut() {
+                        default_model.effort = Some(next_effort.clone());
+                    }
+                    if let Some((provider_id, model_id)) = &favorite_key {
+                        agent.update_favorite_model(provider_id, model_id, |favorite| {
+                            favorite.effort = Some(next_effort)
+                        });
+                    }
                 }
             });
         });

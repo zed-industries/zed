@@ -1472,9 +1472,18 @@ pub mod test {
 
     impl TestProjectItem {
         pub fn new(id: u64, path: &str, cx: &mut App) -> Entity<Self> {
+            Self::new_in_worktree(id, path, WorktreeId::from_usize(0), cx)
+        }
+
+        pub fn new_in_worktree(
+            id: u64,
+            path: &str,
+            worktree_id: WorktreeId,
+            cx: &mut App,
+        ) -> Entity<Self> {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
-                worktree_id: WorktreeId::from_usize(0),
+                worktree_id,
                 path: rel_path(path).into(),
             });
             cx.new(|_| Self {

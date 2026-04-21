@@ -1,3 +1,4 @@
+use std::any::TypeId;
 use std::cmp::min;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -823,6 +824,23 @@ impl EventEmitter<SearchEvent> for MarkdownPreviewView {}
 
 impl Item for MarkdownPreviewView {
     type Event = ();
+
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a Entity<Self>,
+        _: &'a App,
+    ) -> Option<gpui::AnyEntity> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.clone().into())
+        } else if type_id == TypeId::of::<Editor>() {
+            self.active_editor
+                .as_ref()
+                .map(|state| state.editor.clone().into())
+        } else {
+            None
+        }
+    }
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::FileDoc))

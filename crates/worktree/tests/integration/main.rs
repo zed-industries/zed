@@ -2913,6 +2913,78 @@ async fn test_linked_worktree_git_file_event_does_not_panic(
     });
 }
 
+#[gpui::test]
+async fn test_linked_worktree_event_in_unregistered_common_git_dir_does_not_panic(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // Regression test: a rescan event on a linked worktree's commondir
+    // must not panic when the worktree's repository has already been
+    // unregistered from `git_repositories`.
+    init_test(cx);
+
+    use git::repository::Worktree as GitWorktree;
+
+    let fs = FakeFs::new(executor);
+
+    fs.insert_tree(
+        path!("/main_repo"),
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/main_repo/.git")),
+        false,
+        GitWorktree {
+            path: PathBuf::from(path!("/linked_worktree")),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    fs.write(
+        path!("/linked_worktree/file.txt").as_ref(),
+        "content".as_bytes(),
+    )
+    .await
+    .unwrap();
+
+    let tree = Worktree::local(
+        path!("/linked_worktree").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    // Unregister the linked worktree's repository by removing its gitfile.
+    fs.remove_file(
+        Path::new(path!("/linked_worktree/.git")),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    tree.flush_fs_events(cx).await;
+
+    // Deliver the kind of Rescan event `FsWatcher` emits when the kernel
+    // signals `need_rescan` for the commondir.
+    fs.emit_fs_event(path!("/main_repo/.git"), Some(fs::PathEventKind::Rescan));
+    cx.run_until_parked();
+    tree.flush_fs_events(cx).await;
+}
+
 fn init_test(cx: &mut gpui::TestAppContext) {
     zlog::init_test();
 

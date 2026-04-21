@@ -150,20 +150,19 @@
       "(" @context
       ")" @context)) @item)
 
-; Object literal methods
-(variable_declarator
-  value: (object
-    (method_definition
-      [
-        "get"
-        "set"
-        "async"
-        "*"
-      ]* @context
-      name: (_) @name
-      parameters: (formal_parameters
-        "(" @context
-        ")" @context)) @item))
+; Object literal methods (including nested objects)
+(object
+  (method_definition
+    [
+      "get"
+      "set"
+      "async"
+      "*"
+    ]* @context
+    name: (_) @name
+    parameters: (formal_parameters
+      "(" @context
+      ")" @context)) @item)
 
 (public_field_definition
   [

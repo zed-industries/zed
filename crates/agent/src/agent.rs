@@ -47,7 +47,7 @@ use prompt_store::{
     WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, update_settings_file};
+use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 use std::any::Any;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -1423,16 +1423,29 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
             return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
         };
 
-        // We want to reset the effort level when switching models, as the currently-selected effort level may
-        // not be compatible.
-        let effort = model
-            .default_effort_level()
-            .map(|effort_level| effort_level.value.to_string());
+        let favorite = agent_settings::AgentSettings::get_global(cx)
+            .favorite_models
+            .iter()
+            .find(|favorite| {
+                favorite.provider.0 == model.provider_id().0.as_ref()
+                    && favorite.model == model.id().0.as_ref()
+            })
+            .cloned();
+
+        let LanguageModelSelection {
+            enable_thinking,
+            effort,
+            speed,
+            ..
+        } = agent_settings::language_model_to_selection(&model, favorite.as_ref());
 
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
             thread.set_thinking_effort(effort.clone(), cx);
-            thread.set_thinking_enabled(model.supports_thinking(), cx);
+            thread.set_thinking_enabled(enable_thinking, cx);
+            if let Some(speed) = speed {
+                thread.set_speed(speed, cx);
+            }
         });
 
         update_settings_file(
