@@ -998,7 +998,7 @@ impl ProjectSearchView {
 
         let excluded_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(EXCLUDE_PLACEHOLDER, *.lock", window, cx);
+            editor.set_placeholder_text(EXCLUDE_PLACEHOLDER, window, cx);
 
             editor
         });

@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
-    NextHistoryQuery, PreviousHistoryQuery, SearchOption, SearchOptions, SelectNextMatch,
-    SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace,
-    ToggleWholeWord,
+    EXCLUDE_PLACEHOLDER, INCLUDE_PLACEHOLDER, NextHistoryQuery, PreviousHistoryQuery,
+    REPLACE_PLACEHOLDER, SearchOption, SearchOptions, SelectNextMatch, SelectPreviousMatch,
+    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
 };
 use editor::EditorSettings;
 use editor::scroll::Autoscroll;
