@@ -2862,7 +2862,6 @@ fn plan_label_markdown_style(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use acp::SessionId;
     use acp_thread::{
         AgentSessionList, AgentSessionListRequest, AgentSessionListResponse, StubAgentConnection,
     };
@@ -3033,8 +3032,8 @@ pub(crate) mod tests {
     async fn test_recent_history_refreshes_when_history_cache_updated(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let session_a = AgentSessionInfo::new(SessionId::new("session-a"));
-        let session_b = AgentSessionInfo::new(SessionId::new("session-b"));
+        let session_a = AgentSessionInfo::new(acp::SessionId::new("session-a"));
+        let session_b = AgentSessionInfo::new(acp::SessionId::new("session-b"));
 
         // Use a connection that provides a session list so ThreadHistory is created
         let (conversation_view, history, cx) = setup_thread_view_with_history(
@@ -3073,7 +3072,7 @@ pub(crate) mod tests {
     async fn test_new_thread_creation_triggers_session_list_refresh(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let session = AgentSessionInfo::new(SessionId::new("history-session"));
+        let session = AgentSessionInfo::new(acp::SessionId::new("history-session"));
         let (conversation_view, _history, cx) = setup_thread_view_with_history(
             StubAgentServer::new(SessionHistoryConnection::new(vec![session.clone()])),
             cx,
@@ -3109,7 +3108,7 @@ pub(crate) mod tests {
                     Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
-                    Some(SessionId::new("resume-session")),
+                    Some(acp::SessionId::new("resume-session")),
                     None,
                     None,
                     None,
@@ -3156,7 +3155,7 @@ pub(crate) mod tests {
                 self,
                 project,
                 "RestoredAvailableCommandsConnection",
-                SessionId::new("new-session"),
+                acp::SessionId::new("new-session"),
                 cx,
             );
             Task::ready(Ok(thread))
@@ -3246,7 +3245,7 @@ pub(crate) mod tests {
                     Rc::new(StubAgentServer::new(RestoredAvailableCommandsConnection)),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
-                    Some(SessionId::new("restored-session")),
+                    Some(acp::SessionId::new("restored-session")),
                     None,
                     None,
                     None,
@@ -3328,7 +3327,7 @@ pub(crate) mod tests {
                     Rc::new(StubAgentServer::new(connection)),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
-                    Some(SessionId::new("session-1")),
+                    Some(acp::SessionId::new("session-1")),
                     None,
                     Some(PathList::new(&[PathBuf::from("/project/subdir")])),
                     None,
@@ -4296,7 +4295,7 @@ pub(crate) mod tests {
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
         name: &'static str,
-        session_id: SessionId,
+        session_id: acp::SessionId,
         cx: &mut App,
     ) -> Entity<AcpThread> {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
@@ -4339,7 +4338,7 @@ pub(crate) mod tests {
                 self,
                 project,
                 "SessionHistoryConnection",
-                SessionId::new("history-session"),
+                acp::SessionId::new("history-session"),
                 cx,
             );
             Task::ready(Ok(thread))
@@ -4403,7 +4402,7 @@ pub(crate) mod tests {
                 self,
                 project,
                 "ResumeOnlyAgentConnection",
-                SessionId::new("new-session"),
+                acp::SessionId::new("new-session"),
                 cx,
             );
             Task::ready(Ok(thread))
@@ -4583,7 +4582,7 @@ pub(crate) mod tests {
                     self,
                     project,
                     action_log,
-                    SessionId::new("test"),
+                    acp::SessionId::new("test"),
                     watch::Receiver::constant(
                         acp::PromptCapabilities::new()
                             .image(true)
@@ -4663,7 +4662,7 @@ pub(crate) mod tests {
                     self.clone(),
                     project,
                     action_log,
-                    SessionId::new("new-session"),
+                    acp::SessionId::new("new-session"),
                     watch::Receiver::constant(
                         acp::PromptCapabilities::new()
                             .image(true)
@@ -7289,7 +7288,7 @@ pub(crate) mod tests {
                     self,
                     project,
                     action_log,
-                    SessionId::new("close-capable-session"),
+                    acp::SessionId::new("close-capable-session"),
                     watch::Receiver::constant(
                         acp::PromptCapabilities::new()
                             .image(true)

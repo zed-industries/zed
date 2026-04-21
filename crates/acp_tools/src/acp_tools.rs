@@ -215,6 +215,15 @@ impl AcpConnectionRegistry {
         cx.notify();
     }
 
+    /// Clear the retained message history for the current connection and force
+    /// watchers to resubscribe so their local correlation state is reset too.
+    pub fn clear_messages(&mut self, cx: &mut Context<Self>) {
+        self.backlog.clear();
+        self.generation += 1;
+        self.subscribers.clear();
+        cx.notify();
+    }
+
     /// Subscribe to messages on the current connection.
     ///
     /// Returns the existing backlog (already-observed messages) together with
@@ -277,6 +286,7 @@ impl AcpTools {
 
         let Some(agent_id) = agent_id else {
             self.watched_connection = None;
+            self.expanded.clear();
             return;
         };
 
@@ -285,6 +295,8 @@ impl AcpTools {
                 return;
             }
         }
+
+        self.expanded.clear();
 
         let (backlog, messages_rx) = self
             .connection_registry
@@ -427,6 +439,8 @@ impl AcpTools {
         if let Some(connection) = self.watched_connection.as_mut() {
             connection.messages.clear();
             connection.list_state.reset(0);
+            connection.incoming_request_methods.clear();
+            connection.outgoing_request_methods.clear();
             self.expanded.clear();
             cx.notify();
         }
@@ -732,6 +746,7 @@ impl Render for AcpToolsToolbarItemView {
         };
 
         let acp_tools = acp_tools.clone();
+        let connection_registry = acp_tools.read(cx).connection_registry.clone();
         let has_messages = acp_tools
             .read(cx)
             .watched_connection
@@ -756,6 +771,9 @@ impl Render for AcpToolsToolbarItemView {
                     .tooltip(Tooltip::text("Clear Messages"))
                     .disabled(!has_messages)
                     .on_click(cx.listener(move |_this, _, _window, cx| {
+                        connection_registry.update(cx, |registry, cx| {
+                            registry.clear_messages(cx);
+                        });
                         acp_tools.update(cx, |acp_tools, cx| {
                             acp_tools.clear_messages(cx);
                         });
