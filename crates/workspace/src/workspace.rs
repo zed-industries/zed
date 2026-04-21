@@ -1431,6 +1431,12 @@ pub enum OpenMode {
     Activate,
 }
 
+fn is_dirty_scratch_buffer(item: &dyn ItemHandle, cx: &App) -> bool {
+    item.is_dirty(cx)
+        && item.buffer_kind(cx) == ItemBufferKind::Singleton
+        && item.project_entry_ids(cx).is_empty()
+}
+
 impl Workspace {
     pub fn new(
         workspace_id: Option<WorkspaceId>,
@@ -3294,6 +3300,17 @@ impl Workspace {
                 }
             }
 
+            if close_intent == CloseIntent::ReplaceWindow {
+                let should_continue = this
+                    .update_in(cx, |this, window, cx| {
+                        this.prompt_for_dirty_scratch_buffers(window, cx)
+                    })?
+                    .await?;
+                if !should_continue {
+                    return Ok(false);
+                }
+            }
+
             let save_result = this
                 .update_in(cx, |this, window, cx| {
                     this.save_all_internal(SaveIntent::Close, window, cx)
@@ -3417,6 +3434,63 @@ impl Workspace {
         self.save_all_internal(SaveIntent::Close, window, cx)
     }
 
+    /// Prompts the user to save, discard, or cancel for each dirty untitled
+    /// buffer. Returns `false` if the user cancelled any prompt, `true` otherwise.
+    pub fn prompt_for_dirty_scratch_buffers(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<bool>> {
+        let scratch_items: Vec<_> = self
+            .panes
+            .iter()
+            .flat_map(|pane| {
+                let pane_weak = pane.downgrade();
+                pane.read(cx)
+                    .items()
+                    .filter_map(|item| {
+                        let prompt_needed =
+                            is_dirty_scratch_buffer(&**item, cx) && item.can_save_as(cx);
+                        prompt_needed.then(|| (pane_weak.clone(), item.boxed_clone()))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+
+        if scratch_items.is_empty() {
+            return Task::ready(Ok(true));
+        }
+
+        cx.emit(Event::Activate);
+        let project = self.project.clone();
+
+        cx.spawn_in(window, async move |_this, cx| {
+            for (pane, item) in scratch_items {
+                let proceed = Pane::save_item(
+                    project.clone(),
+                    &pane,
+                    &*item,
+                    SaveIntent::Close,
+                    cx,
+                )
+                .await?;
+                if !proceed {
+                    return Ok(false);
+                }
+                // On "Don't Save", `Pane::save_item` reloads from disk — a no-op for
+                // scratch buffers — so manually remove any still-dirty scratch item to
+                // prevent later save passes from re-prompting or re-serializing it.
+                pane.update_in(cx, |pane, window, cx| {
+                    if is_dirty_scratch_buffer(&*item, cx) {
+                        pane.remove_item(item.item_id(), false, false, window, cx);
+                    }
+                })
+                .log_err();
+            }
+            Ok(true)
+        })
+    }
+
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,
@@ -3530,9 +3604,18 @@ impl Workspace {
             open_mode = OpenMode::Activate;
         }
 
+        let prompt_task = if open_mode == OpenMode::NewWindow {
+            Task::ready(Ok(true))
+        } else {
+            self.prompt_for_dirty_scratch_buffers(window, cx)
+        };
+
         let app_state = self.app_state.clone();
 
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
+            if !prompt_task.await? {
+                return this.upgrade().context("workspace was dropped during prompt");
+            }
             let OpenResult { workspace, .. } = cx
                 .update(|cx| {
                     open_paths(
@@ -11066,6 +11149,130 @@ mod tests {
         cx.executor().run_until_parked();
         assert!(!cx.has_pending_prompt());
         assert!(!task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_replace_window_prompts_for_dirty_scratch_buffers(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // A dirty untitled buffer (Singleton with no project entries) must prompt
+        // on ReplaceWindow so it isn't silently serialized during the swap.
+        let scratch = cx.new(|cx| TestItem::new(cx).with_dirty(true));
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(scratch.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Cancel");
+        cx.executor().run_until_parked();
+        assert!(!task.await.unwrap());
+
+        // Answering "Don't Save" discards the buffer and lets the replacement proceed.
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Don't Save");
+        cx.executor().run_until_parked();
+        assert!(!cx.has_pending_prompt());
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_open_workspace_for_paths_prompts_for_dirty_scratch_buffers(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let scratch = cx.new(|cx| TestItem::new(cx).with_dirty(true));
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(scratch.clone()), None, true, window, cx);
+        });
+
+        // Any callers that route through `open_workspace_for_paths` with a non-NewWindow
+        // mode (e.g. the welcome screen) must prompt before replacing the workspace.
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.open_workspace_for_paths(OpenMode::Activate, vec!["/root".into()], window, cx)
+        });
+        cx.executor().run_until_parked();
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Cancel");
+        cx.executor().run_until_parked();
+        let returned = task.await.unwrap();
+        assert_eq!(
+            returned, workspace,
+            "cancel should return the outgoing workspace unchanged"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_multi_workspace_open_project_prompts_for_dirty_scratch_buffers(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let multi_workspace_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        cx.run_until_parked();
+
+        let workspace = multi_workspace_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+
+        let scratch = cx.new(|cx| TestItem::new(cx).with_dirty(true));
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(scratch.clone()), None, true, window, cx);
+        });
+
+        // `open_project` on the multi-workspace branch must prompt for dirty
+        // scratch buffers in the currently-active workspace before switching.
+        let open_task = multi_workspace_handle
+            .update(cx, |mw, window, cx| {
+                mw.open_project(vec!["/root".into()], OpenMode::Activate, window, cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+        assert!(!cx.has_pending_prompt());
+
+        let opened = open_task.await.unwrap();
+        assert_eq!(
+            opened, workspace,
+            "cancelling the scratch prompt should leave the active workspace unchanged"
+        );
+        workspace.read_with(cx, |w, cx| {
+            assert!(
+                w.items(cx).any(|item| item.item_id() == scratch.item_id()),
+                "the scratch buffer should still be in the outgoing workspace"
+            );
+        });
     }
 
     #[gpui::test]

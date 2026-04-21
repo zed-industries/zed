@@ -1930,15 +1930,30 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         if self.multi_workspace_enabled(cx) {
-            self.find_or_create_local_workspace(
-                PathList::new(&paths),
-                None,
-                &[],
-                None,
-                OpenMode::Activate,
-                window,
-                cx,
-            )
+            let outgoing_workspace = self.workspace().clone();
+            let path_list = PathList::new(&paths);
+            cx.spawn_in(window, async move |this, cx| {
+                let should_continue = outgoing_workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.prompt_for_dirty_scratch_buffers(window, cx)
+                    })?
+                    .await?;
+                if !should_continue {
+                    return Ok(outgoing_workspace);
+                }
+                this.update_in(cx, |this, window, cx| {
+                    this.find_or_create_local_workspace(
+                        path_list,
+                        None,
+                        &[],
+                        None,
+                        OpenMode::Activate,
+                        window,
+                        cx,
+                    )
+                })?
+                .await
+            })
         } else {
             let workspace = self.workspace().clone();
             cx.spawn_in(window, async move |_this, cx| {
