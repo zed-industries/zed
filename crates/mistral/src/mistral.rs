@@ -79,7 +79,7 @@ pub enum Model {
     #[serde(rename = "custom")]
     Custom {
         name: String,
-        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        /// The name displayed in the UI, such as in the agent panel model dropdown menu.
         display_name: Option<String>,
         max_tokens: u64,
         max_output_tokens: Option<u64>,

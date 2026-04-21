@@ -208,11 +208,24 @@ impl<'de> Deserialize<'de> for ModelShow {
                 let mut capabilities: Vec<String> = Vec::new();
                 let mut architecture: Option<String> = None;
                 let mut context_length: Option<u64> = None;
+                let mut num_ctx: Option<u64> = None;
 
                 while let Some(key) = map.next_key::<String>()? {
                     match key.as_str() {
                         "capabilities" => {
                             capabilities = map.next_value()?;
+                        }
+                        "parameters" => {
+                            let params_str: String = map.next_value()?;
+                            for line in params_str.lines() {
+                                if let Some(start) = line.find("num_ctx") {
+                                    let value_part = &line[start + 7..];
+                                    if let Ok(value) = value_part.trim().parse::<u64>() {
+                                        num_ctx = Some(value);
+                                        break;
+                                    }
+                                }
+                            }
                         }
                         "model_info" => {
                             let model_info: Value = map.next_value()?;
@@ -235,6 +248,7 @@ impl<'de> Deserialize<'de> for ModelShow {
                     }
                 }
 
+                let context_length = num_ctx.or(context_length);
                 Ok(ModelShow {
                     capabilities,
                     context_length,
@@ -525,6 +539,120 @@ mod tests {
         assert!(result.capabilities.contains(&"completion".to_string()));
 
         assert_eq!(result.architecture, Some("llama".to_string()));
+        assert_eq!(result.context_length, Some(131072));
+    }
+
+    #[test]
+    fn parse_show_model_with_num_ctx_preference() {
+        let response = serde_json::json!({
+            "license": "LLAMA 3.2 COMMUNITY LICENSE AGREEMENT...",
+            "parameters": "num_ctx                        32768\npresence_penalty               1.5\ntemperature                    1\ntop_k                          20\ntop_p                          0.95",
+            "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "llama",
+                "families": ["llama"],
+                "parameter_size": "3.2B",
+                "quantization_level": "Q4_K_M"
+            },
+            "model_info": {
+                "general.architecture": "llama",
+                "general.basename": "Llama-3.2",
+                "general.file_type": 15,
+                "general.finetune": "Instruct",
+                "general.languages": ["en", "de", "fr", "it", "pt", "hi", "es", "th"],
+                "general.parameter_count": 3212749888u64,
+                "general.quantization_version": 2,
+                "general.size_label": "3B",
+                "general.tags": ["facebook", "meta", "pytorch", "llama", "llama-3", "text-generation"],
+                "general.type": "model",
+                "llama.attention.head_count": 24,
+                "llama.attention.head_count_kv": 8,
+                "llama.attention.key_length": 128,
+                "llama.attention.layer_norm_rms_epsilon": 0.00001,
+                "llama.attention.value_length": 128,
+                "llama.block_count": 28,
+                "llama.context_length": 131072,
+                "llama.embedding_length": 3072,
+                "llama.feed_forward_length": 8192,
+                "llama.rope.dimension_count": 128,
+                "llama.rope.freq_base": 500000,
+                "llama.vocab_size": 128256,
+                "tokenizer.ggml.bos_token_id": 128000,
+                "tokenizer.ggml.eos_token_id": 128009,
+                "tokenizer.ggml.merges": null,
+                "tokenizer.ggml.model": "gpt2",
+                "tokenizer.ggml.pre": "llama-bpe",
+                "tokenizer.ggml.token_type": null,
+                "tokenizer.ggml.tokens": null
+            },
+            "tensors": [
+                { "name": "rope_freqs.weight", "type": "F32", "shape": [64] },
+                { "name": "token_embd.weight", "type": "Q4_K_S", "shape": [3072, 128256] }
+            ],
+            "capabilities": ["completion", "tools"],
+            "modified_at": "2025-04-29T21:24:41.445877632+03:00"
+        });
+
+        let result: ModelShow = serde_json::from_value(response).unwrap();
+
+        assert_eq!(result.context_length, Some(32768));
+    }
+
+    #[test]
+    fn parse_show_model_without_num_ctx_in_parameters_fallback() {
+        let response = serde_json::json!({
+            "license": "LLAMA 3.2 COMMUNITY LICENSE AGREEMENT...",
+            "parameters": "presence_penalty               1.5\ntemperature                    1\ntop_k                          20\ntop_p                          0.95",
+            "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "llama",
+                "families": ["llama"],
+                "parameter_size": "3.2B",
+                "quantization_level": "Q4_K_M"
+            },
+            "model_info": {
+                "general.architecture": "llama",
+                "general.basename": "Llama-3.2",
+                "general.file_type": 15,
+                "general.finetune": "Instruct",
+                "general.languages": ["en", "de", "fr", "it", "pt", "hi", "es", "th"],
+                "general.parameter_count": 3212749888u64,
+                "general.quantization_version": 2,
+                "general.size_label": "3B",
+                "general.tags": ["facebook", "meta", "pytorch", "llama", "llama-3", "text-generation"],
+                "general.type": "model",
+                "llama.attention.head_count": 24,
+                "llama.attention.head_count_kv": 8,
+                "llama.attention.key_length": 128,
+                "llama.attention.layer_norm_rms_epsilon": 0.00001,
+                "llama.attention.value_length": 128,
+                "llama.block_count": 28,
+                "llama.context_length": 131072,
+                "llama.embedding_length": 3072,
+                "llama.feed_forward_length": 8192,
+                "llama.rope.dimension_count": 128,
+                "llama.rope.freq_base": 500000,
+                "llama.vocab_size": 128256,
+                "tokenizer.ggml.bos_token_id": 128000,
+                "tokenizer.ggml.eos_token_id": 128009,
+                "tokenizer.ggml.merges": null,
+                "tokenizer.ggml.model": "gpt2",
+                "tokenizer.ggml.pre": "llama-bpe",
+                "tokenizer.ggml.token_type": null,
+                "tokenizer.ggml.tokens": null
+            },
+            "tensors": [
+                { "name": "rope_freqs.weight", "type": "F32", "shape": [64] },
+                { "name": "token_embd.weight", "type": "Q4_K_S", "shape": [3072, 128256] }
+            ],
+            "capabilities": ["completion", "tools"],
+            "modified_at": "2025-04-29T21:24:41.445877632+03:00"
+        });
+
+        let result: ModelShow = serde_json::from_value(response).unwrap();
+
         assert_eq!(result.context_length, Some(131072));
     }
 

@@ -48,7 +48,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
-use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
+use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -195,12 +195,13 @@ pub struct State {
     settings: Option<AmazonBedrockSettings>,
     /// Whether credentials came from environment variables (only relevant for static credentials)
     credentials_from_env: bool,
+    credentials_provider: Arc<dyn CredentialsProvider>,
     _subscription: Subscription,
 }
 
 impl State {
     fn reset_auth(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let credentials_provider = self.credentials_provider.clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
                 .delete_credentials(AMAZON_AWS_URL, cx)
@@ -220,7 +221,7 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let auth = credentials.clone().into_auth();
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let credentials_provider = self.credentials_provider.clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
                 .write_credentials(
@@ -287,7 +288,7 @@ impl State {
         &self,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), AuthenticateError>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let credentials_provider = self.credentials_provider.clone();
         cx.spawn(async move |this, cx| {
             // Try environment variables first
             let (auth, from_env) = if let Some(bearer_token) = &ZED_BEDROCK_BEARER_TOKEN_VAR.value {
@@ -344,7 +345,7 @@ impl State {
                 .ok_or(AuthenticateError::CredentialsNotFound)?;
 
             let credentials_str = String::from_utf8(credentials_bytes)
-                .context("invalid {PROVIDER_NAME} credentials")?;
+                .with_context(|| format!("invalid {PROVIDER_NAME} credentials"))?;
 
             let credentials: BedrockCredentials =
                 serde_json::from_str(&credentials_str).context("failed to parse credentials")?;
@@ -400,11 +401,16 @@ pub struct BedrockLanguageModelProvider {
 }
 
 impl BedrockLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| State {
             auth: None,
             settings: Some(AllLanguageModelSettings::get_global(cx).bedrock.clone()),
             credentials_from_env: false,
+            credentials_provider,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),

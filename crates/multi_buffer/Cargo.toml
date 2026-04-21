@@ -45,6 +45,7 @@ tree-sitter.workspace = true
 ztracing.workspace = true
 tracing.workspace = true
 util.workspace = true
+unicode-segmentation.workspace = true
 
 [dev-dependencies]
 buffer_diff = { workspace = true, features = ["test-support"] }

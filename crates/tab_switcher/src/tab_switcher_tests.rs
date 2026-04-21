@@ -223,8 +223,8 @@ async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
     // 1.txt | [3.txt] | 2.txt | 4.txt
     //
     // With 3.txt being the active item in the pane.
-    cx.dispatch_action(ActivatePreviousItem);
-    cx.dispatch_action(ActivatePreviousItem);
+    cx.dispatch_action(ActivatePreviousItem::default());
+    cx.dispatch_action(ActivatePreviousItem::default());
     cx.run_until_parked();
 
     cx.simulate_modifiers_change(Modifiers::control());
@@ -258,7 +258,7 @@ async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
 fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         super::init(cx);
         editor::init(cx);
         state
@@ -548,4 +548,60 @@ async fn test_open_in_active_pane_closes_file_in_all_panes(cx: &mut gpui::TestAp
             "all panes should be empty"
         );
     }
+}
+
+#[gpui::test]
+async fn test_toggle_all_stays_open_after_closing_last_tab_in_active_pane(
+    cx: &mut gpui::TestAppContext,
+) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a.txt": "",
+                "b.txt": "",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let tab_a = open_buffer("a.txt", &workspace, cx).await;
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.split_pane(
+            workspace.active_pane().clone(),
+            workspace::SplitDirection::Right,
+            window,
+            cx,
+        );
+    });
+    open_buffer("b.txt", &workspace, cx).await;
+
+    // Right pane (with b.txt) is now the active pane.
+    cx.dispatch_action(ToggleAll);
+    let tab_switcher = get_active_tab_switcher(&workspace, cx);
+
+    tab_switcher.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 2);
+        // Explicitly select b.txt (index 0, the most recently activated item)
+        // to close the last tab in the active (right) pane.
+        picker.delegate.selected_index = 0;
+    });
+
+    cx.dispatch_action(CloseSelectedItem);
+    cx.run_until_parked();
+
+    // Tab switcher must remain open with a.txt as the only match
+    let tab_switcher = get_active_tab_switcher(&workspace, cx);
+    tab_switcher.update(cx, |picker, cx| {
+        assert_eq!(picker.delegate.matches.len(), 1);
+        assert_match_at_position(picker, 0, tab_a.boxed_clone());
+        let _ = cx;
+    });
 }

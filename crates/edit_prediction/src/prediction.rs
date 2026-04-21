@@ -25,6 +25,7 @@ impl std::fmt::Display for EditPredictionId {
 pub struct EditPredictionResult {
     pub id: EditPredictionId,
     pub prediction: Result<EditPrediction, EditPredictionRejectReason>,
+    pub model_version: Option<String>,
     pub e2e_latency: std::time::Duration,
 }
 
@@ -43,8 +44,9 @@ impl EditPredictionResult {
         if edits.is_empty() {
             return Self {
                 id,
-                e2e_latency,
                 prediction: Err(EditPredictionRejectReason::Empty),
+                model_version,
+                e2e_latency,
             };
         }
 
@@ -59,8 +61,9 @@ impl EditPredictionResult {
         else {
             return Self {
                 id,
-                e2e_latency,
                 prediction: Err(EditPredictionRejectReason::InterpolatedEmpty),
+                model_version,
+                e2e_latency,
             };
         };
 
@@ -68,7 +71,6 @@ impl EditPredictionResult {
 
         Self {
             id: id.clone(),
-            e2e_latency,
             prediction: Ok(EditPrediction {
                 id,
                 edits,
@@ -77,8 +79,10 @@ impl EditPredictionResult {
                 edit_preview,
                 inputs,
                 buffer: edited_buffer.clone(),
-                model_version,
+                model_version: model_version.clone(),
             }),
+            model_version,
+            e2e_latency,
         }
     }
 }
@@ -155,7 +159,6 @@ mod tests {
                 excerpt_start_row: None,
                 excerpt_ranges: Default::default(),
                 syntax_ranges: None,
-                experiment: None,
                 in_open_source_repo: false,
                 can_collect_data: false,
                 repo_url: None,

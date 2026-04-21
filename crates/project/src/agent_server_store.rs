@@ -1,4 +1,3 @@
-use remote::Interactive;
 use std::{
     any::Any,
     path::{Path, PathBuf},
@@ -12,6 +11,7 @@ use fs::Fs;
 use gpui::{AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task};
 use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
+use percent_encoding::percent_decode_str;
 use remote::RemoteClient;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -21,11 +21,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
 use sha2::{Digest, Sha256};
-use task::Shell;
+use url::Url;
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
 use crate::agent_registry_store::{AgentRegistryStore, RegistryAgent, RegistryTargetConfig};
+
+use crate::worktree_store::WorktreeStore;
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct AgentServerCommand {
@@ -113,19 +115,34 @@ pub enum ExternalAgentSource {
 
 pub trait ExternalAgentServer {
     fn get_command(
-        &mut self,
+        &self,
+        extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
-        new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>>;
 
+    fn version(&self) -> Option<&SharedString> {
+        None
+    }
+
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        None
+    }
+
+    fn set_new_version_available_tx(&mut self, _tx: watch::Sender<Option<String>>) {}
+
+    fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
-impl dyn ExternalAgentServer {
-    fn downcast_mut<T: ExternalAgentServer + 'static>(&mut self) -> Option<&mut T> {
-        self.as_any_mut().downcast_mut()
-    }
+struct ExtensionAgentEntry {
+    agent_name: Arc<str>,
+    extension_id: String,
+    targets: HashMap<String, extension::TargetConfig>,
+    env: HashMap<String, String>,
+    icon_path: Option<String>,
+    display_name: Option<SharedString>,
+    version: Option<SharedString>,
 }
 
 enum AgentServerStoreState {
@@ -136,19 +153,13 @@ enum AgentServerStoreState {
         downstream_client: Option<(u64, AnyProtoClient)>,
         settings: Option<AllAgentServersSettings>,
         http_client: Arc<dyn HttpClient>,
-        extension_agents: Vec<(
-            Arc<str>,
-            String,
-            HashMap<String, extension::TargetConfig>,
-            HashMap<String, String>,
-            Option<String>,
-            Option<SharedString>,
-        )>,
+        extension_agents: Vec<ExtensionAgentEntry>,
         _subscriptions: Vec<Subscription>,
     },
     Remote {
         project_id: u64,
         upstream_client: Entity<RemoteClient>,
+        worktree_store: Entity<WorktreeStore>,
     },
     Collab,
 }
@@ -216,14 +227,15 @@ impl AgentServerStore {
                             resolve_extension_icon_path(&extensions_dir, ext_id, icon)
                         });
 
-                        extension_agents.push((
-                            agent_name.clone(),
-                            ext_id.to_owned(),
-                            agent_entry.targets.clone(),
-                            agent_entry.env.clone(),
+                        extension_agents.push(ExtensionAgentEntry {
+                            agent_name: agent_name.clone(),
+                            extension_id: ext_id.to_owned(),
+                            targets: agent_entry.targets.clone(),
+                            env: agent_entry.env.clone(),
                             icon_path,
-                            Some(display_name),
-                        ));
+                            display_name: Some(display_name),
+                            version: Some(SharedString::from(manifest.version.clone())),
+                        });
                     }
                 }
                 self.reregister_agents(cx);
@@ -231,6 +243,7 @@ impl AgentServerStore {
             AgentServerStoreState::Remote {
                 project_id,
                 upstream_client,
+                worktree_store,
             } => {
                 let mut agents = vec![];
                 for (ext_id, manifest) in manifests {
@@ -256,6 +269,7 @@ impl AgentServerStore {
                                     Box::new(RemoteExternalAgentServer {
                                         project_id: *project_id,
                                         upstream_client: upstream_client.clone(),
+                                        worktree_store: worktree_store.clone(),
                                         name: agent_server_name.clone(),
                                         new_version_available_tx: None,
                                     })
@@ -280,6 +294,7 @@ impl AgentServerStore {
                                 .iter()
                                 .map(|(k, v)| (k.clone(), v.clone()))
                                 .collect(),
+                            version: Some(manifest.version.to_string()),
                         });
                     }
                 }
@@ -300,9 +315,9 @@ impl AgentServerStore {
         cx.emit(AgentServersUpdated);
     }
 
-    pub fn agent_icon(&self, name: &AgentId) -> Option<SharedString> {
+    pub fn agent_icon(&self, id: &AgentId) -> Option<SharedString> {
         self.external_agents
-            .get(name)
+            .get(id)
             .and_then(|entry| entry.icon.clone())
     }
 
@@ -435,15 +450,28 @@ impl AgentServerStore {
             })
             .unwrap_or_default();
 
-        self.external_agents.clear();
+        // Drain the existing versioned agents, extracting reconnect state
+        // from any active connection so we can preserve it or trigger a
+        // reconnect when the version changes.
+        let mut old_versioned_agents: HashMap<
+            AgentId,
+            (SharedString, watch::Sender<Option<String>>),
+        > = HashMap::default();
+        for (name, mut entry) in self.external_agents.drain() {
+            if let Some(version) = entry.server.version().cloned() {
+                if let Some(tx) = entry.server.take_new_version_available_tx() {
+                    old_versioned_agents.insert(name, (version, tx));
+                }
+            }
+        }
 
         // Insert extension agents before custom/registry so registry entries override extensions.
-        for (agent_name, ext_id, targets, env, icon_path, display_name) in extension_agents.iter() {
-            let name = AgentId(agent_name.clone().into());
-            let mut env = env.clone();
+        for entry in extension_agents.iter() {
+            let name = AgentId(entry.agent_name.clone().into());
+            let mut env = entry.env.clone();
             if let Some(settings_env) =
                 new_settings
-                    .get(agent_name.as_ref())
+                    .get(entry.agent_name.as_ref())
                     .and_then(|settings| match settings {
                         CustomAgentServerSettings::Extension { env, .. } => Some(env.clone()),
                         _ => None,
@@ -451,7 +479,8 @@ impl AgentServerStore {
             {
                 env.extend(settings_env);
             }
-            let icon = icon_path
+            let icon = entry
+                .icon_path
                 .as_ref()
                 .map(|path| SharedString::from(path.clone()));
 
@@ -463,14 +492,16 @@ impl AgentServerStore {
                         http_client: http_client.clone(),
                         node_runtime: node_runtime.clone(),
                         project_environment: project_environment.clone(),
-                        extension_id: Arc::from(&**ext_id),
-                        targets: targets.clone(),
+                        extension_id: Arc::from(&*entry.extension_id),
+                        targets: entry.targets.clone(),
                         env,
-                        agent_id: agent_name.clone(),
+                        agent_id: entry.agent_name.clone(),
+                        version: entry.version.clone(),
+                        new_version_available_tx: None,
                     }) as Box<dyn ExternalAgentServer>,
                     ExternalAgentSource::Extension,
                     icon,
-                    display_name.clone(),
+                    entry.display_name.clone(),
                 ),
             );
         }
@@ -520,8 +551,10 @@ impl AgentServerStore {
                                         node_runtime: node_runtime.clone(),
                                         project_environment: project_environment.clone(),
                                         registry_id: Arc::from(name.as_str()),
+                                        version: agent.metadata.version.clone(),
                                         targets: agent.targets.clone(),
                                         env: env.clone(),
+                                        new_version_available_tx: None,
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                     ExternalAgentSource::Registry,
@@ -535,12 +568,16 @@ impl AgentServerStore {
                                 agent_name.clone(),
                                 ExternalAgentEntry::new(
                                     Box::new(LocalRegistryNpxAgent {
+                                        fs: fs.clone(),
                                         node_runtime: node_runtime.clone(),
                                         project_environment: project_environment.clone(),
+                                        registry_id: Arc::from(name.as_str()),
+                                        version: agent.metadata.version.clone(),
                                         package: agent.package.clone(),
                                         args: agent.args.clone(),
                                         distribution_env: agent.env.clone(),
                                         settings_env: env.clone(),
+                                        new_version_available_tx: None,
                                     })
                                         as Box<dyn ExternalAgentServer>,
                                     ExternalAgentSource::Registry,
@@ -552,6 +589,24 @@ impl AgentServerStore {
                     }
                 }
                 CustomAgentServerSettings::Extension { .. } => {}
+            }
+        }
+
+        // For each rebuilt versioned agent, compare the version. If it
+        // changed, notify the active connection to reconnect. Otherwise,
+        // transfer the channel to the new entry so future updates can use it.
+        for (name, entry) in &mut self.external_agents {
+            let Some((old_version, mut tx)) = old_versioned_agents.remove(name) else {
+                continue;
+            };
+            let Some(new_version) = entry.server.version() else {
+                continue;
+            };
+
+            if new_version != &old_version {
+                tx.send(Some(new_version.to_string())).ok();
+            } else {
+                entry.server.set_new_version_available_tx(tx);
             }
         }
 
@@ -612,11 +667,16 @@ impl AgentServerStore {
         this
     }
 
-    pub(crate) fn remote(project_id: u64, upstream_client: Entity<RemoteClient>) -> Self {
+    pub(crate) fn remote(
+        project_id: u64,
+        upstream_client: Entity<RemoteClient>,
+        worktree_store: Entity<WorktreeStore>,
+    ) -> Self {
         Self {
             state: AgentServerStoreState::Remote {
                 project_id,
                 upstream_client,
+                worktree_store,
             },
             external_agents: HashMap::default(),
         }
@@ -683,6 +743,10 @@ impl AgentServerStore {
         }
     }
 
+    pub fn has_external_agents(&self) -> bool {
+        !self.external_agents.is_empty()
+    }
+
     pub fn external_agents(&self) -> impl Iterator<Item = &AgentId> {
         self.external_agents.keys()
     }
@@ -737,11 +801,10 @@ impl AgentServerStore {
                 if no_browser {
                     extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
                 }
-                anyhow::Ok(agent.get_command(
-                    extra_env,
-                    new_version_available_tx,
-                    &mut cx.to_async(),
-                ))
+                if let Some(new_version_available_tx) = new_version_available_tx {
+                    agent.set_new_version_available_tx(new_version_available_tx);
+                }
+                anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
             })?
             .await?;
         Ok(proto::AgentServerCommand {
@@ -751,8 +814,10 @@ impl AgentServerStore {
                 .env
                 .map(|env| env.into_iter().collect())
                 .unwrap_or_default(),
-            // root_dir and login are no longer used, but returned for backwards compatibility
-            root_dir: paths::home_dir().to_string_lossy().to_string(),
+            root_dir: envelope
+                .payload
+                .root_dir
+                .unwrap_or_else(|| paths::home_dir().to_string_lossy().to_string()),
             login: None,
         })
     }
@@ -766,6 +831,7 @@ impl AgentServerStore {
             let AgentServerStoreState::Remote {
                 project_id,
                 upstream_client,
+                worktree_store,
             } = &this.state
             else {
                 debug_panic!(
@@ -779,9 +845,8 @@ impl AgentServerStore {
             let mut metadata = HashMap::default();
 
             for (name, mut entry) in previous_entries.drain() {
-                if let Some(agent) = entry.server.downcast_mut::<RemoteExternalAgentServer>() {
-                    new_version_available_txs
-                        .insert(name.clone(), agent.new_version_available_tx.take());
+                if let Some(tx) = entry.server.take_new_version_available_tx() {
+                    new_version_available_txs.insert(name.clone(), tx);
                 }
 
                 metadata.insert(name, (entry.icon, entry.display_name, entry.source));
@@ -810,10 +875,9 @@ impl AgentServerStore {
                     let agent = RemoteExternalAgentServer {
                         project_id: *project_id,
                         upstream_client: upstream_client.clone(),
+                        worktree_store: worktree_store.clone(),
                         name: agent_id.clone(),
-                        new_version_available_tx: new_version_available_txs
-                            .remove(&agent_id)
-                            .flatten(),
+                        new_version_available_tx: new_version_available_txs.remove(&agent_id),
                     };
                     (
                         agent_id,
@@ -847,25 +911,28 @@ impl AgentServerStore {
                 );
             };
 
+            extension_agents.clear();
             for ExternalExtensionAgent {
                 name,
                 icon_path,
                 extension_id,
                 targets,
                 env,
+                version,
             } in envelope.payload.agents
             {
-                extension_agents.push((
-                    Arc::from(&*name),
+                extension_agents.push(ExtensionAgentEntry {
+                    agent_name: Arc::from(&*name),
                     extension_id,
-                    targets
+                    targets: targets
                         .into_iter()
                         .map(|(k, v)| (k, extension::TargetConfig::from_proto(v)))
                         .collect(),
-                    env.into_iter().collect(),
+                    env: env.into_iter().collect(),
                     icon_path,
-                    None,
-                ));
+                    display_name: None,
+                    version: version.map(SharedString::from),
+                });
             }
 
             this.reregister_agents(cx);
@@ -880,23 +947,21 @@ impl AgentServerStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, _| {
-            if let Some(agent) = this.external_agents.get_mut(&*envelope.payload.name)
-                && let Some(agent) = agent.server.downcast_mut::<RemoteExternalAgentServer>()
-                && let Some(new_version_available_tx) = &mut agent.new_version_available_tx
+            if let Some(entry) = this.external_agents.get_mut(&*envelope.payload.name)
+                && let Some(mut tx) = entry.server.take_new_version_available_tx()
             {
-                new_version_available_tx
-                    .send(Some(envelope.payload.version))
-                    .ok();
+                tx.send(Some(envelope.payload.version)).ok();
+                entry.server.set_new_version_available_tx(tx);
             }
         });
         Ok(())
     }
 
-    pub fn get_extension_id_for_agent(&mut self, name: &AgentId) -> Option<Arc<str>> {
-        self.external_agents.get_mut(name).and_then(|entry| {
+    pub fn get_extension_id_for_agent(&self, name: &AgentId) -> Option<Arc<str>> {
+        self.external_agents.get(name).and_then(|entry| {
             entry
                 .server
-                .as_any_mut()
+                .as_any()
                 .downcast_ref::<LocalExtensionArchiveAgent>()
                 .map(|ext_agent| ext_agent.extension_id.clone())
         })
@@ -906,22 +971,38 @@ impl AgentServerStore {
 struct RemoteExternalAgentServer {
     project_id: u64,
     upstream_client: Entity<RemoteClient>,
+    worktree_store: Entity<WorktreeStore>,
     name: AgentId,
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
 impl ExternalAgentServer for RemoteExternalAgentServer {
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.new_version_available_tx.take()
+    }
+
+    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.new_version_available_tx = Some(tx);
+    }
+
     fn get_command(
-        &mut self,
+        &self,
+        extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
-        new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
         let project_id = self.project_id;
         let name = self.name.to_string();
         let upstream_client = self.upstream_client.downgrade();
-        self.new_version_available_tx = new_version_available_tx;
+        let worktree_store = self.worktree_store.clone();
         cx.spawn(async move |cx| {
+            let root_dir = worktree_store.read_with(cx, |worktree_store, cx| {
+                crate::Project::default_visible_worktree_paths(worktree_store, cx)
+                    .into_iter()
+                    .next()
+                    .map(|path| path.display().to_string())
+            });
+
             let mut response = upstream_client
                 .update(cx, |upstream_client, _| {
                     upstream_client
@@ -929,33 +1010,119 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                         .request(proto::GetAgentServerCommand {
                             project_id,
                             name,
-                            root_dir: None,
+                            root_dir,
                         })
                 })?
                 .await?;
-            let root_dir = response.root_dir;
+            response.args.extend(extra_args);
             response.env.extend(extra_env);
-            let command = upstream_client.update(cx, |client, _| {
-                client.build_command_with_options(
-                    Some(response.path),
-                    &response.args,
-                    &response.env.into_iter().collect(),
-                    Some(root_dir.clone()),
-                    None,
-                    Interactive::No,
-                )
-            })??;
+
             Ok(AgentServerCommand {
-                path: command.program.into(),
-                args: command.args,
-                env: Some(command.env),
+                path: response.path.into(),
+                args: response.args,
+                env: Some(response.env.into_iter().collect()),
             })
         })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+fn asset_kind_for_archive_url(archive_url: &str) -> Result<AssetKind> {
+    let archive_path = Url::parse(archive_url)
+        .ok()
+        .map(|url| url.path().to_string())
+        .unwrap_or_else(|| archive_url.to_string());
+
+    if archive_path.ends_with(".zip") {
+        Ok(AssetKind::Zip)
+    } else if archive_path.ends_with(".tar.gz") || archive_path.ends_with(".tgz") {
+        Ok(AssetKind::TarGz)
+    } else if archive_path.ends_with(".tar.bz2") || archive_path.ends_with(".tbz2") {
+        Ok(AssetKind::TarBz2)
+    } else {
+        bail!("unsupported archive type in URL: {archive_url}");
+    }
+}
+
+struct GithubReleaseArchive {
+    repo_name_with_owner: String,
+    tag: String,
+    asset_name: String,
+}
+
+fn github_release_archive_from_url(archive_url: &str) -> Option<GithubReleaseArchive> {
+    fn decode_path_segment(segment: &str) -> Option<String> {
+        percent_decode_str(segment)
+            .decode_utf8()
+            .ok()
+            .map(|segment| segment.into_owned())
+    }
+
+    let url = Url::parse(archive_url).ok()?;
+    if url.scheme() != "https" || url.host_str()? != "github.com" {
+        return None;
+    }
+
+    let segments = url.path_segments()?.collect::<Vec<_>>();
+    if segments.len() < 6 || segments[2] != "releases" || segments[3] != "download" {
+        return None;
+    }
+
+    Some(GithubReleaseArchive {
+        repo_name_with_owner: format!("{}/{}", segments[0], segments[1]),
+        tag: decode_path_segment(segments[4])?,
+        asset_name: segments[5..]
+            .iter()
+            .map(|segment| decode_path_segment(segment))
+            .collect::<Option<Vec<_>>>()?
+            .join("/"),
+    })
+}
+
+fn sanitize_path_component(input: &str) -> String {
+    let sanitized = input
+        .chars()
+        .map(|character| match character {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '_' | '-' => character,
+            _ => '-',
+        })
+        .collect::<String>();
+
+    if sanitized.is_empty() {
+        "unknown".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn versioned_archive_cache_dir(
+    base_dir: &Path,
+    version: Option<&str>,
+    archive_url: &str,
+) -> PathBuf {
+    let version = version.unwrap_or_default();
+    let sanitized_version = sanitize_path_component(version);
+
+    let mut version_hasher = Sha256::new();
+    version_hasher.update(version.as_bytes());
+    let version_hash = format!("{:x}", version_hasher.finalize());
+
+    let mut url_hasher = Sha256::new();
+    url_hasher.update(archive_url.as_bytes());
+    let url_hash = format!("{:x}", url_hasher.finalize());
+
+    base_dir.join(format!(
+        "v_{sanitized_version}_{}_{}",
+        &version_hash[..16],
+        &url_hash[..16],
+    ))
 }
 
 pub struct LocalExtensionArchiveAgent {
@@ -967,13 +1134,27 @@ pub struct LocalExtensionArchiveAgent {
     pub agent_id: Arc<str>,
     pub targets: HashMap<String, extension::TargetConfig>,
     pub env: HashMap<String, String>,
+    pub version: Option<SharedString>,
+    pub new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
 impl ExternalAgentServer for LocalExtensionArchiveAgent {
+    fn version(&self) -> Option<&SharedString> {
+        self.version.as_ref()
+    }
+
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.new_version_available_tx.take()
+    }
+
+    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.new_version_available_tx = Some(tx);
+    }
+
     fn get_command(
-        &mut self,
+        &self,
+        extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
-        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
         let fs = self.fs.clone();
@@ -984,16 +1165,13 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
         let agent_id = self.agent_id.clone();
         let targets = self.targets.clone();
         let base_env = self.env.clone();
+        let version = self.version.clone();
 
         cx.spawn(async move |cx| {
             // Get project environment
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.local_directory_environment(
-                        &Shell::System,
-                        paths::home_dir().as_path().into(),
-                        cx,
-                    )
+                    project_environment.default_environment(cx)
                 })?
                 .await
                 .unwrap_or_default();
@@ -1039,54 +1217,38 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
             })?;
 
             let archive_url = &target_config.archive;
-
-            // Use URL as version identifier for caching
-            // Hash the URL to get a stable directory name
-            let mut hasher = Sha256::new();
-            hasher.update(archive_url.as_bytes());
-            let url_hash = format!("{:x}", hasher.finalize());
-            let version_dir = dir.join(format!("v_{}", url_hash));
+            let version_dir = versioned_archive_cache_dir(
+                &dir,
+                version.as_ref().map(|version| version.as_ref()),
+                archive_url,
+            );
 
             if !fs.is_dir(&version_dir).await {
                 // Determine SHA256 for verification
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
                     // Use provided SHA256
                     Some(provided_sha.clone())
-                } else if archive_url.starts_with("https://github.com/") {
+                } else if let Some(github_archive) = github_release_archive_from_url(archive_url) {
                     // Try to fetch SHA256 from GitHub API
-                    // Parse URL to extract repo and tag/file info
-                    // Format: https://github.com/owner/repo/releases/download/tag/file.zip
-                    if let Some(caps) = archive_url.strip_prefix("https://github.com/") {
-                        let parts: Vec<&str> = caps.split('/').collect();
-                        if parts.len() >= 6 && parts[2] == "releases" && parts[3] == "download" {
-                            let repo = format!("{}/{}", parts[0], parts[1]);
-                            let tag = parts[4];
-                            let filename = parts[5..].join("/");
-
-                            // Try to get release info from GitHub
-                            if let Ok(release) = ::http_client::github::get_release_by_tag_name(
-                                &repo,
-                                tag,
-                                http_client.clone(),
-                            )
-                            .await
-                            {
-                                // Find matching asset
-                                if let Some(asset) =
-                                    release.assets.iter().find(|a| a.name == filename)
-                                {
-                                    // Strip "sha256:" prefix if present
-                                    asset.digest.as_ref().map(|d| {
-                                        d.strip_prefix("sha256:")
-                                            .map(|s| s.to_string())
-                                            .unwrap_or_else(|| d.clone())
-                                    })
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
+                    if let Ok(release) = ::http_client::github::get_release_by_tag_name(
+                        &github_archive.repo_name_with_owner,
+                        &github_archive.tag,
+                        http_client.clone(),
+                    )
+                    .await
+                    {
+                        // Find matching asset
+                        if let Some(asset) = release
+                            .assets
+                            .iter()
+                            .find(|a| a.name == github_archive.asset_name)
+                        {
+                            // Strip "sha256:" prefix if present
+                            asset.digest.as_ref().map(|d| {
+                                d.strip_prefix("sha256:")
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_else(|| d.clone())
+                            })
                         } else {
                             None
                         }
@@ -1097,14 +1259,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                     None
                 };
 
-                // Determine archive type from URL
-                let asset_kind = if archive_url.ends_with(".zip") {
-                    AssetKind::Zip
-                } else if archive_url.ends_with(".tar.gz") || archive_url.ends_with(".tgz") {
-                    AssetKind::TarGz
-                } else {
-                    anyhow::bail!("unsupported archive type in URL: {}", archive_url);
-                };
+                let asset_kind = asset_kind_for_archive_url(archive_url)?;
 
                 // Download and extract
                 ::http_client::github_download::download_server_binary(
@@ -1143,14 +1298,21 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                 }
             };
 
+            let mut args = target_config.args.clone();
+            args.extend(extra_args);
+
             let command = AgentServerCommand {
                 path: cmd_path,
-                args: target_config.args.clone(),
+                args,
                 env: Some(env),
             };
 
             Ok(command)
         })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
@@ -1164,15 +1326,29 @@ struct LocalRegistryArchiveAgent {
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
     registry_id: Arc<str>,
+    version: SharedString,
     targets: HashMap<String, RegistryTargetConfig>,
     env: HashMap<String, String>,
+    new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
 impl ExternalAgentServer for LocalRegistryArchiveAgent {
+    fn version(&self) -> Option<&SharedString> {
+        Some(&self.version)
+    }
+
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.new_version_available_tx.take()
+    }
+
+    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.new_version_available_tx = Some(tx);
+    }
+
     fn get_command(
-        &mut self,
+        &self,
+        extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
-        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
         let fs = self.fs.clone();
@@ -1182,22 +1358,19 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let registry_id = self.registry_id.clone();
         let targets = self.targets.clone();
         let settings_env = self.env.clone();
+        let version = self.version.clone();
 
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.local_directory_environment(
-                        &Shell::System,
-                        paths::home_dir().as_path().into(),
-                        cx,
-                    )
+                    project_environment.default_environment(cx)
                 })?
                 .await
                 .unwrap_or_default();
 
             let dir = paths::external_agents_dir()
                 .join("registry")
-                .join(registry_id.as_ref());
+                .join(sanitize_path_component(&registry_id));
             fs.create_dir(&dir).await?;
 
             let os = if cfg!(target_os = "macos") {
@@ -1236,44 +1409,30 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             env.extend(settings_env);
 
             let archive_url = &target_config.archive;
-
-            let mut hasher = Sha256::new();
-            hasher.update(archive_url.as_bytes());
-            let url_hash = format!("{:x}", hasher.finalize());
-            let version_dir = dir.join(format!("v_{}", url_hash));
+            let version_dir =
+                versioned_archive_cache_dir(&dir, Some(version.as_ref()), archive_url);
 
             if !fs.is_dir(&version_dir).await {
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
                     Some(provided_sha.clone())
-                } else if archive_url.starts_with("https://github.com/") {
-                    if let Some(caps) = archive_url.strip_prefix("https://github.com/") {
-                        let parts: Vec<&str> = caps.split('/').collect();
-                        if parts.len() >= 6 && parts[2] == "releases" && parts[3] == "download" {
-                            let repo = format!("{}/{}", parts[0], parts[1]);
-                            let tag = parts[4];
-                            let filename = parts[5..].join("/");
-
-                            if let Ok(release) = ::http_client::github::get_release_by_tag_name(
-                                &repo,
-                                tag,
-                                http_client.clone(),
-                            )
-                            .await
-                            {
-                                if let Some(asset) =
-                                    release.assets.iter().find(|a| a.name == filename)
-                                {
-                                    asset.digest.as_ref().and_then(|d| {
-                                        d.strip_prefix("sha256:")
-                                            .map(|s| s.to_string())
-                                            .or_else(|| Some(d.clone()))
-                                    })
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
+                } else if let Some(github_archive) = github_release_archive_from_url(archive_url) {
+                    if let Ok(release) = ::http_client::github::get_release_by_tag_name(
+                        &github_archive.repo_name_with_owner,
+                        &github_archive.tag,
+                        http_client.clone(),
+                    )
+                    .await
+                    {
+                        if let Some(asset) = release
+                            .assets
+                            .iter()
+                            .find(|a| a.name == github_archive.asset_name)
+                        {
+                            asset.digest.as_ref().and_then(|d| {
+                                d.strip_prefix("sha256:")
+                                    .map(|s| s.to_string())
+                                    .or_else(|| Some(d.clone()))
+                            })
                         } else {
                             None
                         }
@@ -1284,13 +1443,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     None
                 };
 
-                let asset_kind = if archive_url.ends_with(".zip") {
-                    AssetKind::Zip
-                } else if archive_url.ends_with(".tar.gz") || archive_url.ends_with(".tgz") {
-                    AssetKind::TarGz
-                } else {
-                    anyhow::bail!("unsupported archive type in URL: {}", archive_url);
-                };
+                let asset_kind = asset_kind_for_archive_url(archive_url)?;
 
                 ::http_client::github_download::download_server_binary(
                     &*http_client,
@@ -1324,14 +1477,21 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 }
             };
 
+            let mut args = target_config.args.clone();
+            args.extend(extra_args);
+
             let command = AgentServerCommand {
                 path: cmd_path,
-                args: target_config.args.clone(),
+                args,
                 env: Some(env),
             };
 
             Ok(command)
         })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
@@ -1340,23 +1500,41 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
 }
 
 struct LocalRegistryNpxAgent {
+    fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
+    registry_id: Arc<str>,
+    version: SharedString,
     package: SharedString,
     args: Vec<String>,
     distribution_env: HashMap<String, String>,
     settings_env: HashMap<String, String>,
+    new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
 impl ExternalAgentServer for LocalRegistryNpxAgent {
+    fn version(&self) -> Option<&SharedString> {
+        Some(&self.version)
+    }
+
+    fn take_new_version_available_tx(&mut self) -> Option<watch::Sender<Option<String>>> {
+        self.new_version_available_tx.take()
+    }
+
+    fn set_new_version_available_tx(&mut self, tx: watch::Sender<Option<String>>) {
+        self.new_version_available_tx = Some(tx);
+    }
+
     fn get_command(
-        &mut self,
+        &self,
+        extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
-        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
+        let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
+        let registry_id = self.registry_id.clone();
         let package = self.package.clone();
         let args = self.args.clone();
         let distribution_env = self.distribution_env.clone();
@@ -1365,20 +1543,23 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.local_directory_environment(
-                        &Shell::System,
-                        paths::home_dir().as_path().into(),
-                        cx,
-                    )
+                    project_environment.default_environment(cx)
                 })?
                 .await
                 .unwrap_or_default();
+
+            let prefix_dir = paths::external_agents_dir()
+                .join("registry")
+                .join("npx")
+                .join(sanitize_path_component(&registry_id));
+            fs.create_dir(&prefix_dir).await?;
 
             let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package.to_string()];
             exec_args.extend(args);
 
             let npm_command = node_runtime
                 .npm_command(
+                    Some(&prefix_dir),
                     "exec",
                     &exec_args.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
                 )
@@ -1389,14 +1570,21 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
             env.extend(extra_env);
             env.extend(settings_env);
 
+            let mut args = npm_command.args;
+            args.extend(extra_args);
+
             let command = AgentServerCommand {
                 path: npm_command.path,
-                args: npm_command.args,
+                args,
                 env: Some(env),
             };
 
             Ok(command)
         })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
@@ -1411,9 +1599,9 @@ struct LocalCustomAgent {
 
 impl ExternalAgentServer for LocalCustomAgent {
     fn get_command(
-        &mut self,
+        &self,
+        extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
-        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
         let mut command = self.command.clone();
@@ -1421,19 +1609,20 @@ impl ExternalAgentServer for LocalCustomAgent {
         cx.spawn(async move |cx| {
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
-                    project_environment.local_directory_environment(
-                        &Shell::System,
-                        paths::home_dir().as_path().into(),
-                        cx,
-                    )
+                    project_environment.default_environment(cx)
                 })?
                 .await
                 .unwrap_or_default();
             env.extend(command.env.unwrap_or_default());
             env.extend(extra_env);
             command.env = Some(env);
+            command.args.extend(extra_args);
             Ok(command)
         })
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
@@ -1712,5 +1901,341 @@ impl settings::Settings for AllAgentServersSettings {
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_registry_store::{
+        AgentRegistryStore, RegistryAgent, RegistryAgentMetadata, RegistryNpxAgent,
+    };
+    use crate::worktree_store::{WorktreeIdCounter, WorktreeStore};
+    use gpui::{AppContext as _, TestAppContext};
+    use node_runtime::NodeRuntime;
+    use settings::Settings as _;
+
+    fn make_npx_agent(id: &str, version: &str) -> RegistryAgent {
+        let id = SharedString::from(id.to_string());
+        RegistryAgent::Npx(RegistryNpxAgent {
+            metadata: RegistryAgentMetadata {
+                id: AgentId::new(id.clone()),
+                name: id.clone(),
+                description: SharedString::from(""),
+                version: SharedString::from(version.to_string()),
+                repository: None,
+                website: None,
+                icon_path: None,
+            },
+            package: id,
+            args: Vec::new(),
+            env: HashMap::default(),
+        })
+    }
+
+    fn init_test_settings(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    fn init_registry(
+        cx: &mut TestAppContext,
+        agents: Vec<RegistryAgent>,
+    ) -> gpui::Entity<AgentRegistryStore> {
+        cx.update(|cx| AgentRegistryStore::init_test_global(cx, agents))
+    }
+
+    fn set_registry_settings(cx: &mut TestAppContext, agent_names: &[&str]) {
+        cx.update(|cx| {
+            AllAgentServersSettings::override_global(
+                AllAgentServersSettings(
+                    agent_names
+                        .iter()
+                        .map(|name| {
+                            (
+                                name.to_string(),
+                                settings::CustomAgentServerSettings::Registry {
+                                    env: HashMap::default(),
+                                    default_mode: None,
+                                    default_model: None,
+                                    favorite_models: Vec::new(),
+                                    default_config_options: HashMap::default(),
+                                    favorite_config_option_values: HashMap::default(),
+                                }
+                                .into(),
+                            )
+                        })
+                        .collect(),
+                ),
+                cx,
+            );
+        });
+    }
+
+    fn create_agent_server_store(cx: &mut TestAppContext) -> gpui::Entity<AgentServerStore> {
+        cx.update(|cx| {
+            let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.background_executor().clone());
+            let worktree_store =
+                cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
+            let project_environment = cx.new(|cx| {
+                crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
+            });
+            let http_client = http_client::FakeHttpClient::with_404_response();
+
+            cx.new(|cx| {
+                AgentServerStore::local(
+                    NodeRuntime::unavailable(),
+                    fs,
+                    project_environment,
+                    http_client,
+                    cx,
+                )
+            })
+        })
+    }
+
+    #[test]
+    fn detects_supported_archive_suffixes() {
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.zip"),
+            Ok(AssetKind::Zip)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.zip?download=1"),
+            Ok(AssetKind::Zip)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tar.gz"),
+            Ok(AssetKind::TarGz)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tar.gz?download=1#latest"),
+            Ok(AssetKind::TarGz)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tgz"),
+            Ok(AssetKind::TarGz)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tgz#download"),
+            Ok(AssetKind::TarGz)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tar.bz2"),
+            Ok(AssetKind::TarBz2)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tar.bz2?download=1"),
+            Ok(AssetKind::TarBz2)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tbz2"),
+            Ok(AssetKind::TarBz2)
+        ));
+        assert!(matches!(
+            asset_kind_for_archive_url("https://example.com/agent.tbz2#download"),
+            Ok(AssetKind::TarBz2)
+        ));
+    }
+
+    #[test]
+    fn parses_github_release_archive_urls() {
+        let github_archive = github_release_archive_from_url(
+            "https://github.com/owner/repo/releases/download/release%2F2.3.5/agent.tar.bz2?download=1",
+        )
+        .unwrap();
+
+        assert_eq!(github_archive.repo_name_with_owner, "owner/repo");
+        assert_eq!(github_archive.tag, "release/2.3.5");
+        assert_eq!(github_archive.asset_name, "agent.tar.bz2");
+    }
+
+    #[test]
+    fn rejects_unsupported_archive_suffixes() {
+        let error = asset_kind_for_archive_url("https://example.com/agent.tar.xz")
+            .err()
+            .map(|error| error.to_string());
+
+        assert_eq!(
+            error,
+            Some("unsupported archive type in URL: https://example.com/agent.tar.xz".to_string()),
+        );
+    }
+
+    #[test]
+    fn versioned_archive_cache_dir_includes_version_before_url_hash() {
+        let slash_version_dir = versioned_archive_cache_dir(
+            Path::new("/tmp/agents"),
+            Some("release/2.3.5"),
+            "https://example.com/agent.zip",
+        );
+        let colon_version_dir = versioned_archive_cache_dir(
+            Path::new("/tmp/agents"),
+            Some("release:2.3.5"),
+            "https://example.com/agent.zip",
+        );
+        let file_name = slash_version_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("cache directory should have a file name");
+
+        assert!(file_name.starts_with("v_release-2.3.5_"));
+        assert_ne!(slash_version_dir, colon_version_dir);
+    }
+
+    #[gpui::test]
+    fn test_version_change_sends_notification(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        let registry = init_registry(cx, vec![make_npx_agent("test-agent", "1.0.0")]);
+        set_registry_settings(cx, &["test-agent"]);
+        let store = create_agent_server_store(cx);
+
+        // Verify the agent was registered with version 1.0.0.
+        store.read_with(cx, |store, _| {
+            let entry = store
+                .external_agents
+                .get(&AgentId::new("test-agent"))
+                .expect("agent should be registered");
+            assert_eq!(
+                entry.server.version().map(|v| v.to_string()),
+                Some("1.0.0".to_string())
+            );
+        });
+
+        // Set up a watch channel and store the tx on the agent.
+        let (tx, mut rx) = watch::channel::<Option<String>>(None);
+        store.update(cx, |store, _| {
+            let entry = store
+                .external_agents
+                .get_mut(&AgentId::new("test-agent"))
+                .expect("agent should be registered");
+            entry.server.set_new_version_available_tx(tx);
+        });
+
+        // Update the registry to version 2.0.0.
+        registry.update(cx, |store, cx| {
+            store.set_agents(vec![make_npx_agent("test-agent", "2.0.0")], cx);
+        });
+        cx.run_until_parked();
+
+        // The watch channel should have received the new version.
+        assert_eq!(rx.borrow().as_deref(), Some("2.0.0"));
+    }
+
+    #[gpui::test]
+    fn test_same_version_preserves_tx(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        let registry = init_registry(cx, vec![make_npx_agent("test-agent", "1.0.0")]);
+        set_registry_settings(cx, &["test-agent"]);
+        let store = create_agent_server_store(cx);
+
+        let (tx, mut rx) = watch::channel::<Option<String>>(None);
+        store.update(cx, |store, _| {
+            let entry = store
+                .external_agents
+                .get_mut(&AgentId::new("test-agent"))
+                .expect("agent should be registered");
+            entry.server.set_new_version_available_tx(tx);
+        });
+
+        // "Refresh" the registry with the same version.
+        registry.update(cx, |store, cx| {
+            store.set_agents(vec![make_npx_agent("test-agent", "1.0.0")], cx);
+        });
+        cx.run_until_parked();
+
+        // No notification should have been sent.
+        assert_eq!(rx.borrow().as_deref(), None);
+
+        // The tx should have been transferred to the rebuilt agent entry.
+        store.update(cx, |store, _| {
+            let entry = store
+                .external_agents
+                .get_mut(&AgentId::new("test-agent"))
+                .expect("agent should be registered");
+            assert!(
+                entry.server.take_new_version_available_tx().is_some(),
+                "tx should have been transferred to the rebuilt agent"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_no_tx_stored_does_not_panic_on_version_change(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        let registry = init_registry(cx, vec![make_npx_agent("test-agent", "1.0.0")]);
+        set_registry_settings(cx, &["test-agent"]);
+        let _store = create_agent_server_store(cx);
+
+        // Update the registry without having stored any tx — should not panic.
+        registry.update(cx, |store, cx| {
+            store.set_agents(vec![make_npx_agent("test-agent", "2.0.0")], cx);
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn test_multiple_agents_independent_notifications(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        let registry = init_registry(
+            cx,
+            vec![
+                make_npx_agent("agent-a", "1.0.0"),
+                make_npx_agent("agent-b", "3.0.0"),
+            ],
+        );
+        set_registry_settings(cx, &["agent-a", "agent-b"]);
+        let store = create_agent_server_store(cx);
+
+        let (tx_a, mut rx_a) = watch::channel::<Option<String>>(None);
+        let (tx_b, mut rx_b) = watch::channel::<Option<String>>(None);
+        store.update(cx, |store, _| {
+            store
+                .external_agents
+                .get_mut(&AgentId::new("agent-a"))
+                .expect("agent-a should be registered")
+                .server
+                .set_new_version_available_tx(tx_a);
+            store
+                .external_agents
+                .get_mut(&AgentId::new("agent-b"))
+                .expect("agent-b should be registered")
+                .server
+                .set_new_version_available_tx(tx_b);
+        });
+
+        // Update only agent-a to a new version; agent-b stays the same.
+        registry.update(cx, |store, cx| {
+            store.set_agents(
+                vec![
+                    make_npx_agent("agent-a", "2.0.0"),
+                    make_npx_agent("agent-b", "3.0.0"),
+                ],
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // agent-a should have received a notification.
+        assert_eq!(rx_a.borrow().as_deref(), Some("2.0.0"));
+
+        // agent-b should NOT have received a notification.
+        assert_eq!(rx_b.borrow().as_deref(), None);
+
+        // agent-b's tx should have been transferred.
+        store.update(cx, |store, _| {
+            assert!(
+                store
+                    .external_agents
+                    .get_mut(&AgentId::new("agent-b"))
+                    .expect("agent-b should be registered")
+                    .server
+                    .take_new_version_available_tx()
+                    .is_some(),
+                "agent-b tx should have been transferred"
+            );
+        });
     }
 }
