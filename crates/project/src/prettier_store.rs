@@ -412,7 +412,7 @@ impl PrettierStore {
             prettier_store
                 .update(cx, |prettier_store, cx| {
                     let name = if is_default {
-                        LanguageServerName("prettier (default)".to_string().into())
+                        LanguageServerName("prettier (default)".into())
                     } else {
                         let worktree_path = worktree_id
                             .and_then(|id| {

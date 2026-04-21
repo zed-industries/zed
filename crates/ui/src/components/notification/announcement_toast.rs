@@ -1,9 +1,6 @@
-use crate::{ListBulletItem, Vector, VectorName, prelude::*};
+use crate::{ListBulletItem, prelude::*};
 use component::{Component, ComponentScope, example_group, single_example};
-use gpui::{
-    AnyElement, ClickEvent, IntoElement, ParentElement, SharedString, linear_color_stop,
-    linear_gradient,
-};
+use gpui::{AnyElement, ClickEvent, IntoElement, ParentElement, SharedString};
 use smallvec::SmallVec;
 
 #[derive(IntoElement, RegisterComponent)]
@@ -26,9 +23,9 @@ impl AnnouncementToast {
             heading: None,
             description: None,
             bullet_items: SmallVec::new(),
-            primary_action_label: "Learn More".into(),
+            primary_action_label: "Try Now".into(),
             primary_on_click: Box::new(|_, _, _| {}),
-            secondary_action_label: "View Release Notes".into(),
+            secondary_action_label: "Learn More".into(),
             secondary_on_click: Box::new(|_, _, _| {}),
             dismiss_on_click: Box::new(|_, _, _| {}),
         }
@@ -104,6 +101,8 @@ impl RenderOnce for AnnouncementToast {
         let illustration = self.illustration;
 
         v_flex()
+            .id("announcement-toast")
+            .occlude()
             .relative()
             .w_full()
             .elevation_3(cx)
@@ -134,12 +133,13 @@ impl RenderOnce for AnnouncementToast {
                             .gap_1()
                             .child(
                                 Button::new("try-now", self.primary_action_label)
-                                    .style(ButtonStyle::Outlined)
+                                    .style(ButtonStyle::Tinted(crate::TintColor::Accent))
                                     .full_width()
                                     .on_click(self.primary_on_click),
                             )
                             .child(
                                 Button::new("release-notes", self.secondary_action_label)
+                                    .style(ButtonStyle::OutlinedGhost)
                                     .full_width()
                                     .on_click(self.secondary_on_click),
                             ),
@@ -164,63 +164,28 @@ impl Component for AnnouncementToast {
         Some("A special toast for announcing new and exciting features.")
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        let illustration = h_flex()
-            .relative()
-            .h(rems_from_px(126.))
-            .bg(cx.theme().colors().editor_background)
-            .justify_center()
-            .gap_8()
-            .rounded_t_md()
-            .overflow_hidden()
-            .child(
-                div().absolute().inset_0().w(px(515.)).h(px(126.)).child(
-                    Vector::new(VectorName::AcpGrid, rems_from_px(515.), rems_from_px(126.))
-                        .color(Color::Custom(cx.theme().colors().text.opacity(0.02))),
-                ),
-            )
-            .child(div().absolute().inset_0().size_full().bg(linear_gradient(
-                0.,
-                linear_color_stop(
-                    cx.theme().colors().elevated_surface_background.opacity(0.1),
-                    0.9,
-                ),
-                linear_color_stop(
-                    cx.theme().colors().elevated_surface_background.opacity(0.),
-                    0.,
-                ),
-            )))
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .size_full()
-                    .bg(gpui::black().opacity(0.15)),
-            )
-            .child(
-                Vector::new(
-                    VectorName::AcpLogoSerif,
-                    rems_from_px(257.),
-                    rems_from_px(47.),
-                )
-                .color(Color::Custom(cx.theme().colors().text.opacity(0.8))),
-            );
-
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         let examples = vec![single_example(
             "Basic",
-            div().w_80().child(
-                AnnouncementToast::new()
-                    .illustration(illustration)
-                    .heading("What's new in Zed")
-                    .description(
-                        "This version comes in with some changes to the workspace for a better experience.",
-                    )
-                    .bullet_item(ListBulletItem::new("Improved agent performance"))
-                    .bullet_item(ListBulletItem::new("New agentic features"))
-                    .bullet_item(ListBulletItem::new("Better agent capabilities"))
-
-            )
-            .into_any_element(),
+            div()
+                .w_80()
+                .child(
+                    AnnouncementToast::new()
+                        .heading("Introducing Parallel Agents")
+                        .description("Run multiple agent threads simultaneously across projects.")
+                        .bullet_item(ListBulletItem::new(
+                            "Mix and match Zed's agent with any ACP-compatible agent",
+                        ))
+                        .bullet_item(ListBulletItem::new(
+                            "Optional worktree isolation keeps agents from conflicting",
+                        ))
+                        .bullet_item(ListBulletItem::new(
+                            "Updated workspace layout designed for agentic workflows",
+                        ))
+                        .primary_action_label("Try Now")
+                        .secondary_action_label("Learn More"),
+                )
+                .into_any_element(),
         )];
 
         Some(

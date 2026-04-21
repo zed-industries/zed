@@ -126,6 +126,10 @@ impl ThreadSwitcher {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut gpui::Window, cx: &mut Context<Self>) {
+        self.confirm_selected(cx);
+    }
+
+    fn confirm_selected(&mut self, cx: &mut Context<Self>) {
         if let Some(entry) = self.entries.get(self.selected_index) {
             cx.emit(ThreadSwitcherEvent::Confirmed {
                 metadata: entry.metadata.clone(),
@@ -133,6 +137,22 @@ impl ThreadSwitcher {
             });
         }
         cx.emit(DismissEvent);
+    }
+
+    fn select_and_confirm(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.entries.len() {
+            self.selected_index = index;
+            self.confirm_selected(cx);
+        }
+    }
+
+    fn select_index(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.entries.len() || index == self.selected_index {
+            return;
+        }
+        self.selected_index = index;
+        self.emit_preview(cx);
+        cx.notify();
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _window: &mut gpui::Window, cx: &mut Context<Self>) {
@@ -223,7 +243,18 @@ impl Render for ThreadSwitcher {
                         this.removed(entry.diff_stats.lines_removed as usize)
                     })
                     .selected(ix == selected_index)
-                    .base_bg(cx.theme().colors().surface_background)
+                    .base_bg(cx.theme().colors().elevated_surface_background)
+                    .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
+                        if *hovered {
+                            this.select_index(ix, cx);
+                        }
+                    }))
+                    // TODO: This is not properly propagating to the tread item.
+                    .on_click(
+                        cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                            this.select_and_confirm(ix, cx);
+                        }),
+                    )
                     .into_any_element()
             }))
     }
