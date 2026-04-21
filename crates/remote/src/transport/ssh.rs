@@ -608,81 +608,75 @@ impl SshRemoteConnection {
         // On non-Windows, check if the user already has an active ControlMaster
         // session for this host. If so, reuse it instead of prompting for auth.
         #[cfg(not(windows))]
-        let reused_socket = find_existing_control_master(
-            &destination,
-            &connection_options.additional_args(),
-        )
-        .await;
+        let reused_socket =
+            find_existing_control_master(&destination, &connection_options.additional_args()).await;
 
         #[cfg(not(windows))]
-        let (socket, master_process_option) =
-            if let Some(reused_path) = reused_socket {
-                delegate.set_status(Some("Connecting (reusing session)"), cx);
-                log::info!("reusing existing ControlMaster, skipping authentication");
-                let socket = SshSocket::new(connection_options, reused_path).await?;
-                (socket, None)
-            } else {
-                let askpass_delegate = askpass::AskPassDelegate::new(cx, {
-                    let delegate = delegate.clone();
-                    move |prompt, tx, cx| delegate.ask_password(prompt, tx, cx)
-                });
+        let (socket, master_process_option) = if let Some(reused_path) = reused_socket {
+            delegate.set_status(Some("Connecting (reusing session)"), cx);
+            log::info!("reusing existing ControlMaster, skipping authentication");
+            let socket = SshSocket::new(connection_options, reused_path).await?;
+            (socket, None)
+        } else {
+            let askpass_delegate = askpass::AskPassDelegate::new(cx, {
+                let delegate = delegate.clone();
+                move |prompt, tx, cx| delegate.ask_password(prompt, tx, cx)
+            });
 
-                let mut askpass = askpass::AskPassSession::new(
-                    cx.background_executor().clone(),
-                    askpass_delegate,
-                )
-                .await?;
+            let mut askpass =
+                askpass::AskPassSession::new(cx.background_executor().clone(), askpass_delegate)
+                    .await?;
 
-                delegate.set_status(Some("Connecting"), cx);
+            delegate.set_status(Some("Connecting"), cx);
 
-                // Start the master SSH process, which does not do anything except
-                // for establish the connection and keep it open, allowing other ssh
-                // commands to reuse it via a control socket.
-                let socket_path = temp_dir.path().join("ssh.sock");
-                let mut master_process = MasterProcess::new(
-                    askpass.script_path().as_ref(),
-                    connection_options.additional_args(),
-                    &socket_path,
-                    &destination,
-                )?;
+            // Start the master SSH process, which does not do anything except
+            // for establish the connection and keep it open, allowing other ssh
+            // commands to reuse it via a control socket.
+            let socket_path = temp_dir.path().join("ssh.sock");
+            let mut master_process = MasterProcess::new(
+                askpass.script_path().as_ref(),
+                connection_options.additional_args(),
+                &socket_path,
+                &destination,
+            )?;
 
-                let result = select_biased! {
-                    result = askpass.run().fuse() => {
-                        match result {
-                            AskPassResult::CancelledByUser => {
-                                master_process.as_mut().kill().ok();
-                                anyhow::bail!("SSH connection canceled")
-                            }
-                            AskPassResult::Timedout => {
-                                anyhow::bail!("connecting to host timed out")
-                            }
+            let result = select_biased! {
+                result = askpass.run().fuse() => {
+                    match result {
+                        AskPassResult::CancelledByUser => {
+                            master_process.as_mut().kill().ok();
+                            anyhow::bail!("SSH connection canceled")
+                        }
+                        AskPassResult::Timedout => {
+                            anyhow::bail!("connecting to host timed out")
                         }
                     }
-                    _ = master_process.wait_connected().fuse() => {
-                        anyhow::Ok(())
-                    }
-                };
-
-                if let Err(e) = result {
-                    return Err(e.context("Failed to connect to host"));
                 }
-
-                if master_process.as_mut().try_status()?.is_some() {
-                    let mut output = Vec::new();
-                    let mut stderr = master_process.as_mut().stderr.take().unwrap();
-                    stderr.read_to_end(&mut output).await?;
-
-                    let error_message = format!(
-                        "failed to connect: {}",
-                        String::from_utf8_lossy(&output).trim()
-                    );
-                    anyhow::bail!(error_message);
+                _ = master_process.wait_connected().fuse() => {
+                    anyhow::Ok(())
                 }
-
-                let socket = SshSocket::new(connection_options, socket_path).await?;
-                drop(askpass);
-                (socket, Some(master_process))
             };
+
+            if let Err(e) = result {
+                return Err(e.context("Failed to connect to host"));
+            }
+
+            if master_process.as_mut().try_status()?.is_some() {
+                let mut output = Vec::new();
+                let mut stderr = master_process.as_mut().stderr.take().unwrap();
+                stderr.read_to_end(&mut output).await?;
+
+                let error_message = format!(
+                    "failed to connect: {}",
+                    String::from_utf8_lossy(&output).trim()
+                );
+                anyhow::bail!(error_message);
+            }
+
+            let socket = SshSocket::new(connection_options, socket_path).await?;
+            drop(askpass);
+            (socket, Some(master_process))
+        };
 
         #[cfg(windows)]
         let (socket, master_process_option) = {
@@ -691,11 +685,9 @@ impl SshRemoteConnection {
                 move |prompt, tx, cx| delegate.ask_password(prompt, tx, cx)
             });
 
-            let mut askpass = askpass::AskPassSession::new(
-                cx.background_executor().clone(),
-                askpass_delegate,
-            )
-            .await?;
+            let mut askpass =
+                askpass::AskPassSession::new(cx.background_executor().clone(), askpass_delegate)
+                    .await?;
 
             delegate.set_status(Some("Connecting"), cx);
 
