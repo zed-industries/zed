@@ -6,7 +6,7 @@ use crate::{
     git::{CommitDetails, CommitList},
     github::{
         CommitAuthor, GitHubClient, GitHubUser, GithubLogin, PullRequestComment, PullRequestData,
-        PullRequestReview, ReviewState,
+        PullRequestReview, ReviewState, ZED_ZIPPY_AUTHOR,
     },
     report::Report,
 };
@@ -112,6 +112,10 @@ impl<'a> Reporter<'a> {
     /// Method that checks every commit for compliance
     async fn check_commit(&self, commit: &CommitDetails) -> Result<ReviewSuccess, ReviewFailure> {
         let Some(pr_number) = commit.pr_number() else {
+            if commit.author().name().contains("Zed Zippy") && commit.title().starts_with("Bump to")
+            {
+                return Ok(ReviewSuccess::CoAuthored(vec![ZED_ZIPPY_AUTHOR.clone()]));
+            }
             return Err(ReviewFailure::NoPullRequestFound);
         };
 

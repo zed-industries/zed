@@ -136,6 +136,10 @@ impl Committer {
             email: email.to_owned(),
         }
     }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl fmt::Display for Committer {

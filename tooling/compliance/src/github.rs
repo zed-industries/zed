@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, ops::Not, rc::Rc};
+use std::{collections::HashMap, fmt, ops::Not, rc::Rc, sync::LazyLock};
 
 use anyhow::Result;
 use derive_more::Deref;
@@ -71,6 +71,14 @@ pub struct CommitAuthor {
     email: String,
     user: Option<GithubLogin>,
 }
+
+pub(crate) static ZED_ZIPPY_AUTHOR: LazyLock<CommitAuthor> = LazyLock::new(|| CommitAuthor {
+    name: "Zed Zippy".to_string(),
+    email: "234243425+zed-zippy[bot]@users.noreply.github.com".to_string(),
+    user: Some(GithubLogin {
+        login: "zed-zippy[bot]".to_string(),
+    }),
+});
 
 impl CommitAuthor {
     pub(crate) fn user(&self) -> Option<&GithubLogin> {
