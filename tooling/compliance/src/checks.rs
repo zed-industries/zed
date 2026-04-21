@@ -6,7 +6,7 @@ use crate::{
     git::{CommitDetails, CommitList, ZED_ZIPPY_LOGIN},
     github::{
         CommitAuthor, GithubApiClient, GithubLogin, PullRequestComment, PullRequestData,
-        PullRequestReview, Repository, ReviewState,
+        PullRequestReview, Repository, ReviewState, ZED_ZIPPY_AUTHOR,
     },
     report::Report,
 };
