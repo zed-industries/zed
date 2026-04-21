@@ -409,7 +409,6 @@ dependencies = [
  "theme",
  "theme_settings",
  "time",
- "time_format",
  "tree-sitter-md",
  "ui",
  "ui_input",
