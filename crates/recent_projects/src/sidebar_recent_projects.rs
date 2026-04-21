@@ -70,7 +70,7 @@ impl SidebarRecentProjects {
             cx.spawn_in(window, async move |this, cx| {
                 let Some(fs) = fs else { return };
                 let workspaces = db
-                    .recent_workspaces_on_disk(fs.as_ref())
+                    .recent_project_workspaces(fs.as_ref())
                     .await
                     .log_err()
                     .unwrap_or_default();

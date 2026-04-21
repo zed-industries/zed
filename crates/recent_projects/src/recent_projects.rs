@@ -96,7 +96,7 @@ pub async fn get_recent_projects(
     db: &WorkspaceDb,
 ) -> Vec<RecentProjectEntry> {
     let workspaces = db
-        .recent_workspaces_on_disk(fs.as_ref())
+        .recent_project_workspaces(fs.as_ref())
         .await
         .unwrap_or_default();
 
@@ -610,7 +610,7 @@ impl RecentProjects {
         cx.spawn_in(window, async move |this, cx| {
             let Some(fs) = fs else { return };
             let workspaces = db
-                .recent_workspaces_on_disk(fs.as_ref())
+                .recent_project_workspaces(fs.as_ref())
                 .await
                 .log_err()
                 .unwrap_or_default();
@@ -2040,7 +2040,7 @@ impl RecentProjectsDelegate {
                 db.delete_workspace_by_id(workspace_id).await.log_err();
                 let Some(fs) = fs else { return };
                 let workspaces = db
-                    .recent_workspaces_on_disk(fs.as_ref())
+                    .recent_project_workspaces(fs.as_ref())
                     .await
                     .unwrap_or_default();
                 let workspaces =
