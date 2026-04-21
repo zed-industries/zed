@@ -1194,31 +1194,21 @@ impl Fs for RealFs {
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
 
         let watcher: Arc<dyn Watcher> = if use_poll {
-            // Default poll interval: 2 seconds. Override with ZED_FILE_WATCHER_POLL_MS.
-            let poll_ms: u64 = std::env::var("ZED_FILE_WATCHER_POLL_MS")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(2000)
-                .clamp(500, 30000);
-            let poll_interval = Duration::from_millis(poll_ms);
-
             log::info!(
                 "Using poll watcher ({}ms interval) for {}",
-                poll_ms,
+                fs_watcher::poll_interval().as_millis(),
                 path.display()
             );
             Arc::new(fs_watcher::FsWatcher::new(
                 tx.clone(),
                 pending_paths.clone(),
                 fs_watcher::WatcherMode::Poll,
-                Some(poll_interval),
             ))
         } else {
             Arc::new(fs_watcher::FsWatcher::new(
                 tx.clone(),
                 pending_paths.clone(),
                 fs_watcher::WatcherMode::Native,
-                None,
             ))
         };
 
