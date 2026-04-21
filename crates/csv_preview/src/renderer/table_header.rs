@@ -19,8 +19,17 @@ impl CsvPreviewView {
         cx: &mut Context<'_, CsvPreviewView>,
         col_idx: AnyColumn,
     ) -> AnyElement {
-        // CSV data columns: text + filter/sort buttons
+        let has_active_filter = self.engine.has_active_filters(col_idx);
+        let has_active_sort = self
+            .engine
+            .applied_sorting
+            .is_some_and(|o| o.col_idx == col_idx);
+        let always_show_buttons = has_active_filter || has_active_sort;
+        let group_name =
+            SharedString::from(format!("csv-col-header-{}", col_idx.get()));
+
         h_flex()
+            .group(group_name.clone())
             .justify_between()
             .items_center()
             .w_full()
@@ -29,6 +38,9 @@ impl CsvPreviewView {
             .child(
                 h_flex()
                     .gap_1()
+                    .when(!always_show_buttons, |this| {
+                        this.visible_on_hover(group_name)
+                    })
                     .child(self.create_filter_button(cx, col_idx))
                     .child(self.create_sort_button(cx, col_idx)),
             )
