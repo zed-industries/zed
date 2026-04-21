@@ -68,7 +68,8 @@ impl ReportEntry<ReviewSuccess> {
 #[derive(Debug, Default)]
 pub struct ReportSummary {
     pub pull_requests: usize,
-    pub reviewed: usize,
+    pub reviewed_prs: usize,
+    pub other_checked: usize,
     pub not_reviewed: usize,
     pub errors: usize,
 }
@@ -87,7 +88,14 @@ impl ReportSummary {
                 .filter_map(|entry| entry.commit.pr_number())
                 .unique()
                 .count(),
-            reviewed: entries.iter().filter(|entry| entry.reason.is_ok()).count(),
+            reviewed_prs: entries
+                .iter()
+                .filter(|entry| entry.reason.is_ok() && entry.commit.pr_number().is_some())
+                .count(),
+            other_checked: entries
+                .iter()
+                .filter(|entry| entry.reason.is_ok() && entry.commit.pr_number().is_none())
+                .count(),
             not_reviewed: entries
                 .iter()
                 .filter(|entry| {
@@ -119,7 +127,7 @@ impl ReportSummary {
     }
 
     pub fn prs_with_errors(&self) -> usize {
-        self.pull_requests - self.reviewed
+        self.pull_requests.saturating_sub(self.reviewed_prs)
     }
 }
 
@@ -197,8 +205,13 @@ impl Report {
         writeln!(writer, "## Overview")?;
         writeln!(writer)?;
         writeln!(writer, "- PRs: {}", summary.pull_requests)?;
-        writeln!(writer, "- Reviewed: {}", summary.reviewed)?;
+        writeln!(writer, "- Reviewed: {}", summary.reviewed_prs)?;
         writeln!(writer, "- Not reviewed: {}", summary.not_reviewed)?;
+        writeln!(
+            writer,
+            "- Differently validated commits: {}",
+            summary.other_checked
+        )?;
         if summary.has_errors() {
             writeln!(writer, "- Errors: {}", summary.errors)?;
         }
@@ -308,7 +321,7 @@ mod tests {
     use crate::{
         checks::{ReviewFailure, ReviewSuccess},
         git::{CommitDetails, CommitList},
-        github::{GithubUser, PullRequestReview, ReviewState},
+        github::{GithubLogin, GithubUser, PullRequestReview, ReviewState},
     };
 
     use super::{Report, ReportReviewSummary};
@@ -366,10 +379,17 @@ mod tests {
             make_commit("ddd", "Dave", "dave@test.com", "Error commit (#300)", ""),
             Err(ReviewFailure::Other(anyhow::anyhow!("some error"))),
         );
+        report.add(
+            make_commit("ddd", "Dave", "dave@test.com", "Bump Version", ""),
+            Ok(ReviewSuccess::ZedZippyCommit(GithubLogin::new(
+                "dave".to_string(),
+            ))),
+        );
 
         let summary = report.summary();
         assert_eq!(summary.pull_requests, 3);
-        assert_eq!(summary.reviewed, 1);
+        assert_eq!(summary.reviewed_prs, 1);
+        assert_eq!(summary.other_checked, 1);
         assert_eq!(summary.not_reviewed, 2);
         assert_eq!(summary.errors, 1);
     }
