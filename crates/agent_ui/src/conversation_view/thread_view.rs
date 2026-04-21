@@ -4392,20 +4392,36 @@ impl Render for TokenUsageTooltip {
                         v_flex()
                             .gap_0p5()
                             .child(
-                                h_flex()
-                                    .gap_0p5()
-                                    .child(Label::new("Input:").color(Color::Muted).mr_0p5())
-                                    .child(Label::new(input_tokens))
-                                    .child(Label::new("/").color(separator_color))
-                                    .child(Label::new(input_max).color(Color::Muted)),
+                                ButtonLike::new("input_tokens_row")
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(Label::new("Input:").color(Color::Muted))
+                                            .child(
+                                                h_flex()
+                                                    .gap_0p5()
+                                                    .child(Label::new(input_tokens))
+                                                    .child(Label::new("/").color(separator_color))
+                                                    .child(Label::new(input_max).color(Color::Muted)),
+                                            ),
+                                    ),
                             )
                             .child(
-                                h_flex()
-                                    .gap_0p5()
-                                    .child(Label::new("Output:").color(Color::Muted).mr_0p5())
-                                    .child(Label::new(output_tokens))
-                                    .child(Label::new("/").color(separator_color))
-                                    .child(Label::new(output_max).color(Color::Muted)),
+                                ButtonLike::new("output_tokens_row")
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .justify_between()
+                                            .child(Label::new("Output:").color(Color::Muted))
+                                            .child(
+                                                h_flex()
+                                                    .gap_0p5()
+                                                    .child(Label::new(output_tokens))
+                                                    .child(Label::new("/").color(separator_color))
+                                                    .child(Label::new(output_max).color(Color::Muted)),
+                                            ),
+                                    ),
                             ),
                     )
                 })
