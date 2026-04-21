@@ -178,13 +178,6 @@ impl ThreadHistory {
         self.session_list.notify_refresh();
     }
 
-    pub fn session_for_id(&self, session_id: &acp::SessionId) -> Option<AgentSessionInfo> {
-        self.sessions
-            .iter()
-            .find(|entry| &entry.session_id == session_id)
-            .cloned()
-    }
-
     pub(crate) fn sessions(&self) -> &[AgentSessionInfo] {
         &self.sessions
     }
