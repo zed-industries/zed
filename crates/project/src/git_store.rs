@@ -62,6 +62,7 @@ use rpc::{
 };
 use serde::Deserialize;
 use settings::{Settings, WorktreeId};
+use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
     cmp::Ordering,
@@ -5056,6 +5057,7 @@ impl Repository {
         });
 
         let request_tx_for_handler = request_tx;
+        let repository_id = self.id;
         let background_executor = cx.background_executor().clone();
 
         cx.background_spawn(async move {
@@ -5073,6 +5075,7 @@ impl Repository {
                     Self::remote_commit_data_reader(
                         project_id,
                         client,
+                        repository_id,
                         request_rx,
                         result_tx,
                         background_executor,
@@ -5139,6 +5142,7 @@ impl Repository {
     async fn remote_commit_data_reader(
         project_id: ProjectId,
         client: AnyProtoClient,
+        repository_id: RepositoryId,
         request_rx: smol::channel::Receiver<Oid>,
         result_tx: smol::channel::Sender<(Oid, GraphCommitData)>,
         background_executor: BackgroundExecutor,
@@ -5172,12 +5176,34 @@ impl Repository {
                 break;
             }
 
-            let result = client.request(request).await;
-            result_tx.send(msg)
+            let result = client
+                .request(proto::GetGraphCommitData {
+                    project_id: project_id.to_proto(),
+                    repository_id: repository_id.to_proto(),
+                    shas: queued_shas.into_iter().map(|oid| oid.to_string()).collect(),
+                })
+                .await;
+
+            if let Ok(commit_data) = result {
+                for commit in commit_data.commits {
+                    let Ok(commit_data) = graph_commit_data_from_proto(commit) else {
+                        continue;
+                    };
+
+                    if result_tx
+                        .send((commit_data.sha, commit_data))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
 
             background_executor.timer(Duration::from_millis(2)).await;
-
         }
+
+        drop(result_tx);
     }
 
     fn buffer_store(&self, cx: &App) -> Option<Entity<BufferStore>> {
@@ -7691,6 +7717,33 @@ fn deserialize_blame_buffer_response(
         .collect::<HashMap<_, _>>();
 
     Some(Blame { entries, messages })
+}
+
+fn graph_commit_data_to_proto(commit: &GraphCommitData) -> proto::GraphCommitData {
+    proto::GraphCommitData {
+        sha: commit.sha.to_string(),
+        parents: commit.parents.iter().map(|p| p.to_string()).collect(),
+        author_name: commit.author_name.to_string(),
+        author_email: commit.author_email.to_string(),
+        commit_timestamp: commit.commit_timestamp,
+        subject: commit.subject.to_string(),
+    }
+}
+
+fn graph_commit_data_from_proto(commit: proto::GraphCommitData) -> Result<GraphCommitData> {
+    let sha = Oid::from_str(&commit.sha)?;
+    let mut parents = SmallVec::with_capacity(commit.parents.len());
+    for parent in &commit.parents {
+        parents.push(Oid::from_str(parent)?);
+    }
+    Ok(GraphCommitData {
+        sha,
+        parents,
+        author_name: SharedString::from(commit.author_name),
+        author_email: SharedString::from(commit.author_email),
+        commit_timestamp: commit.commit_timestamp,
+        subject: SharedString::from(commit.subject),
+    })
 }
 
 fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
