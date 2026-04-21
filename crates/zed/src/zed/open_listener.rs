@@ -783,7 +783,7 @@ async fn open_workspaces(
 }
 
 async fn open_local_workspace(
-    workspace_paths: Vec<String>,
+    mut workspace_paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
     diff_all: bool,
     open_options: workspace::OpenOptions,
@@ -791,6 +791,16 @@ async fn open_local_workspace(
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
+    let user_provided_paths = !workspace_paths.is_empty();
+
+    // When only diff paths are provided (no regular paths), add the current
+    // working directory so the workspace opens with the right context.
+    if !user_provided_paths && !diff_paths.is_empty() {
+        if let Ok(cwd) = std::env::current_dir() {
+            workspace_paths.push(cwd.to_string_lossy().into_owned());
+        }
+    }
+
     let paths_with_position =
         derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
 
@@ -822,10 +832,12 @@ async fn open_local_workspace(
     // the entire workspace is closed.
     if open_options.wait {
         let mut wait_for_window_close = paths_with_position.is_empty() && diff_paths.is_empty();
-        for path_with_position in &paths_with_position {
-            if app_state.fs.is_dir(&path_with_position.path).await {
-                wait_for_window_close = true;
-                break;
+        if user_provided_paths {
+            for path_with_position in &paths_with_position {
+                if app_state.fs.is_dir(&path_with_position.path).await {
+                    wait_for_window_close = true;
+                    break;
+                }
             }
         }
 

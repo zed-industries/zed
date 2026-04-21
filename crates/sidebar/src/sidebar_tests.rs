@@ -3,7 +3,9 @@ use acp_thread::{AcpThread, PermissionOptions, StubAgentConnection};
 use agent::ThreadStore;
 use agent_ui::{
     ThreadId,
-    test_support::{active_session_id, open_thread_with_connection, send_message},
+    test_support::{
+        active_session_id, active_thread_id, open_thread_with_connection, send_message,
+    },
     thread_metadata_store::{ThreadMetadata, WorktreePaths},
 };
 use chrono::DateTime;
@@ -207,6 +209,7 @@ async fn save_n_test_threads(
             Some(format!("Thread {}", i + 1).into()),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
             None,
+            None,
             project,
             cx,
         )
@@ -224,6 +227,7 @@ async fn save_test_thread_metadata(
         Some("Test".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
+        None,
         project,
         cx,
     )
@@ -239,6 +243,7 @@ async fn save_named_thread_metadata(
         acp::SessionId::new(Arc::from(session_id)),
         Some(SharedString::from(title.to_string())),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         None,
         project,
         cx,
@@ -335,6 +340,7 @@ fn save_thread_metadata(
     title: Option<SharedString>,
     updated_at: DateTime<Utc>,
     created_at: Option<DateTime<Utc>>,
+    interacted_at: Option<DateTime<Utc>>,
     project: &Entity<project::Project>,
     cx: &mut TestAppContext,
 ) {
@@ -354,6 +360,7 @@ fn save_thread_metadata(
             title,
             updated_at,
             created_at,
+            interacted_at,
             worktree_paths,
             archived: false,
             remote_connection,
@@ -388,6 +395,7 @@ fn save_thread_metadata_with_main_paths(
         title: Some(title),
         updated_at,
         created_at: None,
+        interacted_at: None,
         worktree_paths: WorktreePaths::from_path_lists(main_worktree_paths, folder_paths).unwrap(),
         archived: false,
         remote_connection: None,
@@ -441,9 +449,12 @@ fn format_linked_worktree_chips(worktrees: &[ThreadItemWorktreeInfo]) -> String 
         if wt.kind == ui::WorktreeKind::Main {
             continue;
         }
-        if !seen.contains(&wt.name) {
-            seen.push(wt.name.clone());
-            chips.push(format!("{{{}}}", wt.name));
+        let Some(name) = wt.worktree_name.as_ref() else {
+            continue;
+        };
+        if !seen.contains(name) {
+            seen.push(name.clone());
+            chips.push(format!("{{{}}}", name));
         }
     }
     if chips.is_empty() {
@@ -631,6 +642,7 @@ async fn test_single_workspace_with_saved_threads(cx: &mut TestAppContext) {
         Some("Fix crash in project panel".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap(),
         None,
+        None,
         &project,
         cx,
     );
@@ -639,6 +651,7 @@ async fn test_single_workspace_with_saved_threads(cx: &mut TestAppContext) {
         acp::SessionId::new(Arc::from("thread-2")),
         Some("Add inline diff view".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        None,
         None,
         &project,
         cx,
@@ -671,6 +684,7 @@ async fn test_workspace_lifecycle(cx: &mut TestAppContext) {
         acp::SessionId::new(Arc::from("thread-a1")),
         Some("Thread A1".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         None,
         &project,
         cx,
@@ -854,6 +868,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     title: Some("Completed thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
+                    interacted_at: None,
                     archived: false,
                     remote_connection: None,
                 },
@@ -878,6 +893,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     title: Some("Running thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
+                    interacted_at: None,
                     archived: false,
                     remote_connection: None,
                 },
@@ -902,6 +918,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     title: Some("Error thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
+                    interacted_at: None,
                     archived: false,
                     remote_connection: None,
                 },
@@ -927,6 +944,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     title: Some("Waiting thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
+                    interacted_at: None,
                     archived: false,
                     remote_connection: None,
                 },
@@ -952,6 +970,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     title: Some("Notified thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
+                    interacted_at: None,
                     archived: false,
                     remote_connection: None,
                 },
@@ -1578,6 +1597,7 @@ async fn test_search_narrows_visible_threads_to_matches(cx: &mut TestAppContext)
             Some(title.into()),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
             None,
+            None,
             &project,
             cx,
         );
@@ -1629,6 +1649,7 @@ async fn test_search_matches_regardless_of_case(cx: &mut TestAppContext) {
         Some("Fix Crash In Project Panel".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
+        None,
         &project,
         cx,
     );
@@ -1671,6 +1692,7 @@ async fn test_escape_clears_search_and_restores_full_list(cx: &mut TestAppContex
             acp::SessionId::new(Arc::from(id)),
             Some(title.into()),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
             None,
             &project,
             cx,
@@ -1732,6 +1754,7 @@ async fn test_search_only_shows_workspace_headers_with_matches(cx: &mut TestAppC
             Some(title.into()),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
             None,
+            None,
             &project_a,
             cx,
         )
@@ -1755,6 +1778,7 @@ async fn test_search_only_shows_workspace_headers_with_matches(cx: &mut TestAppC
             acp::SessionId::new(Arc::from(id)),
             Some(title.into()),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
             None,
             &project_b,
             cx,
@@ -1820,6 +1844,7 @@ async fn test_search_matches_workspace_name(cx: &mut TestAppContext) {
             Some(title.into()),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
             None,
+            None,
             &project_a,
             cx,
         )
@@ -1843,6 +1868,7 @@ async fn test_search_matches_workspace_name(cx: &mut TestAppContext) {
             acp::SessionId::new(Arc::from(id)),
             Some(title.into()),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
             None,
             &project_b,
             cx,
@@ -1929,6 +1955,7 @@ async fn test_search_finds_threads_inside_collapsed_groups(cx: &mut TestAppConte
         Some("Important thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
+        None,
         &project,
         cx,
     );
@@ -1979,6 +2006,7 @@ async fn test_search_then_keyboard_navigate_and_confirm(cx: &mut TestAppContext)
             acp::SessionId::new(Arc::from(id)),
             Some(title.into()),
             chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
             None,
             &project,
             cx,
@@ -2050,6 +2078,7 @@ async fn test_confirm_on_historical_thread_activates_workspace(cx: &mut TestAppC
         Some("Historical Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
         None,
+        None,
         &project,
         cx,
     );
@@ -2069,7 +2098,7 @@ async fn test_confirm_on_historical_thread_activates_workspace(cx: &mut TestAppC
     // Switch to workspace 1 so we can verify the confirm switches back.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().nth(1).unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -2109,6 +2138,7 @@ async fn test_confirm_on_historical_thread_preserves_historical_timestamp_and_or
         Some("Newer Historical Thread".into()),
         newer_timestamp,
         Some(newer_timestamp),
+        None,
         &project,
         cx,
     );
@@ -2120,6 +2150,7 @@ async fn test_confirm_on_historical_thread_preserves_historical_timestamp_and_or
         Some("Older Historical Thread".into()),
         older_timestamp,
         Some(older_timestamp),
+        None,
         &project,
         cx,
     );
@@ -2230,6 +2261,7 @@ async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_threa
         Some("Historical Thread in New Group".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
         None,
+        None,
         &project_b,
         cx,
     );
@@ -2338,6 +2370,7 @@ async fn test_click_clears_selection_and_focus_in_restores_it(cx: &mut TestAppCo
         Some("Thread A".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
         None,
+        None,
         &project,
         cx,
     );
@@ -2346,6 +2379,7 @@ async fn test_click_clears_selection_and_focus_in_restores_it(cx: &mut TestAppCo
         acp::SessionId::new(Arc::from("t-2")),
         Some("Thread B".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         None,
         &project,
         cx,
@@ -2563,7 +2597,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
 
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
     cx.run_until_parked();
 
@@ -2619,7 +2653,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().find(|w| *w == &workspace_b).cloned();
         if let Some(workspace) = workspace {
-            mw.activate(workspace, window, cx);
+            mw.activate(workspace, None, window, cx);
         }
     });
     cx.run_until_parked();
@@ -2883,7 +2917,7 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
     // Switch to the worktree workspace.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().nth(1).unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
 
     // Create a non-empty thread in the worktree workspace.
@@ -3140,6 +3174,7 @@ async fn test_two_worktree_workspaces_absorbed_when_main_added(cx: &mut TestAppC
         Some("Thread A".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
+        None,
         &project_a,
         cx,
     );
@@ -3147,6 +3182,7 @@ async fn test_two_worktree_workspaces_absorbed_when_main_added(cx: &mut TestAppC
         acp::SessionId::new(Arc::from("thread-b")),
         Some("Thread B".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap(),
+        None,
         None,
         &project_b,
         cx,
@@ -3485,7 +3521,7 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
     // Switch back to the main workspace before setting up the sidebar.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
 
     // Start a thread in the worktree workspace's panel and keep it
@@ -3578,7 +3614,7 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
 
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
 
     let connection = StubAgentConnection::new();
@@ -3804,7 +3840,10 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                 }
                 ListEntry::Thread(thread)
                     if thread.metadata.title.as_ref().map(|t| t.as_ref()) == Some("WT Thread")
-                        && thread.worktrees.first().map(|wt| wt.name.as_ref())
+                        && thread
+                            .worktrees
+                            .first()
+                            .and_then(|wt| wt.worktree_name.as_ref().map(|n| n.as_ref()))
                             == Some("wt-feature-a") =>
                 {
                     saw_expected_thread = true;
@@ -3814,7 +3853,7 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                     let worktree_name = thread
                         .worktrees
                         .first()
-                        .map(|wt| wt.name.as_ref())
+                        .and_then(|wt| wt.worktree_name.as_ref().map(|n| n.as_ref()))
                         .unwrap_or("<none>");
                     panic!(
                         "unexpected sidebar thread while opening linked worktree thread: title=`{}`, worktree=`{}`",
@@ -3898,7 +3937,7 @@ async fn test_clicking_absorbed_worktree_thread_activates_worktree_workspace(
     // Activate the main workspace before setting up the sidebar.
     let main_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace.clone(), window, cx);
+        mw.activate(workspace.clone(), None, window, cx);
         workspace
     });
 
@@ -3979,7 +4018,7 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
     // Ensure workspace A is active.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -3998,6 +4037,7 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
                 title: Some("Archived Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
+                interacted_at: None,
                 worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                     "/project-b",
                 )])),
@@ -4048,7 +4088,7 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
     // Start with workspace A active.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -4066,6 +4106,7 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
                 title: Some("CWD Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
+                interacted_at: None,
                 worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[
                     std::path::PathBuf::from("/project-b"),
                 ])),
@@ -4114,7 +4155,7 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
     // Activate workspace B (index 1) to make it the active one.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().nth(1).unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -4132,6 +4173,7 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
                 title: Some("Contextless Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
+                interacted_at: None,
                 worktree_paths: WorktreePaths::default(),
                 archived: false,
                 remote_connection: None,
@@ -4188,6 +4230,7 @@ async fn test_activate_archived_thread_saved_paths_opens_new_workspace(cx: &mut 
                 title: Some("New WS Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
+                interacted_at: None,
                 worktree_paths: WorktreePaths::from_folder_paths(&path_list_b),
                 archived: false,
                 remote_connection: None,
@@ -4243,6 +4286,7 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window(cx: &m
                 title: Some("Cross Window Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
+                interacted_at: None,
                 worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                     "/project-b",
                 )])),
@@ -4323,6 +4367,7 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window_with_t
                 title: Some("Cross Window Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
+                interacted_at: None,
                 worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                     "/project-b",
                 )])),
@@ -4406,6 +4451,7 @@ async fn test_activate_archived_thread_prefers_current_window_for_matching_paths
                 title: Some("Current Window Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
+                interacted_at: None,
                 worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                     "/project-a",
                 )])),
@@ -4511,7 +4557,7 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
     // Activate main workspace so the sidebar tracks the main panel.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces().next().unwrap().clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace, None, window, cx);
     });
 
     let main_workspace =
@@ -4540,6 +4586,7 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
         Some("Thread 2".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
         None,
+        None,
         &main_project,
         cx,
     );
@@ -4551,6 +4598,7 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
         thread1_session_id,
         Some("Thread 1".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         None,
         &worktree_project,
         cx,
@@ -4685,6 +4733,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
         Some("Main Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
         None,
+        None,
         &main_project,
         cx,
     );
@@ -4695,6 +4744,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
         wt_thread_id.clone(),
         Some("Worktree Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         None,
         &worktree_project,
         cx,
@@ -5160,6 +5210,7 @@ async fn test_restore_worktree_thread_uses_main_repo_project_group_key(cx: &mut 
         Some("Worktree Thread C".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
+        None,
         &worktree_project,
         cx,
     );
@@ -5306,6 +5357,7 @@ async fn test_archive_last_worktree_thread_not_blocked_by_remote_thread_at_same_
         Some("Main Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
         None,
+        None,
         &main_project,
         cx,
     );
@@ -5316,6 +5368,7 @@ async fn test_archive_last_worktree_thread_not_blocked_by_remote_thread_at_same_
         wt_thread_id.clone(),
         Some("Local Worktree Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         None,
         &worktree_project,
         cx,
@@ -5334,6 +5387,7 @@ async fn test_archive_last_worktree_thread_not_blocked_by_remote_thread_at_same_
             title: Some("Remote Worktree Thread".into()),
             updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
             created_at: None,
+            interacted_at: None,
             worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                 "/wt-feature-a",
             )])),
@@ -5473,6 +5527,7 @@ async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut Test
         Some("Worktree Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
+        None,
         &worktree_project,
         cx,
     );
@@ -5499,6 +5554,16 @@ async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut Test
     );
 }
 
+fn thread_id_for(session_id: &acp::SessionId, cx: &mut TestAppContext) -> ThreadId {
+    cx.read(|cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(session_id)
+            .map(|m| m.thread_id)
+            .expect("thread metadata should exist")
+    })
+}
+
 #[gpui::test]
 async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
@@ -5507,7 +5572,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let switcher_ids =
-        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> Vec<acp::SessionId> {
+        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> Vec<ThreadId> {
             sidebar.read_with(cx, |sidebar, cx| {
                 let switcher = sidebar
                     .thread_switcher
@@ -5517,13 +5582,13 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
                     .read(cx)
                     .entries()
                     .iter()
-                    .map(|e| e.session_id.clone())
+                    .map(|e| e.metadata.thread_id)
                     .collect()
             })
         };
 
     let switcher_selected_id =
-        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> acp::SessionId {
+        |sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext| -> ThreadId {
             sidebar.read_with(cx, |sidebar, cx| {
                 let switcher = sidebar
                     .thread_switcher
@@ -5532,8 +5597,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
                 let s = switcher.read(cx);
                 s.selected_entry()
                     .expect("should have selection")
-                    .session_id
-                    .clone()
+                    .metadata
+                    .thread_id
             })
         };
 
@@ -5547,11 +5612,13 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     open_thread_with_connection(&panel, connection_c, cx);
     send_message(&panel, cx);
     let session_id_c = active_session_id(&panel, cx);
+    let thread_id_c = active_thread_id(&panel, cx);
     save_thread_metadata(
         session_id_c.clone(),
         Some("Thread C".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap()),
+        None,
         &project,
         cx,
     );
@@ -5563,11 +5630,13 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     open_thread_with_connection(&panel, connection_b, cx);
     send_message(&panel, cx);
     let session_id_b = active_session_id(&panel, cx);
+    let thread_id_b = active_thread_id(&panel, cx);
     save_thread_metadata(
         session_id_b.clone(),
         Some("Thread B".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
         Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap()),
+        None,
         &project,
         cx,
     );
@@ -5579,11 +5648,13 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     open_thread_with_connection(&panel, connection_a, cx);
     send_message(&panel, cx);
     let session_id_a = active_session_id(&panel, cx);
+    let thread_id_a = active_thread_id(&panel, cx);
     save_thread_metadata(
         session_id_a.clone(),
         Some("Thread A".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap(),
         Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 3, 0, 0, 0).unwrap()),
+        None,
         &project,
         cx,
     );
@@ -5605,14 +5676,10 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     // then B, then C.
     assert_eq!(
         switcher_ids(&sidebar, cx),
-        vec![
-            session_id_a.clone(),
-            session_id_b.clone(),
-            session_id_c.clone()
-        ],
+        vec![thread_id_a, thread_id_b, thread_id_c,],
     );
     // First ctrl-tab selects the second entry (B).
-    assert_eq!(switcher_selected_id(&sidebar, cx), session_id_b);
+    assert_eq!(switcher_selected_id(&sidebar, cx), thread_id_b);
 
     // Dismiss the switcher without confirming.
     sidebar.update_in(cx, |sidebar, _window, cx| {
@@ -5639,7 +5706,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
             .update(cx, |s, cx| s.cycle_selection(cx));
     });
     cx.run_until_parked();
-    assert_eq!(switcher_selected_id(&sidebar, cx), session_id_c);
+    assert_eq!(switcher_selected_id(&sidebar, cx), thread_id_c);
 
     assert!(sidebar.update(cx, |sidebar, _cx| sidebar.thread_last_accessed.is_empty()));
 
@@ -5666,7 +5733,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
             .cloned()
             .collect::<Vec<_>>();
         assert_eq!(last_accessed.len(), 1);
-        assert!(last_accessed.contains(&session_id_c));
+        assert!(last_accessed.contains(&thread_id_c));
         assert!(
             is_active_session(&sidebar, &session_id_c),
             "active_entry should be Thread({session_id_c:?})"
@@ -5680,11 +5747,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
 
     assert_eq!(
         switcher_ids(&sidebar, cx),
-        vec![
-            session_id_c.clone(),
-            session_id_a.clone(),
-            session_id_b.clone()
-        ],
+        vec![thread_id_c, thread_id_a, thread_id_b],
     );
 
     // Confirm on Thread A.
@@ -5702,8 +5765,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
             .cloned()
             .collect::<Vec<_>>();
         assert_eq!(last_accessed.len(), 2);
-        assert!(last_accessed.contains(&session_id_c));
-        assert!(last_accessed.contains(&session_id_a));
+        assert!(last_accessed.contains(&thread_id_c));
+        assert!(last_accessed.contains(&thread_id_a));
         assert!(
             is_active_session(&sidebar, &session_id_a),
             "active_entry should be Thread({session_id_a:?})"
@@ -5717,11 +5780,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
 
     assert_eq!(
         switcher_ids(&sidebar, cx),
-        vec![
-            session_id_a.clone(),
-            session_id_c.clone(),
-            session_id_b.clone(),
-        ],
+        vec![thread_id_a, thread_id_c, thread_id_b,],
     );
 
     sidebar.update_in(cx, |sidebar, _window, cx| {
@@ -5745,9 +5804,9 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
             .cloned()
             .collect::<Vec<_>>();
         assert_eq!(last_accessed.len(), 3);
-        assert!(last_accessed.contains(&session_id_c));
-        assert!(last_accessed.contains(&session_id_a));
-        assert!(last_accessed.contains(&session_id_b));
+        assert!(last_accessed.contains(&thread_id_c));
+        assert!(last_accessed.contains(&thread_id_a));
+        assert!(last_accessed.contains(&thread_id_b));
         assert!(
             is_active_session(&sidebar, &session_id_b),
             "active_entry should be Thread({session_id_b:?})"
@@ -5761,6 +5820,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
         Some("Historical Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
         Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap()),
+        None,
         &project,
         cx,
     );
@@ -5779,16 +5839,12 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     // last_message_sent_or_queued. So for the accessed threads (tier 1) the
     // sort key is last_accessed_at; for Historical Thread (tier 3) it's created_at.
     let session_id_hist = acp::SessionId::new(Arc::from("thread-historical"));
+    let thread_id_hist = thread_id_for(&session_id_hist, cx);
 
     let ids = switcher_ids(&sidebar, cx);
     assert_eq!(
         ids,
-        vec![
-            session_id_b.clone(),
-            session_id_a.clone(),
-            session_id_c.clone(),
-            session_id_hist.clone()
-        ],
+        vec![thread_id_b, thread_id_a, thread_id_c, thread_id_hist],
     );
 
     sidebar.update_in(cx, |sidebar, _window, cx| {
@@ -5802,6 +5858,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
         Some("Old Historical Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2023, 6, 1, 0, 0, 0).unwrap(),
         Some(chrono::TimeZone::with_ymd_and_hms(&Utc, 2023, 6, 1, 0, 0, 0).unwrap()),
+        None,
         &project,
         cx,
     );
@@ -5814,15 +5871,16 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     // Both historical threads have no access or message times. They should
     // appear after accessed threads, sorted by created_at (newest first).
     let session_id_old_hist = acp::SessionId::new(Arc::from("thread-old-historical"));
+    let thread_id_old_hist = thread_id_for(&session_id_old_hist, cx);
     let ids = switcher_ids(&sidebar, cx);
     assert_eq!(
         ids,
         vec![
-            session_id_b,
-            session_id_a,
-            session_id_c,
-            session_id_hist,
-            session_id_old_hist,
+            thread_id_b,
+            thread_id_a,
+            thread_id_c,
+            thread_id_hist,
+            thread_id_old_hist,
         ],
     );
 
@@ -5843,6 +5901,7 @@ async fn test_archive_thread_keeps_metadata_but_hides_from_sidebar(cx: &mut Test
         acp::SessionId::new(Arc::from("thread-to-archive")),
         Some("Thread To Archive".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         None,
         &project,
         cx,
@@ -6099,6 +6158,7 @@ async fn test_unarchive_first_thread_in_group_does_not_create_spurious_draft(
                     title: Some("Unarchived Thread".into()),
                     updated_at: Utc::now(),
                     created_at: None,
+                    interacted_at: None,
                     worktree_paths: WorktreePaths::from_folder_paths(&path_list_b),
                     archived: true,
                     remote_connection: None,
@@ -6191,6 +6251,7 @@ async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread
                     title: Some("Unarchived Thread".into()),
                     updated_at: Utc::now(),
                     created_at: None,
+                    interacted_at: None,
                     worktree_paths: WorktreePaths::from_folder_paths(&path_list_b),
                     archived: true,
                     remote_connection: None,
@@ -6400,7 +6461,7 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
     cx.run_until_parked();
 
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(workspace_a.clone(), window, cx);
+        mw.activate(workspace_a.clone(), None, window, cx);
     });
     cx.run_until_parked();
 
@@ -6416,6 +6477,7 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
                     title: Some("Restored In Inactive Workspace".into()),
                     updated_at: Utc::now(),
                     created_at: None,
+                    interacted_at: None,
                     worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[
                         PathBuf::from("/project-b"),
                     ])),
@@ -6791,7 +6853,7 @@ async fn test_switch_to_workspace_with_archived_thread_shows_no_active_entry(
     let workspace_a =
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().unwrap().clone());
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(workspace_a.clone(), window, cx);
+        mw.activate(workspace_a.clone(), None, window, cx);
     });
     cx.run_until_parked();
 
@@ -6821,6 +6883,7 @@ async fn test_archived_threads_excluded_from_sidebar_entries(cx: &mut TestAppCon
         Some("Visible Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
         None,
+        None,
         &project,
         cx,
     );
@@ -6830,6 +6893,7 @@ async fn test_archived_threads_excluded_from_sidebar_entries(cx: &mut TestAppCon
         archived_thread_session_id.clone(),
         Some("Archived Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         None,
         &project,
         cx,
@@ -6950,7 +7014,7 @@ async fn test_archive_last_thread_on_linked_worktree_does_not_create_new_thread_
 
     // Activate the linked worktree workspace so the sidebar tracks it.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(worktree_workspace.clone(), window, cx);
+        mw.activate(worktree_workspace.clone(), None, window, cx);
     });
 
     // Open a thread in the linked worktree panel and send a message
@@ -6976,6 +7040,7 @@ async fn test_archive_last_thread_on_linked_worktree_does_not_create_new_thread_
         Some("Ochre Drift Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
         None,
+        None,
         &worktree_project,
         cx,
     );
@@ -6986,6 +7051,7 @@ async fn test_archive_last_thread_on_linked_worktree_does_not_create_new_thread_
         acp::SessionId::new(Arc::from("main-project-thread")),
         Some("Main Project Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         None,
         &main_project,
         cx,
@@ -7119,7 +7185,7 @@ async fn test_archive_last_thread_on_linked_worktree_with_no_siblings_leaves_gro
 
     // Activate the linked worktree workspace.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(worktree_workspace.clone(), window, cx);
+        mw.activate(worktree_workspace.clone(), None, window, cx);
     });
 
     // Open a thread on the linked worktree — this is the ONLY thread.
@@ -7141,6 +7207,7 @@ async fn test_archive_last_thread_on_linked_worktree_with_no_siblings_leaves_gro
         worktree_thread_id.clone(),
         Some("Ochre Drift Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        None,
         None,
         &worktree_project,
         cx,
@@ -7258,6 +7325,7 @@ async fn test_unarchive_linked_worktree_thread_into_project_group_shows_only_res
                     title: Some("Unarchived Linked Thread".into()),
                     updated_at: Utc::now(),
                     created_at: None,
+                    interacted_at: None,
                     worktree_paths: WorktreePaths::from_path_lists(
                         main_paths.clone(),
                         folder_paths.clone(),
@@ -7418,7 +7486,7 @@ async fn test_archive_thread_on_linked_worktree_selects_sibling_thread(cx: &mut 
 
     // Activate the linked worktree workspace.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(worktree_workspace.clone(), window, cx);
+        mw.activate(worktree_workspace.clone(), None, window, cx);
     });
 
     // Open a thread on the linked worktree.
@@ -7441,6 +7509,7 @@ async fn test_archive_thread_on_linked_worktree_selects_sibling_thread(cx: &mut 
         Some("Ochre Drift Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
         None,
+        None,
         &worktree_project,
         cx,
     );
@@ -7451,6 +7520,7 @@ async fn test_archive_thread_on_linked_worktree_selects_sibling_thread(cx: &mut 
         main_thread_id,
         Some("Main Project Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         None,
         &main_project,
         cx,
@@ -7571,7 +7641,7 @@ async fn test_linked_worktree_workspace_reachable_and_dismissable(cx: &mut TestA
     // Switch back to the main workspace.
     multi_workspace.update_in(cx, |mw, window, cx| {
         let main_ws = mw.workspaces().next().unwrap().clone();
-        mw.activate(main_ws, window, cx);
+        mw.activate(main_ws, None, window, cx);
     });
     cx.run_until_parked();
 
@@ -7780,7 +7850,9 @@ async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
     );
 
     // Switch to A — B survives. (Switching from one internal workspace, to another)
-    multi_workspace.update_in(cx, |mw, window, cx| mw.activate(workspace_a, window, cx));
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.activate(workspace_a, None, window, cx)
+    });
     cx.run_until_parked();
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
@@ -7919,6 +7991,7 @@ async fn test_legacy_thread_with_canonical_path_opens_main_repo_workspace(cx: &m
             title: Some("Legacy Main Thread".into()),
             updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
             created_at: None,
+            interacted_at: None,
             worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                 "/project",
             )])),
@@ -8247,7 +8320,7 @@ async fn test_project_header_click_restores_last_viewed(cx: &mut TestAppContext)
             .clone()
     });
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(workspace_a.clone(), window, cx);
+        mw.activate(workspace_a.clone(), None, window, cx);
     });
     cx.run_until_parked();
 
@@ -8335,11 +8408,11 @@ async fn test_activating_workspace_with_draft_does_not_create_extras(cx: &mut Te
 
     // Switch away from project-b, then back.
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(workspace_a.clone(), window, cx);
+        mw.activate(workspace_a.clone(), None, window, cx);
     });
     cx.run_until_parked();
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(workspace_b.clone(), window, cx);
+        mw.activate(workspace_b.clone(), None, window, cx);
     });
     cx.run_until_parked();
 
@@ -8377,6 +8450,7 @@ async fn test_non_archive_thread_paths_migrate_on_worktree_add_and_remove(cx: &m
         Some("Historical 1".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
+        None,
         &project,
         cx,
     );
@@ -8384,6 +8458,7 @@ async fn test_non_archive_thread_paths_migrate_on_worktree_add_and_remove(cx: &m
         acp::SessionId::new(Arc::from("hist-2")),
         Some("Historical 2".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap(),
+        None,
         None,
         &project,
         cx,
@@ -8552,6 +8627,7 @@ async fn test_worktree_add_only_regroups_threads_for_changed_workspace(cx: &mut 
         Some("Main Thread".into()),
         time_main,
         Some(time_main),
+        None,
         &main_project,
         cx,
     );
@@ -8560,6 +8636,7 @@ async fn test_worktree_add_only_regroups_threads_for_changed_workspace(cx: &mut 
         Some("Worktree Thread".into()),
         time_wt,
         Some(time_wt),
+        None,
         &worktree_project,
         cx,
     );
@@ -8903,6 +8980,7 @@ mod property_test {
             title: Some(title),
             updated_at,
             created_at: None,
+            interacted_at: None,
             worktree_paths: WorktreePaths::from_path_lists(main_worktree_paths, path_list).unwrap(),
             archived: false,
             remote_connection: None,
@@ -8957,7 +9035,15 @@ mod property_test {
                         chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 1, 1, 0, 0, 0)
                             .unwrap()
                             + chrono::Duration::seconds(state.thread_counter as i64);
-                    save_thread_metadata(session_id, Some(title), updated_at, None, &project, cx);
+                    save_thread_metadata(
+                        session_id,
+                        Some(title),
+                        updated_at,
+                        None,
+                        None,
+                        &project,
+                        cx,
+                    );
                 }
             }
             Operation::SaveWorktreeThread { worktree_index } => {
@@ -9062,7 +9148,7 @@ mod property_test {
                         .unwrap_or_else(|| mw.workspace().clone())
                 });
                 multi_workspace.update_in(cx, |mw, window, cx| {
-                    mw.activate(workspace, window, cx);
+                    mw.activate(workspace, None, window, cx);
                 });
             }
             Operation::AddLinkedWorktree {
@@ -9776,6 +9862,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
         Some("Main Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
+        None,
         &project,
         cx,
     );
@@ -9801,6 +9888,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
             title: Some("Worktree Thread".into()),
             updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap(),
             created_at: None,
+            interacted_at: None,
             worktree_paths: WorktreePaths::from_path_lists(
                 main_worktree_paths,
                 PathList::new(&[PathBuf::from("/project-wt-1")]),
@@ -10056,6 +10144,7 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
         acp::SessionId::new(Arc::from("main-thread")),
         Some("Main Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        None,
         None,
         &main_project,
         cx,
@@ -10345,7 +10434,7 @@ fn test_worktree_info_branch_names_for_main_worktrees() {
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].kind, ui::WorktreeKind::Main);
     assert_eq!(infos[0].branch_name, Some(SharedString::from("feature-x")));
-    assert_eq!(infos[0].name, SharedString::from("myapp"));
+    assert_eq!(infos[0].worktree_name, Some(SharedString::from("myapp")));
 }
 
 #[test]
@@ -10382,7 +10471,7 @@ fn test_worktree_info_missing_branch_returns_none() {
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].kind, ui::WorktreeKind::Main);
     assert_eq!(infos[0].branch_name, None);
-    assert_eq!(infos[0].name, SharedString::from("myapp"));
+    assert_eq!(infos[0].worktree_name, Some(SharedString::from("myapp")));
 }
 
 #[gpui::test]
@@ -10521,6 +10610,7 @@ async fn test_remote_archive_thread_with_active_connection(
             updated_at: chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 1, 1, 0, 0, 0)
                 .unwrap(),
             created_at: None,
+            interacted_at: None,
             worktree_paths: WorktreePaths::from_path_lists(
                 PathList::new(&[PathBuf::from("/project")]),
                 PathList::new(&[PathBuf::from("/worktrees/project/feature-a/project")]),
@@ -10638,6 +10728,7 @@ async fn test_remote_archive_thread_with_disconnected_remote(
         thread_id.clone(),
         Some("Remote Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
         None,
         &project,
         cx,
@@ -10832,7 +10923,7 @@ async fn test_cmd_click_project_header_returns_to_last_active_linked_worktree_wo
     // workspaces — what matters for this test is the explicit sequence of
     // activations below.)
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(worktree_workspace_a.clone(), window, cx);
+        mw.activate(worktree_workspace_a.clone(), None, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(
@@ -10845,7 +10936,7 @@ async fn test_cmd_click_project_header_returns_to_last_active_linked_worktree_wo
     // workspace remains the linked-worktree one (group B getting activated
     // records *its own* last-active workspace, not group A's).
     multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.activate(workspace_b.clone(), window, cx);
+        mw.activate(workspace_b.clone(), None, window, cx);
     });
     cx.run_until_parked();
     assert_eq!(

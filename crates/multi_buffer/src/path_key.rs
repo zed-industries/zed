@@ -253,8 +253,8 @@ impl MultiBuffer {
 
         for (path_index, excerpt_anchors) in &buffers {
             let path = snapshot
-                .path_keys_by_index
-                .get(&path_index)
+                .path_keys
+                .get_index(path_index.0 as usize)
                 .expect("anchor from wrong multibuffer");
 
             let mut excerpt_anchors = excerpt_anchors.peekable();
@@ -353,18 +353,15 @@ impl MultiBuffer {
     pub(crate) fn get_or_create_path_key_index(&mut self, path_key: &PathKey) -> PathKeyIndex {
         let mut snapshot = self.snapshot.borrow_mut();
 
-        if let Some(&existing) = snapshot.indices_by_path_key.get(path_key) {
-            return existing;
+        if let Some(existing) = snapshot.path_keys.get_index_of(path_key) {
+            return PathKeyIndex(existing as u64);
         }
 
-        let index = snapshot
-            .path_keys_by_index
-            .last()
-            .map(|(index, _)| PathKeyIndex(index.0 + 1))
-            .unwrap_or(PathKeyIndex(0));
-        snapshot.path_keys_by_index.insert(index, path_key.clone());
-        snapshot.indices_by_path_key.insert(path_key.clone(), index);
-        index
+        PathKeyIndex(
+            Arc::make_mut(&mut snapshot.path_keys)
+                .insert_full(path_key.clone())
+                .0 as u64,
+        )
     }
 
     pub fn update_path_excerpts(

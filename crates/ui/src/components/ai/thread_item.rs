@@ -22,13 +22,13 @@ pub enum WorktreeKind {
     Linked,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ThreadItemWorktreeInfo {
-    pub name: SharedString,
+    pub worktree_name: Option<SharedString>,
+    pub branch_name: Option<SharedString>,
     pub full_path: SharedString,
     pub highlight_positions: Vec<usize>,
     pub kind: WorktreeKind,
-    pub branch_name: Option<SharedString>,
 }
 
 #[derive(IntoElement, RegisterComponent)]
@@ -371,6 +371,7 @@ impl RenderOnce for ThreadItem {
             .worktrees
             .into_iter()
             .filter(|wt| wt.kind == WorktreeKind::Linked)
+            .filter(|wt| wt.worktree_name.is_some() || wt.branch_name.is_some())
             .collect();
 
         let has_worktree = !linked_worktrees.is_empty();
@@ -470,42 +471,68 @@ impl RenderOnce for ThreadItem {
                                 })
                                 .children(
                                     linked_worktrees.into_iter().map(|wt| {
-                                        let worktree_label = if wt.highlight_positions.is_empty() {
-                                            Label::new(wt.name)
+                                        let worktree_label = wt.worktree_name.clone().map(|name| {
+                                            if wt.highlight_positions.is_empty() {
+                                                Label::new(name)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted)
+                                                    .truncate()
+                                                    .into_any_element()
+                                            } else {
+                                                HighlightedLabel::new(
+                                                    name,
+                                                    wt.highlight_positions.clone(),
+                                                )
                                                 .size(LabelSize::Small)
                                                 .color(Color::Muted)
                                                 .truncate()
                                                 .into_any_element()
+                                            }
+                                        });
+
+                                        // When only the branch is shown, lead with a branch icon;
+                                        // otherwise keep the worktree icon (which "covers" both the
+                                        // worktree and any accompanying branch).
+                                        let chip_icon = if wt.worktree_name.is_none()
+                                            && wt.branch_name.is_some()
+                                        {
+                                            IconName::GitBranch
                                         } else {
-                                            HighlightedLabel::new(wt.name, wt.highlight_positions)
+                                            IconName::GitWorktree
+                                        };
+
+                                        let branch_label = wt.branch_name.map(|branch| {
+                                            Label::new(branch)
                                                 .size(LabelSize::Small)
                                                 .color(Color::Muted)
                                                 .truncate()
                                                 .into_any_element()
-                                        };
+                                        });
+
+                                        let show_separator =
+                                            worktree_label.is_some() && branch_label.is_some();
 
                                         h_flex()
                                             .min_w_0()
                                             .gap_0p5()
                                             .child(
-                                                Icon::new(IconName::GitWorktree)
+                                                Icon::new(chip_icon)
                                                     .size(IconSize::XSmall)
                                                     .color(Color::Muted),
                                             )
-                                            .child(worktree_label)
-                                            .when_some(wt.branch_name, |this, branch| {
+                                            .when_some(worktree_label, |this, label| {
+                                                this.child(label)
+                                            })
+                                            .when(show_separator, |this| {
                                                 this.child(
                                                     Label::new("/")
                                                         .size(LabelSize::Small)
                                                         .color(separator_color)
                                                         .flex_shrink_0(),
                                                 )
-                                                .child(
-                                                    Label::new(branch)
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted)
-                                                        .truncate(),
-                                                )
+                                            })
+                                            .when_some(branch_label, |this, label| {
+                                                this.child(label)
                                             })
                                     }),
                                 )
@@ -628,7 +655,7 @@ impl Component for ThreadItem {
                             .icon(IconName::AiClaude)
                             .timestamp("2w")
                             .worktrees(vec![ThreadItemWorktreeInfo {
-                                name: "link-agent-panel".into(),
+                                worktree_name: Some("link-agent-panel".into()),
                                 full_path: "link-agent-panel".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
@@ -656,7 +683,7 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-5b", "Full metadata example")
                             .icon(IconName::AiClaude)
                             .worktrees(vec![ThreadItemWorktreeInfo {
-                                name: "my-project".into(),
+                                worktree_name: Some("my-project".into()),
                                 full_path: "my-project".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
@@ -675,7 +702,7 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-5c", "Full metadata with branch")
                             .icon(IconName::AiClaude)
                             .worktrees(vec![ThreadItemWorktreeInfo {
-                                name: "my-project".into(),
+                                worktree_name: Some("my-project".into()),
                                 full_path: "/worktrees/my-project/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
@@ -694,7 +721,7 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-5d", "Metadata overflow with long branch name")
                             .icon(IconName::AiClaude)
                             .worktrees(vec![ThreadItemWorktreeInfo {
-                                name: "my-project".into(),
+                                worktree_name: Some("my-project".into()),
                                 full_path: "/worktrees/my-project/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
@@ -713,7 +740,7 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-5e", "Main worktree branch with diff stats")
                             .icon(IconName::ZedAgent)
                             .worktrees(vec![ThreadItemWorktreeInfo {
-                                name: "zed".into(),
+                                worktree_name: Some("zed".into()),
                                 full_path: "/projects/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Main,
@@ -732,7 +759,9 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-5f", "Thread with a very long worktree name")
                             .icon(IconName::AiClaude)
                             .worktrees(vec![ThreadItemWorktreeInfo {
-                                name: "very-long-worktree-name-that-should-truncate".into(),
+                                worktree_name: Some(
+                                    "very-long-worktree-name-that-should-truncate".into(),
+                                ),
                                 full_path: "/worktrees/very-long-worktree-name/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
@@ -749,7 +778,7 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-5g", "Filtered thread with highlighted worktree")
                             .icon(IconName::AiClaude)
                             .worktrees(vec![ThreadItemWorktreeInfo {
-                                name: "jade-glen".into(),
+                                worktree_name: Some("jade-glen".into()),
                                 full_path: "/worktrees/jade-glen/zed".into(),
                                 highlight_positions: vec![0, 1, 2, 3],
                                 kind: WorktreeKind::Linked,
@@ -767,14 +796,14 @@ impl Component for ThreadItem {
                             .icon(IconName::AiClaude)
                             .worktrees(vec![
                                 ThreadItemWorktreeInfo {
-                                    name: "jade-glen".into(),
+                                    worktree_name: Some("jade-glen".into()),
                                     full_path: "/worktrees/jade-glen/zed".into(),
                                     highlight_positions: Vec::new(),
                                     kind: WorktreeKind::Linked,
                                     branch_name: None,
                                 },
                                 ThreadItemWorktreeInfo {
-                                    name: "fawn-otter".into(),
+                                    worktree_name: Some("fawn-otter".into()),
                                     full_path: "/worktrees/fawn-otter/zed-slides".into(),
                                     highlight_positions: Vec::new(),
                                     kind: WorktreeKind::Linked,
@@ -793,14 +822,14 @@ impl Component for ThreadItem {
                             .icon(IconName::ZedAgent)
                             .worktrees(vec![
                                 ThreadItemWorktreeInfo {
-                                    name: "jade-glen".into(),
+                                    worktree_name: Some("jade-glen".into()),
                                     full_path: "/worktrees/jade-glen/zed".into(),
                                     highlight_positions: Vec::new(),
                                     kind: WorktreeKind::Linked,
                                     branch_name: Some("fix".into()),
                                 },
                                 ThreadItemWorktreeInfo {
-                                    name: "fawn-otter".into(),
+                                    worktree_name: Some("fawn-otter".into()),
                                     full_path: "/worktrees/fawn-otter/zed-slides".into(),
                                     highlight_positions: Vec::new(),
                                     kind: WorktreeKind::Linked,
@@ -819,7 +848,7 @@ impl Component for ThreadItem {
                             .icon(IconName::AiClaude)
                             .project_name("my-remote-server")
                             .worktrees(vec![ThreadItemWorktreeInfo {
-                                name: "jade-glen".into(),
+                                worktree_name: Some("jade-glen".into()),
                                 full_path: "/worktrees/jade-glen/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
@@ -840,7 +869,7 @@ impl Component for ThreadItem {
                                 PathBuf::from("/projects/zed-slides"),
                             ]))
                             .worktrees(vec![ThreadItemWorktreeInfo {
-                                name: "jade-glen".into(),
+                                worktree_name: Some("jade-glen".into()),
                                 full_path: "/worktrees/jade-glen/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
@@ -858,7 +887,7 @@ impl Component for ThreadItem {
                             .icon(IconName::ZedAgent)
                             .project_name("remote-dev")
                             .worktrees(vec![ThreadItemWorktreeInfo {
-                                name: "my-worktree".into(),
+                                worktree_name: Some("my-worktree".into()),
                                 full_path: "/worktrees/my-worktree/zed".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,

@@ -525,6 +525,7 @@ mod tests {
     use crate::{PredictionProvider, TeacherBackend};
     use edit_prediction::example_spec::ExampleSpec;
     use std::{path::Path, sync::Arc};
+    use zeta_prompt::ZetaFormat;
 
     fn example_with_previous_prediction() -> Example {
         Example {
@@ -557,7 +558,10 @@ mod tests {
                     editable_region_offset: Some(4),
                 }),
                 error: None,
-                provider: PredictionProvider::Teacher(TeacherBackend::Sonnet45),
+                provider: PredictionProvider::Teacher(
+                    TeacherBackend::Sonnet45,
+                    ZetaFormat::default(),
+                ),
                 cumulative_logprob: None,
                 avg_logprob: None,
             }],

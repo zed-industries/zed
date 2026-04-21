@@ -1,11 +1,11 @@
-use std::{fmt, ops::Not as _};
+use std::{fmt, ops::Not as _, rc::Rc};
 
 use itertools::Itertools as _;
 
 use crate::{
     git::{CommitDetails, CommitList, ZED_ZIPPY_LOGIN},
     github::{
-        CommitAuthor, GithubClient, GithubLogin, PullRequestComment, PullRequestData,
+        CommitAuthor, GithubApiClient, GithubLogin, PullRequestComment, PullRequestData,
         PullRequestReview, Repository, ReviewState,
     },
     report::Report,
@@ -133,17 +133,26 @@ impl<E: Into<anyhow::Error>> From<E> for ReviewFailure {
     }
 }
 
-pub struct Reporter<'a> {
+pub struct Reporter {
     commits: CommitList,
-    github_client: &'a GithubClient,
+    github_client: Rc<dyn GithubApiClient>,
 }
 
-impl<'a> Reporter<'a> {
-    pub fn new(commits: CommitList, github_client: &'a GithubClient) -> Self {
+impl Reporter {
+    pub fn new(commits: CommitList, github_client: Rc<dyn GithubApiClient>) -> Self {
         Self {
             commits,
             github_client,
         }
+    }
+
+    pub async fn result_for_commit(
+        commit: CommitDetails,
+        github_client: Rc<dyn GithubApiClient>,
+    ) -> ReviewResult {
+        Self::new(Default::default(), github_client)
+            .check_commit(&commit)
+            .await
     }
 
     /// Method that checks every commit for compliance
@@ -409,8 +418,8 @@ mod tests {
 
     use crate::git::{CommitDetails, CommitList, CommitSha, ZED_ZIPPY_EMAIL, ZED_ZIPPY_LOGIN};
     use crate::github::{
-        CommitMetadataBySha, GithubApiClient, GithubClient, GithubLogin, GithubUser,
-        PullRequestComment, PullRequestData, PullRequestReview, Repository, ReviewState,
+        CommitMetadataBySha, GithubApiClient, GithubLogin, GithubUser, PullRequestComment,
+        PullRequestData, PullRequestReview, Repository, ReviewState,
     };
 
     use super::{Reporter, ReviewFailure, ReviewSuccess, VersionBumpFailure};
@@ -647,8 +656,8 @@ mod tests {
                 commit_metadata_json: self.commit_metadata_json,
                 org_members: self.org_members,
             };
-            let client = GithubClient::new(Rc::new(mock));
-            let reporter = Reporter::new(CommitList::default(), &client);
+            let client = Rc::new(mock);
+            let reporter = Reporter::new(CommitList::default(), client);
             reporter.check_commit(&self.commit).await
         }
     }

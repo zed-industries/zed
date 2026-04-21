@@ -1680,6 +1680,10 @@ impl PlatformWindow for X11Window {
         }
 
         inner.renderer.draw(scene);
+
+        if inner.renderer.needs_redraw() {
+            inner.force_render_after_recovery = true;
+        }
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
