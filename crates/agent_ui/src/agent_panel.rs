@@ -67,7 +67,6 @@ use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
-use release_channel::ReleaseChannel;
 use rules_library::{RulesLibrary, open_rules_library};
 use settings::TerminalDockPosition;
 use settings::{Settings, update_settings_file};
@@ -89,9 +88,6 @@ const AGENT_PANEL_KEY: &str = "agent_panel";
 const MIN_PANEL_WIDTH: Pixels = px(300.);
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 
-fn agent_v2_enabled(cx: &App) -> bool {
-    !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
-}
 /// Maximum number of idle threads kept in the agent panel's retained list.
 /// Set as a GPUI global to override; otherwise defaults to 5.
 pub struct MaxIdleRetainedThreads(pub usize);
@@ -3213,7 +3209,6 @@ impl AgentPanel {
             selected_agent.into_any_element()
         };
 
-        let agent_v2_enabled = agent_v2_enabled(cx);
         let is_empty_state = !self.active_thread_has_messages(cx);
 
         let is_in_history_or_config = self.is_overlay_open();
@@ -3235,7 +3230,7 @@ impl AgentPanel {
                 }))
         };
 
-        let use_v2_empty_toolbar = agent_v2_enabled && is_empty_state && !is_in_history_or_config;
+        let use_v2_empty_toolbar = is_empty_state && !is_in_history_or_config;
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
 
