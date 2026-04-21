@@ -1852,7 +1852,12 @@ impl SearchableItem for TerminalView {
     }
 
     /// Returns the selection content to pre-load into this search
-    fn query_suggestion(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> String {
+    fn query_suggestion(
+        &mut self,
+        _ignore_settings: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
         self.terminal()
             .read(cx)
             .last_content
