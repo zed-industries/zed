@@ -207,14 +207,15 @@ where
             return;
         };
 
+        let source_buffer_id = first.source_buffer_snapshot.remote_id();
         let Some(diff) =
-            source_snapshot.diff_for_buffer_id(first.source_buffer_snapshot.remote_id())
+            source_snapshot.diff_for_buffer_id(source_buffer_id)
         else {
             pending.clear();
             return;
         };
         let source_is_lhs =
-            first.source_buffer_snapshot.remote_id() == diff.base_text().remote_id();
+            source_buffer_id == diff.base_text().remote_id();
         let target_buffer_id = if source_is_lhs {
             diff.buffer_id()
         } else {
@@ -258,7 +259,7 @@ where
     };
 
     for (buffer_snapshot, source_range, source_excerpt_range) in
-        source_snapshot.range_to_buffer_ranges(source_bounds)
+        source_snapshot.range_to_buffer_ranges(source_bounds.clone())
     {
         let buffer_id = buffer_snapshot.remote_id();
 
