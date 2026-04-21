@@ -3364,24 +3364,27 @@ impl Workspace {
                                 };
                                 keystroke
                             };
-                            cx.update(|window, cx| {
-                                let focused = window.focused(cx);
-                                window.dispatch_keystroke(keystroke.clone(), cx);
-                                if window.focused(cx) != focused {
-                                    // dispatch_keystroke may cause the focus to change.
-                                    // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
-                                    // And we need that to happen before the next keystroke to keep vim mode happy...
-                                    // (Note that the tests always do this implicitly, so you must manually test with something like:
-                                    //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
-                                    // )
-                                    window.draw(cx).clear();
-                                }
-                            })
-                            .ok();
+                            let focus_changed = cx
+                                .update(|window, cx| {
+                                    let focused = window.focused(cx);
+                                    window.dispatch_keystroke(keystroke.clone(), cx);
+                                    if window.focused(cx) != focused {
+                                        // dispatch_keystroke may cause the focus to change.
+                                        // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
+                                        // And we need that to happen before the next keystroke to keep vim mode happy...
+                                        // (Note that the tests always do this implicitly, so you must manually test with something like:
+                                        //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
+                                        // )
+                                        window.draw(cx).clear();
+                                        return true;
+                                    }
+                                    false
+                                })
+                                .unwrap_or(false);
 
-                            // Yield between synthetic keystrokes so deferred focus and
-                            // other effects can settle before dispatching the next key.
-                            yield_now().await;
+                            if focus_changed {
+                                yield_now().await;
+                            }
                         }
 
                         *keystrokes.borrow_mut() = Default::default();

@@ -353,7 +353,7 @@ impl ProjectState {
             drop(pending_prediction.task);
         } else {
             cx.spawn(async move |this, cx| {
-                let Some(prediction_id) = pending_prediction.task.await else {
+                let Some((prediction_id, model_version)) = pending_prediction.task.await else {
                     return;
                 };
 
@@ -362,7 +362,7 @@ impl ProjectState {
                         prediction_id,
                         EditPredictionRejectReason::Canceled,
                         false,
-                        None,
+                        model_version,
                         None,
                         cx,
                     );
@@ -460,7 +460,7 @@ pub enum DiagnosticSearchScope {
 #[derive(Debug)]
 struct PendingPrediction {
     id: usize,
-    task: Task<Option<EditPredictionId>>,
+    task: Task<Option<(EditPredictionId, Option<String>)>>,
     /// If true, the task is dropped immediately on cancel (cancelling the HTTP request).
     /// If false, the task is awaited to completion so rejection can be reported.
     drop_on_cancel: bool,
@@ -2039,6 +2039,7 @@ impl EditPredictionStore {
                                 EditPredictionResult {
                                     id: prediction_result.id,
                                     prediction: Err(EditPredictionRejectReason::CurrentPreferred),
+                                    model_version: prediction_result.model_version,
                                     e2e_latency: prediction_result.e2e_latency,
                                 }
                             },
@@ -2213,9 +2214,9 @@ impl EditPredictionStore {
             }
 
             let new_prediction_result = do_refresh(this.clone(), cx).await.log_err().flatten();
-            let new_prediction_id = new_prediction_result
+            let new_prediction_metadata = new_prediction_result
                 .as_ref()
-                .map(|(prediction, _)| prediction.id.clone());
+                .map(|(prediction, _)| (prediction.id.clone(), prediction.model_version.clone()));
 
             // When a prediction completes, remove it from the pending list, and cancel
             // any pending predictions that were enqueued before it.
@@ -2271,7 +2272,7 @@ impl EditPredictionStore {
                                 prediction_result.id,
                                 reject_reason,
                                 false,
-                                None,
+                                prediction_result.model_version,
                                 Some(prediction_result.e2e_latency),
                                 cx,
                             );
@@ -2303,7 +2304,7 @@ impl EditPredictionStore {
             })
             .ok();
 
-            new_prediction_id
+            new_prediction_metadata
         });
 
         if project_state.pending_predictions.len() < max_pending_predictions {

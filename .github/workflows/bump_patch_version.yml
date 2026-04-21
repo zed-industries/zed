@@ -25,7 +25,8 @@ jobs:
         clean: false
         ref: ${{ inputs.branch }}
         token: ${{ steps.generate-token.outputs.token }}
-    - name: bump_patch_version::run_bump_patch_version::bump_patch_version
+    - id: bump-version
+      name: bump_patch_version::run_bump_patch_version::bump_version
       run: |
         channel="$(cat crates/zed/RELEASE_CHANNEL)"
 
@@ -42,16 +43,28 @@ jobs:
             ;;
         esac
         which cargo-set-version > /dev/null || cargo install cargo-edit -f --no-default-features --features "set-version"
-        output="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
-        git commit -am "Bump to $output for @$GITHUB_ACTOR"
-        git tag "v${output}${tag_suffix}"
-        git push origin HEAD "v${output}${tag_suffix}"
-      env:
-        GIT_COMMITTER_NAME: Zed Zippy
-        GIT_COMMITTER_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
-        GIT_AUTHOR_NAME: Zed Zippy
-        GIT_AUTHOR_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
-        GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
+        version="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "tag_suffix=$tag_suffix" >> "$GITHUB_OUTPUT"
+    - id: commit
+      name: bump_patch_version::run_bump_patch_version::commit_changes
+      uses: IAreKyleW00t/verified-bot-commit@126a6a11889ab05bcff72ec2403c326cd249b84c
+      with:
+        message: Bump to ${{ steps.bump-version.outputs.version }} for @${{ github.actor }}
+        ref: refs/heads/${{ inputs.branch }}
+        files: '**'
+        token: ${{ steps.generate-token.outputs.token }}
+    - name: bump_patch_version::run_bump_patch_version::create_version_tag
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+      with:
+        script: |
+          github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/v${{ steps.bump-version.outputs.version }}${{ steps.bump-version.outputs.tag_suffix }}',
+              sha: '${{ steps.commit.outputs.commit }}'
+          })
+        github-token: ${{ steps.generate-token.outputs.token }}
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.branch }}
   cancel-in-progress: true
