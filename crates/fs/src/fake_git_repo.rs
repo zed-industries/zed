@@ -457,7 +457,7 @@ impl GitRepository for FakeGitRepository {
                         worktree_status: StatusCode::Unmodified,
                     })
                 {
-                    entries.push((path.clone(), status));
+                    entries.push((path.clone(), status, None));
                 }
             }
             entries.sort_by(|a, b| a.0.cmp(&b.0));

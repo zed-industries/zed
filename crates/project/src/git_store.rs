@@ -196,6 +196,7 @@ pub struct StatusEntry {
     pub repo_path: RepoPath,
     pub status: FileStatus,
     pub diff_stat: Option<DiffStat>,
+    pub original_path: Option<RepoPath>,
 }
 
 impl StatusEntry {
@@ -219,6 +220,7 @@ impl StatusEntry {
             status: Some(status_to_proto(self.status)),
             diff_stat_added: self.diff_stat.map(|ds| ds.added),
             diff_stat_deleted: self.diff_stat.map(|ds| ds.deleted),
+            original_path: self.original_path.as_ref().map(|p| p.to_proto()),
         }
     }
 }
@@ -233,10 +235,18 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
             (Some(added), Some(deleted)) => Some(DiffStat { added, deleted }),
             _ => None,
         };
+        let original_path = value
+            .original_path
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(RepoPath::from_proto)
+            .transpose()
+            .context("invalid original path")?;
         Ok(Self {
             repo_path,
             status,
             diff_stat,
+            original_path,
         })
     }
 }
@@ -3110,7 +3120,7 @@ impl GitStore {
                     path: path.as_ref().to_proto(),
                     status: match status {
                         TreeDiffStatus::Added {} => proto::tree_diff_status::Status::Added.into(),
-                        TreeDiffStatus::Modified { .. } => {
+                        TreeDiffStatus::Modified { .. } | TreeDiffStatus::Renamed { .. } => {
                             proto::tree_diff_status::Status::Modified.into()
                         }
                         TreeDiffStatus::Deleted { .. } => {
@@ -3118,9 +3128,9 @@ impl GitStore {
                         }
                     },
                     oid: match status {
-                        TreeDiffStatus::Deleted { old } | TreeDiffStatus::Modified { old } => {
-                            Some(old.to_string())
-                        }
+                        TreeDiffStatus::Deleted { old }
+                        | TreeDiffStatus::Modified { old }
+                        | TreeDiffStatus::Renamed { old } => Some(old.to_string()),
                         TreeDiffStatus::Added => None,
                     },
                 })
@@ -3913,6 +3923,7 @@ impl RepositorySnapshot {
                         Ordering::Equal => {
                             if new_entry.status != old_entry.status
                                 || new_entry.diff_stat != old_entry.diff_stat
+                                || new_entry.original_path != old_entry.original_path
                             {
                                 updated_statuses.push(new_entry.to_proto());
                             }
@@ -7140,13 +7151,15 @@ impl Repository {
                         let prev_statuses = prev_snapshot.statuses_by_path.clone();
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
 
-                        for (repo_path, status) in &*statuses.entries {
+                        for (repo_path, status, original_path) in &*statuses.entries {
                             let current_diff_stat = diff_stats.get(repo_path).copied();
 
                             changed_paths.remove(repo_path);
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
                                 && cursor.item().is_some_and(|entry| {
-                                    entry.status == *status && entry.diff_stat == current_diff_stat
+                                    entry.status == *status
+                                        && entry.diff_stat == current_diff_stat
+                                        && entry.original_path.as_ref() == original_path.as_ref()
                                 })
                             {
                                 continue;
@@ -7156,6 +7169,7 @@ impl Repository {
                                 repo_path: repo_path.clone(),
                                 status: *status,
                                 diff_stat: current_diff_stat,
+                                original_path: original_path.clone(),
                             }));
                         }
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
@@ -7755,7 +7769,7 @@ async fn compute_snapshot(
         diff_stats.entries.iter().map(|(p, s)| (p, *s)).collect();
     let mut conflicted_paths = Vec::new();
     let statuses_by_path = SumTree::from_iter(
-        statuses.entries.iter().map(|(repo_path, status)| {
+        statuses.entries.iter().map(|(repo_path, status, original_path)| {
             if status.is_conflicted() {
                 conflicted_paths.push(repo_path.clone());
             }
@@ -7763,6 +7777,7 @@ async fn compute_snapshot(
                 repo_path: repo_path.clone(),
                 status: *status,
                 diff_stat: diff_stat_map.get(repo_path).copied(),
+                original_path: original_path.clone(),
             }
         }),
         (),

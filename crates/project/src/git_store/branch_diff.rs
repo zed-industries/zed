@@ -389,7 +389,8 @@ impl BranchDiff {
                 let oid = match entry {
                     git::status::TreeDiffStatus::Added { .. } => None,
                     git::status::TreeDiffStatus::Modified { old, .. }
-                    | git::status::TreeDiffStatus::Deleted { old } => Some(old),
+                    | git::status::TreeDiffStatus::Deleted { old }
+                    | git::status::TreeDiffStatus::Renamed { old } => Some(old),
                 };
                 project
                     .update(cx, |project, cx| {
@@ -424,6 +425,10 @@ fn diff_status_to_file_status(branch_diff: &git::status::TreeDiffStatus) -> File
         git::status::TreeDiffStatus::Deleted { .. } => FileStatus::Tracked(TrackedStatus {
             index_status: StatusCode::Deleted,
             worktree_status: StatusCode::Deleted,
+        }),
+        git::status::TreeDiffStatus::Renamed { .. } => FileStatus::Tracked(TrackedStatus {
+            index_status: StatusCode::Renamed,
+            worktree_status: StatusCode::Unmodified,
         }),
     };
     file_status

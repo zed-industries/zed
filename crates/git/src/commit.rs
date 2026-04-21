@@ -106,7 +106,19 @@ pub fn parse_git_diff_name_status(content: &str) -> impl Iterator<Item = (&str, 
     std::iter::from_fn(move || {
         loop {
             let status_str = parts.next()?;
+            if status_str.is_empty() {
+                continue;
+            }
             let path = parts.next()?;
+
+            if status_str.starts_with('R') {
+                let new_path = parts.next()?;
+                return Some((new_path, StatusCode::Renamed));
+            } else if status_str.starts_with('C') {
+                let new_path = parts.next()?;
+                return Some((new_path, StatusCode::Copied));
+            }
+
             let status = match status_str {
                 "M" => StatusCode::Modified,
                 "A" => StatusCode::Added,

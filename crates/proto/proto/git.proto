@@ -341,6 +341,7 @@ message StatusEntry {
   GitFileStatus status = 3;
   optional uint32 diff_stat_added = 4;
   optional uint32 diff_stat_deleted = 5;
+  optional string original_path = 6;
 }
 
 message StashEntry {

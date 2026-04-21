@@ -1,6 +1,6 @@
 use crate::commit::parse_git_diff_name_status;
 use crate::stash::GitStash;
-use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
+use crate::status::{DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff};
 use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
@@ -1251,7 +1251,6 @@ impl GitRepository for RealGitRepository {
                     "show",
                     "--format=",
                     "-z",
-                    "--no-renames",
                     "--name-status",
                     "--first-parent",
                 ])
@@ -1287,7 +1286,7 @@ impl GitRepository for RealGitRepository {
                 };
 
                 match status_code {
-                    StatusCode::Modified => {
+                    StatusCode::Modified | StatusCode::Renamed | StatusCode::Copied => {
                         stdin.write_all(commit.as_bytes()).await?;
                         stdin.write_all(b":").await?;
                         stdin.write_all(path.as_bytes()).await?;
@@ -1333,7 +1332,7 @@ impl GitRepository for RealGitRepository {
                 };
 
                 match status_code {
-                    StatusCode::Modified => {
+                    StatusCode::Modified | StatusCode::Renamed | StatusCode::Copied => {
                         info_line.clear();
                         stdout.read_line(&mut info_line).await?;
                         let len = info_line.trim_end().parse().with_context(|| {
@@ -1635,11 +1634,15 @@ impl GitRepository for RealGitRepository {
         };
         let args = git_status_args(path_prefixes);
         log::debug!("Checking for git status in {path_prefixes:?}");
+        let repository = self.repository.clone();
         self.executor.spawn(async move {
             let output = git.build_command(&args).output().await?;
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                stdout.parse()
+                let mut status: GitStatus = stdout.parse()?;
+                let repository = repository.lock();
+                infer_unstaged_renames(&repository, &git.working_directory, &mut status);
+                Ok(status)
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 anyhow::bail!("git status failed: {stderr}");
@@ -1657,7 +1660,6 @@ impl GitRepository for RealGitRepository {
             OsString::from("diff-tree"),
             OsString::from("-r"),
             OsString::from("-z"),
-            OsString::from("--no-renames"),
         ];
         match request {
             DiffTreeType::MergeBase { base, head } => {
@@ -2126,7 +2128,7 @@ impl GitRepository for RealGitRepository {
                 let mut args: Vec<String> = vec![
                     "diff".into(),
                     "--numstat".into(),
-                    "--no-renames".into(),
+                    "-z".into(),
                     "HEAD".into(),
                 ];
                 if !path_prefixes.is_empty() {
@@ -3185,6 +3187,101 @@ async fn read_single_commit_response<R: smol::io::AsyncBufRead + Unpin>(
         .ok_or_else(|| anyhow!("failed to parse commit {}", sha))
 }
 
+fn infer_unstaged_renames(
+    repository: &git2::Repository,
+    working_directory: &Path,
+    status: &mut GitStatus,
+) {
+    let mut deleted_entries = Vec::new();
+    let mut untracked_entries = Vec::new();
+
+    for (index, (repo_path, file_status, _)) in status.entries.iter().enumerate() {
+        match *file_status {
+            FileStatus::Tracked(TrackedStatus {
+                index_status: StatusCode::Unmodified,
+                worktree_status: StatusCode::Deleted,
+            }) => deleted_entries.push((index, repo_path.clone())),
+            FileStatus::Untracked => untracked_entries.push((index, repo_path.clone())),
+            _ => {}
+        }
+    }
+
+    if deleted_entries.is_empty() || untracked_entries.is_empty() {
+        return;
+    }
+
+    let head_tree = match repository.head().and_then(|head| head.peel_to_tree()) {
+        Ok(tree) => tree,
+        Err(_) => return,
+    };
+
+    let mut matched_untracked: HashSet<usize> = HashSet::default();
+    let mut renames = Vec::new();
+
+    for (deleted_index, deleted_path) in deleted_entries {
+        let deleted_entry = match head_tree.get_path(deleted_path.as_std_path()) {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        if deleted_entry.filemode() == i32::from(git2::FileMode::Link) {
+            continue;
+        }
+
+        let deleted_blob = match repository.find_blob(deleted_entry.id()) {
+            Ok(blob) => blob,
+            Err(_) => continue,
+        };
+
+        let mut rename_target = None;
+        for (untracked_index, untracked_path) in &untracked_entries {
+            if matched_untracked.contains(untracked_index) {
+                continue;
+            }
+
+            let candidate_path = working_directory.join(untracked_path.as_std_path());
+            let candidate_bytes = match std::fs::read(&candidate_path) {
+                Ok(bytes) => bytes,
+                Err(_) => continue,
+            };
+
+            if candidate_bytes == deleted_blob.content() {
+                rename_target = Some((*untracked_index, untracked_path.clone()));
+                break;
+            }
+        }
+
+        if let Some((untracked_index, untracked_path)) = rename_target {
+            matched_untracked.insert(untracked_index);
+            renames.push((deleted_index, untracked_index, deleted_path, untracked_path));
+        }
+    }
+
+    if renames.is_empty() {
+        return;
+    }
+
+    let mut entries = status.entries.iter().cloned().collect::<Vec<_>>();
+    let mut removed_indexes: HashSet<usize> = HashSet::default();
+
+    for (deleted_index, untracked_index, old_path, new_path) in renames {
+        removed_indexes.insert(deleted_index);
+        removed_indexes.insert(untracked_index);
+        entries.push((
+            new_path,
+            FileStatus::worktree(StatusCode::Renamed),
+            Some(old_path),
+        ));
+    }
+
+    entries = entries
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, entry)| (!removed_indexes.contains(&index)).then_some(entry))
+        .collect();
+    entries.sort_unstable_by(|(a, _, _), (b, _, _)| a.cmp(b));
+    status.entries = entries.into();
+}
+
 fn parse_initial_graph_output<'a>(
     lines: impl Iterator<Item = &'a str>,
 ) -> Vec<Arc<InitialGraphCommitData>> {
@@ -3225,7 +3322,6 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("status"),
         OsString::from("--porcelain=v1"),
         OsString::from("--untracked-files=all"),
-        OsString::from("--no-renames"),
         OsString::from("-z"),
         OsString::from("--"),
     ];
@@ -4493,6 +4589,158 @@ mod tests {
             moved_worktree.path.canonicalize().unwrap(),
             new_path.canonicalize().unwrap()
         );
+    }
+
+    #[gpui::test]
+    async fn test_status_infers_unstaged_rename(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("old_name.rs"), "fn renamed() {}\n")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("old_name.rs")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        smol::fs::rename(
+            repo_dir.path().join("old_name.rs"),
+            repo_dir.path().join("new_name.rs"),
+        )
+        .await
+        .unwrap();
+
+        let root = RepoPath::from_rel_path(RelPath::new(Path::new(""), PathStyle::local()).unwrap().as_ref());
+        let status = repo.status(&[root]).await.unwrap();
+        assert_eq!(status.entries.len(), 1);
+
+        let (path, file_status, original_path) = &status.entries[0];
+        assert_eq!(path, &repo_path("new_name.rs"));
+        assert_eq!(*file_status, FileStatus::worktree(StatusCode::Renamed));
+        assert_eq!(original_path.as_ref(), Some(&repo_path("old_name.rs")));
+    }
+
+    #[gpui::test]
+    async fn test_status_does_not_infer_rename_when_content_changes(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("old_name.rs"), "fn renamed() {}\n")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("old_name.rs")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        smol::fs::rename(
+            repo_dir.path().join("old_name.rs"),
+            repo_dir.path().join("new_name.rs"),
+        )
+        .await
+        .unwrap();
+        smol::fs::write(repo_dir.path().join("new_name.rs"), "fn changed() {}\n")
+            .await
+            .unwrap();
+
+        let root = RepoPath::from_rel_path(RelPath::new(Path::new(""), PathStyle::local()).unwrap().as_ref());
+        let status = repo.status(&[root]).await.unwrap();
+        assert_eq!(status.entries.len(), 2);
+        assert_eq!(status.entries[0].0, repo_path("new_name.rs"));
+        assert_eq!(status.entries[0].1, FileStatus::Untracked);
+        assert_eq!(status.entries[1].0, repo_path("old_name.rs"));
+        assert_eq!(status.entries[1].1, FileStatus::worktree(StatusCode::Deleted));
+    }
+
+    #[gpui::test]
+    async fn test_status_preserves_staged_rename(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("old_name.rs"), "fn renamed() {}\n")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("old_name.rs")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        smol::fs::rename(
+            repo_dir.path().join("old_name.rs"),
+            repo_dir.path().join("new_name.rs"),
+        )
+        .await
+        .unwrap();
+        repo.stage_paths(vec![repo_path("old_name.rs"), repo_path("new_name.rs")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        let root = RepoPath::from_rel_path(RelPath::new(Path::new(""), PathStyle::local()).unwrap().as_ref());
+        let status = repo.status(&[root]).await.unwrap();
+        assert_eq!(status.entries.len(), 1);
+
+        let (path, file_status, original_path) = &status.entries[0];
+        assert_eq!(path, &repo_path("new_name.rs"));
+        assert!(file_status.is_renamed());
+        assert_eq!(original_path.as_ref(), Some(&repo_path("old_name.rs")));
     }
 
     #[test]

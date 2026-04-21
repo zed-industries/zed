@@ -535,14 +535,26 @@ pub struct GitStatusEntry {
     pub(crate) status: FileStatus,
     pub(crate) staging: StageStatus,
     pub(crate) diff_stat: Option<DiffStat>,
+    pub(crate) original_path: Option<RepoPath>,
 }
 
 impl GitStatusEntry {
     fn display_name(&self, path_style: PathStyle) -> String {
-        self.repo_path
+        let name = self
+            .repo_path
             .file_name()
             .map(|name| name.to_owned())
-            .unwrap_or_else(|| self.repo_path.display(path_style).to_string())
+            .unwrap_or_else(|| self.repo_path.display(path_style).to_string());
+
+        if let Some(orig) = &self.original_path {
+            let orig_name = orig
+                .file_name()
+                .map(|name| name.to_owned())
+                .unwrap_or_else(|| orig.display(path_style).to_string());
+            format!("{name} \u{2190} {orig_name}")
+        } else {
+            name
+        }
     }
 
     fn parent_dir(&self, path_style: PathStyle) -> Option<String> {
@@ -2505,6 +2517,8 @@ impl GitPanel {
             Some("Delete")
         } else if git_status_entry.status.is_created() {
             Some("Create")
+        } else if git_status_entry.status.is_renamed() {
+            Some("Rename")
         } else if git_status_entry.status.is_modified() {
             Some("Update")
         } else {
@@ -3577,6 +3591,7 @@ impl GitPanel {
                 status: entry.status,
                 staging,
                 diff_stat: entry.diff_stat,
+                original_path: entry.original_path.clone(),
             };
 
             if staging.has_staged() {
@@ -3614,6 +3629,7 @@ impl GitPanel {
                             status: status.status,
                             staging: StageStatus::Staged,
                             diff_stat: status.diff_stat,
+                            original_path: status.original_path,
                         });
             }
         }
@@ -5088,12 +5104,15 @@ impl GitPanel {
         let is_modified = status.is_modified();
         let is_deleted = status.is_deleted();
         let is_created = status.is_created();
+        let is_renamed = status.is_renamed();
 
         let label_color = if status_style == StatusStyle::LabelColor {
             if has_conflict {
                 Color::VersionControlConflict
             } else if is_created {
                 Color::VersionControlAdded
+            } else if is_renamed {
+                Color::VersionControlRenamed
             } else if is_modified {
                 Color::VersionControlModified
             } else if is_deleted {
@@ -6674,6 +6693,7 @@ mod tests {
                         added: 1,
                         deleted: 1,
                     }),
+                    original_path: None,
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/util/util.rs"),
@@ -6683,6 +6703,7 @@ mod tests {
                         added: 1,
                         deleted: 1,
                     }),
+                    original_path: None,
                 },),
             ],
         );
@@ -6707,6 +6728,7 @@ mod tests {
                         added: 1,
                         deleted: 1,
                     }),
+                    original_path: None,
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/util/util.rs"),
@@ -6716,6 +6738,7 @@ mod tests {
                         added: 1,
                         deleted: 1,
                     }),
+                    original_path: None,
                 },),
             ],
         );

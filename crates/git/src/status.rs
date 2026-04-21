@@ -166,6 +166,7 @@ impl FileStatus {
         self.is_modified()
             || self.is_created()
             || self.is_deleted()
+            || self.is_renamed()
             || self.is_untracked()
             || self.is_conflicted()
     }
@@ -197,6 +198,16 @@ impl FileStatus {
         };
         tracked.index_status == StatusCode::Deleted && tracked.worktree_status != StatusCode::Added
             || tracked.worktree_status == StatusCode::Deleted
+    }
+
+    pub fn is_renamed(self) -> bool {
+        match self {
+            FileStatus::Tracked(tracked) => matches!(
+                (tracked.index_status, tracked.worktree_status),
+                (StatusCode::Renamed, _) | (_, StatusCode::Renamed)
+            ),
+            _ => false,
+        }
     }
 
     pub fn is_untracked(self) -> bool {
@@ -250,7 +261,11 @@ impl StatusCode {
                 deleted: 1,
                 ..TrackedSummary::UNCHANGED
             },
-            StatusCode::Renamed | StatusCode::Copied | StatusCode::Unmodified => {
+            StatusCode::Renamed => TrackedSummary {
+                modified: 1,
+                ..TrackedSummary::UNCHANGED
+            },
+            StatusCode::Copied | StatusCode::Unmodified => {
                 TrackedSummary::UNCHANGED
             }
         }
@@ -429,40 +444,62 @@ impl std::ops::Sub for GitSummary {
 
 #[derive(Clone, Debug)]
 pub struct GitStatus {
-    pub entries: Arc<[(RepoPath, FileStatus)]>,
+    pub entries: Arc<[(RepoPath, FileStatus, Option<RepoPath>)]>,
 }
 
 impl FromStr for GitStatus {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let mut entries = s
-            .split('\0')
-            .filter_map(|entry| {
-                let sep = entry.get(2..3)?;
-                if sep != " " {
-                    return None;
+        let mut parts = s.split('\0');
+        let mut entries = Vec::new();
+
+        while let Some(entry) = parts.next() {
+            let sep = match entry.get(2..3) {
+                Some(" ") => {}
+                _ => continue,
+            };
+            let _ = sep;
+            let path_str = &entry[3..];
+            if path_str.ends_with('/') {
+                continue;
+            }
+
+            let status_bytes: [u8; 2] = entry.as_bytes()[0..2].try_into().unwrap();
+            let status = match FileStatus::from_bytes(status_bytes).log_err() {
+                Some(s) => s,
+                None => continue,
+            };
+
+            let is_rename_or_copy = matches!(status_bytes[0], b'R' | b'C')
+                || matches!(status_bytes[1], b'R' | b'C');
+
+            if is_rename_or_copy {
+                // Porcelain v1 with -z: rename produces `XY new_path\0old_path\0`
+                let original_path_str = match parts.next() {
+                    Some(s) if !s.is_empty() => s,
+                    _ => continue,
                 };
-                let path = &entry[3..];
-                // The git status output includes untracked directories as well as untracked files.
-                // We do our own processing to compute the "summary" status of each directory,
-                // so just skip any directories in the output, since they'll otherwise interfere
-                // with our handling of nested repositories.
-                if path.ends_with('/') {
-                    return None;
-                }
-                let status = entry.as_bytes()[0..2].try_into().unwrap();
-                let status = FileStatus::from_bytes(status).log_err()?;
-                // git-status outputs `/`-delimited repo paths, even on Windows.
-                let path = RepoPath::from_rel_path(RelPath::unix(path).log_err()?);
-                Some((path, status))
-            })
-            .collect::<Vec<_>>();
-        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
-        // When a file exists in HEAD, is deleted in the index, and exists again in the working copy,
-        // git produces two lines for it, one reading `D ` (deleted in index, unmodified in working copy)
-        // and the other reading `??` (untracked). Merge these two into the equivalent of `DA`.
-        entries.dedup_by(|(a, a_status), (b, b_status)| {
+                let new_path = match RelPath::unix(path_str).log_err() {
+                    Some(r) => RepoPath::from_rel_path(r),
+                    None => continue,
+                };
+                let orig_path = match RelPath::unix(original_path_str).log_err() {
+                    Some(r) => RepoPath::from_rel_path(r),
+                    None => continue,
+                };
+                entries.push((new_path, status, Some(orig_path)));
+            } else {
+                let path = match RelPath::unix(path_str).log_err() {
+                    Some(r) => RepoPath::from_rel_path(r),
+                    None => continue,
+                };
+                entries.push((path, status, None));
+            }
+        }
+
+        entries.sort_unstable_by(|(a, _, _), (b, _, _)| a.cmp(b));
+        entries.dedup_by(|(a, a_status, _), (b, b_status, _)| {
             const INDEX_DELETED: FileStatus = FileStatus::index(StatusCode::Deleted);
             if a.ne(&b) {
                 return false;
@@ -535,6 +572,7 @@ pub enum TreeDiffStatus {
     Added,
     Modified { old: Oid },
     Deleted { old: Oid },
+    Renamed { old: Oid },
 }
 
 impl FromStr for TreeDiff {
@@ -543,37 +581,45 @@ impl FromStr for TreeDiff {
     fn from_str(s: &str) -> Result<Self> {
         let mut fields = s.split('\0');
         let mut parsed = HashMap::default();
-        while let Some((status, path)) = fields.next().zip(fields.next()) {
-            let path = RepoPath::from_rel_path(RelPath::unix(path)?);
-
-            let mut fields = status.split(" ").skip(2);
-            let old_sha = fields
+        while let Some((status_field, path)) = fields.next().zip(fields.next()) {
+            let mut status_parts = status_field.split(" ").skip(2);
+            let old_sha = status_parts
                 .next()
                 .ok_or_else(|| anyhow!("expected to find old_sha"))?
                 .to_owned()
                 .parse()?;
-            let _new_sha = fields
+            let _new_sha = status_parts
                 .next()
                 .ok_or_else(|| anyhow!("expected to find new_sha"))?;
-            let status = fields
+            let status_str = status_parts
                 .next()
-                .and_then(|s| {
-                    if s.len() == 1 {
-                        s.as_bytes().first()
-                    } else {
-                        None
-                    }
-                })
                 .ok_or_else(|| anyhow!("expected to find status"))?;
 
-            let result = match StatusCode::from_byte(*status)? {
-                StatusCode::Modified => TreeDiffStatus::Modified { old: old_sha },
-                StatusCode::Added => TreeDiffStatus::Added,
-                StatusCode::Deleted => TreeDiffStatus::Deleted { old: old_sha },
-                _status => continue,
+            let status_byte = match status_str.as_bytes().first() {
+                Some(b) => *b,
+                None => continue,
             };
 
-            parsed.insert(path, result);
+            let is_rename = status_byte == b'R' || status_byte == b'C';
+            let (final_path, result) = if is_rename {
+                let new_path_str = match fields.next() {
+                    Some(s) if !s.is_empty() => s,
+                    _ => continue,
+                };
+                let new_path = RepoPath::from_rel_path(RelPath::unix(new_path_str)?);
+                (new_path, TreeDiffStatus::Renamed { old: old_sha })
+            } else {
+                let path = RepoPath::from_rel_path(RelPath::unix(path)?);
+                let result = match StatusCode::from_byte(status_byte)? {
+                    StatusCode::Modified => TreeDiffStatus::Modified { old: old_sha },
+                    StatusCode::Added => TreeDiffStatus::Added,
+                    StatusCode::Deleted => TreeDiffStatus::Deleted { old: old_sha },
+                    _status => continue,
+                };
+                (path, result)
+            };
+
+            parsed.insert(final_path, result);
         }
 
         Ok(Self { entries: parsed })
@@ -591,31 +637,43 @@ pub struct GitDiffStat {
     pub entries: Arc<[(RepoPath, DiffStat)]>,
 }
 
-/// Parses the output of `git diff --numstat` where output looks like:
+/// Parses the output of `git diff --numstat -z` where output is NUL-separated.
 ///
-/// ```text
-/// 24   12   dir/file.txt
-/// ```
+/// Normal entries: `added\tdeleted\tpath\0`
+/// Rename entries: `added\tdeleted\t\0old_path\0new_path\0`
 pub fn parse_numstat(output: &str) -> GitDiffStat {
     let mut entries = Vec::new();
-    for line in output.lines() {
-        let line = line.trim();
-        if line.is_empty() {
+    let mut parts = output.split('\0');
+
+    while let Some(line) = parts.next() {
+        if !line.contains('\t') {
             continue;
         }
-        let mut parts = line.splitn(3, '\t');
+        let mut fields = line.splitn(3, '\t');
         let (Some(added_str), Some(deleted_str), Some(path_str)) =
-            (parts.next(), parts.next(), parts.next())
+            (fields.next(), fields.next(), fields.next())
         else {
             continue;
         };
-        let Ok(added) = added_str.parse::<u32>() else {
+        let Ok(added) = added_str.trim().parse::<u32>() else {
             continue;
         };
         let Ok(deleted) = deleted_str.parse::<u32>() else {
             continue;
         };
-        let Ok(path) = RepoPath::new(path_str) else {
+
+        let path = if path_str.is_empty() {
+            let _old_path = parts.next().unwrap_or("");
+            let new_path = parts.next().unwrap_or("");
+            new_path
+        } else {
+            path_str
+        };
+
+        if path.is_empty() {
+            continue;
+        }
+        let Ok(path) = RepoPath::new(path) else {
             continue;
         };
         entries.push((path, DiffStat { added, deleted }));
@@ -645,7 +703,7 @@ mod tests {
 
     #[test]
     fn test_parse_numstat_normal() {
-        let input = "10\t5\tsrc/main.rs\n3\t1\tREADME.md\n";
+        let input = "10\t5\tsrc/main.rs\03\t1\tREADME.md\0";
         let result = parse_numstat(input);
         assert_eq!(result.entries.len(), 2);
         assert_eq!(
@@ -667,7 +725,7 @@ mod tests {
     #[test]
     fn test_parse_numstat_binary_files_skipped() {
         // git diff --numstat outputs "-\t-\tpath" for binary files
-        let input = "-\t-\timage.png\n5\t2\tsrc/lib.rs\n";
+        let input = "-\t-\timage.png\05\t2\tsrc/lib.rs\0";
         let result = parse_numstat(input);
         assert_eq!(result.entries.len(), 1);
         assert!(lookup(&result.entries, "image.png").is_none());
@@ -683,13 +741,12 @@ mod tests {
     #[test]
     fn test_parse_numstat_empty_input() {
         assert!(parse_numstat("").entries.is_empty());
-        assert!(parse_numstat("\n\n").entries.is_empty());
-        assert!(parse_numstat("   \n  \n").entries.is_empty());
+        assert!(parse_numstat("\0\0").entries.is_empty());
     }
 
     #[test]
     fn test_parse_numstat_malformed_lines_skipped() {
-        let input = "not_a_number\t5\tfile.rs\n10\t5\tvalid.rs\n";
+        let input = "not_a_number\t5\tfile.rs\010\t5\tvalid.rs\0";
         let result = parse_numstat(input);
         assert_eq!(result.entries.len(), 1);
         assert_eq!(
@@ -703,8 +760,7 @@ mod tests {
 
     #[test]
     fn test_parse_numstat_incomplete_lines_skipped() {
-        // Lines with fewer than 3 tab-separated fields are skipped
-        let input = "10\t5\n7\t3\tok.rs\n";
+        let input = "10\t5\07\t3\tok.rs\0";
         let result = parse_numstat(input);
         assert_eq!(result.entries.len(), 1);
         assert_eq!(
@@ -718,7 +774,7 @@ mod tests {
 
     #[test]
     fn test_parse_numstat_zero_stats() {
-        let input = "0\t0\tunchanged_but_present.rs\n";
+        let input = "0\t0\tunchanged_but_present.rs\0";
         let result = parse_numstat(input);
         assert_eq!(
             lookup(&result.entries, "unchanged_but_present.rs"),
@@ -727,6 +783,38 @@ mod tests {
                 deleted: 0
             })
         );
+    }
+
+    #[test]
+    fn test_parse_numstat_renamed_file() {
+        // With -z, renamed entries have format: "added\tdeleted\t\0old_path\0new_path\0"
+        let input = "3\t1\t\0old_name.rs\0new_name.rs\0";
+        let result = parse_numstat(input);
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(
+            lookup(&result.entries, "new_name.rs"),
+            Some(&DiffStat {
+                added: 3,
+                deleted: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn test_parse_git_status_renamed() {
+        // Porcelain v1 with -z: rename produces "R  new_path\0old_path\0"
+        let input = "R  new_file.rs\0old_file.rs\0M  modified.rs\0";
+        let result: GitStatus = input.parse().unwrap();
+        assert_eq!(result.entries.len(), 2);
+        let (path, status, original) = &result.entries[1];
+        assert_eq!(path, &RepoPath::new("new_file.rs").unwrap());
+        assert!(status.is_renamed());
+        assert_eq!(original.as_ref().unwrap(), &RepoPath::new("old_file.rs").unwrap());
+
+        let (path, status, original) = &result.entries[0];
+        assert_eq!(path, &RepoPath::new("modified.rs").unwrap());
+        assert!(status.is_modified());
+        assert!(original.is_none());
     }
 
     #[test]
