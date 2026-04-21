@@ -1263,7 +1263,7 @@ impl AgentPanel {
     ) -> Entity<ConversationView> {
         let desired_agent = self.selected_agent(cx);
 
-        let previous_content = self.take_active_initial_content(cx);
+        let previous_content = self.active_initial_content(cx);
 
         if let Some(draft) = &self.draft_thread {
             let agent_matches = *draft.read(cx).agent_key() == desired_agent;
@@ -1418,36 +1418,6 @@ impl AgentPanel {
         editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
         });
-    }
-
-    fn take_active_initial_content(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Option<AgentInitialContent> {
-        self.active_thread_view(cx).and_then(|thread_view| {
-            thread_view.update(cx, |thread_view, cx| {
-                let draft_blocks = thread_view
-                    .thread
-                    .read(cx)
-                    .draft_prompt()
-                    .map(|draft| draft.to_vec())
-                    .filter(|draft| !draft.is_empty());
-
-                let draft_blocks = draft_blocks.or_else(|| {
-                    let text = thread_view.message_editor.read(cx).text(cx);
-                    if text.trim().is_empty() {
-                        None
-                    } else {
-                        Some(vec![acp::ContentBlock::Text(acp::TextContent::new(text))])
-                    }
-                });
-
-                draft_blocks.map(|blocks| AgentInitialContent::ContentBlock {
-                    blocks,
-                    auto_submit: false,
-                })
-            })
-        })
     }
 
     fn new_native_agent_thread_from_summary(
