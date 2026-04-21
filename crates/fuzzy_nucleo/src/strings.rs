@@ -739,4 +739,105 @@ mod tests {
             "no candidate contains 'xyzzy', so nothing should match"
         );
     }
+
+    #[gpui::test]
+    async fn test_segment_size_not_divisible_by_cpus(executor: BackgroundExecutor) {
+        executor.set_num_cpus(4);
+        let cs = candidates(&["alpha", "beta", "gamma", "delta", "epsilon"]);
+        let cancel = AtomicBool::new(false);
+        let results = match_strings_async(
+            &cs,
+            "a",
+            Case::Ignore,
+            LengthPenalty::Off,
+            10,
+            &cancel,
+            executor,
+        )
+        .await;
+        let matched: Vec<&str> = results.iter().map(|m| m.string.as_ref()).collect();
+        assert!(matched.contains(&"alpha"));
+        assert!(matched.contains(&"gamma"));
+        assert!(matched.contains(&"delta"));
+    }
+
+    #[gpui::test]
+    async fn test_segment_size_with_many_cpus_few_candidates(executor: BackgroundExecutor) {
+        executor.set_num_cpus(16);
+        let cs = candidates(&["one", "two", "three"]);
+        let cancel = AtomicBool::new(false);
+        let results = match_strings_async(
+            &cs,
+            "o",
+            Case::Ignore,
+            LengthPenalty::Off,
+            10,
+            &cancel,
+            executor,
+        )
+        .await;
+        let matched: Vec<&str> = results.iter().map(|m| m.string.as_ref()).collect();
+        assert!(matched.contains(&"one"));
+        assert!(matched.contains(&"two"));
+    }
+
+    #[gpui::test]
+    async fn test_segment_size_single_candidate(executor: BackgroundExecutor) {
+        executor.set_num_cpus(8);
+        let cs = candidates(&["lonely"]);
+        let cancel = AtomicBool::new(false);
+        let results = match_strings_async(
+            &cs,
+            "lone",
+            Case::Ignore,
+            LengthPenalty::Off,
+            10,
+            &cancel,
+            executor,
+        )
+        .await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].string.as_ref(), "lonely");
+    }
+
+    #[gpui::test]
+    async fn test_segment_size_candidates_equal_cpus(executor: BackgroundExecutor) {
+        executor.set_num_cpus(4);
+        let cs = candidates(&["aaa", "bbb", "ccc", "ddd"]);
+        let cancel = AtomicBool::new(false);
+        let results = match_strings_async(
+            &cs,
+            "a",
+            Case::Ignore,
+            LengthPenalty::Off,
+            10,
+            &cancel,
+            executor,
+        )
+        .await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].string.as_ref(), "aaa");
+    }
+
+    #[gpui::test]
+    async fn test_segment_size_candidates_one_more_than_cpus(executor: BackgroundExecutor) {
+        executor.set_num_cpus(3);
+        let cs = candidates(&["ant", "ape", "dog", "axe"]);
+        let cancel = AtomicBool::new(false);
+        let results = match_strings_async(
+            &cs,
+            "a",
+            Case::Ignore,
+            LengthPenalty::Off,
+            10,
+            &cancel,
+            executor,
+        )
+        .await;
+        let matched: Vec<&str> = results.iter().map(|m| m.string.as_ref()).collect();
+        assert!(matched.contains(&"ant"));
+        assert!(matched.contains(&"ape"));
+        assert!(matched.contains(&"axe"));
+        assert!(!matched.contains(&"dog"));
+    }
 }
