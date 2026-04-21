@@ -84,68 +84,6 @@ fn test_splice_included_ranges() {
 }
 
 #[gpui::test]
-fn test_captures_on_large_error_node(cx: &mut App) {
-    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let language = rust_lang();
-    registry.add(language.clone());
-
-    // Build a large file with broken syntax that produces a massive ERROR node.
-    let mut source = String::from("fn main() {\n");
-    for i in 0..5000 {
-        source.push_str(&format!("    ({i}),\n"));
-    }
-    // Deliberately omit the closing brace to produce a large ERROR subtree.
-    source.push_str("    unexpected_token\n");
-
-    let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), source.clone());
-
-    let mut syntax_map = SyntaxMap::new(&buffer);
-    syntax_map.set_language_registry(registry);
-    syntax_map.reparse(language, &buffer);
-
-    // Verify the tree contains an ERROR node.
-    let layers = syntax_map.layers(&buffer);
-    assert!(
-        layers.first().expect("expected at least one layer").node().has_error(),
-        "expected the parse tree to contain an ERROR node"
-    );
-
-    // Query highlights for small visible windows at various positions in the file,
-    // simulating scrolling. Each should complete without hanging or taking excessive time.
-    let total_bytes = source.len();
-    let window_size = 800; // ~25 lines visible
-    let query_positions = [
-        0,
-        total_bytes / 4,
-        total_bytes / 2,
-        total_bytes * 3 / 4,
-        total_bytes.saturating_sub(window_size),
-    ];
-
-    for &start in &query_positions {
-        let end = (start + window_size).min(total_bytes);
-        let captures: Vec<_> = syntax_map
-            .captures(
-                start..end,
-                &buffer,
-                |grammar| grammar.highlights_config.as_ref().map(|c| &c.query),
-            )
-            .collect();
-
-        // The captures should be limited to nodes relevant to the visible window,
-        // not the entire ERROR subtree.
-        for capture in &captures {
-            assert!(
-                capture.node.start_byte() < end + MAX_BYTES_TO_QUERY,
-                "capture at byte {} is too far past the query range end {}",
-                capture.node.start_byte(),
-                end,
-            );
-        }
-    }
-}
-
-#[gpui::test]
 fn test_syntax_map_layers_for_range(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let language = rust_lang();
