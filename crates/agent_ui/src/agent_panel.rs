@@ -214,12 +214,11 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
                     }
                 })
-                .register_action(|workspace, _action: &NewExternalAgentThread, window, cx| {
+                .register_action(|workspace, action: &NewExternalAgentThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            let id = panel.create_thread("agent_panel", window, cx);
-                            panel.activate_retained_thread(id, true, window, cx);
+                            panel.new_external_agent_thread(action, window, cx);
                         });
                     }
                 })
@@ -1161,6 +1160,14 @@ impl AgentPanel {
         &self.connection_store
     }
 
+    pub fn selected_agent(&self, cx: &App) -> Agent {
+        if self.project.read(cx).is_via_collab() {
+            Agent::NativeAgent
+        } else {
+            self.selected_agent.clone()
+        }
+    }
+
     pub fn open_thread(
         &mut self,
         session_id: acp::SessionId,
@@ -1217,6 +1224,18 @@ impl AgentPanel {
         self.activate_draft(true, window, cx);
     }
 
+    pub fn new_external_agent_thread(
+        &mut self,
+        action: &NewExternalAgentThread,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(agent) = action.agent.clone() {
+            self.selected_agent = agent;
+        }
+        self.activate_draft(true, window, cx);
+    }
+
     pub fn activate_draft(&mut self, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
         let draft = self.ensure_draft(window, cx);
         if let BaseView::AgentThread { conversation_view } = &self.base_view {
@@ -1242,33 +1261,22 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ConversationView> {
-        let desired_agent = if self.project.read(cx).is_via_collab() {
-            Agent::NativeAgent
-        } else {
-            self.selected_agent.clone()
-        };
+        let desired_agent = self.selected_agent(cx);
         if let Some(draft) = &self.draft_thread {
             let agent_matches = *draft.read(cx).agent_key() == desired_agent;
-            let has_editor_content = draft.read(cx).root_thread_view().is_some_and(|tv| {
-                !tv.read(cx)
-                    .message_editor
-                    .read(cx)
-                    .text(cx)
-                    .trim()
-                    .is_empty()
-            });
-            if agent_matches || has_editor_content {
+            if agent_matches {
                 return draft.clone();
             }
             self.draft_thread = None;
             self._draft_editor_observation = None;
         }
+        let previous_content = self.active_initial_content(cx);
         let thread = self.create_agent_thread(
             desired_agent,
             None,
             None,
             None,
-            None,
+            previous_content,
             "agent_panel",
             window,
             cx,
@@ -1308,11 +1316,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadId {
-        let agent = if self.project.read(cx).is_via_collab() {
-            Agent::NativeAgent
-        } else {
-            self.selected_agent.clone()
-        };
+        let agent = self.selected_agent(cx);
         let thread = self.create_agent_thread(agent, None, None, None, None, source, window, cx);
         let thread_id = thread.conversation_view.read(cx).thread_id;
         self.retained_threads
@@ -1414,36 +1418,6 @@ impl AgentPanel {
         });
     }
 
-    fn take_active_initial_content(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Option<AgentInitialContent> {
-        self.active_thread_view(cx).and_then(|thread_view| {
-            thread_view.update(cx, |thread_view, cx| {
-                let draft_blocks = thread_view
-                    .thread
-                    .read(cx)
-                    .draft_prompt()
-                    .map(|draft| draft.to_vec())
-                    .filter(|draft| !draft.is_empty());
-
-                let draft_blocks = draft_blocks.or_else(|| {
-                    let text = thread_view.message_editor.read(cx).text(cx);
-                    if text.trim().is_empty() {
-                        None
-                    } else {
-                        Some(vec![acp::ContentBlock::Text(acp::TextContent::new(text))])
-                    }
-                });
-
-                draft_blocks.map(|blocks| AgentInitialContent::ContentBlock {
-                    blocks,
-                    auto_submit: false,
-                })
-            })
-        })
-    }
-
     fn new_native_agent_thread_from_summary(
         &mut self,
         action: &NewNativeAgentThreadFromSummary,
@@ -1501,13 +1475,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let agent = agent_choice.unwrap_or_else(|| {
-            if self.project.read(cx).is_via_collab() {
-                Agent::NativeAgent
-            } else {
-                self.selected_agent.clone()
-            }
-        });
+        let agent = agent_choice.unwrap_or_else(|| self.selected_agent(cx));
         let thread = self.create_agent_thread(
             agent,
             resume_session_id,
@@ -2423,18 +2391,17 @@ impl AgentPanel {
                     let entry = entry.clone();
                     panel
                         .update(cx, move |this, cx| {
-                            if let Some(agent) = this.selected_agent() {
-                                this.load_agent_thread(
-                                    agent,
-                                    entry.session_id.clone(),
-                                    entry.work_dirs.clone(),
-                                    entry.title.clone(),
-                                    true,
-                                    "agent_panel",
-                                    window,
-                                    cx,
-                                );
-                            }
+                            let agent = this.selected_agent(cx);
+                            this.load_agent_thread(
+                                agent,
+                                entry.session_id.clone(),
+                                entry.work_dirs.clone(),
+                                entry.title.clone(),
+                                true,
+                                "agent_panel",
+                                window,
+                                cx,
+                            );
                         })
                         .ok();
                 }
@@ -2471,10 +2438,6 @@ impl AgentPanel {
                 },
             )
         })
-    }
-
-    pub(crate) fn selected_agent(&self) -> Option<Agent> {
-        Some(self.selected_agent.clone())
     }
 
     fn sync_agent_servers_from_extensions(&mut self, cx: &mut Context<Self>) {
@@ -2515,31 +2478,6 @@ impl AgentPanel {
             None,
             external_source_prompt.map(AgentInitialContent::from),
             true,
-            "agent_panel",
-            window,
-            cx,
-        );
-    }
-
-    pub fn new_agent_thread(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
-        self.new_agent_thread_inner(agent, true, window, cx);
-    }
-
-    fn new_agent_thread_inner(
-        &mut self,
-        agent: Agent,
-        focus: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let initial_content = self.take_active_initial_content(cx);
-        self.external_thread(
-            Some(agent),
-            None,
-            None,
-            None,
-            initial_content,
-            focus,
             "agent_panel",
             window,
             cx,
@@ -2980,11 +2918,6 @@ impl AgentPanel {
             return false;
         };
 
-        let agent = if self.project.read(cx).is_via_collab() {
-            Agent::NativeAgent
-        } else {
-            agent
-        };
         let thread = self.create_agent_thread(
             agent,
             None,
@@ -3349,14 +3282,12 @@ impl AgentPanel {
                                                     workspace.panel::<AgentPanel>(cx)
                                                 {
                                                     panel.update(cx, |panel, cx| {
-                                                        panel.selected_agent = Agent::NativeAgent;
-                                                        let id = panel.create_thread(
-                                                            "agent_panel",
+                                                        panel.new_external_agent_thread(
+                                                            &NewExternalAgentThread {
+                                                                agent: Some(Agent::NativeAgent),
+                                                            },
                                                             window,
                                                             cx,
-                                                        );
-                                                        panel.activate_retained_thread(
-                                                            id, true, window, cx,
                                                         );
                                                     });
                                                 }
@@ -3438,16 +3369,14 @@ impl AgentPanel {
                                                         workspace.panel::<AgentPanel>(cx)
                                                     {
                                                         panel.update(cx, |panel, cx| {
-                                                            panel.selected_agent = Agent::Custom {
-                                                                id: agent_id.clone(),
-                                                            };
-                                                            let id = panel.create_thread(
-                                                                "agent_panel",
+                                                            panel.new_external_agent_thread(
+                                                                &NewExternalAgentThread {
+                                                                    agent: Some(Agent::Custom {
+                                                                        id: agent_id.clone(),
+                                                                    }),
+                                                                },
                                                                 window,
                                                                 cx,
-                                                            );
-                                                            panel.activate_retained_thread(
-                                                                id, true, window, cx,
                                                             );
                                                         });
                                                     }
@@ -5172,7 +5101,7 @@ mod tests {
         // Load thread A back via load_agent_thread — should promote from background.
         panel.update_in(&mut cx, |panel, window, cx| {
             panel.load_agent_thread(
-                panel.selected_agent().expect("selected agent must be set"),
+                panel.selected_agent(cx),
                 session_id_a.clone(),
                 None,
                 None,
@@ -5947,6 +5876,166 @@ mod tests {
                 "draft should be reused when the agent has not changed"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_activate_draft_preserves_typed_content(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        // Create a draft using the Stub agent, which connects synchronously.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_agent = Agent::Stub;
+            panel.activate_draft(true, window, cx);
+        });
+        cx.run_until_parked();
+
+        let initial_draft_id = panel.read_with(cx, |panel, _cx| {
+            panel.draft_thread.as_ref().unwrap().entity_id()
+        });
+
+        // Type some text into the draft editor.
+        let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
+        let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Don't lose me!", window, cx);
+        });
+
+        // Press cmd-n (activate_draft again with the same agent).
+        cx.dispatch_action(NewExternalAgentThread { agent: None });
+        cx.run_until_parked();
+
+        // The draft entity should not have changed.
+        panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                panel.draft_thread.as_ref().unwrap().entity_id(),
+                initial_draft_id,
+                "cmd-n should not replace the draft when already on it"
+            );
+        });
+
+        // The editor content should be preserved.
+        let thread_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
+        let text = panel.read_with(cx, |panel, cx| panel.editor_text(thread_id, cx));
+        assert_eq!(
+            text.as_deref(),
+            Some("Don't lose me!"),
+            "typed content should be preserved when pressing cmd-n on the draft"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_draft_content_carried_over_when_switching_agents(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        // Create a draft with a custom stub server that connects synchronously.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_draft_with_server(
+                Rc::new(StubAgentServer::new(StubAgentConnection::new())),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let initial_draft_id = panel.read_with(cx, |panel, _cx| {
+            panel.draft_thread.as_ref().unwrap().entity_id()
+        });
+
+        // Type text into the first draft's editor.
+        let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
+        let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("carry me over", window, cx);
+        });
+
+        // Switch to a different agent. ensure_draft should extract the typed
+        // content from the old draft and pre-fill the new one.
+        cx.dispatch_action(NewExternalAgentThread {
+            agent: Some(Agent::Stub),
+        });
+        cx.run_until_parked();
+
+        // A new draft should have been created for the Stub agent.
+        panel.read_with(cx, |panel, cx| {
+            let draft = panel.draft_thread.as_ref().expect("draft should exist");
+            assert_ne!(
+                draft.entity_id(),
+                initial_draft_id,
+                "a new draft should have been created for the new agent"
+            );
+            assert_eq!(
+                *draft.read(cx).agent_key(),
+                Agent::Stub,
+                "new draft should use the new agent"
+            );
+        });
+
+        // The new draft's editor should contain the text typed in the old draft.
+        let thread_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
+        let text = panel.read_with(cx, |panel, cx| panel.editor_text(thread_id, cx));
+        assert_eq!(
+            text.as_deref(),
+            Some("carry me over"),
+            "content should be carried over to the new agent's draft"
+        );
     }
 
     #[gpui::test]
