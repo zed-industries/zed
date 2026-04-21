@@ -1385,11 +1385,9 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     );
     let resulting_lens_actions = editor_b
         .update(cx_b, |editor, cx| {
-            let snapshot = buffer_b.read(cx).snapshot();
-            let range = snapshot.anchor_before(0)..snapshot.anchor_after(snapshot.len());
             let lsp_store = editor.project().unwrap().read(cx).lsp_store();
             lsp_store.update(cx, |lsp_store, cx| {
-                lsp_store.code_lens_actions(&buffer_b, range, cx)
+                lsp_store.code_lens_actions(&buffer_b, cx)
             })
         })
         .await

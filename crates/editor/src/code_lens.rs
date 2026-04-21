@@ -380,31 +380,15 @@ impl Editor {
                 .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let visible_ranges = editor
-                .update(cx, |editor, cx| {
-                    editor
-                        .visible_buffer_ranges(cx)
-                        .into_iter()
-                        .map(|(snapshot, visible_range, _)| {
-                            let buffer_id = snapshot.remote_id();
-                            let anchor_range = snapshot.anchor_before(visible_range.start)
-                                ..snapshot.anchor_after(visible_range.end);
-                            (buffer_id, anchor_range)
-                        })
-                        .collect::<HashMap<_, _>>()
-                })
-                .unwrap_or_default();
-
             let Some(tasks) = project
                 .update(cx, |project, cx| {
                     project.lsp_store().update(cx, |lsp_store, cx| {
                         buffers_to_query
                             .into_iter()
-                            .filter_map(|buffer| {
+                            .map(|buffer| {
                                 let buffer_id = buffer.read(cx).remote_id();
-                                let resolve_range = visible_ranges.get(&buffer_id).cloned()?;
-                                let task = lsp_store.code_lens_actions(&buffer, resolve_range, cx);
-                                Some(async move { (buffer_id, task.await) })
+                                let task = lsp_store.code_lens_actions(&buffer, cx);
+                                async move { (buffer_id, task.await) }
                             })
                             .collect::<Vec<_>>()
                     })
@@ -450,8 +434,11 @@ impl Editor {
                         Some((position, CodeLensItem { title, action }))
                     })
                     .collect();
-                let grouped = group_lenses_by_row(individual_lenses, &multi_buffer_snapshot);
-                new_lenses_per_buffer.insert(buffer_id, grouped.collect::<Vec<_>>());
+                new_lenses_per_buffer.insert(
+                    buffer_id,
+                    group_lenses_by_row(individual_lenses, &multi_buffer_snapshot)
+                        .collect::<Vec<_>>(),
+                );
             }
 
             editor
@@ -500,7 +487,7 @@ impl Editor {
                             .extend(block_ids);
                     }
 
-                    cx.notify();
+                    editor.resolve_visible_code_lenses(cx);
                 })
                 .ok();
         });

@@ -14,9 +14,10 @@ use lsp::LanguageServerId;
 use rpc::{TypedEnvelope, proto};
 use settings::Settings as _;
 use std::time::Duration;
+use text::OffsetRangeExt as _;
 
 use crate::{
-    CodeAction, LspAction, LspStore, LspStoreEvent,
+    CodeAction, LspAction, LspStore, LspStoreEvent, Project,
     lsp_command::{GetCodeLens, LspCommand as _},
     project_settings::ProjectSettings,
 };
@@ -43,31 +44,22 @@ impl LspStore {
         }
     }
 
-    /// Fetches all code lenses for the buffer and resolves the ones within
-    /// `resolve_range`. Returns ALL lenses for the buffer (not filtered).
+    /// Fetches and returns all code lenses for the buffer.
+    ///
+    /// Resolution of individual lenses is the caller's responsibility; see
+    /// [`LspStore::resolve_visible_code_lenses`].
     pub fn code_lens_actions(
         &mut self,
         buffer: &Entity<Buffer>,
-        resolve_range: Range<Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Vec<CodeAction>>>> {
         let buffer_id = buffer.read(cx).remote_id();
         let fetch_task = self.fetch_code_lenses(buffer, cx);
-        let buffer = buffer.clone();
 
         cx.spawn(async move |lsp_store, cx| {
             fetch_task
                 .await
                 .map_err(|e| anyhow::anyhow!("code lens fetch failed: {e:#}"))?;
-
-            if let Some(resolve_task) = lsp_store
-                .update(cx, |lsp_store, cx| {
-                    lsp_store.resolve_visible_code_lenses(&buffer, resolve_range, cx)
-                })
-                .ok()
-            {
-                resolve_task.await;
-            }
 
             let actions = lsp_store.read_with(cx, |lsp_store, _| {
                 lsp_store
@@ -382,5 +374,50 @@ impl LspStore {
             cx.emit(LspStoreEvent::RefreshCodeLens);
         });
         Ok(proto::Ack {})
+    }
+}
+
+impl Project {
+    pub fn code_lens_actions(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        range: Range<Anchor>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<CodeAction>>>> {
+        let snapshot = buffer.read(cx).snapshot();
+        let range = range.to_point(&snapshot);
+        let range_start = snapshot.anchor_before(range.start);
+        let range_end = if range.start == range.end {
+            range_start
+        } else {
+            snapshot.anchor_after(range.end)
+        };
+        let range = range_start..range_end;
+        let lsp_store = self.lsp_store();
+        let fetch_task =
+            lsp_store.update(cx, |lsp_store, cx| lsp_store.code_lens_actions(buffer, cx));
+        let buffer = buffer.clone();
+        cx.spawn(async move |_, cx| {
+            let mut actions = fetch_task.await?;
+            if let Some(actions) = &mut actions {
+                let resolve_task = lsp_store.update(cx, |lsp_store, cx| {
+                    lsp_store.resolve_visible_code_lenses(&buffer, range.clone(), cx)
+                });
+                let resolved = resolve_task.await;
+                for resolved_action in resolved {
+                    if let Some(action) = actions.iter_mut().find(|a| {
+                        a.server_id == resolved_action.server_id && a.range == resolved_action.range
+                    }) {
+                        *action = resolved_action;
+                    }
+                }
+                let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                actions.retain(|action| {
+                    range.start.cmp(&action.range.start, &snapshot).is_ge()
+                        && range.end.cmp(&action.range.end, &snapshot).is_le()
+                });
+            }
+            Ok(actions)
+        })
     }
 }

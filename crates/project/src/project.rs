@@ -134,7 +134,7 @@ use std::{
 
 use task_store::TaskStore;
 use terminals::Terminals;
-use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
+use text::{Anchor, BufferId, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
@@ -4382,38 +4382,6 @@ impl Project {
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.code_actions(buffer_handle, range, kinds, cx)
-        })
-    }
-
-    pub fn code_lens_actions<T: Clone + ToOffset>(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        range: Range<T>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<CodeAction>>>> {
-        let snapshot = buffer.read(cx).snapshot();
-        let range = range.to_point(&snapshot);
-        let range_start = snapshot.anchor_before(range.start);
-        let range_end = if range.start == range.end {
-            range_start
-        } else {
-            snapshot.anchor_after(range.end)
-        };
-        let range = range_start..range_end;
-        let task = self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.code_lens_actions(buffer, range.clone(), cx)
-        });
-        let buffer = buffer.clone();
-        cx.spawn(async move |_, cx| {
-            let mut actions = task.await?;
-            if let Some(actions) = &mut actions {
-                let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-                actions.retain(|action| {
-                    range.start.cmp(&action.range.start, &snapshot).is_ge()
-                        && range.end.cmp(&action.range.end, &snapshot).is_le()
-                });
-            }
-            Ok(actions)
         })
     }
 
