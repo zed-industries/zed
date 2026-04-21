@@ -114,7 +114,11 @@ jobs:
               return;
             }
 
-            if (GUILD_MEMBERS.includes(author)) {
+            const authorLower = author.toLowerCase();
+            const isGuildMember = GUILD_MEMBERS.some(
+              (member) => member.toLowerCase() === authorLower
+            );
+            if (isGuildMember) {
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
