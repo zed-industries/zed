@@ -1585,6 +1585,7 @@ impl SearchableItem for Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        dbg!("Editor::update_matches");
         let existing_range = self
             .background_highlights
             .get(&HighlightKey::BufferSearchHighlights)
@@ -1790,55 +1791,101 @@ impl SearchableItem for Editor {
             });
         }
     }
+
+    /// Takes the current cursor position and finds the next match in the
+    /// provided `direction`, wrapping around if necessary.
     fn match_index_for_direction(
         &mut self,
         matches: &[Range<Anchor>],
-        current_index: usize,
+        _current_index: usize,
         direction: Direction,
-        count: usize,
+        _count: usize,
         _token: SearchToken,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> usize {
+        let cursor = self.selections.newest_anchor().head();
         let buffer = self.buffer().read(cx).snapshot(cx);
-        let current_index_position = if self.selections.disjoint_anchors_arc().len() == 1 {
-            self.selections.newest_anchor().head()
-        } else {
-            matches[current_index].start
+        // TODO direction
+        // TODO! – Support `count` argument.
+        zlog::info!("in match_index_for_direction");
+        let next_idx = match dbg!(direction) {
+            Direction::Next => matches
+                .iter()
+                .position(|m| m.start.cmp(&cursor, &buffer).is_gt())
+                .unwrap_or(0),
+            Direction::Prev => matches
+                .iter()
+                .rposition(|m| m.end.cmp(&cursor, &buffer).is_lt())
+                .unwrap_or(matches.len() - 1),
         };
+        dbg!(next_idx)
 
-        let mut count = count % matches.len();
-        if count == 0 {
-            return current_index;
-        }
-        match direction {
-            Direction::Next => {
-                if matches[current_index]
-                    .start
-                    .cmp(&current_index_position, &buffer)
-                    .is_gt()
-                {
-                    count -= 1
-                }
+        // // OPTIMIZATION PROPOSAL
+        // // TODO double check that current index is not off by one (one too far)
+        //
+        // TODO!(dino): Check that this still works if `current_index > 0`
+        // but cursor is before the current index, for example, pressing `n` in
+        // this situtation should jump to line 3, not 1.
+        //
+        //     1. test 12345
+        //     2. test 12^345
+        //     3. test 12345
+        //     4. test 12345
+        //     5. [test] 12345
+        //     6. test 12345
+        //     7. test 12345
+        //
+        // let next_idx = match dbg!(direction) {
+        //     Direction::Next => matches[current_index..]
+        //         .iter()
+        //         .position(|m| m.start.cmp(&cursor, &buffer).is_gt())
+        //         .map(|relative_pos| relative_pos + current_index)
+        //         .unwrap_or(0),
+        //     Direction::Prev => matches[..(current_index + 1).min(matches.len() - 1)]
+        //         .iter()
+        //         .rposition(|m| m.end.cmp(&cursor, &buffer).is_lt())
+        //         .unwrap_or(matches.len() - 1),
+        // };
 
-                (current_index + count) % matches.len()
-            }
-            Direction::Prev => {
-                if matches[current_index]
-                    .end
-                    .cmp(&current_index_position, &buffer)
-                    .is_lt()
-                {
-                    count -= 1;
-                }
+        // let current_index_position = if self.selections.disjoint_anchors_arc().len() == 1 {
+        //     self.selections.newest_anchor().head()
+        // } else {
+        //     matches[current_index].start
+        // };
 
-                if current_index >= count {
-                    current_index - count
-                } else {
-                    matches.len() - (count - current_index)
-                }
-            }
-        }
+        // let mut count = count % matches.len();
+        // if count == 0 {
+        //     return current_index;
+        // }
+        // match direction {
+        //     Direction::Next => {
+        //         if matches[current_index]
+        //             .start
+        //             .cmp(&current_index_position, &buffer)
+        //             .is_gt()
+        //         {
+        //             count -= 1
+        //         }
+
+        //         (current_index + count) % matches.len()
+        //     }
+        //     Direction::Prev => {
+        //         if matches[current_index]
+        //             .end
+        //             .cmp(&current_index_position, &buffer)
+        //             .is_lt()
+        //         {
+        //             count -= 1;
+        //         }
+
+        //         if current_index >= count {
+        //             current_index - count
+        //         } else {
+        //             matches.len() - (count - current_index)
+        //         }
+        //     }
+        // }
     }
 
     fn find_matches(
@@ -1937,6 +1984,7 @@ pub fn active_match_index(
     cursor: &Anchor,
     buffer: &MultiBufferSnapshot,
 ) -> Option<usize> {
+    dbg!(direction);
     if ranges.is_empty() {
         None
     } else {

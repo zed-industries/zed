@@ -3828,7 +3828,10 @@ impl Editor {
 
         let selections = &self.selections.disjoint_anchors_arc();
         if selections.len() == 1 {
-            cx.emit(SearchEvent::ActiveMatchChanged)
+            // TODO!(dino): We likely still need to emit this, even though we
+            // don't want it to be handled by `BufferSearchBar`.
+            dbg!("Emitting SearchEvent::ActiveMatchChanged");
+            // cx.emit(SearchEvent::ActiveMatchChanged)
         }
         if local && let Some(buffer_snapshot) = buffer.as_singleton() {
             let inmemory_selections = selections
@@ -4046,6 +4049,7 @@ impl Editor {
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
     ) -> R {
+        dbg!("changing selection");
         let snapshot = self.display_snapshot(cx);
         if let Some(state) = &mut self.deferred_selection_effects_state {
             state.effects.scroll = effects.scroll.or(state.effects.scroll);
