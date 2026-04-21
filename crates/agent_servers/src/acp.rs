@@ -75,8 +75,118 @@ struct ClientContext {
     session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>>,
 }
 
+fn dispatch_queue_closed_error() -> acp::Error {
+    acp::Error::internal_error().data("ACP foreground dispatch queue closed")
+}
+
 /// Work items sent from `Send` handler closures to the `!Send` foreground thread.
-type ForegroundWork = Box<dyn FnOnce(&mut AsyncApp, &ClientContext) + Send>;
+trait ForegroundWorkItem: Send {
+    fn run(self: Box<Self>, cx: &mut AsyncApp, ctx: &ClientContext);
+    fn reject(self: Box<Self>);
+}
+
+type ForegroundWork = Box<dyn ForegroundWorkItem>;
+
+struct RequestForegroundWork<Req, Res>
+where
+    Req: Send + 'static,
+    Res: JsonRpcResponse + Send + 'static,
+{
+    request: Req,
+    responder: Responder<Res>,
+    handler: fn(Req, Responder<Res>, &mut AsyncApp, &ClientContext),
+}
+
+impl<Req, Res> ForegroundWorkItem for RequestForegroundWork<Req, Res>
+where
+    Req: Send + 'static,
+    Res: JsonRpcResponse + Send + 'static,
+{
+    fn run(self: Box<Self>, cx: &mut AsyncApp, ctx: &ClientContext) {
+        let Self {
+            request,
+            responder,
+            handler,
+        } = *self;
+        handler(request, responder, cx, ctx);
+    }
+
+    fn reject(self: Box<Self>) {
+        let Self { responder, .. } = *self;
+        log::error!("ACP foreground dispatch queue closed while handling inbound request");
+        responder
+            .respond_with_error(dispatch_queue_closed_error())
+            .log_err();
+    }
+}
+
+struct NotificationForegroundWork<Notif>
+where
+    Notif: Send + 'static,
+{
+    notification: Notif,
+    connection: ConnectionTo<Agent>,
+    handler: fn(Notif, &mut AsyncApp, &ClientContext),
+}
+
+impl<Notif> ForegroundWorkItem for NotificationForegroundWork<Notif>
+where
+    Notif: Send + 'static,
+{
+    fn run(self: Box<Self>, cx: &mut AsyncApp, ctx: &ClientContext) {
+        let Self {
+            notification,
+            handler,
+            ..
+        } = *self;
+        handler(notification, cx, ctx);
+    }
+
+    fn reject(self: Box<Self>) {
+        let Self { connection, .. } = *self;
+        log::error!("ACP foreground dispatch queue closed while handling inbound notification");
+        connection
+            .send_error_notification(dispatch_queue_closed_error())
+            .log_err();
+    }
+}
+
+fn enqueue_request<Req, Res>(
+    dispatch_tx: &mpsc::UnboundedSender<ForegroundWork>,
+    request: Req,
+    responder: Responder<Res>,
+    handler: fn(Req, Responder<Res>, &mut AsyncApp, &ClientContext),
+) where
+    Req: Send + 'static,
+    Res: JsonRpcResponse + Send + 'static,
+{
+    let work: ForegroundWork = Box::new(RequestForegroundWork {
+        request,
+        responder,
+        handler,
+    });
+    if let Err(err) = dispatch_tx.unbounded_send(work) {
+        err.into_inner().reject();
+    }
+}
+
+fn enqueue_notification<Notif>(
+    dispatch_tx: &mpsc::UnboundedSender<ForegroundWork>,
+    notification: Notif,
+    connection: ConnectionTo<Agent>,
+    handler: fn(Notif, &mut AsyncApp, &ClientContext),
+) where
+    Notif: Send + 'static,
+{
+    let work: ForegroundWork = Box::new(NotificationForegroundWork {
+        notification,
+        connection,
+        handler,
+    });
+    if let Err(err) = dispatch_tx.unbounded_send(work) {
+        err.into_inner().reject();
+    }
+}
 
 pub struct AcpConnection {
     id: AgentId,
@@ -248,11 +358,7 @@ macro_rules! dispatch_request_handler {
     ($dispatch_tx:expr, $handler:expr) => {{
         let dispatch_tx = $dispatch_tx.clone();
         async move |args, responder, _connection| {
-            dispatch_tx
-                .unbounded_send(Box::new(move |cx, ctx| {
-                    $handler(args, responder, cx, ctx);
-                }))
-                .log_err();
+            enqueue_request(&dispatch_tx, args, responder, $handler);
             Ok(())
         }
     }};
@@ -261,12 +367,8 @@ macro_rules! dispatch_request_handler {
 macro_rules! dispatch_notification_handler {
     ($dispatch_tx:expr, $handler:expr) => {{
         let dispatch_tx = $dispatch_tx.clone();
-        async move |notification, _connection| {
-            dispatch_tx
-                .unbounded_send(Box::new(move |cx, ctx| {
-                    $handler(notification, cx, ctx);
-                }))
-                .log_err();
+        async move |notification, connection| {
+            enqueue_notification(&dispatch_tx, notification, connection, $handler);
             Ok(())
         }
     }};
@@ -481,7 +583,7 @@ impl AcpConnection {
             let mut dispatch_rx = dispatch_rx;
             async move |cx| {
                 while let Some(work) = dispatch_rx.next().await {
-                    work(cx, &dispatch_context);
+                    work.run(cx, &dispatch_context);
                 }
             }
         });

@@ -13,6 +13,9 @@ workspace = true
 path = "src/acp_tools.rs"
 doctest = false
 
+[features]
+test-support = ["workspace/test-support"]
+
 [dependencies]
 agent-client-protocol.workspace = true
 collections.workspace = true
