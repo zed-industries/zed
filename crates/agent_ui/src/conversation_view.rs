@@ -2857,7 +2857,6 @@ pub(crate) mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::agent_panel;
-    use crate::thread_history::ThreadHistory;
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
@@ -3955,9 +3954,7 @@ pub(crate) mod tests {
         agent: impl AgentServer + 'static,
         cx: &mut TestAppContext,
     ) -> (Entity<ConversationView>, &mut VisualTestContext) {
-        let (conversation_view, _history, cx) =
-            setup_conversation_view_with_history_and_initial_content(agent, None, cx).await;
-        (conversation_view, cx)
+        setup_conversation_view_with_initial_content_opt(agent, None, cx).await
     }
 
     async fn setup_conversation_view_with_initial_content(
@@ -3965,25 +3962,14 @@ pub(crate) mod tests {
         initial_content: AgentInitialContent,
         cx: &mut TestAppContext,
     ) -> (Entity<ConversationView>, &mut VisualTestContext) {
-        let (conversation_view, _history, cx) =
-            setup_conversation_view_with_history_and_initial_content(
-                agent,
-                Some(initial_content),
-                cx,
-            )
-            .await;
-        (conversation_view, cx)
+        setup_conversation_view_with_initial_content_opt(agent, Some(initial_content), cx).await
     }
 
-    async fn setup_conversation_view_with_history_and_initial_content(
+    async fn setup_conversation_view_with_initial_content_opt(
         agent: impl AgentServer + 'static,
         initial_content: Option<AgentInitialContent>,
         cx: &mut TestAppContext,
-    ) -> (
-        Entity<ConversationView>,
-        Option<Entity<ThreadHistory>>,
-        &mut VisualTestContext,
-    ) {
+    ) -> (Entity<ConversationView>, &mut VisualTestContext) {
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
         let (multi_workspace, cx) =
@@ -4019,14 +4005,7 @@ pub(crate) mod tests {
         });
         cx.run_until_parked();
 
-        let history = cx.update(|_window, cx| {
-            connection_store
-                .read(cx)
-                .entry(&agent_key)
-                .and_then(|e| e.read(cx).history().cloned())
-        });
-
-        (conversation_view, history, cx)
+        (conversation_view, cx)
     }
 
     fn add_to_workspace(conversation_view: Entity<ConversationView>, cx: &mut VisualTestContext) {

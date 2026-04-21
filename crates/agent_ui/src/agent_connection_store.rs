@@ -10,7 +10,7 @@ use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Subscri
 use project::{AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
 
-use crate::{Agent, ThreadHistory};
+use crate::Agent;
 
 pub enum AgentConnectionEntry {
     Connecting {
@@ -25,7 +25,6 @@ pub enum AgentConnectionEntry {
 #[derive(Clone)]
 pub struct AgentConnectedState {
     pub connection: Rc<dyn AgentConnection>,
-    pub history: Option<Entity<ThreadHistory>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,13 +40,6 @@ impl AgentConnectionEntry {
             AgentConnectionEntry::Connecting { connect_task } => connect_task.clone(),
             AgentConnectionEntry::Connected(state) => Task::ready(Ok(state.clone())).shared(),
             AgentConnectionEntry::Error { error } => Task::ready(Err(error.clone())).shared(),
-        }
-    }
-
-    pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
-        match self {
-            AgentConnectionEntry::Connected(state) => state.history.as_ref(),
-            _ => None,
         }
     }
 
@@ -241,16 +233,8 @@ impl AgentConnectionStore {
         let delegate = AgentServerDelegate::new(agent_server_store, Some(new_version_tx));
 
         let connect_task = server.connect(delegate, self.project.clone(), cx);
-        let connect_task = cx.spawn(async move |_this, cx| match connect_task.await {
-            Ok(connection) => cx.update(|cx| {
-                let history = connection
-                    .session_list(cx)
-                    .map(|session_list| cx.new(|cx| ThreadHistory::new(session_list, cx)));
-                Ok(AgentConnectedState {
-                    connection,
-                    history,
-                })
-            }),
+        let connect_task = cx.spawn(async move |_this, _cx| match connect_task.await {
+            Ok(connection) => Ok(AgentConnectedState { connection }),
             Err(err) => match err.downcast::<LoadError>() {
                 Ok(load_error) => Err(load_error),
                 Err(err) => Err(LoadError::Other(SharedString::from(err.to_string()))),
