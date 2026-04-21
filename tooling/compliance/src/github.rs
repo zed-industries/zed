@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, fmt, ops::Not, rc::Rc, sync::LazyLock};
+use std::{borrow::Cow, collections::HashMap, fmt, ops::Not, sync::LazyLock};
 
 use anyhow::Result;
 use derive_more::Deref;
@@ -216,23 +216,6 @@ pub trait GithubApiClient {
         label: &str,
         issue_number: u64,
     ) -> Result<()>;
-}
-
-#[derive(Deref)]
-pub struct GithubClient {
-    api: Rc<dyn GithubApiClient>,
-}
-
-impl GithubClient {
-    pub fn new(api: Rc<dyn GithubApiClient>) -> Self {
-        Self { api }
-    }
-
-    #[cfg(feature = "octo-client")]
-    pub async fn for_app_in_repo(app_id: u64, app_private_key: &str, org: &str) -> Result<Self> {
-        let client = OctocrabClient::new(app_id, app_private_key, org).await?;
-        Ok(Self::new(Rc::new(client)))
-    }
 }
 
 pub mod graph_ql {

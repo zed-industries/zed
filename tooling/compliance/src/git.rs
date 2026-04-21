@@ -138,6 +138,18 @@ impl CommitDetails {
     }
 }
 
+impl FromStr for CommitDetails {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        CommitList::from_str(s).and_then(|list| {
+            list.into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("No commit found"))
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Committer {
     name: String,
@@ -319,6 +331,30 @@ impl FromStr for VersionTagList {
             .not()
             .then_some(Self(version_tags))
             .ok_or_else(|| anyhow::anyhow!("No version tags found"))
+    }
+}
+
+pub struct InfoForCommit {
+    sha: String,
+}
+
+impl InfoForCommit {
+    pub fn new(sha: impl ToString) -> Self {
+        Self {
+            sha: sha.to_string(),
+        }
+    }
+}
+
+impl Subcommand for InfoForCommit {
+    type ParsedOutput = CommitDetails;
+
+    fn args(&self) -> impl IntoIterator<Item = String> {
+        [
+            "log".to_string(),
+            format!("--pretty=format:{}", CommitDetails::FORMAT_STRING),
+            format!("{sha}~1..{sha}", sha = self.sha),
+        ]
     }
 }
 
