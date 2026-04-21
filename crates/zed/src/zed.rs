@@ -3028,6 +3028,10 @@ mod tests {
         let window_is_edited = |window: WindowHandle<MultiWorkspace>, cx: &mut TestAppContext| {
             cx.update(|cx| window.read(cx).unwrap().workspace().read(cx).is_edited())
         };
+        let workspace_database_id = |window: WindowHandle<MultiWorkspace>,
+                                     cx: &mut TestAppContext| {
+            cx.update(|cx| window.read(cx).unwrap().workspace().read(cx).database_id())
+        };
 
         let editor = window
             .read_with(cx, |multi_workspace, cx| {
@@ -3042,6 +3046,11 @@ mod tests {
             .unwrap();
 
         assert!(!window_is_edited(window, cx));
+        let initial_database_id = workspace_database_id(window, cx);
+        assert!(
+            initial_database_id.is_some(),
+            "a restored workspace must have a stable database id"
+        );
 
         // Editing a buffer marks the window as edited.
         window
@@ -3087,6 +3096,11 @@ mod tests {
                 .unwrap()
         });
         assert!(window_is_edited(window, cx));
+        assert_eq!(
+            workspace_database_id(window, cx),
+            initial_database_id,
+            "the workspace must keep the same database id across a close/reopen cycle"
+        );
 
         window
             .update(cx, |multi_workspace, _, cx| {

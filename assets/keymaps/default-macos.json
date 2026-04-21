@@ -264,7 +264,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "agent::NewThread",
-      "cmd-shift-h": "agent::OpenHistory",
       "cmd-alt-c": "agent::OpenSettings",
       "cmd-alt-l": "agent::OpenRulesLibrary",
       "cmd-alt-p": "agent::ManageProfiles",
@@ -272,7 +271,6 @@
       "shift-tab": "agent::CycleModeSelector",
       "cmd-alt-/": "agent::ToggleModelSelector",
       "alt-tab": "agent::CycleFavoriteModels",
-      "cmd-shift-j": "agent::ToggleNavigationMenu",
       "cmd-alt-m": "agent::ToggleOptionsMenu",
       "cmd-alt-shift-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
