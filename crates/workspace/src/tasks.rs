@@ -431,17 +431,15 @@ mod tests {
         cx.run_until_parked();
 
         assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
-        fixture
-            .workspace
-            .update_in(cx, |_workspace, window, cx| {
-                cx.spawn_in(window, {
-                    let workspace = workspace.clone();
-                    async move |_this, cx| {
-                        Workspace::save_for_task(&workspace, SaveStrategy::All, cx).await;
-                    }
-                })
-                .detach();
-            });
+        fixture.workspace.update_in(cx, |_workspace, window, cx| {
+            cx.spawn_in(window, {
+                let workspace = workspace.clone();
+                async move |_this, cx| {
+                    Workspace::save_for_task(&workspace, SaveStrategy::All, cx).await;
+                }
+            })
+            .detach();
+        });
         cx.run_until_parked();
         assert!(cx.read(|cx| !fixture.item.read(cx).is_dirty));
     }
@@ -453,17 +451,15 @@ mod tests {
         cx.run_until_parked();
 
         assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
-        fixture
-            .workspace
-            .update_in(cx, |_workspace, window, cx| {
-                cx.spawn_in(window, {
-                    let workspace = workspace.clone();
-                    async move |_this, cx| {
-                        Workspace::save_for_task(&workspace, SaveStrategy::None, cx).await;
-                    }
-                })
-                .detach();
-            });
+        fixture.workspace.update_in(cx, |_workspace, window, cx| {
+            cx.spawn_in(window, {
+                let workspace = workspace.clone();
+                async move |_this, cx| {
+                    Workspace::save_for_task(&workspace, SaveStrategy::None, cx).await;
+                }
+            })
+            .detach();
+        });
         cx.run_until_parked();
         assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
     }
@@ -477,17 +473,15 @@ mod tests {
 
         assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
         assert!(cx.read(|cx| inactive.read(cx).is_dirty));
-        fixture
-            .workspace
-            .update_in(cx, |_workspace, window, cx| {
-                cx.spawn_in(window, {
-                    let workspace = workspace.clone();
-                    async move |_this, cx| {
-                        Workspace::save_for_task(&workspace, SaveStrategy::Current, cx).await;
-                    }
-                })
-                .detach();
-            });
+        fixture.workspace.update_in(cx, |_workspace, window, cx| {
+            cx.spawn_in(window, {
+                let workspace = workspace.clone();
+                async move |_this, cx| {
+                    Workspace::save_for_task(&workspace, SaveStrategy::Current, cx).await;
+                }
+            })
+            .detach();
+        });
         cx.run_until_parked();
         assert!(cx.read(|cx| !fixture.item.read(cx).is_dirty));
         assert!(cx.read(|cx| inactive.read(cx).is_dirty));
