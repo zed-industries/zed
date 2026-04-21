@@ -189,14 +189,20 @@ impl Render for TitleBar {
                 .root_name()
                 .file_name()
                 .map(|name| SharedString::from(name.to_string()));
-            linked_worktree_name = repository.as_ref().and_then(|repo| {
+            if let Some(repo) = &repository {
                 let repo = repo.read(cx);
-                linked_worktree_short_name(
+                linked_worktree_name = linked_worktree_short_name(
                     repo.original_repo_abs_path.as_ref(),
                     repo.work_directory_abs_path.as_ref(),
-                )
-                .filter(|name| Some(name) != project_name.as_ref())
-            });
+                );
+                if let Some(name) = repo
+                    .original_repo_abs_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                {
+                    project_name = Some(SharedString::from(name.to_string()));
+                }
+            }
         }
 
         children.push(
