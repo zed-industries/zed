@@ -53,6 +53,7 @@ pub(crate) struct StickyUserMessageState {
     pub(crate) message_index: usize,
     pub(crate) message_preview: String,
     pub(crate) has_more_message_content: bool,
+    pub(crate) top_offset: Pixels,
 }
 
 impl ThreadFeedbackState {
@@ -8965,12 +8966,26 @@ impl ThreadView {
         }
     }
 
-    fn sticky_user_message_hidden_by_next_message(
+    fn sticky_user_message_push_progress(
         next_visible_user_top: Option<Pixels>,
         viewport_top: Pixels,
-    ) -> bool {
-        next_visible_user_top
-            .is_some_and(|top| top < viewport_top + STICKY_USER_MESSAGE_HEADER_HEIGHT)
+    ) -> f32 {
+        let Some(next_top) = next_visible_user_top else {
+            return 1.0;
+        };
+
+        let sticky_bottom = viewport_top + STICKY_USER_MESSAGE_HEADER_HEIGHT;
+        if next_top >= sticky_bottom {
+            1.0
+        } else if next_top <= viewport_top {
+            0.0
+        } else {
+            ((next_top - viewport_top) / STICKY_USER_MESSAGE_HEADER_HEIGHT).clamp(0.0, 1.0)
+        }
+    }
+
+    fn sticky_user_message_top_offset(push_progress: f32) -> Pixels {
+        -STICKY_USER_MESSAGE_HEADER_HEIGHT * (1.0 - push_progress)
     }
 
     pub(crate) fn sticky_user_message_state(&self, cx: &App) -> Option<StickyUserMessageState> {
@@ -9002,12 +9017,17 @@ impl ThreadView {
             ..entries.len())
             .find(|&index| matches!(entries.get(index), Some(AgentThreadEntry::UserMessage(_))));
 
-        if Self::sticky_user_message_hidden_by_next_message(
-            next_visible_user_index
-                .and_then(|index| self.list_state.bounds_for_item(index))
-                .map(|bounds| bounds.top()),
-            viewport_top,
-        ) {
+        let next_visible_user_top = next_visible_user_index
+            .and_then(|index| self.list_state.bounds_for_item(index))
+            .map(|bounds| bounds.top());
+        let push_progress =
+            Self::sticky_user_message_push_progress(next_visible_user_top, viewport_top);
+
+        // A push progress of 0 means the next visible user message has reached the viewport top.
+        // Hide the sticky here so it does not overlap a user message that is itself fully visible —
+        // this is what produces the hard-swap behavior when transitioning from a partially-visible
+        // user message to its sticky replacement.
+        if push_progress <= 0.0 {
             return None;
         }
 
@@ -9023,6 +9043,7 @@ impl ThreadView {
             message_index,
             message_preview,
             has_more_message_content,
+            top_offset: Self::sticky_user_message_top_offset(push_progress),
         })
     }
 
@@ -9036,11 +9057,12 @@ impl ThreadView {
             message_index,
             message_preview,
             has_more_message_content,
+            top_offset,
         } = state;
 
         div()
             .absolute()
-            .top_0()
+            .top(top_offset)
             .left_0()
             .right_0()
             .child(
@@ -11871,10 +11893,6 @@ mod sticky_user_message_tests {
         );
 
         assert_eq!(candidate, Some(0));
-        assert!(ThreadView::sticky_user_message_hidden_by_next_message(
-            Some(viewport_top),
-            viewport_top
-        ));
     }
 
     #[test]
@@ -11894,14 +11912,10 @@ mod sticky_user_message_tests {
         );
 
         assert_eq!(candidate, Some(2));
-        assert!(!ThreadView::sticky_user_message_hidden_by_next_message(
-            None,
-            viewport_top
-        ));
     }
 
     #[test]
-    fn sticky_user_message_hides_when_next_message_enters_sticky_zone() {
+    fn sticky_user_message_is_pushed_out_when_next_message_enters_sticky_zone() {
         let viewport_top = px(100.0);
 
         let candidate = ThreadView::sticky_user_message_candidate_index(
@@ -11913,9 +11927,14 @@ mod sticky_user_message_tests {
         );
 
         assert_eq!(candidate, Some(0));
-        assert!(ThreadView::sticky_user_message_hidden_by_next_message(
+        let push_progress = ThreadView::sticky_user_message_push_progress(
             Some(viewport_top + px(20.0)),
-            viewport_top
-        ));
+            viewport_top,
+        );
+        assert!(push_progress > 0.0 && push_progress < 1.0);
+        assert_eq!(
+            ThreadView::sticky_user_message_top_offset(push_progress),
+            -STICKY_USER_MESSAGE_HEADER_HEIGHT * (1.0 - push_progress)
+        );
     }
 }
