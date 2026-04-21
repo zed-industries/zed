@@ -13,7 +13,7 @@ Upper layer (Zed ui crate, third-party GPUI users)
   div().role(Role::Button).aria_label("Submit")
                     │ annotations
 GPUI Semantic Layer (new)
-  AccessibilityProps on Interactivity
+  Accessibility on Interactivity
   prepaint phase builds AccessibilityFrame
                     │ TreeUpdate
 accesskit (third-party crate)
@@ -34,21 +34,21 @@ Data flows in two directions:
 ```toml
 # crates/gpui/Cargo.toml
 [dependencies]
-accesskit = "0.18"
+accesskit = "0.24"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-accesskit_macos = "0.17"
+accesskit_macos = "0.26"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-accesskit_windows = "0.24"
+accesskit_windows = "0.32"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-accesskit_unix = "0.11"
+accesskit_unix = "0.21"
 ```
 
 ## GPUI Semantic Layer
 
-### `AccessibilityProps` struct
+### `Accessibility` struct
 
 New file: `crates/gpui/src/accessibility.rs`
 
@@ -56,7 +56,7 @@ All fields map 1:1 to WAI-ARIA 1.1 attributes. `Role` and `Live` are re-exported
 
 ```rust
 #[derive(Default, Clone)]
-pub struct AccessibilityProps {
+pub struct Accessibility {
     pub role: Option<Role>,                // role
     pub label: Option<SharedString>,       // aria-label
     pub description: Option<SharedString>, // aria-description
@@ -79,7 +79,7 @@ One new field in `crates/gpui/src/elements/div.rs`:
 ```rust
 pub struct Interactivity {
     // ... all existing fields unchanged ...
-    pub(crate) accessibility: Option<Box<AccessibilityProps>>,
+    pub(crate) accessibility: Option<Box<Accessibility>>,
 }
 ```
 
@@ -281,13 +281,74 @@ fn handle_action_request(request: ActionRequest, window: &mut Window, cx: &mut A
 | File | Change |
 |------|--------|
 | `crates/gpui/Cargo.toml` | Add `accesskit`, `accesskit_macos`, `accesskit_windows`, `accesskit_unix` |
-| `crates/gpui/src/accessibility.rs` | New file: `AccessibilityProps`, `AccessibilityFrame`, `AccessibilityAdapter` trait |
-| `crates/gpui/src/elements/div.rs` | Add `accessibility: Option<Box<AccessibilityProps>>` to `Interactivity`; add 12 builder methods to `InteractiveElement` |
+| `crates/gpui/src/accessibility.rs` | New file: `Accessibility`, `AccessibilityFrame`, `AccessibilityAdapter` trait |
+| `crates/gpui/src/elements/div.rs` | Add `accessibility: Option<Box<Accessibility>>` to `Interactivity`; add 12 builder methods to `InteractiveElement` |
 | `crates/gpui/src/window.rs` | Add `accessibility_adapter`, `accessibility_node_stack`; update `draw` to push `TreeUpdate` |
 | `crates/gpui/src/platform/mac/accessibility.rs` | New file: `MacAccessibilityAdapter` wrapping `accesskit_macos::Adapter` |
 | `crates/gpui/src/platform/windows/accessibility.rs` | New file: Windows adapter |
 | `crates/gpui/src/platform/linux/accessibility.rs` | New file: Linux adapter |
 | `crates/gpui/src/lib.rs` | Re-export `Role`, `Live` from `accesskit` |
+| `crates/gpui/examples/accessibility.rs` | New example: labeled counter + checkboxes + live region; console tree dump for headless verification |
+
+## Verification Example
+
+New file: `crates/gpui/examples/accessibility.rs`
+
+The example renders a small UI with clearly labeled roles and states, then provides two verification paths:
+
+### What the example renders
+
+```
+┌─────────────────────────────────┐
+│  Accessibility Example          │
+│                                 │
+│  [Counter: 3]  [Increment]      │
+│                                 │
+│  ☑ Option A   ☐ Option B        │
+│                                 │
+│  Status: Counter updated to 3   │
+└─────────────────────────────────┘
+```
+
+Elements and their accessibility annotations:
+
+| Element | role | aria_label | other |
+|---------|------|------------|-------|
+| Counter display | `StaticText` | `"Counter value"` | — |
+| Increment button | `Button` | `"Increment counter"` | `aria_disabled` when count ≥ 10 |
+| Checkbox A | `CheckBox` | `"Option A"` | `aria_checked` |
+| Checkbox B | `CheckBox` | `"Option B"` | `aria_checked` |
+| Status div | `Status` | — | `aria_live(Live::Polite)` |
+
+### Verification path 1 — macOS Accessibility Inspector
+
+Run the example, open **Xcode → Accessibility Inspector** (or `/Applications/Xcode.app/.../AccessibilityInspector`), point it at the example window. Expected output:
+
+```
+AXWindow "Accessibility Example"
+  AXStaticText  label="Counter value"   value="3"
+  AXButton      label="Increment counter"  enabled=true
+  AXCheckBox    label="Option A"  value=checked
+  AXCheckBox    label="Option B"  value=unchecked
+  AXGroup       live=polite  label="Status: Counter updated to 3"
+```
+
+Clicking Increment in the Inspector (via its action panel) should increment the counter — this validates the `ActionRequest::Click` → GPUI event routing.
+
+### Verification path 2 — `cargo run` console output
+
+The example prints its own accessibility tree to stdout on each frame so it can be verified without any external tool:
+
+```
+[accessibility] frame:
+  NodeId(1)  role=Button       label="Increment counter"  disabled=false  bounds=(160,60,120,32)
+  NodeId(2)  role=CheckBox     label="Option A"            checked=true    bounds=(40,110,80,20)
+  NodeId(3)  role=CheckBox     label="Option B"            checked=false   bounds=(140,110,80,20)
+  NodeId(4)  role=StaticText   label="Counter value"       value="3"       bounds=(40,60,100,32)
+  NodeId(5)  role=Status       live=polite                                  bounds=(40,150,400,20)
+```
+
+This dump is written by a `#[cfg(debug_assertions)]` hook in `AccessibilityFrame::into_tree_update`, requiring no platform adapter to produce output.
 
 ## Out of Scope
 
