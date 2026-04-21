@@ -125,6 +125,8 @@ pub enum Model {
     Glm5_1,
     #[serde(rename = "kimi-k2.5")]
     KimiK2_5,
+    #[serde(rename = "kimi-k2.6")]
+    KimiK2_6,
     #[serde(rename = "minimax-m2.7")]
     MiniMaxM2_7,
     #[serde(rename = "mimo-v2-pro")]
@@ -176,7 +178,7 @@ impl Model {
     pub fn available_subscriptions(&self) -> &'static [OpenCodeSubscription] {
         match self {
             // Models available in both Zen and Go
-            Self::Glm5 | Self::Glm5_1 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus | Self::Qwen3_6Plus => {
+            Self::Glm5 | Self::Glm5_1 | Self::KimiK2_6 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus | Self::Qwen3_6Plus => {
                 &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go]
             }
 
@@ -232,6 +234,7 @@ impl Model {
             Self::Glm5 => "glm-5",
             Self::Glm5_1 => "glm-5.1",
             Self::KimiK2_5 => "kimi-k2.5",
+            Self::KimiK2_6 => "kimi-k2.6",
             Self::MiniMaxM2_7 => "minimax-m2.7",
             Self::MimoV2Pro => "mimo-v2-pro",
             Self::MimoV2Omni => "mimo-v2-omni",
@@ -280,6 +283,7 @@ impl Model {
             Self::Glm5 => "GLM 5",
             Self::Glm5_1 => "GLM 5.1",
             Self::KimiK2_5 => "Kimi K2.5",
+            Self::KimiK2_6 => "Kimi K2.6",
             Self::MiniMaxM2_7 => "MiniMax M2.7",
             Self::MimoV2Pro => "MiMo V2 Pro",
             Self::MimoV2Omni => "MiMo V2 Omni",
@@ -338,6 +342,7 @@ impl Model {
             | Self::Glm5
             | Self::Glm5_1
             | Self::KimiK2_5
+            | Self::KimiK2_6
             | Self::MimoV2Pro
             | Self::MimoV2Omni
             | Self::Qwen3_5Plus
@@ -379,7 +384,7 @@ impl Model {
             Self::MiniMaxM2_7 => 204_800,
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 204_800,
             Self::Glm5 | Self::Glm5_1 => 204_800,
-            Self::KimiK2_5 => 262_144,
+            Self::KimiK2_6 | Self::KimiK2_5 => 262_144,
             Self::MimoV2Pro => 1_048_576,
             Self::MimoV2Omni => 262_144,
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => 262_144,
@@ -427,7 +432,7 @@ impl Model {
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(131_072),
             Self::Glm5 | Self::Glm5_1 => Some(131_072),
             Self::BigPickle => Some(128_000),
-            Self::KimiK2_5 => Some(65_536),
+            Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => Some(65_536),
             Self::Nemotron3SuperFree => Some(128_000),
             Self::MimoV2Pro | Self::MimoV2Omni => Some(64_000),
@@ -476,7 +481,7 @@ impl Model {
             Self::Gemini3_1Pro | Self::Gemini3Flash => true,
 
             // OpenAI-compatible models with image support
-            Self::KimiK2_5 | Self::MimoV2Omni | Self::Qwen3_5Plus | Self::Qwen3_6Plus => true,
+            Self::KimiK2_6 | Self::KimiK2_5 | Self::MimoV2Omni | Self::Qwen3_5Plus | Self::Qwen3_6Plus => true,
 
             // OpenAI-compatible models without image support
             Self::MiniMaxM2_5
