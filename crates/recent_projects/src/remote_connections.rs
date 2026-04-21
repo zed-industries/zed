@@ -202,6 +202,18 @@ pub async fn open_remote_project(
         );
     }
 
+    if let Some(requesting_window) = open_options.requesting_window {
+        let prompt_task = requesting_window.update(cx, |multi_workspace, window, cx| {
+            let workspace = multi_workspace.workspace().clone();
+            workspace.update(cx, |workspace, cx| {
+                workspace.prompt_for_dirty_scratch_buffers(window, cx)
+            })
+        })?;
+        if !prompt_task.await? {
+            return Ok(requesting_window);
+        }
+    }
+
     let (window, initial_workspace) = if let Some(window) = open_options.requesting_window {
         let workspace = window.update(cx, |multi_workspace, _, _| {
             multi_workspace.workspace().clone()
