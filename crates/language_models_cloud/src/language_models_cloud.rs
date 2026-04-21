@@ -57,7 +57,7 @@ const PROVIDER_NAME: LanguageModelProviderName = ZED_CLOUD_PROVIDER_NAME;
 pub trait CloudLlmTokenProvider: Send + Sync {
     type AuthContext: Clone + Send + 'static;
 
-    fn auth_context(&self, cx: &AsyncApp) -> Self::AuthContext;
+    fn auth_context(&self, cx: &impl AppContext) -> Self::AuthContext;
     fn acquire_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
     fn refresh_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
 }
@@ -405,7 +405,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 let model_id = self.model.id.to_string();
                 let generate_content_request =
                     into_google(request, model_id.clone(), GoogleModelMode::Default);
-                let auth_context = token_provider.auth_context(&cx.to_async());
+                let auth_context = token_provider.auth_context(cx);
                 async move {
                     let token = token_provider.acquire_token(auth_context).await?;
 
@@ -494,6 +494,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 if enable_thinking && effort.is_some() {
                     request.thinking = Some(anthropic::Thinking::Adaptive);
                     request.output_config = Some(anthropic::OutputConfig { effort });
+                }
+
+                if !self.model.supports_fast_mode {
+                    request.speed = None;
                 }
 
                 let http_client = self.http_client.clone();

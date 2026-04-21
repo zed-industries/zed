@@ -39,7 +39,7 @@ pub struct AnthropicSettingsContent {
 pub struct AnthropicAvailableModel {
     /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-latest, claude-3-opus-20240229, etc
     pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the agent panel.
     pub display_name: Option<String>,
     /// The model's context window size.
     pub max_tokens: u64,
@@ -109,7 +109,7 @@ pub struct OllamaSettingsContent {
 pub struct OllamaAvailableModel {
     /// The model name in the Ollama API (e.g. "llama3.2:latest")
     pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the agent panel.
     pub display_name: Option<String>,
     /// The Context Length parameter to the model (aka num_ctx or n_ctx)
     pub max_tokens: u64,
@@ -388,7 +388,7 @@ pub struct ZedDotDevAvailableModel {
     pub provider: ZedDotDevAvailableProvider,
     /// The model's name in the provider's API. e.g. claude-3-5-sonnet-20240620
     pub name: String,
-    /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+    /// The name displayed in the UI, such as in the agent panel model dropdown menu.
     pub display_name: Option<String>,
     /// The size of the context window, indicating the maximum number of tokens the model can process.
     pub max_tokens: usize,

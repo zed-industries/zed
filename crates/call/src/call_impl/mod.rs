@@ -40,7 +40,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             &cx.entity(),
             window,
             move |multi_workspace, _, event: &MultiWorkspaceEvent, window, cx| {
-                if !matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged)
+                if !matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged { .. })
                     && window.is_window_active()
                 {
                     return;

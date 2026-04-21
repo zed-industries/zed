@@ -1298,6 +1298,7 @@ impl ProjectSearchView {
                         this.save(
                             SaveOptions {
                                 format: true,
+                                force_format: false,
                                 autosave: false,
                             },
                             project,

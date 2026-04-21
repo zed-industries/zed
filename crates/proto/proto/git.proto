@@ -577,6 +577,22 @@ message GitGetHeadShaResponse {
   optional string sha = 1;
 }
 
+message GitEditRef {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string ref_name = 3;
+  oneof action {
+    string update_to_commit = 4;
+    DeleteRef delete = 5;
+  }
+  message DeleteRef {}
+}
+
+message GitRepairWorktrees {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
 message GitWorktreesResponse {
   repeated Worktree worktrees = 1;
 }
@@ -586,6 +602,7 @@ message Worktree {
   string ref_name = 2;
   string sha = 3;
   bool is_main = 4;
+  bool is_bare = 5;
 }
 
 message GitCreateWorktree {
@@ -606,10 +623,27 @@ message GitCreateCheckpointResponse {
   bytes commit_sha = 1;
 }
 
+message GitCreateArchiveCheckpoint {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message GitCreateArchiveCheckpointResponse {
+  string staged_commit_sha = 1;
+  string unstaged_commit_sha = 2;
+}
+
 message GitRestoreCheckpoint {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   bytes commit_sha = 3;
+}
+
+message GitRestoreArchiveCheckpoint {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string staged_commit_sha = 3;
+  string unstaged_commit_sha = 4;
 }
 
 message GitCompareCheckpoints {

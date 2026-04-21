@@ -28,7 +28,7 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
             .with_ref(branch.to_string())
     }
 
-    fn bump_patch_version(token: &StepOutput) -> Step<Run> {
+    fn bump_version() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             channel="$(cat crates/zed/RELEASE_CHANNEL)"
 
@@ -45,25 +45,67 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
                 ;;
             esac
             which cargo-set-version > /dev/null || cargo install cargo-edit -f --no-default-features --features "set-version"
-            output="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
-            git commit -am "Bump to $output for @$GITHUB_ACTOR"
-            git tag "v${output}${tag_suffix}"
-            git push origin HEAD "v${output}${tag_suffix}"
+            version="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            echo "tag_suffix=$tag_suffix" >> "$GITHUB_OUTPUT"
         "#})
-        .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
-        .add_env((
-            "GIT_COMMITTER_EMAIL",
-            "234243425+zed-zippy[bot]@users.noreply.github.com",
+        .id("bump-version")
+    }
+
+    fn commit_changes(
+        version: &StepOutput,
+        token: &StepOutput,
+        branch: &WorkflowInput,
+    ) -> Step<Use> {
+        named::uses(
+            "IAreKyleW00t",
+            "verified-bot-commit",
+            "126a6a11889ab05bcff72ec2403c326cd249b84c", // v2.3.0
+        )
+        .id("commit")
+        .add_with((
+            "message",
+            format!("Bump to {version} for @${{{{ github.actor }}}}"),
         ))
-        .add_env(("GIT_AUTHOR_NAME", "Zed Zippy"))
-        .add_env((
-            "GIT_AUTHOR_EMAIL",
-            "234243425+zed-zippy[bot]@users.noreply.github.com",
-        ))
-        .add_env(("GITHUB_TOKEN", token))
+        .add_with(("ref", format!("refs/heads/{branch}")))
+        .add_with(("files", "**"))
+        .add_with(("token", token.to_string()))
+    }
+
+    fn create_version_tag(
+        version: &StepOutput,
+        tag_suffix: &StepOutput,
+        commit_sha: &StepOutput,
+        token: &StepOutput,
+    ) -> Step<Use> {
+        named::uses(
+            "actions",
+            "github-script",
+            "f28e40c7f34bde8b3046d885e986cb6290c5673b", // v7
+        )
+        .with(
+            Input::default()
+                .add(
+                    "script",
+                    indoc::formatdoc! {r#"
+                        github.rest.git.createRef({{
+                            owner: context.repo.owner,
+                            repo: context.repo.repo,
+                            ref: 'refs/tags/v{version}{tag_suffix}',
+                            sha: '{commit_sha}'
+                        }})
+                    "#},
+                )
+                .add("github-token", token.to_string()),
+        )
     }
 
     let (authenticate, token) = steps::authenticate_as_zippy().into();
+    let bump_version_step = bump_version();
+    let version = StepOutput::new(&bump_version_step, "version");
+    let tag_suffix = StepOutput::new(&bump_version_step, "tag_suffix");
+    let commit_step = commit_changes(&version, &token, branch);
+    let commit_sha = StepOutput::new_unchecked(&commit_step, "commit");
 
     named::job(
         Job::default()
@@ -73,6 +115,13 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
             .runs_on(runners::LINUX_XL)
             .add_step(authenticate)
             .add_step(checkout_branch(branch, &token))
-            .add_step(bump_patch_version(&token)),
+            .add_step(bump_version_step)
+            .add_step(commit_step)
+            .add_step(create_version_tag(
+                &version,
+                &tag_suffix,
+                &commit_sha,
+                &token,
+            )),
     )
 }

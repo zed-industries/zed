@@ -7,7 +7,7 @@ use resvg::tiny_skia::Pixmap;
 use smallvec::SmallVec;
 use std::{
     hash::Hash,
-    sync::{Arc, LazyLock},
+    sync::{Arc, LazyLock, OnceLock},
 };
 
 #[cfg(target_os = "macos")]
@@ -111,17 +111,23 @@ impl SvgRenderer {
             Arc::new(db)
         });
 
-        let fontdb = {
-            let mut db = (**SYSTEM_FONT_DB).clone();
-            load_bundled_fonts(&*asset_source, &mut db);
-            fix_generic_font_families(&mut db);
-            Arc::new(db)
-        };
+        // Build the enriched font DB lazily on first SVG render rather than
+        // eagerly at construction time. This avoids the expensive deep-clone
+        // of the system font database for code paths that never render SVGs
+        // (e.g. tests).
+        let enriched_fontdb: Arc<OnceLock<Arc<usvg::fontdb::Database>>> = Arc::new(OnceLock::new());
 
         let default_font_resolver = usvg::FontResolver::default_font_selector();
-        let font_resolver = Box::new(
+        let font_resolver = Box::new({
+            let asset_source = asset_source.clone();
             move |font: &usvg::Font, db: &mut Arc<usvg::fontdb::Database>| {
                 if db.is_empty() {
+                    let fontdb = enriched_fontdb.get_or_init(|| {
+                        let mut db = (**SYSTEM_FONT_DB).clone();
+                        load_bundled_fonts(&*asset_source, &mut db);
+                        fix_generic_font_families(&mut db);
+                        Arc::new(db)
+                    });
                     *db = fontdb.clone();
                 }
                 if let Some(id) = default_font_resolver(font, db) {
@@ -135,8 +141,8 @@ impl SvgRenderer {
                 };
                 db.query(&sans_query)
                     .or_else(|| db.faces().next().map(|f| f.id))
-            },
-        );
+            }
+        });
         let default_fallback_selection = usvg::FontResolver::default_fallback_selector();
         let fallback_selection = Box::new(
             move |ch: char, fonts: &[usvg::fontdb::ID], db: &mut Arc<usvg::fontdb::Database>| {
