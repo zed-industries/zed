@@ -1,5 +1,6 @@
 use ai_onboarding::YoungAccountBanner;
 use anyhow::Result;
+use client::Status;
 use client::{Client, RefreshLlmTokenListener, UserStore, global_llm_token, zed_urls};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::OrganizationId;
@@ -249,11 +250,21 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn is_authenticated(&self, cx: &App) -> bool {
         let state = self.state.read(cx);
-        !state.is_signed_out(cx)
+        let status = *state.client.status().borrow();
+        matches!(status, Status::Authenticated | Status::Connected { .. })
     }
 
-    fn authenticate(&self, _cx: &mut App) -> Task<Result<(), AuthenticateError>> {
-        Task::ready(Ok(()))
+    fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+        let mut status = self.state.read(cx).client.status();
+        if !status.borrow().is_signing_in() {
+            return Task::ready(Ok(()));
+        }
+        cx.background_spawn(async move {
+            while status.borrow().is_signing_in() {
+                status.next().await;
+            }
+            Ok(())
+        })
     }
 
     fn configuration_view(
