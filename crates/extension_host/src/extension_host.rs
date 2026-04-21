@@ -77,7 +77,7 @@ const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 ///
 /// These snippets should no longer be downloaded or loaded, because their
 /// functionality has been integrated into the core editor.
-const SUPPRESSED_EXTENSIONS: &[&str] = &["snippets", "ruff", "ty", "basedpyright"];
+const SUPPRESSED_EXTENSIONS: &[&str] = &["snippets", "ruff", "ty", "basedpyright", "basher"];
 
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
 pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
