@@ -1,14 +1,18 @@
+use std::path::Path;
+
 use crate::{FakeFs, FakeFsEntry, Fs, RemoveOptions, RenameOptions};
 use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
+use git::repository::GitCommitTemplate;
 use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions, FetchOptions,
-        GRAPH_CHUNK_SIZE, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder,
-        LogSource, PushOptions, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions,
+        CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
+        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
+        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -60,6 +64,7 @@ pub struct FakeGitRepositoryState {
     pub remotes: HashMap<String, String>,
     pub simulated_index_write_error_message: Option<String>,
     pub simulated_create_worktree_error: Option<String>,
+    pub simulated_graph_error: Option<String>,
     pub refs: HashMap<String, String>,
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
     pub stash_entries: GitStash,
@@ -77,6 +82,7 @@ impl FakeGitRepositoryState {
             branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
             simulated_create_worktree_error: Default::default(),
+            simulated_graph_error: None,
             refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
             merge_base_contents: Default::default(),
             oids: Default::default(),
@@ -103,6 +109,42 @@ impl FakeGitRepository {
         }
         .boxed()
     }
+
+    fn edit_ref(&self, edit: RefEdit) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            match edit {
+                RefEdit::Update { ref_name, commit } => {
+                    state.refs.insert(ref_name, commit);
+                }
+                RefEdit::Delete { ref_name } => {
+                    state.refs.remove(&ref_name);
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Scans `.git/worktrees/*/gitdir` to find the admin entry directory for a
+    /// worktree at the given checkout path. Used when the working tree directory
+    /// has already been deleted and we can't read its `.git` pointer file.
+    async fn find_worktree_entry_dir_by_path(&self, path: &Path) -> Option<PathBuf> {
+        use futures::StreamExt;
+
+        let worktrees_dir = self.common_dir_path.join("worktrees");
+        let mut entries = self.fs.read_dir(&worktrees_dir).await.ok()?;
+        while let Some(Ok(entry_path)) = entries.next().await {
+            if let Ok(gitdir_content) = self.fs.load(&entry_path.join("gitdir")).await {
+                let worktree_path = PathBuf::from(gitdir_content.trim())
+                    .parent()
+                    .map(PathBuf::from)
+                    .unwrap_or_default();
+                if worktree_path == path {
+                    return Some(entry_path);
+                }
+            }
+        }
+        None
+    }
 }
 
 impl GitRepository for FakeGitRepository {
@@ -128,6 +170,10 @@ impl GitRepository for FakeGitRepository {
                 .cloned()
         });
         self.executor.spawn(async move { fut.await.ok() }).boxed()
+    }
+
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
+        async { Ok(None) }.boxed()
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
@@ -491,6 +537,7 @@ impl GitRepository for FakeGitRepository {
                     ref_name: Some(branch_ref.into()),
                     sha: head_sha.into(),
                     is_main: true,
+                    is_bare: false,
                 };
                 (main_wt, state.refs.clone())
             })?;
@@ -529,6 +576,7 @@ impl GitRepository for FakeGitRepository {
                         ref_name: ref_name.map(Into::into),
                         sha: sha.into(),
                         is_main: false,
+                        is_bare: false,
                     });
                 }
             }
@@ -540,9 +588,8 @@ impl GitRepository for FakeGitRepository {
 
     fn create_worktree(
         &self,
-        branch_name: Option<String>,
+        target: CreateWorktreeTarget,
         path: PathBuf,
-        from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
         let fs = self.fs.clone();
         let executor = self.executor.clone();
@@ -550,30 +597,82 @@ impl GitRepository for FakeGitRepository {
         let common_dir_path = self.common_dir_path.clone();
         async move {
             executor.simulate_random_delay().await;
-            // Check for simulated error and duplicate branch before any side effects.
-            fs.with_git_state(&dot_git_path, false, |state| {
-                if let Some(message) = &state.simulated_create_worktree_error {
-                    anyhow::bail!("{message}");
-                }
-                if let Some(ref name) = branch_name {
-                    if state.branches.contains(name) {
-                        bail!("a branch named '{}' already exists", name);
+
+            let branch_name = target.branch_name().map(ToOwned::to_owned);
+            let create_branch_ref = matches!(target, CreateWorktreeTarget::NewBranch { .. });
+
+            // Check for simulated error and validate branch state before any side effects.
+            fs.with_git_state(&dot_git_path, false, {
+                let branch_name = branch_name.clone();
+                move |state| {
+                    if let Some(message) = &state.simulated_create_worktree_error {
+                        anyhow::bail!("{message}");
                     }
+
+                    match (create_branch_ref, branch_name.as_ref()) {
+                        (true, Some(branch_name)) => {
+                            if state.branches.contains(branch_name) {
+                                bail!("a branch named '{}' already exists", branch_name);
+                            }
+                        }
+                        (false, Some(branch_name)) => {
+                            if !state.branches.contains(branch_name) {
+                                bail!("no branch named '{}' exists", branch_name);
+                            }
+                        }
+                        (false, None) => {}
+                        (true, None) => bail!("branch name is required to create a branch"),
+                    }
+
+                    Ok(())
                 }
-                Ok(())
             })??;
+
+            let (branch_name, sha, create_branch_ref) = match target {
+                CreateWorktreeTarget::ExistingBranch { branch_name } => {
+                    let ref_name = format!("refs/heads/{branch_name}");
+                    let sha = fs.with_git_state(&dot_git_path, false, {
+                        move |state| {
+                            Ok::<_, anyhow::Error>(
+                                state
+                                    .refs
+                                    .get(&ref_name)
+                                    .cloned()
+                                    .unwrap_or_else(|| "fake-sha".to_string()),
+                            )
+                        }
+                    })??;
+                    (Some(branch_name), sha, false)
+                }
+                CreateWorktreeTarget::NewBranch {
+                    branch_name,
+                    base_sha: start_point,
+                } => (
+                    Some(branch_name),
+                    start_point.unwrap_or_else(|| "fake-sha".to_string()),
+                    true,
+                ),
+                CreateWorktreeTarget::Detached {
+                    base_sha: start_point,
+                } => (
+                    None,
+                    start_point.unwrap_or_else(|| "fake-sha".to_string()),
+                    false,
+                ),
+            };
 
             // Create the worktree checkout directory.
             fs.create_dir(&path).await?;
 
             // Create .git/worktrees/<name>/ directory with HEAD, commondir, gitdir.
-            let worktree_entry_name = branch_name
-                .as_deref()
-                .unwrap_or_else(|| path.file_name().unwrap().to_str().unwrap());
+            let worktree_entry_name = branch_name.as_deref().unwrap_or_else(|| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("detached")
+            });
             let worktrees_entry_dir = common_dir_path.join("worktrees").join(worktree_entry_name);
             fs.create_dir(&worktrees_entry_dir).await?;
 
-            let sha = from_commit.unwrap_or_else(|| "fake-sha".to_string());
             let head_content = if let Some(ref branch_name) = branch_name {
                 let ref_name = format!("refs/heads/{branch_name}");
                 format!("ref: {ref_name}")
@@ -604,15 +703,22 @@ impl GitRepository for FakeGitRepository {
                 false,
             )?;
 
-            // Update git state: add ref and branch.
-            fs.with_git_state(&dot_git_path, true, move |state| {
-                if let Some(branch_name) = branch_name {
-                    let ref_name = format!("refs/heads/{branch_name}");
-                    state.refs.insert(ref_name, sha);
-                    state.branches.insert(branch_name);
-                }
-                Ok::<(), anyhow::Error>(())
-            })??;
+            // Update git state for newly created branches.
+            if create_branch_ref {
+                fs.with_git_state(&dot_git_path, true, {
+                    let branch_name = branch_name.clone();
+                    let sha = sha.clone();
+                    move |state| {
+                        if let Some(branch_name) = branch_name {
+                            let ref_name = format!("refs/heads/{branch_name}");
+                            state.refs.insert(ref_name, sha);
+                            state.branches.insert(branch_name);
+                        }
+                        Ok::<(), anyhow::Error>(())
+                    }
+                })??;
+            }
+
             Ok(())
         }
         .boxed()
@@ -625,24 +731,30 @@ impl GitRepository for FakeGitRepository {
         async move {
             executor.simulate_random_delay().await;
 
-            // Read the worktree's .git file to find its entry directory.
+            // Try to read the worktree's .git file to find its entry
+            // directory. If the working tree is already gone (e.g. the
+            // caller deleted it before asking git to clean up), fall back
+            // to scanning `.git/worktrees/*/gitdir` for a matching path,
+            // mirroring real git's behavior with `--force`.
             let dot_git_file = path.join(".git");
-            let content = fs
-                .load(&dot_git_file)
-                .await
-                .with_context(|| format!("no worktree found at path: {}", path.display()))?;
-            let gitdir = content
-                .strip_prefix("gitdir:")
-                .context("invalid .git file in worktree")?
-                .trim();
-            let worktree_entry_dir = PathBuf::from(gitdir);
+            let worktree_entry_dir = if let Ok(content) = fs.load(&dot_git_file).await {
+                let gitdir = content
+                    .strip_prefix("gitdir:")
+                    .context("invalid .git file in worktree")?
+                    .trim();
+                PathBuf::from(gitdir)
+            } else {
+                self.find_worktree_entry_dir_by_path(&path)
+                    .await
+                    .with_context(|| format!("no worktree found at path: {}", path.display()))?
+            };
 
-            // Remove the worktree checkout directory.
+            // Remove the worktree checkout directory if it still exists.
             fs.remove_dir(
                 &path,
                 RemoveOptions {
                     recursive: true,
-                    ignore_if_not_exists: false,
+                    ignore_if_not_exists: true,
                 },
             )
             .await?;
@@ -720,6 +832,15 @@ impl GitRepository for FakeGitRepository {
             Ok(())
         }
         .boxed()
+    }
+
+    fn checkout_branch_in_worktree(
+        &self,
+        _branch_name: String,
+        _worktree_path: PathBuf,
+        _create: bool,
+    ) -> BoxFuture<'_, Result<()>> {
+        async { Ok(()) }.boxed()
     }
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
@@ -1118,6 +1239,39 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn create_archive_checkpoint(&self) -> BoxFuture<'_, Result<(String, String)>> {
+        let executor = self.executor.clone();
+        let fs = self.fs.clone();
+        let checkpoints = self.checkpoints.clone();
+        let repository_dir_path = self.repository_dir_path.parent().unwrap().to_path_buf();
+        async move {
+            executor.simulate_random_delay().await;
+            let staged_oid = git::Oid::random(&mut *executor.rng().lock());
+            let unstaged_oid = git::Oid::random(&mut *executor.rng().lock());
+            let entry = fs.entry(&repository_dir_path)?;
+            checkpoints.lock().insert(staged_oid, entry.clone());
+            checkpoints.lock().insert(unstaged_oid, entry);
+            Ok((staged_oid.to_string(), unstaged_oid.to_string()))
+        }
+        .boxed()
+    }
+
+    fn restore_archive_checkpoint(
+        &self,
+        // The fake filesystem doesn't model a separate index, so only the
+        // unstaged (full working directory) snapshot is restored.
+        _staged_sha: String,
+        unstaged_sha: String,
+    ) -> BoxFuture<'_, Result<()>> {
+        match unstaged_sha.parse() {
+            Ok(commit_sha) => self.restore_checkpoint(GitRepositoryCheckpoint { commit_sha }),
+            Err(error) => async move {
+                Err(anyhow::anyhow!(error).context("failed to parse unstaged SHA as Oid"))
+            }
+            .boxed(),
+        }
+    }
+
     fn compare_checkpoints(
         &self,
         left: GitRepositoryCheckpoint,
@@ -1268,8 +1422,17 @@ impl GitRepository for FakeGitRepository {
         let fs = self.fs.clone();
         let dot_git_path = self.dot_git_path.clone();
         async move {
-            let graph_commits =
-                fs.with_git_state(&dot_git_path, false, |state| state.graph_commits.clone())?;
+            let (graph_commits, simulated_error) =
+                fs.with_git_state(&dot_git_path, false, |state| {
+                    (
+                        state.graph_commits.clone(),
+                        state.simulated_graph_error.clone(),
+                    )
+                })?;
+
+            if let Some(error) = simulated_error {
+                anyhow::bail!("{}", error);
+            }
 
             for chunk in graph_commits.chunks(GRAPH_CHUNK_SIZE) {
                 request_tx.send(chunk.to_vec()).await.ok();
@@ -1293,17 +1456,11 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
-        self.with_state_async(true, move |state| {
-            state.refs.insert(ref_name, commit);
-            Ok(())
-        })
+        self.edit_ref(RefEdit::Update { ref_name, commit })
     }
 
     fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>> {
-        self.with_state_async(true, move |state| {
-            state.refs.remove(&ref_name);
-            Ok(())
-        })
+        self.edit_ref(RefEdit::Delete { ref_name })
     }
 
     fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>> {

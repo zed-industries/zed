@@ -57,8 +57,8 @@ impl DockerInspectConfig {
         let mut map = HashMap::new();
         for env_var in &self.env {
             let Some((key, value)) = env_var.split_once('=') else {
-                log::error!("Unable to parse {env_var} into an environment key-value");
-                return Err(DevContainerError::DevContainerParseFailed);
+                log::warn!("Skipping environment variable without a value: {env_var}");
+                continue;
             };
             map.insert(key.to_string(), value.to_string());
         }
@@ -79,6 +79,8 @@ pub(crate) struct DockerComposeServiceBuild {
     pub(crate) context: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) dockerfile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) target: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) args: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -173,6 +175,7 @@ pub(crate) struct DockerComposeConfig {
 
 pub(crate) struct Docker {
     docker_cli: String,
+    has_buildx: bool,
 }
 
 impl DockerInspect {
@@ -182,9 +185,24 @@ impl DockerInspect {
 }
 
 impl Docker {
-    pub(crate) fn new(docker_cli: &str) -> Self {
+    pub(crate) async fn new(docker_cli: &str) -> Self {
+        let has_buildx = if docker_cli == "podman" {
+            false
+        } else {
+            let output = Command::new(docker_cli)
+                .args(["buildx", "version"])
+                .output()
+                .await;
+            output.map(|o| o.status.success()).unwrap_or(false)
+        };
+        if !has_buildx && docker_cli != "podman" {
+            log::info!(
+                "docker buildx not found; dev container builds will use the scratch-image fallback"
+            );
+        }
         Self {
             docker_cli: docker_cli.to_string(),
+            has_buildx,
         }
     }
 
@@ -194,7 +212,7 @@ impl Docker {
 
     async fn pull_image(&self, image: &String) -> Result<(), DevContainerError> {
         let mut command = Command::new(&self.docker_cli);
-        command.args(&["pull", image]);
+        command.args(&["pull", "--", image]);
 
         let output = command.output().await.map_err(|e| {
             log::error!("Error pulling image: {e}");
@@ -370,7 +388,7 @@ impl DockerClient for Docker {
     }
 
     fn supports_compose_buildkit(&self) -> bool {
-        !self.is_podman()
+        self.has_buildx
     }
 }
 
@@ -485,45 +503,23 @@ where
     let s: Option<String> = Option::deserialize(deserializer)?;
     match s {
         Some(json_string) => {
+            // The devcontainer metadata label can be either a JSON array (e.g. from
+            // image-based devcontainers) or a single JSON object (e.g. from
+            // docker-compose-based devcontainers created by the devcontainer CLI).
+            // Handle both formats.
             let parsed: Vec<HashMap<String, serde_json_lenient::Value>> =
-                serde_json_lenient::from_str(&json_string).map_err(|e| {
-                    log::error!("Error deserializing metadata: {e}");
-                    serde::de::Error::custom(e)
+                serde_json_lenient::from_str(&json_string).or_else(|_| {
+                    let single: HashMap<String, serde_json_lenient::Value> =
+                        serde_json_lenient::from_str(&json_string).map_err(|e| {
+                            log::error!("Error deserializing metadata: {e}");
+                            serde::de::Error::custom(e)
+                        })?;
+                    Ok(vec![single])
                 })?;
             Ok(Some(parsed))
         }
         None => Ok(None),
     }
-}
-
-pub(crate) fn get_remote_dir_from_config(
-    config: &DockerInspect,
-    local_dir: String,
-) -> Result<String, DevContainerError> {
-    let local_path = PathBuf::from(&local_dir);
-
-    let Some(mounts) = &config.mounts else {
-        log::error!("No mounts defined for container");
-        return Err(DevContainerError::ContainerNotValid(config.id.clone()));
-    };
-
-    for mount in mounts {
-        // Sometimes docker will mount the local filesystem on host_mnt for system isolation
-        let mount_source = PathBuf::from(&mount.source.trim_start_matches("/host_mnt"));
-        if let Ok(relative_path_to_project) = local_path.strip_prefix(&mount_source) {
-            let remote_dir = format!(
-                "{}/{}",
-                &mount.destination,
-                relative_path_to_project.display()
-            );
-            return Ok(remote_dir);
-        }
-        if mount.source == local_dir {
-            return Ok(mount.destination.clone());
-        }
-    }
-    log::error!("No mounts to local folder");
-    Err(DevContainerError::ContainerNotValid(config.id.clone()))
 }
 
 #[cfg(test)]
@@ -539,7 +535,7 @@ mod test {
         devcontainer_json::MountDefinition,
         docker::{
             Docker, DockerComposeConfig, DockerComposeService, DockerComposeServicePort,
-            DockerComposeVolume, DockerInspect, DockerPs, get_remote_dir_from_config,
+            DockerComposeVolume, DockerInspect, DockerPs,
         },
     };
 
@@ -568,6 +564,44 @@ mod test {
     }
 
     #[test]
+    fn should_parse_database_url_with_equals_in_query_string() {
+        let config = super::DockerInspectConfig {
+            labels: super::DockerConfigLabels { metadata: None },
+            image_user: None,
+            env: vec![
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
+                "TEST_DATABASE_URL=postgres://postgres:postgres@db:5432/mydb?sslmode=disable"
+                    .to_string(),
+            ],
+        };
+
+        let map = config.env_as_map().unwrap();
+        assert_eq!(
+            map.get("TEST_DATABASE_URL").unwrap(),
+            "postgres://postgres:postgres@db:5432/mydb?sslmode=disable"
+        );
+    }
+
+    #[test]
+    fn should_skip_env_var_without_equals() {
+        let config = super::DockerInspectConfig {
+            labels: super::DockerConfigLabels { metadata: None },
+            image_user: None,
+            env: vec![
+                "VALID_KEY=valid_value".to_string(),
+                "NO_EQUALS_VAR".to_string(),
+                "ANOTHER_VALID=value".to_string(),
+            ],
+        };
+
+        let map = config.env_as_map().unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("VALID_KEY").unwrap(), "valid_value");
+        assert_eq!(map.get("ANOTHER_VALID").unwrap(), "value");
+        assert!(!map.contains_key("NO_EQUALS_VAR"));
+    }
+
+    #[test]
     fn should_parse_simple_label() {
         let json = r#"{"volumes": [], "labels": ["com.example.key=value"]}"#;
         let service: DockerComposeService = serde_json_lenient::from_str(json).unwrap();
@@ -585,7 +619,10 @@ mod test {
 
     #[test]
     fn should_create_docker_inspect_command() {
-        let docker = Docker::new("docker");
+        let docker = Docker {
+            docker_cli: "docker".to_string(),
+            has_buildx: false,
+        };
         let given_id = "given_docker_id";
 
         let command = docker.create_docker_inspect(given_id);
@@ -682,256 +719,27 @@ mod test {
     }
 
     #[test]
-    fn should_get_target_dir_from_docker_inspect() {
+    fn should_deserialize_object_metadata_from_docker_compose_container() {
+        // The devcontainer CLI writes metadata as a bare JSON object (not an array)
+        // when there is only one metadata entry (e.g. docker-compose with no features).
+        // See https://github.com/devcontainers/cli/issues/1054
         let given_config = r#"
     {
-      "Id": "abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85",
-      "Created": "2026-02-04T23:44:21.802688084Z",
-      "Path": "/bin/sh",
-      "Args": [
-        "-c",
-        "echo Container started\ntrap \"exit 0\" 15\n\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done",
-        "-"
-      ],
-      "State": {
-        "Status": "running",
-        "Running": true,
-        "Paused": false,
-        "Restarting": false,
-        "OOMKilled": false,
-        "Dead": false,
-        "Pid": 23087,
-        "ExitCode": 0,
-        "Error": "",
-        "StartedAt": "2026-02-04T23:44:21.954875084Z",
-        "FinishedAt": "0001-01-01T00:00:00Z"
-      },
-      "Image": "sha256:3dcb059253b2ebb44de3936620e1cff3dadcd2c1c982d579081ca8128c1eb319",
-      "ResolvConfPath": "/var/lib/docker/containers/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85/resolv.conf",
-      "HostnamePath": "/var/lib/docker/containers/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85/hostname",
-      "HostsPath": "/var/lib/docker/containers/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85/hosts",
-      "LogPath": "/var/lib/docker/containers/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85/abdb6ab59573659b11dac9f4973796741be35b642c9b48960709304ce46dbf85-json.log",
-      "Name": "/objective_haslett",
-      "RestartCount": 0,
-      "Driver": "overlayfs",
-      "Platform": "linux",
-      "MountLabel": "",
-      "ProcessLabel": "",
-      "AppArmorProfile": "",
-      "ExecIDs": [
-        "008019d93df4107fcbba78bcc6e1ed7e121844f36c26aca1a56284655a6adb53"
-      ],
-      "HostConfig": {
-        "Binds": null,
-        "ContainerIDFile": "",
-        "LogConfig": {
-          "Type": "json-file",
-          "Config": {}
-        },
-        "NetworkMode": "bridge",
-        "PortBindings": {},
-        "RestartPolicy": {
-          "Name": "no",
-          "MaximumRetryCount": 0
-        },
-        "AutoRemove": false,
-        "VolumeDriver": "",
-        "VolumesFrom": null,
-        "ConsoleSize": [
-          0,
-          0
-        ],
-        "CapAdd": null,
-        "CapDrop": null,
-        "CgroupnsMode": "private",
-        "Dns": [],
-        "DnsOptions": [],
-        "DnsSearch": [],
-        "ExtraHosts": null,
-        "GroupAdd": null,
-        "IpcMode": "private",
-        "Cgroup": "",
-        "Links": null,
-        "OomScoreAdj": 0,
-        "PidMode": "",
-        "Privileged": false,
-        "PublishAllPorts": false,
-        "ReadonlyRootfs": false,
-        "SecurityOpt": null,
-        "UTSMode": "",
-        "UsernsMode": "",
-        "ShmSize": 67108864,
-        "Runtime": "runc",
-        "Isolation": "",
-        "CpuShares": 0,
-        "Memory": 0,
-        "NanoCpus": 0,
-        "CgroupParent": "",
-        "BlkioWeight": 0,
-        "BlkioWeightDevice": [],
-        "BlkioDeviceReadBps": [],
-        "BlkioDeviceWriteBps": [],
-        "BlkioDeviceReadIOps": [],
-        "BlkioDeviceWriteIOps": [],
-        "CpuPeriod": 0,
-        "CpuQuota": 0,
-        "CpuRealtimePeriod": 0,
-        "CpuRealtimeRuntime": 0,
-        "CpusetCpus": "",
-        "CpusetMems": "",
-        "Devices": [],
-        "DeviceCgroupRules": null,
-        "DeviceRequests": null,
-        "MemoryReservation": 0,
-        "MemorySwap": 0,
-        "MemorySwappiness": null,
-        "OomKillDisable": null,
-        "PidsLimit": null,
-        "Ulimits": [],
-        "CpuCount": 0,
-        "CpuPercent": 0,
-        "IOMaximumIOps": 0,
-        "IOMaximumBandwidth": 0,
-        "Mounts": [
-          {
-            "Type": "bind",
-            "Source": "/somepath/cli",
-            "Target": "/workspaces/cli",
-            "Consistency": "cached"
-          }
-        ],
-        "MaskedPaths": [
-          "/proc/asound",
-          "/proc/acpi",
-          "/proc/interrupts",
-          "/proc/kcore",
-          "/proc/keys",
-          "/proc/latency_stats",
-          "/proc/timer_list",
-          "/proc/timer_stats",
-          "/proc/sched_debug",
-          "/proc/scsi",
-          "/sys/firmware",
-          "/sys/devices/virtual/powercap"
-        ],
-        "ReadonlyPaths": [
-          "/proc/bus",
-          "/proc/fs",
-          "/proc/irq",
-          "/proc/sys",
-          "/proc/sysrq-trigger"
-        ]
-      },
-      "GraphDriver": {
-        "Data": null,
-        "Name": "overlayfs"
-      },
-      "Mounts": [
-        {
-          "Type": "bind",
-          "Source": "/somepath/cli",
-          "Destination": "/workspaces/cli",
-          "Mode": "",
-          "RW": true,
-          "Propagation": "rprivate"
-        }
-      ],
+      "Id": "dc4e7b8ff4bf",
       "Config": {
-        "Hostname": "abdb6ab59573",
-        "Domainname": "",
-        "User": "root",
-        "AttachStdin": false,
-        "AttachStdout": true,
-        "AttachStderr": true,
-        "Tty": false,
-        "OpenStdin": false,
-        "StdinOnce": false,
-        "Env": [
-          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-        ],
-        "Cmd": [
-          "-c",
-          "echo Container started\ntrap \"exit 0\" 15\n\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done",
-          "-"
-        ],
-        "Image": "mcr.microsoft.com/devcontainers/base:ubuntu",
-        "Volumes": null,
-        "WorkingDir": "",
-        "Entrypoint": [
-          "/bin/sh"
-        ],
-        "OnBuild": null,
         "Labels": {
-          "dev.containers.features": "common",
-          "dev.containers.id": "base-ubuntu",
-          "dev.containers.release": "v0.4.24",
-          "dev.containers.source": "https://github.com/devcontainers/images",
-          "dev.containers.timestamp": "Fri, 30 Jan 2026 16:52:34 GMT",
-          "dev.containers.variant": "noble",
-          "devcontainer.config_file": "/somepath/cli/.devcontainer/dev_container_2/devcontainer.json",
-          "devcontainer.local_folder": "/somepath/cli",
-          "devcontainer.metadata": "[{\"id\":\"ghcr.io/devcontainers/features/common-utils:2\"},{\"id\":\"ghcr.io/devcontainers/features/git:1\",\"customizations\":{\"vscode\":{\"settings\":{\"github.copilot.chat.codeGeneration.instructions\":[{\"text\":\"This dev container includes an up-to-date version of Git, built from source as needed, pre-installed and available on the `PATH`.\"}]}}}},{\"remoteUser\":\"vscode\"}]",
-          "org.opencontainers.image.ref.name": "ubuntu",
-          "org.opencontainers.image.version": "24.04",
-          "version": "2.1.6"
-        },
-        "StopTimeout": 1
-      },
-      "NetworkSettings": {
-        "Bridge": "",
-        "SandboxID": "2a94990d542fe532deb75f1cc67f761df2d669e3b41161f914079e88516cc54b",
-        "SandboxKey": "/var/run/docker/netns/2a94990d542f",
-        "Ports": {},
-        "HairpinMode": false,
-        "LinkLocalIPv6Address": "",
-        "LinkLocalIPv6PrefixLen": 0,
-        "SecondaryIPAddresses": null,
-        "SecondaryIPv6Addresses": null,
-        "EndpointID": "ef5b35a8fbb145565853e1a1d960e737fcc18c20920e96494e4c0cfc55683570",
-        "Gateway": "172.17.0.1",
-        "GlobalIPv6Address": "",
-        "GlobalIPv6PrefixLen": 0,
-        "IPAddress": "172.17.0.3",
-        "IPPrefixLen": 16,
-        "IPv6Gateway": "",
-        "MacAddress": "",
-        "Networks": {
-          "bridge": {
-            "IPAMConfig": null,
-            "Links": null,
-            "Aliases": null,
-            "MacAddress": "9a:ec:af:8a:ac:81",
-            "DriverOpts": null,
-            "GwPriority": 0,
-            "NetworkID": "51bb8ccc4d1281db44f16d915963fc728619d4a68e2f90e5ea8f1cb94885063e",
-            "EndpointID": "ef5b35a8fbb145565853e1a1d960e737fcc18c20920e96494e4c0cfc55683570",
-            "Gateway": "172.17.0.1",
-            "IPAddress": "172.17.0.3",
-            "IPPrefixLen": 16,
-            "IPv6Gateway": "",
-            "GlobalIPv6Address": "",
-            "GlobalIPv6PrefixLen": 0,
-            "DNSNames": null
-          }
-        }
-      },
-      "ImageManifestDescriptor": {
-        "mediaType": "application/vnd.oci.image.manifest.v1+json",
-        "digest": "sha256:39c3436527190561948236894c55b59fa58aa08d68d8867e703c8d5ab72a3593",
-        "size": 2195,
-        "platform": {
-          "architecture": "arm64",
-          "os": "linux"
+          "devcontainer.metadata": "{\"remoteUser\":\"ubuntu\"}"
         }
       }
     }
                 "#;
         let config = serde_json_lenient::from_str::<DockerInspect>(given_config).unwrap();
 
-        let target_dir = get_remote_dir_from_config(&config, "/somepath/cli".to_string());
-
-        assert!(target_dir.is_ok());
-        assert_eq!(target_dir.unwrap(), "/workspaces/cli/".to_string());
+        assert!(config.config.labels.metadata.is_some());
+        let metadata = config.config.labels.metadata.unwrap();
+        assert_eq!(metadata.len(), 1);
+        assert!(metadata[0].contains_key("remoteUser"));
+        assert_eq!(metadata[0]["remoteUser"], "ubuntu");
     }
 
     #[test]

@@ -324,7 +324,7 @@ impl CommitModal {
                 }
             })
             .with_handle(self.commit_menu_handle.clone())
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
     }
 
     pub fn render_footer(&self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -392,7 +392,7 @@ impl CommitModal {
                 branch_picker_button,
                 Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
             )
-            .anchor(Corner::BottomLeft)
+            .anchor(Anchor::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),
