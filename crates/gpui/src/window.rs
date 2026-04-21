@@ -963,7 +963,6 @@ pub struct Window {
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
-    rounding_debug_last: RefCell<FxHashMap<String, String>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
@@ -1575,7 +1574,6 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
-            rounding_debug_last: RefCell::new(FxHashMap::default()),
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
@@ -3498,28 +3496,6 @@ impl Window {
         let snapped_bounds = self.snap_edges(raw_bounds);
         let snapped_border_widths = self.snap_border_widths(quad.border_widths);
 
-        self.log_rounding_debug("quad", || {
-            format!(
-                "raw=({:.2},{:.2} {:.2}x{:.2}) snap=({:.0},{:.0} {:.0}x{:.0}) bw={:.2},{:.2},{:.2},{:.2}->{:.0},{:.0},{:.0},{:.0}",
-                raw_bounds.origin.x.0,
-                raw_bounds.origin.y.0,
-                raw_bounds.size.width.0,
-                raw_bounds.size.height.0,
-                snapped_bounds.origin.x.0,
-                snapped_bounds.origin.y.0,
-                snapped_bounds.size.width.0,
-                snapped_bounds.size.height.0,
-                quad.border_widths.top.0,
-                quad.border_widths.right.0,
-                quad.border_widths.bottom.0,
-                quad.border_widths.left.0,
-                snapped_border_widths.top.0,
-                snapped_border_widths.right.0,
-                snapped_border_widths.bottom.0,
-                snapped_border_widths.left.0,
-            )
-        });
-
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
             bounds: snapped_bounds,
@@ -3688,25 +3664,6 @@ impl Window {
                 size: tile.bounds.size.map(Into::into),
             };
 
-            if Self::rounding_debug_glyphs_enabled() {
-                self.log_rounding_debug("glyph", || {
-                    format!(
-                        "id={glyph_id:?} line=({:.2},{:.2}) glyph=({:.2},{:.2}) dev=({:.0},{:.0} {:.0}x{:.0}) size={:.2} phase={},{}",
-                        origin.x.0,
-                        origin.y.0,
-                        glyph_origin.x.0,
-                        glyph_origin.y.0,
-                        bounds.origin.x.0,
-                        bounds.origin.y.0,
-                        bounds.size.width.0,
-                        bounds.size.height.0,
-                        font_size.0,
-                        subpixel_variant.x,
-                        subpixel_variant.y,
-                    )
-                });
-            }
-
             let content_mask = self.outset_content_mask(self.content_mask());
 
             if subpixel_rendering {
@@ -3741,9 +3698,9 @@ impl Window {
     pub fn paint_glyph_with_raster_bounds(
         &mut self,
         origin: Point<Pixels>,
-        font_id: FontId,
-        glyph_id: GlyphId,
-        font_size: Pixels,
+        _font_id: FontId,
+        _glyph_id: GlyphId,
+        _font_size: Pixels,
         color: Hsla,
         raster_bounds: Bounds<DevicePixels>,
         params: &RenderGlyphParams,
@@ -3766,25 +3723,6 @@ impl Window {
                 origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
-
-            if Self::rounding_debug_glyphs_enabled() {
-                self.log_rounding_debug("glyph-precomputed", || {
-                    format!(
-                        "id={glyph_id:?} font={font_id:?} line=({:.2},{:.2}) glyph=({:.2},{:.2}) dev=({:.0},{:.0} {:.0}x{:.0}) size={:.2} phase={},{}",
-                        origin.x.0,
-                        origin.y.0,
-                        glyph_origin.x.0,
-                        glyph_origin.y.0,
-                        bounds.origin.x.0,
-                        bounds.origin.y.0,
-                        bounds.size.width.0,
-                        bounds.size.height.0,
-                        font_size.0,
-                        params.subpixel_variant.x,
-                        params.subpixel_variant.y,
-                    )
-                });
-            }
 
             let content_mask = self.content_mask().scale(scale_factor);
             self.next_frame.scene.insert_primitive(MonochromeSprite {
@@ -3948,23 +3886,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
-        let raw_bounds = bounds;
-        let path_for_log = path.clone();
-        let bounds = self.snap_edges(raw_bounds);
-
-        self.log_rounding_debug("svg", || {
-            format!(
-                "path={path_for_log} raw=({:.2},{:.2} {:.2}x{:.2}) snap=({:.0},{:.0} {:.0}x{:.0})",
-                raw_bounds.origin.x.0,
-                raw_bounds.origin.y.0,
-                raw_bounds.size.width.0,
-                raw_bounds.size.height.0,
-                bounds.origin.x.0,
-                bounds.origin.y.0,
-                bounds.size.width.0,
-                bounds.size.height.0,
-            )
-        });
+        let bounds = self.snap_edges(bounds);
 
         let params = RenderSvgParams {
             path,
@@ -4180,19 +4102,6 @@ impl Window {
             .map(Into::into);
         let snapped_offset = self.pixel_snap_point(self.element_offset());
         bounds.origin += snapped_offset;
-
-        self.log_rounding_debug("layout", || {
-            format!(
-                "rect=({:.2},{:.2} {:.2}x{:.2}) off=({:.2},{:.2})",
-                bounds.origin.x.0,
-                bounds.origin.y.0,
-                bounds.size.width.0,
-                bounds.size.height.0,
-                snapped_offset.x.0,
-                snapped_offset.y.0,
-            )
-        });
-
         bounds
     }
 
