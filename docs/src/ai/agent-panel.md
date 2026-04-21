@@ -44,7 +44,7 @@ From the "New Thread…" menu you can:
 
 When an external-agent thread is focused, {#action agent::NewExternalAgentThread} creates another thread with the same external agent.
 
-You can also start a new thread from the [Threads Sidebar](./parallel-agents.md#threads-sidebar), scoped to a specific workspace — see [Running Multiple Threads](./parallel-agents.md#running-multiple-threads).
+You can also start a new thread from the [Threads Sidebar](./parallel-agents.md#threads-sidebar), scoped to a specific project — see [Running Multiple Threads](./parallel-agents.md#running-multiple-threads).
 
 ### Managing Multiple Threads {#multiple-threads}
 

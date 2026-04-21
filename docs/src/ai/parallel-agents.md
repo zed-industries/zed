@@ -56,7 +56,7 @@ To add another project to the sidebar, click the **Add Project** button (open-fo
 A single project can contain multiple folders (a multi-root folder project). Agents can then read and write across all of those folders in a single thread. There are two ways to set one up:
 
 - **From the sidebar:** Click the **Add Project** button, choose **Add Local Folders**, and select multiple folders in the file picker. They open together as one multi-root project.
-- **From the title bar:** Click the project picker (the leftmost project name). For any local entry in the recent projects list, hover it and click the folder-with-plus icon (**Add Project to this Workspace**) to merge that project's folders into the current workspace.
+- **From the title bar:** Click the project picker (the leftmost project name). For any local entry in the recent projects list, hover it and click the folder-with-plus icon (**Add Folder to this Project**) to merge that project's folders into the current project.
 
 ## Worktree Isolation {#worktree-isolation}
 
