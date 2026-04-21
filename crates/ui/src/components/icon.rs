@@ -113,6 +113,7 @@ impl From<IconName> for Icon {
 }
 
 /// The source of an icon.
+#[derive(Clone)]
 enum IconSource {
     /// An SVG embedded in the Zed binary.
     Embedded(SharedString),
@@ -126,7 +127,7 @@ enum IconSource {
     ExternalSvg(SharedString),
 }
 
-#[derive(IntoElement, RegisterComponent)]
+#[derive(Clone, IntoElement, RegisterComponent)]
 pub struct Icon {
     source: IconSource,
     color: Color,

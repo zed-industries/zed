@@ -24,6 +24,8 @@ pub struct EditorSettings {
     pub lsp_highlight_debounce: DelayMs,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: DelayMs,
+    pub hover_popover_sticky: bool,
+    pub hover_popover_hiding_delay: DelayMs,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub minimap: Minimap,
@@ -33,6 +35,7 @@ pub struct EditorSettings {
     pub autoscroll_on_clicks: bool,
     pub horizontal_scroll_margin: f32,
     pub scroll_sensitivity: f32,
+    pub mouse_wheel_zoom: bool,
     pub fast_scroll_sensitivity: f32,
     pub sticky_scroll: StickyScroll,
     pub relative_line_numbers: RelativeLineNumbers,
@@ -130,6 +133,7 @@ pub struct Gutter {
     pub line_numbers: bool,
     pub runnables: bool,
     pub breakpoints: bool,
+    pub bookmarks: bool,
     pub folds: bool,
 }
 
@@ -204,6 +208,8 @@ impl Settings for EditorSettings {
             lsp_highlight_debounce: editor.lsp_highlight_debounce.unwrap(),
             hover_popover_enabled: editor.hover_popover_enabled.unwrap(),
             hover_popover_delay: editor.hover_popover_delay.unwrap(),
+            hover_popover_sticky: editor.hover_popover_sticky.unwrap(),
+            hover_popover_hiding_delay: editor.hover_popover_hiding_delay.unwrap(),
             toolbar: Toolbar {
                 breadcrumbs: toolbar.breadcrumbs.unwrap(),
                 quick_actions: toolbar.quick_actions.unwrap(),
@@ -243,6 +249,7 @@ impl Settings for EditorSettings {
                 min_line_number_digits: gutter.min_line_number_digits.unwrap(),
                 line_numbers: gutter.line_numbers.unwrap(),
                 runnables: gutter.runnables.unwrap(),
+                bookmarks: gutter.bookmarks.unwrap(),
                 breakpoints: gutter.breakpoints.unwrap(),
                 folds: gutter.folds.unwrap(),
             },
@@ -251,6 +258,7 @@ impl Settings for EditorSettings {
             autoscroll_on_clicks: editor.autoscroll_on_clicks.unwrap(),
             horizontal_scroll_margin: editor.horizontal_scroll_margin.unwrap(),
             scroll_sensitivity: editor.scroll_sensitivity.unwrap(),
+            mouse_wheel_zoom: editor.mouse_wheel_zoom.unwrap(),
             fast_scroll_sensitivity: editor.fast_scroll_sensitivity.unwrap(),
             sticky_scroll: StickyScroll {
                 enabled: sticky_scroll.enabled.unwrap(),

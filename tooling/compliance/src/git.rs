@@ -110,6 +110,10 @@ impl ToString for VersionTag {
 pub struct CommitSha(pub(crate) String);
 
 impl CommitSha {
+    pub fn new(sha: String) -> Self {
+        Self(sha)
+    }
+
     pub fn short(&self) -> &str {
         self.0.as_str().split_at(8).0
     }
@@ -121,6 +125,29 @@ pub struct CommitDetails {
     author: Committer,
     title: String,
     body: String,
+}
+
+impl CommitDetails {
+    pub fn new(sha: CommitSha, author: Committer, title: String, body: String) -> Self {
+        Self {
+            sha,
+            author,
+            title,
+            body,
+        }
+    }
+}
+
+impl FromStr for CommitDetails {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        CommitList::from_str(s).and_then(|list| {
+            list.into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("No commit found"))
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +162,10 @@ impl Committer {
             name: name.to_owned(),
             email: email.to_owned(),
         }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -300,6 +331,30 @@ impl FromStr for VersionTagList {
             .not()
             .then_some(Self(version_tags))
             .ok_or_else(|| anyhow::anyhow!("No version tags found"))
+    }
+}
+
+pub struct InfoForCommit {
+    sha: String,
+}
+
+impl InfoForCommit {
+    pub fn new(sha: impl ToString) -> Self {
+        Self {
+            sha: sha.to_string(),
+        }
+    }
+}
+
+impl Subcommand for InfoForCommit {
+    type ParsedOutput = CommitDetails;
+
+    fn args(&self) -> impl IntoIterator<Item = String> {
+        [
+            "log".to_string(),
+            format!("--pretty=format:{}", CommitDetails::FORMAT_STRING),
+            format!("{sha}~1..{sha}", sha = self.sha),
+        ]
     }
 }
 
