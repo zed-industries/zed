@@ -4,7 +4,7 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
-use http_client::HttpClient;
+use http_client::{AsyncBody, HttpClient, http};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -301,6 +301,24 @@ pub struct OpenCodeLanguageModel {
     request_limiter: RateLimiter,
 }
 
+struct InjectHeaderClient {
+    inner: Arc<dyn HttpClient>,
+    name: http::HeaderName,
+    value: http::HeaderValue,
+}
+
+impl HttpClient for InjectHeaderClient {
+    fn user_agent(&self) -> Option<&http::HeaderValue> { self.inner.user_agent() }
+    fn proxy(&self) -> Option<&http_client::Url> { self.inner.proxy() }
+    fn send(
+        &self,
+        mut req: http::Request<AsyncBody>,
+    ) -> futures::future::BoxFuture<'static, anyhow::Result<http::Response<AsyncBody>>> {
+        req.headers_mut().insert(self.name.clone(), self.value.clone());
+        self.inner.send(req)
+    }
+}
+
 impl OpenCodeLanguageModel {
     fn base_api_url(&self, cx: &AsyncApp) -> SharedString {
         // Custom models can override the API URL
@@ -330,6 +348,7 @@ impl OpenCodeLanguageModel {
     fn stream_anthropic(
         &self,
         request: anthropic::Request,
+        http_client: Arc<dyn HttpClient>,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -341,7 +360,6 @@ impl OpenCodeLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let http_client = self.http_client.clone();
         // Anthropic crate appends /v1/messages to api_url
         let api_url = self.base_api_url(cx);
         let api_key = self.api_key(cx);
@@ -369,12 +387,12 @@ impl OpenCodeLanguageModel {
     fn stream_openai_chat(
         &self,
         request: open_ai::Request,
+        http_client: Arc<dyn HttpClient>,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<futures::stream::BoxStream<'static, Result<open_ai::ResponseStreamEvent>>>,
     > {
-        let http_client = self.http_client.clone();
         // OpenAI crate appends /chat/completions to api_url, so we pass base + "/v1"
         let base_url = self.base_api_url(cx);
         let api_url: SharedString = format!("{base_url}/v1").into();
@@ -404,12 +422,12 @@ impl OpenCodeLanguageModel {
     fn stream_openai_response(
         &self,
         request: open_ai::responses::Request,
+        http_client: Arc<dyn HttpClient>,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<futures::stream::BoxStream<'static, Result<open_ai::responses::StreamEvent>>>,
     > {
-        let http_client = self.http_client.clone();
         // Responses crate appends /responses to api_url, so we pass base + "/v1"
         let base_url = self.base_api_url(cx);
         let api_url: SharedString = format!("{base_url}/v1").into();
@@ -439,12 +457,12 @@ impl OpenCodeLanguageModel {
     fn stream_google(
         &self,
         request: google_ai::GenerateContentRequest,
+        http_client: Arc<dyn HttpClient>,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<futures::stream::BoxStream<'static, Result<google_ai::GenerateContentResponse>>>,
     > {
-        let http_client = self.http_client.clone();
         let api_url = self.base_api_url(cx);
         let api_key = self.api_key(cx);
 
@@ -563,6 +581,17 @@ impl LanguageModel for OpenCodeLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let http_client = if let Some(ref thread_id) = request.thread_id {
+            Arc::new(InjectHeaderClient {
+                inner: self.http_client.clone(),
+                name: http::HeaderName::from_static("x-opencode-session"),
+                value: http::HeaderValue::from_str(thread_id)
+                    .expect("thread_id is always a valid header value"),
+            })
+        } else {
+            self.http_client.clone()
+        };
+
         match self.model.protocol(self.subscription) {
             ApiProtocol::Anthropic => {
                 let anthropic_request = into_anthropic(
@@ -572,7 +601,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     self.model.max_output_tokens().unwrap_or(8192),
                     anthropic::AnthropicModelMode::Default,
                 );
-                let stream = self.stream_anthropic(anthropic_request, cx);
+                let stream = self.stream_anthropic(anthropic_request, http_client, cx);
                 async move {
                     let mapper = AnthropicEventMapper::new();
                     Ok(mapper.map_stream(stream.await?).boxed())
@@ -588,7 +617,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     self.model.max_output_tokens(),
                     None,
                 );
-                let stream = self.stream_openai_chat(openai_request, cx);
+                let stream = self.stream_openai_chat(openai_request, http_client, cx);
                 async move {
                     let mapper = OpenAiEventMapper::new();
                     Ok(mapper.map_stream(stream.await?).boxed())
@@ -604,7 +633,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     self.model.max_output_tokens(),
                     None,
                 );
-                let stream = self.stream_openai_response(response_request, cx);
+                let stream = self.stream_openai_response(response_request, http_client, cx);
                 async move {
                     let mapper = OpenAiResponseEventMapper::new();
                     Ok(mapper.map_stream(stream.await?).boxed())
@@ -617,7 +646,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     self.model.id().to_string(),
                     google_ai::GoogleModelMode::Default,
                 );
-                let stream = self.stream_google(google_request, cx);
+                let stream = self.stream_google(google_request, http_client, cx);
                 async move {
                     let mapper = GoogleEventMapper::new();
                     Ok(mapper.map_stream(stream.await?.boxed()).boxed())
