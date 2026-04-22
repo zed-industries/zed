@@ -1954,6 +1954,106 @@ impl EditorElement {
         cursor_layouts
     }
 
+    fn layout_navigation_overlays(
+        &self,
+        snapshot: &EditorSnapshot,
+        visible_display_row_range: Range<DisplayRow>,
+        line_layouts: &[LineWithInvisibles],
+        text_hitbox: &Hitbox,
+        content_origin: gpui::Point<Pixels>,
+        scroll_position: gpui::Point<ScrollOffset>,
+        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+        line_height: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<NavigationOverlayPaintCommand> {
+        let mut overlay_sets = self
+            .editor
+            .read(cx)
+            .navigation_overlay_sets()
+            .iter()
+            .map(|(key, overlays)| (*key, overlays.clone()))
+            .collect::<Vec<_>>();
+        if overlay_sets.is_empty() {
+            return Vec::new();
+        }
+        overlay_sets.sort_by_key(|(key, _)| *key);
+
+        let layout_context = NavigationOverlayLayoutContext {
+            display_snapshot: &snapshot.display_snapshot,
+            visible_display_row_range: &visible_display_row_range,
+            line_layouts,
+            text_align: self.style.text.text_align,
+            content_width: text_hitbox.size.width,
+            content_origin,
+            scroll_position,
+            scroll_pixel_position,
+            line_height,
+            editor_font: self.style.text.font(),
+            editor_font_size: self.style.text.font_size.to_pixels(window.rem_size()),
+        };
+        let mut navigation_overlay_paint_commands = Vec::new();
+
+        for (_, overlays) in overlay_sets {
+            for overlay in overlays.as_ref() {
+                Self::layout_navigation_label(
+                    overlay,
+                    &layout_context,
+                    window,
+                    cx,
+                    &mut navigation_overlay_paint_commands,
+                );
+            }
+        }
+
+        navigation_overlay_paint_commands
+    }
+
+    fn layout_navigation_label(
+        overlay: &crate::NavigationTargetOverlay,
+        context: &NavigationOverlayLayoutContext<'_>,
+        window: &mut Window,
+        cx: &mut App,
+        paint_commands: &mut Vec<NavigationOverlayPaintCommand>,
+    ) {
+        let label = &overlay.label;
+        let label_display_point = overlay
+            .target_range
+            .start
+            .to_display_point(context.display_snapshot);
+        let label_row = label_display_point.row();
+        if !context.visible_display_row_range.contains(&label_row) {
+            return;
+        }
+
+        let row_index = label_row.minus(context.visible_display_row_range.start) as usize;
+        let row_layout = &context.line_layouts[row_index];
+        let label_column = label_display_point.column().min(row_layout.len as u32) as usize;
+        let label_x = row_layout.x_for_index(label_column)
+            + row_layout.alignment_offset(context.text_align, context.content_width)
+            - context.scroll_pixel_position.x.into()
+            + label.x_offset;
+        let label_y = ((label_row.as_f64() - context.scroll_position.y)
+            * ScrollPixelOffset::from(context.line_height))
+        .into();
+        let label_text_size = (context.editor_font_size * label.scale_factor.max(0.0)).max(px(1.0));
+        let origin = context.content_origin + point(label_x, label_y);
+
+        let mut element = div()
+            .block_mouse_except_scroll()
+            .font(context.editor_font.clone())
+            .text_size(label_text_size)
+            .text_color(label.text_color)
+            .line_height(context.line_height)
+            .child(label.text.clone())
+            .into_any_element();
+        element.prepaint_as_root(origin, AvailableSpace::min_size(), window, cx);
+
+        paint_commands.push(NavigationOverlayPaintCommand::Label(
+            NavigationLabelLayout { element, origin },
+        ));
+    }
+
     fn layout_scrollbars(
         &self,
         snapshot: &EditorSnapshot,
@@ -4058,6 +4158,7 @@ impl EditorElement {
                     && !row_block_types.contains_key(&(row - 1))
                     && element_height_in_lines == 1
                 {
+                    // Render inline at end of line (for diagnostic blocks that fit)
                     x_offset = line_width + margin;
                     row = row - 1;
                     is_block = false;
@@ -6529,6 +6630,7 @@ impl EditorElement {
                 self.paint_document_colors(layout, window);
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
                 self.paint_redactions(layout, window);
+                self.paint_navigation_overlays(layout, window, cx);
                 self.paint_cursors(layout, window, cx);
                 self.paint_inline_diagnostics(layout, window, cx);
                 self.paint_inline_blame(layout, window, cx);
@@ -6757,6 +6859,20 @@ impl EditorElement {
                     layout,
                     window,
                 );
+            }
+        });
+    }
+
+    fn paint_navigation_overlays(
+        &mut self,
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.with_element_namespace("navigation_overlays", |window| {
+            for command in &mut layout.navigation_overlay_paint_commands {
+                let NavigationOverlayPaintCommand::Label(label) = command;
+                label.element.paint(window, cx);
             }
         });
     }
@@ -9553,8 +9669,8 @@ pub struct EditorRequestLayoutState {
 
 impl EditorRequestLayoutState {
     // In ideal conditions we only need one more subsequent prepaint call for resize to take effect.
-    // i.e. MAX_PREPAINT_DEPTH = 2, but since moving blocks inline (place_near), more lines from
-    // below get exposed, and we end up querying blocks for those lines too in subsequent renders.
+    // i.e. MAX_PREPAINT_DEPTH = 2, but placing near blocks can expose more lines from below, and
+    // we end up querying blocks for those lines too in subsequent renders.
     // Setting MAX_PREPAINT_DEPTH = 3, passes all tests. Just to be on the safe side we set it to 5, so
     // that subsequent shrinking does not lead to incorrect block placing.
     const MAX_PREPAINT_DEPTH: usize = 5;
@@ -10685,6 +10801,18 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
+                    let navigation_overlay_paint_commands = self.layout_navigation_overlays(
+                        &snapshot,
+                        start_row..end_row,
+                        &line_layouts,
+                        &text_hitbox,
+                        content_origin,
+                        scroll_position,
+                        scroll_pixel_position,
+                        line_height,
+                        window,
+                        cx,
+                    );
 
                     let scrollbars_layout = self.layout_scrollbars(
                         &snapshot,
@@ -11071,6 +11199,7 @@ impl Element for EditorElement {
                         spacer_blocks,
                         cursors,
                         visible_cursors,
+                        navigation_overlay_paint_commands,
                         selections,
                         edit_prediction_popover,
                         diff_hunk_controls,
@@ -11288,6 +11417,7 @@ pub struct EditorLayout {
     redacted_ranges: Vec<Range<DisplayPoint>>,
     cursors: Vec<(DisplayPoint, Hsla)>,
     visible_cursors: Vec<CursorLayout>,
+    navigation_overlay_paint_commands: Vec<NavigationOverlayPaintCommand>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     test_indicators: Vec<AnyElement>,
     bookmarks: Vec<AnyElement>,
@@ -12118,6 +12248,32 @@ pub struct IndentGuideLayout {
     settings: IndentGuideSettings,
 }
 
+enum NavigationOverlayPaintCommand {
+    Label(NavigationLabelLayout),
+}
+
+struct NavigationLabelLayout {
+    element: AnyElement,
+    #[cfg_attr(not(test), allow(dead_code))]
+    origin: gpui::Point<Pixels>,
+}
+
+struct NavigationOverlayLayoutContext<'a> {
+    display_snapshot: &'a DisplaySnapshot,
+    visible_display_row_range: &'a Range<DisplayRow>,
+    line_layouts: &'a [LineWithInvisibles],
+    text_align: TextAlign,
+    content_width: Pixels,
+    content_origin: gpui::Point<Pixels>,
+    scroll_position: gpui::Point<ScrollOffset>,
+    scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+    line_height: Pixels,
+    editor_font: Font,
+    editor_font_size: Pixels,
+}
+
+const LABEL_LINE_HEIGHT_PADDING_PX: f32 = 2.0;
+
 pub struct CursorLayout {
     origin: gpui::Point<Pixels>,
     block_width: Pixels,
@@ -12210,7 +12366,7 @@ impl CursorLayout {
                 .bg(self.color)
                 .text_size(text_size)
                 .px_0p5()
-                .line_height(text_size + px(2.))
+                .line_height(text_size + px(LABEL_LINE_HEIGHT_PADDING_PX))
                 .text_color(cursor_name.color)
                 .child(cursor_name.string)
                 .into_any_element();
@@ -12512,7 +12668,8 @@ fn compute_auto_height_layout(
 mod tests {
     use super::*;
     use crate::{
-        Editor, MultiBuffer, SelectionEffects,
+        Editor, HighlightKey, MultiBuffer, NavigationOverlayKey, NavigationOverlayLabel,
+        NavigationTargetOverlay, SelectionEffects,
         display_map::{BlockPlacement, BlockProperties},
         editor_tests::{init_test, update_test_language_settings},
     };
@@ -12522,6 +12679,38 @@ mod tests {
     use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
     use util::test::sample_text;
+
+    enum PrimaryNavigationOverlay {}
+
+    const PRIMARY_NAVIGATION_OVERLAY_KEY: NavigationOverlayKey =
+        NavigationOverlayKey::unique::<PrimaryNavigationOverlay>();
+
+    fn navigation_overlay(
+        label_text: &'static str,
+        target_range: Range<Anchor>,
+        covered_text_range: Option<Range<Anchor>>,
+    ) -> NavigationTargetOverlay {
+        NavigationTargetOverlay {
+            target_range,
+            label: NavigationOverlayLabel {
+                text: SharedString::from(label_text),
+                text_color: Hsla::black(),
+                x_offset: Pixels::ZERO,
+                scale_factor: 1.0,
+            },
+            covered_text_range,
+        }
+    }
+
+    fn navigation_label_layouts(state: &EditorLayout) -> Vec<&NavigationLabelLayout> {
+        state
+            .navigation_overlay_paint_commands
+            .iter()
+            .map(|command| match command {
+                NavigationOverlayPaintCommand::Label(label) => label,
+            })
+            .collect()
+    }
 
     const fn placeholder_hitbox() -> Hitbox {
         use gpui::HitboxId;
@@ -12649,6 +12838,109 @@ mod tests {
                 "Soft wrapped editor should have no horizontal scrolling!"
             );
         }
+    }
+
+    #[gpui::test]
+    fn test_navigation_overlay_covered_text_highlights_are_replaced(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("overlay replacement", cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let editor = window.root(cx).unwrap();
+
+        editor.update(cx, |editor, cx| {
+            let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+            let target_start = buffer_snapshot.anchor_after(Point::new(0, 0));
+            let target_end = buffer_snapshot.anchor_after(Point::new(0, 7));
+            let covered_text_end = buffer_snapshot.anchor_after(Point::new(0, 2));
+
+            editor.set_navigation_overlays(
+                PRIMARY_NAVIGATION_OVERLAY_KEY,
+                vec![navigation_overlay(
+                    "ov",
+                    target_start..target_end,
+                    Some(target_start..covered_text_end),
+                )],
+                cx,
+            );
+            assert!(
+                editor
+                    .text_highlights(
+                        HighlightKey::NavigationOverlay(PRIMARY_NAVIGATION_OVERLAY_KEY),
+                        cx,
+                    )
+                    .is_some()
+            );
+
+            editor.set_navigation_overlays(
+                PRIMARY_NAVIGATION_OVERLAY_KEY,
+                vec![navigation_overlay("ov", target_start..target_end, None)],
+                cx,
+            );
+            assert!(
+                editor
+                    .text_highlights(
+                        HighlightKey::NavigationOverlay(PRIMARY_NAVIGATION_OVERLAY_KEY),
+                        cx,
+                    )
+                    .is_none()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_navigation_overlay_repositions_when_editor_width_changes(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+        let text = "jump target overlay ".repeat(16);
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&text, cx);
+            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+            editor
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+
+        editor.update(cx, |editor, cx| {
+            let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+            let target_start = buffer_snapshot.anchor_after(Point::new(0, 30));
+            let target_end = buffer_snapshot.anchor_after(Point::new(0, 40));
+
+            editor.set_navigation_overlays(
+                PRIMARY_NAVIGATION_OVERLAY_KEY,
+                vec![navigation_overlay("jj", target_start..target_end, None)],
+                cx,
+            );
+        });
+
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+        let (_, wide_state) = cx.draw(Default::default(), size(px(520.), px(260.)), |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+        let (_, narrow_state) = cx.draw(Default::default(), size(px(140.), px(260.)), |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+
+        let wide_label_layouts = navigation_label_layouts(&wide_state);
+        let narrow_label_layouts = navigation_label_layouts(&narrow_state);
+
+        assert_eq!(wide_label_layouts.len(), 1);
+        assert_eq!(narrow_label_layouts.len(), 1);
+
+        let wide_label_origin = wide_label_layouts[0].origin;
+        let narrow_label_origin = narrow_label_layouts[0].origin;
+
+        assert!(
+            narrow_label_origin.y > wide_label_origin.y,
+            "expected inline label to move to a later wrapped row when the editor narrows"
+        );
+        assert!(
+            narrow_label_origin.x < wide_label_origin.x,
+            "expected inline label to recompute its horizontal position for the wrapped row"
+        );
     }
 
     #[gpui::test]

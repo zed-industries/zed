@@ -60,7 +60,7 @@ pub mod test;
 pub(crate) use actions::*;
 pub use display_map::{
     ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder, HighlightKey,
-    SemanticTokenHighlight,
+    NavigationOverlayKey, SemanticTokenHighlight,
 };
 pub use edit_prediction_types::Direction;
 pub use editor_settings::{
@@ -1213,6 +1213,7 @@ pub struct Editor {
     highlight_order: usize,
     highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
+    navigation_overlays: HashMap<NavigationOverlayKey, Arc<[NavigationTargetOverlay]>>,
     gutter_highlights: HashMap<TypeId, GutterHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
@@ -1432,6 +1433,21 @@ pub struct EditorSnapshot {
     current_line_highlight: CurrentLineHighlight,
     gutter_hovered: bool,
     semantic_tokens_enabled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NavigationTargetOverlay {
+    pub target_range: Range<Anchor>,
+    pub label: NavigationOverlayLabel,
+    pub covered_text_range: Option<Range<Anchor>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NavigationOverlayLabel {
+    pub text: SharedString,
+    pub text_color: Hsla,
+    pub x_offset: Pixels,
+    pub scale_factor: f32,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -2475,6 +2491,7 @@ impl Editor {
             highlight_order: 0,
             highlighted_rows: HashMap::default(),
             background_highlights: HashMap::default(),
+            navigation_overlays: HashMap::default(),
             gutter_highlights: HashMap::default(),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
@@ -24694,6 +24711,64 @@ impl Editor {
         cx: &'a App,
     ) -> Option<(HighlightStyle, &'a [Range<Anchor>])> {
         self.display_map.read(cx).text_highlights(key)
+    }
+
+    pub fn set_navigation_overlays(
+        &mut self,
+        key: NavigationOverlayKey,
+        overlays: Vec<NavigationTargetOverlay>,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut covered_text_ranges = overlays
+            .iter()
+            .filter_map(|overlay| overlay.covered_text_range.clone())
+            .collect::<Vec<_>>();
+        covered_text_ranges.sort_by(|left, right| {
+            left.start
+                .cmp(&right.start, &buffer_snapshot)
+                .then_with(|| left.end.cmp(&right.end, &buffer_snapshot))
+        });
+
+        self.display_map.update(cx, |map, cx| {
+            map.clear_highlights(HighlightKey::NavigationOverlay(key));
+            if !covered_text_ranges.is_empty() {
+                map.highlight_text(
+                    HighlightKey::NavigationOverlay(key),
+                    covered_text_ranges,
+                    HighlightStyle {
+                        fade_out: Some(1.0),
+                        ..Default::default()
+                    },
+                    false,
+                    cx,
+                );
+            }
+        });
+
+        if overlays.is_empty() {
+            self.navigation_overlays.remove(&key);
+        } else {
+            self.navigation_overlays.insert(key, Arc::from(overlays));
+        }
+
+        cx.notify();
+    }
+
+    pub fn clear_navigation_overlays(&mut self, key: NavigationOverlayKey, cx: &mut Context<Self>) {
+        let removed = self.navigation_overlays.remove(&key).is_some();
+        let cleared = self.display_map.update(cx, |map, _| {
+            map.clear_highlights(HighlightKey::NavigationOverlay(key))
+        });
+        if removed || cleared {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn navigation_overlay_sets(
+        &self,
+    ) -> &HashMap<NavigationOverlayKey, Arc<[NavigationTargetOverlay]>> {
+        &self.navigation_overlays
     }
 
     pub fn clear_highlights(&mut self, key: HighlightKey, cx: &mut Context<Self>) {
