@@ -1193,24 +1193,21 @@ impl Fs for RealFs {
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
 
-        let watcher: Arc<dyn Watcher> = if use_poll {
+        let mode = if use_poll {
             log::info!(
                 "Using poll watcher ({}ms interval) for {}",
                 fs_watcher::poll_interval().as_millis(),
                 path.display()
             );
-            Arc::new(fs_watcher::FsWatcher::new(
-                tx.clone(),
-                pending_paths.clone(),
-                fs_watcher::WatcherMode::Poll,
-            ))
+            fs_watcher::WatcherMode::Poll
         } else {
-            Arc::new(fs_watcher::FsWatcher::new(
-                tx.clone(),
-                pending_paths.clone(),
-                fs_watcher::WatcherMode::Native,
-            ))
+            fs_watcher::WatcherMode::Native
         };
+        let watcher: Arc<dyn Watcher> = Arc::new(fs_watcher::FsWatcher::new(
+            tx.clone(),
+            pending_paths.clone(),
+            mode,
+        ));
 
         if let Err(e) = watcher.add(&watch_path) {
             log::warn!(
