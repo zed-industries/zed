@@ -5059,35 +5059,40 @@ impl Repository {
         get_waiter: bool,
         cx: &mut Context<Self>,
     ) -> &CommitDataState {
-        if !self.commit_data.contains_key(&sha) {
-            let (state, completer) = if get_waiter {
-                let (tx, rx) = oneshot::channel();
-                (CommitDataState::Loading(Some(rx.shared())), Some(tx))
-            } else {
-                (CommitDataState::Loading(None), None)
-            };
+        if self.commit_data.contains_key(&sha) {
+            return &self.commit_data[&sha];
+        }
 
-            self.commit_data.insert(sha, state);
+        let (state, completer) = if get_waiter {
+            let (tx, rx) = oneshot::channel();
+            (CommitDataState::Loading(Some(rx.shared())), Some(tx))
+        } else {
+            (CommitDataState::Loading(None), None)
+        };
 
-            match &mut self.graph_commit_data_handler {
-                GraphCommitHandlerState::Open(handler) => {
-                    if let Some(tx) = completer {
-                        handler.completers.insert(sha, tx);
-                    }
-                    handler.commit_data_request.try_send(sha).ok();
+        self.commit_data.insert(sha, state);
+
+        match &mut self.graph_commit_data_handler {
+            GraphCommitHandlerState::Open(handler) => {
+                if let Some(tx) = completer {
+                    handler.completers.insert(sha, tx);
                 }
-                GraphCommitHandlerState::Closed => {
-                    let mut handler = self.open_graph_commit_data_handler(cx);
-                    if let Some(tx) = completer {
-                        handler.completers.insert(sha, tx);
-                    }
-                    handler.commit_data_request.try_send(sha).ok();
-                    self.graph_commit_data_handler = GraphCommitHandlerState::Open(handler);
+                handler.commit_data_request.try_send(sha).ok();
+            }
+            GraphCommitHandlerState::Closed => {
+                let mut handler = self.open_graph_commit_data_handler(cx);
+                if let Some(tx) = completer {
+                    handler.completers.insert(sha, tx);
                 }
+                handler.commit_data_request.try_send(sha).ok();
+                self.graph_commit_data_handler = GraphCommitHandlerState::Open(handler);
             }
         }
 
-        &self.commit_data[&sha]
+        &self.commit_data.get(&sha).unwrap_or_else(|| {
+            debug_panic!("This should always be inserted");
+            &CommitDataState::Loading(None)
+        })
     }
 
     fn open_graph_commit_data_handler(&self, cx: &Context<Self>) -> GraphCommitDataHandler {
@@ -5099,13 +5104,6 @@ impl Repository {
             while let Ok((sha, commit_data)) = result_rx.recv().await {
                 let result = this.update(cx, |this, cx| {
                     let data = Arc::new(commit_data);
-                    let old_value = this
-                        .commit_data
-                        .insert(sha, CommitDataState::Loaded(data.clone()));
-                    debug_assert!(
-                        !matches!(old_value, Some(CommitDataState::Loaded(_))),
-                        "We should never overwrite commit data"
-                    );
 
                     if let GraphCommitHandlerState::Open(handler) =
                         &mut this.graph_commit_data_handler
@@ -5116,6 +5114,12 @@ impl Repository {
                     } else {
                         debug_panic!("The handler state has to be open for this task to exist");
                     }
+
+                    let old_value = this.commit_data.insert(sha, CommitDataState::Loaded(data));
+                    debug_assert!(
+                        !matches!(old_value, Some(CommitDataState::Loaded(_))),
+                        "We should never overwrite commit data"
+                    );
 
                     cx.notify();
                 });
