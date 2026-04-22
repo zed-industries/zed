@@ -5120,17 +5120,6 @@ impl Repository {
         })
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn loaded_commit_data_for_test(&self) -> HashMap<Oid, CommitData> {
-        self.commit_data
-            .iter()
-            .filter_map(|(sha, state)| match state {
-                CommitDataState::Loaded(data) => Some((sha.clone(), data.as_ref().clone())),
-                CommitDataState::Loading(_) => None,
-            })
-            .collect()
-    }
-
     fn get_handler(&mut self, cx: &mut Context<Self>) -> &mut CommitDataHandler {
         if matches!(self.commit_data_handler, CommitDataHandlerState::Closed) {
             self.commit_data_handler =
@@ -8071,6 +8060,19 @@ fn proto_to_commit_details(proto: &proto::GitCommitDetails) -> CommitDetails {
         commit_timestamp: proto.commit_timestamp,
         author_email: proto.author_email.clone().into(),
         author_name: proto.author_name.clone().into(),
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Repository {
+    pub fn loaded_commit_data_for_test(&self) -> HashMap<Oid, CommitData> {
+        self.commit_data
+            .iter()
+            .filter_map(|(sha, state)| match state {
+                CommitDataState::Loaded(data) => Some((*sha, data.as_ref().clone())),
+                CommitDataState::Loading(_) => None,
+            })
+            .collect()
     }
 }
 

@@ -1,7 +1,4 @@
-use std::{
-    path::{self, Path, PathBuf},
-    sync::Arc,
-};
+use std::path::{self, Path, PathBuf};
 
 use call::ActiveCall;
 use client::RECEIVE_TIMEOUT;
@@ -13,10 +10,7 @@ use git::{
 };
 use git_ui::{git_panel::GitPanel, project_diff::ProjectDiff};
 use gpui::{AppContext as _, BackgroundExecutor, SharedString, TestAppContext, VisualTestContext};
-use project::{
-    ProjectPath,
-    git_store::{CommitDataState, Repository},
-};
+use project::{ProjectPath, git_store::Repository};
 use serde_json::json;
 
 use util::{path, rel_path::rel_path};
@@ -103,42 +97,31 @@ async fn load_commit_data_batch(
     shas: &[Oid],
     executor: &BackgroundExecutor,
     cx: &mut TestAppContext,
-) -> HashMap<Oid, Arc<CommitData>> {
-    let states = cx.update(|cx| {
-        shas.iter()
-            .map(|sha| {
-                (
-                    *sha,
-                    repository.update(cx, |repository, cx| {
-                        repository.fetch_commit_data(*sha, true, cx).clone()
-                    }),
-                )
-            })
-            .collect::<Vec<_>>()
+) -> HashMap<Oid, CommitData> {
+    cx.update(|cx| {
+        for sha in shas {
+            repository.update(cx, |repository, cx| {
+                repository.fetch_commit_data(*sha, true, cx);
+            });
+        }
     });
 
     executor.run_until_parked();
 
-    let mut commit_data = HashMap::default();
-    for (sha, state) in states {
-        let data = match state {
-            CommitDataState::Loaded(data) => data,
-            CommitDataState::Loading(Some(shared)) => shared.await.unwrap(),
-            CommitDataState::Loading(None) => {
-                panic!("fetch_commit_data(..., true) should return a waiter-backed state")
-            }
-        };
-        commit_data.insert(sha, data);
-    }
-
-    commit_data
-}
-
-fn loaded_commit_data_cache(
-    repository: &gpui::Entity<Repository>,
-    cx: &mut TestAppContext,
-) -> HashMap<Oid, CommitData> {
-    cx.update(|cx| repository.update(cx, |repository, _| repository.loaded_commit_data_for_test()))
+    let loaded_commit_data = cx.update(|cx| {
+        repository.update(cx, |repository, _| repository.loaded_commit_data_for_test())
+    });
+    shas.iter()
+        .map(|sha| {
+            (
+                *sha,
+                loaded_commit_data
+                    .get(sha)
+                    .unwrap_or_else(|| panic!("missing loaded commit data for {sha}"))
+                    .clone(),
+            )
+        })
+        .collect()
 }
 
 fn assert_remote_cache_matches_local_cache(
@@ -147,8 +130,12 @@ fn assert_remote_cache_matches_local_cache(
     cx_local: &mut TestAppContext,
     cx_remote: &mut TestAppContext,
 ) {
-    let local_cache = loaded_commit_data_cache(local_repository, cx_local);
-    let remote_cache = loaded_commit_data_cache(remote_repository, cx_remote);
+    let local_cache = cx_local.update(|cx| {
+        local_repository.update(cx, |repository, _| repository.loaded_commit_data_for_test())
+    });
+    let remote_cache = cx_remote.update(|cx| {
+        remote_repository.update(cx, |repository, _| repository.loaded_commit_data_for_test())
+    });
 
     for (sha, remote_commit_data) in &remote_cache {
         let local_commit_data = local_cache
