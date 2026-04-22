@@ -16,7 +16,7 @@ use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
+    Action, Anchor, AnyView, App, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable,
     ScrollHandle, Subscription, Task, WeakEntity,
 };
 use itertools::Itertools;
@@ -463,7 +463,7 @@ impl AgentConfiguration {
                     }))
                 }
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -562,7 +562,7 @@ impl AgentConfiguration {
                     }))
                 }
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -705,7 +705,7 @@ impl AgentConfiguration {
                     .icon_size(IconSize::Small),
                 Tooltip::text("Configure MCP Server"),
             )
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
             .menu({
                 let fs = self.fs.clone();
                 let context_server_id = context_server_id.clone();
@@ -1059,7 +1059,7 @@ impl AgentConfiguration {
                     }))
                 }
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),

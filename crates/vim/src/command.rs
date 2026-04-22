@@ -28,7 +28,7 @@ use std::{
     sync::OnceLock,
     time::Instant,
 };
-use task::{HideStrategy, RevealStrategy, SaveStrategy, SpawnInTerminal, TaskId};
+use task::{HideStrategy, RevealStrategy, SaveStrategy, Shell, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
 use util::{
     ResultExt,
@@ -2476,7 +2476,7 @@ impl ShellExec {
             workspace.update(cx, |workspace, cx| {
                 let project = workspace.project().read(cx);
                 let cwd = project.first_project_directory(cx);
-                let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                let shell = Shell::System;
 
                 let spawn_in_terminal = SpawnInTerminal {
                     id: TaskId("vim".to_string()),

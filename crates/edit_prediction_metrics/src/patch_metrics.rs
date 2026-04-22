@@ -687,6 +687,35 @@ fn diff_tokens<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<DiffOp> {
         .collect()
 }
 
+/// Reconstruct old and new text from a unified diff.
+///
+/// Context and deletion lines form the old text; context and addition
+/// lines form the new text. Returns `(old_text, new_text)`.
+pub fn reconstruct_texts_from_diff(patch_str: &str) -> (String, String) {
+    let patch = Patch::parse_unified_diff(patch_str);
+    let mut old_lines: Vec<&str> = Vec::new();
+    let mut new_lines: Vec<&str> = Vec::new();
+
+    for hunk in &patch.hunks {
+        for line in &hunk.lines {
+            match line {
+                PatchLine::Context(content) => {
+                    old_lines.push(content);
+                    new_lines.push(content);
+                }
+                PatchLine::Deletion(content) => {
+                    old_lines.push(content);
+                }
+                PatchLine::Addition(content) => {
+                    new_lines.push(content);
+                }
+                PatchLine::Garbage(_) => {}
+            }
+        }
+    }
+
+    (old_lines.join("\n"), new_lines.join("\n"))
+}
 #[derive(Debug, Default, Clone)]
 struct Patch {
     hunks: Vec<Hunk>,

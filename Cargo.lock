@@ -353,6 +353,7 @@ dependencies = [
  "futures 0.3.32",
  "fuzzy",
  "git",
+ "git_ui",
  "gpui",
  "gpui_tokio",
  "heapless",
@@ -408,7 +409,6 @@ dependencies = [
  "theme",
  "theme_settings",
  "time",
- "time_format",
  "tree-sitter-md",
  "ui",
  "ui_input",
@@ -1972,7 +1972,7 @@ dependencies = [
  "bitflags 2.10.0",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -1992,7 +1992,7 @@ dependencies = [
  "bitflags 2.10.0",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -3339,7 +3339,7 @@ dependencies = [
  "command_palette_hooks",
  "db",
  "editor",
- "fuzzy",
+ "fuzzy_nucleo",
  "go_to_line",
  "gpui",
  "language",
@@ -3557,7 +3557,6 @@ dependencies = [
  "slotmap",
  "smol",
  "tempfile",
- "terminal",
  "tiny_http",
  "url",
  "util",
@@ -4872,6 +4871,7 @@ dependencies = [
 name = "diagnostics"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "collections",
  "component",
@@ -5336,6 +5336,7 @@ dependencies = [
  "language",
  "pretty_assertions",
  "serde",
+ "serde_json",
  "similar",
  "tree-sitter",
  "zeta_prompt",
@@ -7317,8 +7318,10 @@ dependencies = [
  "db",
  "editor",
  "file_icons",
+ "fs",
  "futures 0.3.32",
  "fuzzy",
+ "fuzzy_nucleo",
  "git",
  "gpui",
  "indoc",
@@ -8785,7 +8788,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
- "hashbrown 0.15.5",
+ "hashbrown 0.16.1",
  "serde",
  "serde_core",
 ]
@@ -9261,13 +9264,14 @@ dependencies = [
 
 [[package]]
 name = "jupyter-websocket-client"
-version = "1.0.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ef5a543b517583059b5b11daceb37690d6ac206f9321075993cd82ab1541c28"
+checksum = "7c2ae4d8d5344f69bf9734b264e969c2139e30e932ce9b6455de9f65663ed614"
 dependencies = [
  "anyhow",
  "async-trait",
  "async-tungstenite",
+ "bytes 1.11.1",
  "futures 0.3.32",
  "jupyter-protocol",
  "serde",
@@ -10201,7 +10205,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?rev=9bceaf7d06bd9394dc6ed002e27d306348d5b83d#9bceaf7d06bd9394dc6ed002e27d306348d5b83d"
+source = "git+https://github.com/zed-industries/lsp-types?rev=f4dfa89a21ca35cd929b70354b1583fabae325f8#f4dfa89a21ca35cd929b70354b1583fabae325f8"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
@@ -13639,8 +13643,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.11.1",
- "heck 0.4.1",
- "itertools 0.10.5",
+ "heck 0.5.0",
+ "itertools 0.11.0",
  "log",
  "multimap",
  "once_cell",
@@ -13673,7 +13677,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.11.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -14289,7 +14293,7 @@ dependencies = [
  "extension_host",
  "fs",
  "futures 0.3.32",
- "fuzzy",
+ "fuzzy_nucleo",
  "gpui",
  "http_client",
  "indoc",
@@ -16166,7 +16170,6 @@ dependencies = [
  "theme_settings",
  "ui",
  "util",
- "vim_mode_setting",
  "workspace",
  "zed_actions",
 ]
@@ -16374,7 +16377,7 @@ version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -17425,7 +17428,7 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "fuzzy",
+ "fuzzy_nucleo",
  "gpui",
  "menu",
  "picker",
@@ -17434,7 +17437,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "theme",
  "theme_settings",
  "ui",
@@ -17654,7 +17656,11 @@ dependencies = [
  "pretty_assertions",
  "project",
  "regex",
+ "release_channel",
+ "remote",
+ "rpc",
  "schemars",
+ "semver",
  "serde",
  "serde_json",
  "settings",
@@ -17994,6 +18000,7 @@ name = "title_bar"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrayvec",
  "auto_update",
  "call",
  "channel",
@@ -21771,7 +21778,6 @@ dependencies = [
  "postage",
  "pretty_assertions",
  "project",
- "release_channel",
  "remote",
  "schemars",
  "serde",

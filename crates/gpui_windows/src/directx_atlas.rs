@@ -80,7 +80,7 @@ impl PlatformAtlas for DirectXAtlas {
     ) -> anyhow::Result<Option<AtlasTile>> {
         let mut lock = self.0.lock();
         if let Some(tile) = lock.tiles_by_key.get(key) {
-            Ok(Some(tile.clone()))
+            Ok(Some(*tile))
         } else {
             let Some((size, bytes)) = build()? else {
                 return Ok(None);
@@ -90,7 +90,7 @@ impl PlatformAtlas for DirectXAtlas {
                 .ok_or_else(|| anyhow::anyhow!("failed to allocate"))?;
             let texture = lock.texture(tile.texture_id);
             texture.upload(&lock.device_context, tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile.clone());
+            lock.tiles_by_key.insert(key.clone(), tile);
             Ok(Some(tile))
         }
     }

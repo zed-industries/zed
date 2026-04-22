@@ -250,6 +250,9 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum),
         MigrationType::Json(migrations::m_2026_04_01::restructure_profiles_with_settings_key),
         MigrationType::Json(migrations::m_2026_04_10::rename_web_search_to_search_web),
+        MigrationType::Json(
+            migrations::m_2026_04_17::promote_show_branch_icon_true_to_show_branch_status_icon,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -4931,6 +4934,98 @@ mod tests {
     }
 
     #[test]
+    fn test_migration_helpers_handle_various_profile_forms() {
+        let setting = "a_setting";
+        let old_value = "old_value";
+        let new_value = "new_value";
+
+        fn language_setting_fn(value: &mut serde_json::Value, _: &[&str]) -> anyhow::Result<()> {
+            if let Some(obj) = value.as_object_mut() {
+                if let Some(v) = obj.get_mut("a_setting") {
+                    *v = serde_json::json!("new_value");
+                }
+            }
+            Ok(())
+        }
+
+        let mut settings_fn = |map: &mut serde_json::Map<String, serde_json::Value>| {
+            if let Some(v) = map.get_mut(setting) {
+                *v = serde_json::json!(new_value);
+            }
+            Ok(())
+        };
+
+        // Legacy form
+        let input = serde_json::json!({
+            "profiles": {
+                "work": {
+                    setting: old_value
+                }
+            }
+        });
+        let expected = serde_json::json!({
+            "profiles": {
+                "work": {
+                    setting: new_value
+                }
+            }
+        });
+
+        let mut value = input.clone();
+        migrations::migrate_settings(&mut value, &mut settings_fn).unwrap();
+        assert_eq!(value, expected);
+
+        let mut value = input;
+        migrations::migrate_language_setting(&mut value, language_setting_fn).unwrap();
+        assert_eq!(value, expected);
+
+        // Form after migration: `m_2026_04_01`
+        let input = serde_json::json!({
+            "profiles": {
+                "work": {
+                    "settings": {
+                        setting: old_value
+                    }
+                }
+            }
+        });
+        let expected = serde_json::json!({
+            "profiles": {
+                "work": {
+                    "settings": {
+                        setting: new_value
+                    }
+                }
+            }
+        });
+
+        let mut value = input.clone();
+        migrations::migrate_settings(&mut value, &mut settings_fn).unwrap();
+        assert_eq!(value, expected);
+
+        let mut value = input;
+        migrations::migrate_language_setting(&mut value, language_setting_fn).unwrap();
+        assert_eq!(value, expected);
+
+        // Base-only form after migration: `m_2026_04_01` (no settings to migrate)
+        let input = serde_json::json!({
+            "profiles": {
+                "work": {
+                    "base": "default"
+                }
+            }
+        });
+
+        let mut value = input.clone();
+        migrations::migrate_settings(&mut value, &mut settings_fn).unwrap();
+        assert_eq!(value, input);
+
+        let mut value = input.clone();
+        migrations::migrate_language_setting(&mut value, language_setting_fn).unwrap();
+        assert_eq!(value, input);
+    }
+
+    #[test]
     fn test_rename_web_search_to_search_web_root_level_profile() {
         assert_migrate_with_migrations(
             &[MigrationType::Json(
@@ -5024,6 +5119,254 @@ mod tests {
     }
 }"#,
             ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_at_root() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "title_bar": {
+                    "show_branch_icon": true,
+                    "show_branch_name": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "title_bar": {
+                        "show_branch_status_icon": true,
+                        "show_branch_name": true
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_drop_show_branch_icon_false_without_setting_status_icon() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "title_bar": {
+                    "show_branch_icon": false,
+                    "show_branch_name": true
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "title_bar": {
+                        "show_branch_name": true
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_in_platform_override() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "macos": {
+                    "title_bar": {
+                        "show_branch_icon": true,
+                        "show_branch_name": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "title_bar": {
+                            "show_branch_status_icon": true,
+                            "show_branch_name": true
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_in_release_override() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "preview": {
+                    "title_bar": {
+                        "show_branch_icon": true,
+                        "show_branch_name": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "preview": {
+                        "title_bar": {
+                            "show_branch_status_icon": true,
+                            "show_branch_name": true
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_in_profiles() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "title_bar": {
+                            "show_branch_icon": true,
+                            "show_branch_name": true
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "settings": {
+                                "title_bar": {
+                                    "show_branch_status_icon": true,
+                                    "show_branch_name": true
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_across_all_scopes() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "title_bar": {
+                    "show_branch_icon": true,
+                    "show_branch_name": true
+                },
+                "macos": {
+                    "title_bar": {
+                        "show_branch_icon": true,
+                        "show_branch_name": true
+                    }
+                },
+                "preview": {
+                    "title_bar": {
+                        "show_branch_icon": true,
+                        "show_branch_name": true
+                    }
+                },
+                "profiles": {
+                    "work": {
+                        "title_bar": {
+                            "show_branch_icon": true,
+                            "show_branch_name": true
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "title_bar": {
+                        "show_branch_status_icon": true,
+                        "show_branch_name": true
+                    },
+                    "macos": {
+                        "title_bar": {
+                            "show_branch_status_icon": true,
+                            "show_branch_name": true
+                        }
+                    },
+                    "preview": {
+                        "title_bar": {
+                            "show_branch_status_icon": true,
+                            "show_branch_name": true
+                        }
+                    },
+                    "profiles": {
+                        "work": {
+                            "settings": {
+                                "title_bar": {
+                                    "show_branch_status_icon": true,
+                                    "show_branch_name": true
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_promote_show_branch_icon_true_to_show_branch_status_icon_no_change_when_already_migrated()
+     {
+        assert_migrate_settings(
+            &r#"
+            {
+                "title_bar": {
+                    "show_branch_status_icon": true,
+                    "show_branch_name": true
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // No title_bar key — should be unchanged
+        assert_migrate_settings(&r#"{ "theme": "One Dark" }"#.unindent(), None);
+
+        // title_bar without show_branch_icon — should be unchanged
+        assert_migrate_settings(
+            &r#"
+            {
+                "title_bar": {
+                    "show_branch_name": true
+                }
+            }
+            "#
+            .unindent(),
+            None,
         );
     }
 }

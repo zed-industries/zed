@@ -71,12 +71,7 @@ In long conversations, use the scroll arrow buttons at the bottom of the panel t
 
 When focus is in the message editor, you can also use {#kb agent::ScrollOutputPageUp}, {#kb agent::ScrollOutputPageDown}, {#kb agent::ScrollOutputToTop}, {#kb agent::ScrollOutputToBottom}, {#kb agent::ScrollOutputLineUp}, and {#kb agent::ScrollOutputLineDown} to navigate the thread, or {#kb agent::ScrollOutputToPreviousMessage} and {#kb agent::ScrollOutputToNextMessage} to jump between your prompts.
 
-### Navigating History {#navigating-history}
-
-To quickly navigate through recently updated threads, use the {#kb agent::ToggleNavigationMenu} binding when focused on the panel's editor, or click the menu icon button at the top right of the panel.
-Doing that will open a dropdown that shows you your six most recently updated threads.
-
-To view all historical conversations, reach for the `View All` option from within the same menu or via the {#kb agent::OpenHistory} binding.
+### Thread titles {#thread-titles}
 
 Thread titles are auto-generated based on the content of the conversation.
 But you can also edit them manually by clicking the title and typing, or regenerate them by clicking the "Regenerate Thread Title" button in the ellipsis menu in the top right of the panel.

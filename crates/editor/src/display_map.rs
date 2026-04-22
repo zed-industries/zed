@@ -194,12 +194,6 @@ pub struct CompanionExcerptPatch {
     pub target_excerpt_range: Range<MultiBufferPoint>,
 }
 
-pub type ConvertMultiBufferRows = fn(
-    &MultiBufferSnapshot,
-    &MultiBufferSnapshot,
-    Range<MultiBufferPoint>,
-) -> Vec<CompanionExcerptPatch>;
-
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
 /// folding, hard tabs, soft wrapping, custom blocks (like diagnostics), and highlighting.
 ///
@@ -237,26 +231,14 @@ pub struct DisplayMap {
 
 pub(crate) struct Companion {
     rhs_display_map_id: EntityId,
-    rhs_buffer_to_lhs_buffer: HashMap<BufferId, BufferId>,
-    lhs_buffer_to_rhs_buffer: HashMap<BufferId, BufferId>,
-    rhs_rows_to_lhs_rows: ConvertMultiBufferRows,
-    lhs_rows_to_rhs_rows: ConvertMultiBufferRows,
     rhs_custom_block_to_balancing_block: RefCell<HashMap<CustomBlockId, CustomBlockId>>,
     lhs_custom_block_to_balancing_block: RefCell<HashMap<CustomBlockId, CustomBlockId>>,
 }
 
 impl Companion {
-    pub(crate) fn new(
-        rhs_display_map_id: EntityId,
-        rhs_rows_to_lhs_rows: ConvertMultiBufferRows,
-        lhs_rows_to_rhs_rows: ConvertMultiBufferRows,
-    ) -> Self {
+    pub(crate) fn new(rhs_display_map_id: EntityId) -> Self {
         Self {
             rhs_display_map_id,
-            rhs_buffer_to_lhs_buffer: Default::default(),
-            lhs_buffer_to_rhs_buffer: Default::default(),
-            rhs_rows_to_lhs_rows,
-            lhs_rows_to_rhs_rows,
             rhs_custom_block_to_balancing_block: Default::default(),
             lhs_custom_block_to_balancing_block: Default::default(),
         }
@@ -284,12 +266,11 @@ impl Companion {
         our_snapshot: &MultiBufferSnapshot,
         bounds: Range<MultiBufferPoint>,
     ) -> Vec<CompanionExcerptPatch> {
-        let convert_fn = if self.is_rhs(display_map_id) {
-            self.rhs_rows_to_lhs_rows
+        if self.is_rhs(display_map_id) {
+            crate::split::patches_for_rhs_range(companion_snapshot, our_snapshot, bounds)
         } else {
-            self.lhs_rows_to_rhs_rows
-        };
-        convert_fn(companion_snapshot, our_snapshot, bounds)
+            crate::split::patches_for_lhs_range(companion_snapshot, our_snapshot, bounds)
+        }
     }
 
     pub(crate) fn convert_point_from_companion(
@@ -299,17 +280,19 @@ impl Companion {
         companion_snapshot: &MultiBufferSnapshot,
         point: MultiBufferPoint,
     ) -> Range<MultiBufferPoint> {
-        let convert_fn = if self.is_rhs(display_map_id) {
-            self.lhs_rows_to_rhs_rows
+        let patches = if self.is_rhs(display_map_id) {
+            crate::split::patches_for_lhs_range(our_snapshot, companion_snapshot, point..point)
         } else {
-            self.rhs_rows_to_lhs_rows
+            crate::split::patches_for_rhs_range(our_snapshot, companion_snapshot, point..point)
         };
 
-        let excerpt = convert_fn(our_snapshot, companion_snapshot, point..point)
-            .into_iter()
-            .next();
-
-        let Some(excerpt) = excerpt else {
+        let Some(excerpt) = patches.into_iter().next() else {
+            if cfg!(any(test, debug_assertions)) {
+                assert!(
+                    our_snapshot.max_point() == Point::zero(),
+                    "`patches_for_*_in_range` is only allowed to return an empty vec if the multibuffer is empty"
+                );
+            }
             return Point::zero()..our_snapshot.max_point();
         };
         excerpt.patch.edit_for_old_position(point).new
@@ -322,37 +305,16 @@ impl Companion {
         companion_snapshot: &MultiBufferSnapshot,
         point: MultiBufferPoint,
     ) -> Range<MultiBufferPoint> {
-        let convert_fn = if self.is_rhs(display_map_id) {
-            self.rhs_rows_to_lhs_rows
+        let patches = if self.is_rhs(display_map_id) {
+            crate::split::patches_for_rhs_range(companion_snapshot, our_snapshot, point..point)
         } else {
-            self.lhs_rows_to_rhs_rows
+            crate::split::patches_for_lhs_range(companion_snapshot, our_snapshot, point..point)
         };
 
-        let excerpt = convert_fn(companion_snapshot, our_snapshot, point..point)
-            .into_iter()
-            .next();
-
-        let Some(excerpt) = excerpt else {
+        let Some(excerpt) = patches.into_iter().next() else {
             return Point::zero()..companion_snapshot.max_point();
         };
         excerpt.patch.edit_for_old_position(point).new
-    }
-
-    fn buffer_to_companion_buffer(&self, display_map_id: EntityId) -> &HashMap<BufferId, BufferId> {
-        if self.is_rhs(display_map_id) {
-            &self.rhs_buffer_to_lhs_buffer
-        } else {
-            &self.lhs_buffer_to_rhs_buffer
-        }
-    }
-
-    pub(crate) fn lhs_to_rhs_buffer(&self, lhs_buffer_id: BufferId) -> Option<BufferId> {
-        self.lhs_buffer_to_rhs_buffer.get(&lhs_buffer_id).copied()
-    }
-
-    pub(crate) fn add_buffer_mapping(&mut self, lhs_buffer: BufferId, rhs_buffer: BufferId) {
-        self.lhs_buffer_to_rhs_buffer.insert(lhs_buffer, rhs_buffer);
-        self.rhs_buffer_to_lhs_buffer.insert(rhs_buffer, lhs_buffer);
     }
 }
 
@@ -514,9 +476,12 @@ impl DisplayMap {
             // entries: the block map doesn't remove buffers from
             // `folded_buffers` when they leave the multibuffer, so we
             // unfold any RHS buffers whose companion mapping is missing.
+            let rhs_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut buffers_to_unfold = Vec::new();
             for my_buffer in self.folded_buffers() {
-                let their_buffer = companion.read(cx).rhs_buffer_to_lhs_buffer.get(my_buffer);
+                let their_buffer = rhs_snapshot
+                    .diff_for_buffer_id(*my_buffer)
+                    .map(|diff| diff.base_text().remote_id());
 
                 let Some(their_buffer) = their_buffer else {
                     buffers_to_unfold.push(*my_buffer);
@@ -526,7 +491,7 @@ impl DisplayMap {
                 companion_display_map
                     .block_map
                     .folded_buffers
-                    .insert(*their_buffer);
+                    .insert(their_buffer);
             }
             for buffer_id in buffers_to_unfold {
                 self.block_map.folded_buffers.remove(&buffer_id);
@@ -2089,6 +2054,21 @@ impl DisplaySnapshot {
 
     pub fn clip_ignoring_line_ends(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
         DisplayPoint(self.block_snapshot.clip_point(point.0, bias))
+    }
+
+    pub fn inlay_bias_at(&self, point: DisplayPoint) -> Option<Bias> {
+        let wrap_point = self.block_snapshot.to_wrap_point(point.0, Bias::Left);
+        let tab_point = self.block_snapshot.to_tab_point(wrap_point);
+        let (fold_point, _, _) = self
+            .block_snapshot
+            .tab_snapshot
+            .tab_point_to_fold_point(tab_point, Bias::Left);
+        let inlay_point =
+            fold_point.to_inlay_point(&self.block_snapshot.tab_snapshot.fold_snapshot);
+        self.block_snapshot
+            .tab_snapshot
+            .fold_snapshot
+            .inlay_bias_at_point(inlay_point)
     }
 
     pub fn clip_at_line_end(&self, display_point: DisplayPoint) -> DisplayPoint {

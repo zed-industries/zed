@@ -401,6 +401,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 self.model.supports_prompt_cache_key(),
                 self.max_output_tokens(),
                 self.model.reasoning_effort(),
+                false,
             );
             let completions = self.stream_completion(request, cx);
             async move {

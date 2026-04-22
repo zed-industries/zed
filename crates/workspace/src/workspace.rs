@@ -1111,6 +1111,23 @@ struct GlobalAppState(Arc<AppState>);
 
 impl Global for GlobalAppState {}
 
+/// Tracks worktree creation progress for the workspace.
+/// Read by the title bar to show a loading indicator on the worktree button.
+#[derive(Default)]
+pub struct ActiveWorktreeCreation {
+    pub label: Option<SharedString>,
+    pub is_switch: bool,
+}
+
+/// Captured workspace state used when switching between worktrees.
+/// Stores the layout and open files so they can be restored in the new workspace.
+pub struct PreviousWorkspaceState {
+    pub dock_structure: DockStructure,
+    pub open_file_paths: Vec<PathBuf>,
+    pub active_file_path: Option<PathBuf>,
+    pub focused_dock: Option<DockPosition>,
+}
+
 pub struct WorkspaceStore {
     workspaces: HashSet<(gpui::AnyWindowHandle, WeakEntity<Workspace>)>,
     client: Arc<Client>,
@@ -1271,6 +1288,7 @@ pub enum Event {
     ModalOpened,
     Activate,
     PanelAdded(AnyView),
+    WorktreeCreationChanged,
 }
 
 #[derive(Debug, Clone)]
@@ -1379,6 +1397,7 @@ pub struct Workspace {
     _panels_task: Option<Task<Result<()>>>,
     sidebar_focus_handle: Option<FocusHandle>,
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
+    active_worktree_creation: ActiveWorktreeCreation,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1807,6 +1826,7 @@ impl Workspace {
             removing: false,
             sidebar_focus_handle: None,
             multi_workspace,
+            active_worktree_creation: ActiveWorktreeCreation::default(),
             open_in_dev_container: false,
             _dev_container_task: None,
         }
@@ -1949,7 +1969,7 @@ impl Workspace {
                         });
                         match open_mode {
                             OpenMode::Activate => {
-                                multi_workspace.activate(workspace.clone(), window, cx);
+                                multi_workspace.activate(workspace.clone(), None, window, cx);
                             }
                             OpenMode::Add => {
                                 multi_workspace.add(workspace.clone(), &*window, cx);
@@ -2072,6 +2092,15 @@ impl Workspace {
                     });
                 })
                 .log_err();
+
+            if open_mode == OpenMode::NewWindow {
+                window
+                    .update(cx, |_, window, _cx| {
+                        window.activate_window();
+                    })
+                    .log_err();
+            }
+
             Ok(OpenResult {
                 window,
                 workspace,
@@ -2177,6 +2206,64 @@ impl Workspace {
                 dock.serialized_dock = Some(data);
                 dock.restore_state(window, cx);
             });
+        }
+    }
+
+    /// Returns which dock currently has focus, or `None` if focus is in the
+    /// center pane or elsewhere. Does NOT fall back to any global state.
+    pub fn focused_dock_position(&self, window: &Window, cx: &App) -> Option<DockPosition> {
+        [
+            (DockPosition::Left, &self.left_dock),
+            (DockPosition::Right, &self.right_dock),
+            (DockPosition::Bottom, &self.bottom_dock),
+        ]
+        .into_iter()
+        .find(|(_, dock)| {
+            dock.read(cx).is_open() && dock.focus_handle(cx).contains_focused(window, cx)
+        })
+        .map(|(position, _)| position)
+    }
+
+    pub fn active_worktree_creation(&self) -> &ActiveWorktreeCreation {
+        &self.active_worktree_creation
+    }
+
+    pub fn set_active_worktree_creation(
+        &mut self,
+        label: Option<SharedString>,
+        is_switch: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_worktree_creation.label = label;
+        self.active_worktree_creation.is_switch = is_switch;
+        cx.emit(Event::WorktreeCreationChanged);
+        cx.notify();
+    }
+
+    /// Captures the current workspace state for restoring after a worktree switch.
+    /// This includes dock layout, open file paths, and the active file path.
+    pub fn capture_state_for_worktree_switch(
+        &self,
+        window: &Window,
+        fallback_focused_dock: Option<DockPosition>,
+        cx: &App,
+    ) -> PreviousWorkspaceState {
+        let dock_structure = self.capture_dock_state(window, cx);
+        let open_file_paths = self.open_item_abs_paths(cx);
+        let active_file_path = self
+            .active_item(cx)
+            .and_then(|item| item.project_path(cx))
+            .and_then(|pp| self.project().read(cx).absolute_path(&pp, cx));
+
+        let focused_dock = self
+            .focused_dock_position(window, cx)
+            .or(fallback_focused_dock);
+
+        PreviousWorkspaceState {
+            dock_structure,
+            open_file_paths,
+            active_file_path,
+            focused_dock,
         }
     }
 
@@ -3286,24 +3373,27 @@ impl Workspace {
                                 };
                                 keystroke
                             };
-                            cx.update(|window, cx| {
-                                let focused = window.focused(cx);
-                                window.dispatch_keystroke(keystroke.clone(), cx);
-                                if window.focused(cx) != focused {
-                                    // dispatch_keystroke may cause the focus to change.
-                                    // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
-                                    // And we need that to happen before the next keystroke to keep vim mode happy...
-                                    // (Note that the tests always do this implicitly, so you must manually test with something like:
-                                    //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
-                                    // )
-                                    window.draw(cx).clear();
-                                }
-                            })
-                            .ok();
+                            let focus_changed = cx
+                                .update(|window, cx| {
+                                    let focused = window.focused(cx);
+                                    window.dispatch_keystroke(keystroke.clone(), cx);
+                                    if window.focused(cx) != focused {
+                                        // dispatch_keystroke may cause the focus to change.
+                                        // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
+                                        // And we need that to happen before the next keystroke to keep vim mode happy...
+                                        // (Note that the tests always do this implicitly, so you must manually test with something like:
+                                        //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
+                                        // )
+                                        window.draw(cx).clear();
+                                        return true;
+                                    }
+                                    false
+                                })
+                                .unwrap_or(false);
 
-                            // Yield between synthetic keystrokes so deferred focus and
-                            // other effects can settle before dispatching the next key.
-                            yield_now().await;
+                            if focus_changed {
+                                yield_now().await;
+                            }
                         }
 
                         *keystrokes.borrow_mut() = Default::default();
@@ -3354,24 +3444,26 @@ impl Workspace {
         let project = self.project.clone();
         cx.spawn_in(window, async move |workspace, cx| {
             let dirty_items = if save_intent == SaveIntent::Close && !dirty_items.is_empty() {
-                let (serialize_tasks, remaining_dirty_items) =
-                    workspace.update_in(cx, |workspace, window, cx| {
-                        let mut remaining_dirty_items = Vec::new();
-                        let mut serialize_tasks = Vec::new();
-                        for (pane, item) in dirty_items {
-                            if let Some(task) = item
-                                .to_serializable_item_handle(cx)
-                                .and_then(|handle| handle.serialize(workspace, true, window, cx))
-                            {
-                                serialize_tasks.push(task);
-                            } else {
-                                remaining_dirty_items.push((pane, item));
-                            }
+                let mut serialize_tasks = Vec::new();
+                let mut remaining_dirty_items = Vec::new();
+                workspace.update_in(cx, |workspace, window, cx| {
+                    for (pane, item) in dirty_items {
+                        if let Some(task) = item
+                            .to_serializable_item_handle(cx)
+                            .and_then(|handle| handle.serialize(workspace, true, window, cx))
+                        {
+                            serialize_tasks.push((pane, item, task));
+                        } else {
+                            remaining_dirty_items.push((pane, item));
                         }
-                        (serialize_tasks, remaining_dirty_items)
-                    })?;
+                    }
+                })?;
 
-                futures::future::try_join_all(serialize_tasks).await?;
+                for (pane, item, task) in serialize_tasks {
+                    if task.await.log_err().is_none() {
+                        remaining_dirty_items.push((pane, item));
+                    }
+                }
 
                 if !remaining_dirty_items.is_empty() {
                     workspace.update(cx, |_, cx| cx.emit(Event::Activate))?;
@@ -3451,6 +3543,11 @@ impl Workspace {
                         OpenOptions {
                             requesting_window,
                             open_mode,
+                            workspace_matching: if open_mode == OpenMode::NewWindow {
+                                WorkspaceMatching::None
+                            } else {
+                                WorkspaceMatching::default()
+                            },
                             ..Default::default()
                         },
                         cx,
@@ -3765,11 +3862,18 @@ impl Workspace {
                     .project
                     .read(cx)
                     .worktree_for_id(path.worktree_id, cx)?;
-                if worktree.read(cx).is_visible() {
-                    abs_path
-                } else {
-                    None
+                if !worktree.read(cx).is_visible() {
+                    return None;
                 }
+                let settings_location = SettingsLocation {
+                    worktree_id: path.worktree_id,
+                    path: &path.path,
+                };
+                if WorktreeSettings::get(Some(settings_location), cx).is_path_read_only(&path.path)
+                {
+                    return None;
+                }
+                abs_path
             })
             .next()
     }
@@ -9630,7 +9734,7 @@ pub fn open_paths(
             let open_task = existing
                 .update(cx, |multi_workspace, window, cx| {
                     window.activate_window();
-                    multi_workspace.activate(target_workspace.clone(), window, cx);
+                    multi_workspace.activate(target_workspace.clone(), None, window, cx);
                     target_workspace.update(cx, |workspace, cx| {
                         if open_in_dev_container {
                             workspace.set_open_in_dev_container(true);
@@ -9856,6 +9960,7 @@ pub fn open_remote_project_with_new_connection(
             app_state,
             window,
             None,
+            None,
             cx,
         )
         .await
@@ -9869,6 +9974,7 @@ pub fn open_remote_project_with_existing_connection(
     app_state: Arc<AppState>,
     window: WindowHandle<MultiWorkspace>,
     provisional_project_group_key: Option<ProjectGroupKey>,
+    source_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut AsyncApp,
 ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
@@ -9883,6 +9989,7 @@ pub fn open_remote_project_with_existing_connection(
             app_state,
             window,
             provisional_project_group_key,
+            source_workspace,
             cx,
         )
         .await
@@ -9897,6 +10004,7 @@ async fn open_remote_project_inner(
     app_state: Arc<AppState>,
     window: WindowHandle<MultiWorkspace>,
     provisional_project_group_key: Option<ProjectGroupKey>,
+    source_workspace: Option<WeakEntity<Workspace>>,
     cx: &mut AsyncApp,
 ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
     let db = cx.update(|cx| WorkspaceDb::global(cx));
@@ -9967,7 +10075,7 @@ async fn open_remote_project_inner(
                 cx,
             );
         } else {
-            multi_workspace.activate(new_workspace.clone(), window, cx);
+            multi_workspace.activate(new_workspace.clone(), source_workspace, window, cx);
         }
         new_workspace
     })?;
@@ -10055,7 +10163,7 @@ pub fn join_in_room_project(
         {
             existing_window
                 .update(cx, |multi_workspace, window, cx| {
-                    multi_workspace.activate(target_workspace, window, cx);
+                    multi_workspace.activate(target_workspace, None, window, cx);
                 })
                 .ok();
             existing_window
@@ -10995,7 +11103,7 @@ mod tests {
         // Activate workspace A
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
-                mw.activate(workspace_a.clone(), window, cx);
+                mw.activate(workspace_a.clone(), None, window, cx);
             })
             .unwrap();
 
@@ -11080,7 +11188,7 @@ mod tests {
         // Activate workspace A.
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
-                mw.activate(workspace_a.clone(), window, cx);
+                mw.activate(workspace_a.clone(), None, window, cx);
             })
             .unwrap();
 
@@ -11132,7 +11240,7 @@ mod tests {
         let remove_task = multi_workspace_handle
             .update(cx, |mw, window, cx| {
                 // First switch back to A.
-                mw.activate(workspace_a.clone(), window, cx);
+                mw.activate(workspace_a.clone(), None, window, cx);
                 mw.remove([workspace_b.clone()], |_, _, _| unreachable!(), window, cx)
             })
             .unwrap();
@@ -11192,6 +11300,49 @@ mod tests {
         let task = workspace.update_in(cx, |w, window, cx| {
             w.prepare_to_close(CloseIntent::CloseWindow, window, cx)
         });
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_close_window_with_failing_serialization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx).with_dirty(true).with_serialize(|| {
+                Some(Task::ready(Err(anyhow::anyhow!(
+                    "FOREIGN KEY constraint failed"
+                ))))
+            })
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        // The failing serialization must not short-circuit the close; a
+        // save/discard prompt must be shown for the dirty scratch item.
+        assert!(
+            cx.has_pending_prompt(),
+            "a save/discard prompt should be shown for the dirty scratch item \
+             when its serialization fails"
+        );
+        cx.simulate_prompt_answer("Don't Save");
+        cx.executor().run_until_parked();
+
+        // Preparing to close succeeds, even though serialization failed.
         assert!(task.await.unwrap());
     }
 
@@ -14858,7 +15009,7 @@ mod tests {
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
                 let workspace = mw.workspaces().next().unwrap().clone();
-                mw.activate(workspace, window, cx);
+                mw.activate(workspace, None, window, cx);
             })
             .unwrap();
 
@@ -14904,7 +15055,7 @@ mod tests {
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
                 let workspace = mw.workspaces().nth(1).unwrap().clone();
-                mw.activate(workspace, window, cx);
+                mw.activate(workspace, None, window, cx);
             })
             .unwrap();
         cx.run_until_parked();
@@ -14913,7 +15064,7 @@ mod tests {
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
                 let workspace = mw.workspaces().next().unwrap().clone();
-                mw.activate(workspace, window, cx);
+                mw.activate(workspace, None, window, cx);
             })
             .unwrap();
         cx.run_until_parked();
@@ -15156,5 +15307,52 @@ mod tests {
                 "Both panels should still be in the right dock"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_most_recent_active_path_skips_read_only_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "src": { "main.py": "" },
+                ".venv": { "lib": { "dep.py": "" } },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        // Configure .venv as read-only
+        workspace.update_in(cx, |_workspace, _window, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(r#"{"read_only_files": ["**/.venv/**"]}"#, cx)
+                    .ok();
+            });
+        });
+
+        let item_dep = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new_in_worktree(
+                1001,
+                ".venv/lib/dep.py",
+                worktree_id,
+                cx,
+            )])
+        });
+
+        // dep.py is active but matches read_only_files → should be skipped
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_dep.clone()), None, true, window, cx);
+        });
+        let path = workspace.read_with(cx, |workspace, cx| workspace.most_recent_active_path(cx));
+        assert_eq!(path, None);
     }
 }

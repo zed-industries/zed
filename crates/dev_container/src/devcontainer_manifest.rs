@@ -17,8 +17,9 @@ use crate::{
     command_json::{CommandRunner, DefaultCommandRunner},
     devcontainer_api::{DevContainerError, DevContainerUp},
     devcontainer_json::{
-        DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort, MountDefinition,
-        deserialize_devcontainer_json,
+        ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort,
+        MountDefinition, deserialize_devcontainer_json, deserialize_devcontainer_json_from_value,
+        deserialize_devcontainer_json_to_value,
     },
     docker::{
         Docker, DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -131,40 +132,60 @@ impl DevContainerManifest {
         labels
     }
 
-    fn parse_nonremote_vars_for_content(&self, content: &str) -> Result<String, DevContainerError> {
-        let mut replaced_content = content
-            .replace("${devcontainerId}", &self.devcontainer_id())
-            .replace(
-                "${containerWorkspaceFolderBasename}",
-                &self.remote_workspace_base_name().unwrap_or_default(),
-            )
-            .replace(
-                "${localWorkspaceFolderBasename}",
-                &self.local_workspace_base_name()?,
-            )
-            .replace(
-                "${containerWorkspaceFolder}",
-                &self
-                    .remote_workspace_folder()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_default()
-                    .replace('\\', "/"),
-            )
-            .replace(
-                "${localWorkspaceFolder}",
-                &self.local_workspace_folder().replace('\\', "/"),
-            );
-        for (k, v) in &self.local_environment {
-            let find = format!("${{localEnv:{k}}}");
-            replaced_content = replaced_content.replace(&find, &v.replace('\\', "/"));
+    fn parse_nonremote_vars_for_content(
+        &self,
+        content: &str,
+    ) -> Result<serde_json_lenient::Value, DevContainerError> {
+        let mut value = deserialize_devcontainer_json_to_value(content)?;
+        let mut to_visit = vec![&mut value];
+
+        while let Some(value) = to_visit.pop() {
+            use serde_json_lenient::Value;
+
+            match value {
+                Value::String(string) => {
+                    *string = string
+                        .replace("${devcontainerId}", &self.devcontainer_id())
+                        .replace(
+                            "${containerWorkspaceFolderBasename}",
+                            &self.remote_workspace_base_name().unwrap_or_default(),
+                        )
+                        .replace(
+                            "${localWorkspaceFolderBasename}",
+                            &self.local_workspace_base_name()?,
+                        )
+                        .replace(
+                            "${containerWorkspaceFolder}",
+                            &self
+                                .remote_workspace_folder()
+                                .map(|path| path.display().to_string())
+                                .unwrap_or_default()
+                                .replace('\\', "/"),
+                        )
+                        .replace(
+                            "${localWorkspaceFolder}",
+                            &self.local_workspace_folder().replace('\\', "/"),
+                        );
+                    *string = Self::replace_environment_variables(
+                        string,
+                        "localEnv",
+                        &self.local_environment,
+                    );
+                }
+
+                Value::Array(array) => to_visit.extend(array.iter_mut()),
+                Value::Object(object) => to_visit.extend(object.values_mut()),
+
+                Value::Null | Value::Bool(_) | Value::Number(_) => {}
+            }
         }
 
-        Ok(replaced_content)
+        Ok(value)
     }
 
     fn parse_nonremote_vars(&mut self) -> Result<(), DevContainerError> {
         let replaced_content = self.parse_nonremote_vars_for_content(&self.raw_config)?;
-        let parsed_config = deserialize_devcontainer_json(&replaced_content)?;
+        let parsed_config = deserialize_devcontainer_json_from_value(replaced_content)?;
 
         self.config = ConfigStatus::VariableParsed(parsed_config);
 
@@ -178,30 +199,60 @@ impl DevContainerManifest {
         let mut merged_remote_env = container_env.clone();
         // HOME is user-specific, and we will often not run as the image user
         merged_remote_env.remove("HOME");
-        if let Some(remote_env) = self.dev_container().remote_env.clone() {
-            let mut raw = serde_json_lenient::to_string(&remote_env).map_err(|e| {
-                log::error!(
-                    "Unexpected error serializing dev container remote_env: {e} - {:?}",
-                    remote_env
-                );
-                DevContainerError::DevContainerParseFailed
-            })?;
-            for (k, v) in container_env {
-                raw = raw.replace(&format!("${{containerEnv:{k}}}"), v);
-            }
-            let reserialized: HashMap<String, String> = serde_json_lenient::from_str(&raw)
-                .map_err(|e| {
-                    log::error!(
-                        "Unexpected error reserializing dev container remote env: {e} - {:?}",
-                        &raw
-                    );
-                    DevContainerError::DevContainerParseFailed
-                })?;
-            for (k, v) in reserialized {
+        if let Some(mut remote_env) = self.dev_container().remote_env.clone() {
+            remote_env.values_mut().for_each(|value| {
+                *value = Self::replace_environment_variables(value, "containerEnv", &container_env)
+            });
+            for (k, v) in remote_env {
                 merged_remote_env.insert(k, v);
             }
         }
         Ok(merged_remote_env)
+    }
+
+    fn replace_environment_variables(
+        mut orig: &str,
+        environment_source: &str,
+        environment: &HashMap<String, String>,
+    ) -> String {
+        let mut replaced = String::with_capacity(orig.len());
+        let prefix = format!("${{{environment_source}:");
+        while let Some(start) = orig.find(&prefix) {
+            let var_name_start = start + prefix.len();
+            let Some(end) = orig[var_name_start..].find('}') else {
+                // No closing `}` => malformed variable reference => paste as is.
+                break;
+            };
+            let end = var_name_start + end;
+
+            let (var_name_end, default_start) =
+                if let Some(var_name_end) = orig[var_name_start..end].find(':') {
+                    let var_name_end = var_name_start + var_name_end;
+                    (var_name_end, var_name_end + 1)
+                } else {
+                    (end, end)
+                };
+
+            let var_name = &orig[var_name_start..var_name_end];
+            if var_name.is_empty() {
+                // Empty variable name => paste as is.
+                replaced.push_str(&orig[..end + 1]);
+                orig = &orig[end + 1..];
+                continue;
+            }
+            let default = &orig[default_start..end];
+
+            replaced.push_str(&orig[..start]);
+            replaced.push_str(
+                environment
+                    .get(var_name)
+                    .map(|value| value.as_str())
+                    .unwrap_or(default),
+            );
+            orig = &orig[end + 1..];
+        }
+        replaced.push_str(orig);
+        replaced
     }
 
     fn config_file(&self) -> PathBuf {
@@ -478,7 +529,7 @@ impl DevContainerManifest {
             let contents_parsed = self.parse_nonremote_vars_for_content(&contents)?;
 
             let feature_json: DevContainerFeatureJson =
-                serde_json_lenient::from_str(&contents_parsed).map_err(|e| {
+                serde_json_lenient::from_value(contents_parsed).map_err(|e| {
                     log::error!("Failed to parse devcontainer-feature.json: {e}");
                     DevContainerError::ResourceFetchFailed
                 })?;
@@ -1605,6 +1656,26 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             }
         }
 
+        if let Some(options) = dev_container
+            .build
+            .as_ref()
+            .and_then(|b| b.options.as_ref())
+        {
+            for option in options {
+                command.arg(option);
+            }
+        }
+
+        if let Some(cache_from_images) = dev_container
+            .build
+            .as_ref()
+            .and_then(|b| b.cache_from.as_ref())
+        {
+            for cache_from_image in cache_from_images {
+                command.args(["--cache-from", cache_from_image]);
+            }
+        }
+
         command.args(["--target", "dev_containers_target_stage"]);
 
         command.args([
@@ -1614,8 +1685,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
         command.args(["-t", &features_build_info.image_tag]);
 
-        if let DevContainerBuildType::Dockerfile(_) = dev_container.build_type() {
-            command.arg(self.config_directory.display().to_string());
+        if let DevContainerBuildType::Dockerfile(build) = dev_container.build_type() {
+            command.arg(self.calculate_context_dir(build).display().to_string());
         } else {
             // Use an empty folder as the build context to avoid pulling in unneeded files.
             // The actual feature content is supplied via the BuildKit build context above.
@@ -2042,12 +2113,24 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             return Err(DevContainerError::DevContainerParseFailed);
         };
 
-        let devcontainer_args = self
-            .dev_container()
-            .build
-            .as_ref()
-            .and_then(|b| b.args.clone())
-            .unwrap_or_default();
+        // For docker-compose configs the build args live on the primary
+        // compose service rather than on dev_container.build.
+        let devcontainer_args = match self.dev_container().build_type() {
+            DevContainerBuildType::DockerCompose => {
+                let compose = self.docker_compose_manifest().await?;
+                find_primary_service(&compose, self)?
+                    .1
+                    .build
+                    .and_then(|b| b.args)
+                    .unwrap_or_default()
+            }
+            _ => self
+                .dev_container()
+                .build
+                .as_ref()
+                .and_then(|b| b.args.clone())
+                .unwrap_or_default(),
+        };
         let contents = self.fs.load(&dockerfile_path).await.map_err(|e| {
             log::error!("Failed to load Dockerfile: {e}");
             DevContainerError::FilesystemError
@@ -2093,6 +2176,19 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         }
 
         Ok(parsed_lines.join("\n"))
+    }
+
+    fn calculate_context_dir(&self, build: ContainerBuild) -> PathBuf {
+        let Some(context) = build.context else {
+            return self.config_directory.clone();
+        };
+        let context_path = PathBuf::from(context);
+
+        if context_path.is_absolute() {
+            context_path
+        } else {
+            self.config_directory.join(context_path)
+        }
     }
 }
 
@@ -2376,12 +2472,58 @@ fn dockerfile_inject_alias(
     alias: &str,
     build_target: Option<String>,
 ) -> String {
-    match image_from_dockerfile(dockerfile_content.to_string(), &build_target) {
-        Some(target) => format!(
-            r#"{dockerfile_content}
-FROM {target} AS {alias}"#
-        ),
-        None => dockerfile_content.to_string(),
+    let from_lines: Vec<(usize, &str)> = dockerfile_content
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.starts_with("FROM"))
+        .collect();
+
+    let target_entry = match &build_target {
+        Some(target) => from_lines.iter().rfind(|(_, line)| {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            parts.len() >= 3
+                && parts
+                    .get(parts.len() - 2)
+                    .map_or(false, |p| p.eq_ignore_ascii_case("as"))
+                && parts
+                    .last()
+                    .map_or(false, |p| p.eq_ignore_ascii_case(target))
+        }),
+        None => from_lines.last(),
+    };
+
+    let Some(&(line_idx, from_line)) = target_entry else {
+        return dockerfile_content.to_string();
+    };
+
+    let parts: Vec<&str> = from_line.split_whitespace().collect();
+    let has_alias = parts.len() >= 3
+        && parts
+            .get(parts.len() - 2)
+            .map_or(false, |p| p.eq_ignore_ascii_case("as"));
+
+    if has_alias {
+        let Some(existing_alias) = parts.last() else {
+            return dockerfile_content.to_string();
+        };
+        format!("{dockerfile_content}\nFROM {existing_alias} AS {alias}")
+    } else {
+        let lines: Vec<&str> = dockerfile_content.lines().collect();
+        let mut result = String::new();
+        for (i, line) in lines.iter().enumerate() {
+            if i > 0 {
+                result.push('\n');
+            }
+            if i == line_idx {
+                result.push_str(&format!("{line} AS {alias}"));
+            } else {
+                result.push_str(line);
+            }
+        }
+        if dockerfile_content.ends_with('\n') {
+            result.push('\n');
+        }
+        result
     }
 }
 
@@ -2872,7 +3014,9 @@ mod test {
         "REMOTE_WORKSPACE_FOLDER": "${containerWorkspaceFolder}",
         "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}",
         "LOCAL_ENV_VAR_1": "${localEnv:local_env_1}",
-        "LOCAL_ENV_VAR_2": "${localEnv:my_other_env}"
+        "LOCAL_ENV_VAR_2": "${localEnv:my_other_env}",
+        "LOCAL_ENV_VAR_3": "before-${localEnv:missing_local_env}-after",
+        "LOCAL_ENV_VAR_4": "${localEnv:with_defaults:default}"
 
     }
 }
@@ -2966,6 +3110,42 @@ mod test {
                 .and_then(|env| env.get("LOCAL_ENV_VAR_2")),
             Some(&"THISVALUEHERE".to_string())
         );
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("LOCAL_ENV_VAR_3")),
+            Some(&"before--after".to_string())
+        );
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("LOCAL_ENV_VAR_4")),
+            Some(&"default".to_string())
+        );
+    }
+
+    #[test]
+    fn test_replace_environment_variables() {
+        let replaced = DevContainerManifest::replace_environment_variables(
+            "before ${containerEnv:FOUND} middle ${containerEnv:MISSING:default-value} after${containerEnv:MISSING2}",
+            "containerEnv",
+            &HashMap::from([("FOUND".to_string(), "value".to_string())]),
+        );
+
+        assert_eq!(replaced, "before value middle default-value after");
+    }
+
+    #[test]
+    fn test_replace_environment_variables_supports_defaults_with_colons() {
+        let replaced = DevContainerManifest::replace_environment_variables(
+            "before ${containerEnv:MISSING:one:two} after",
+            "containerEnv",
+            &HashMap::new(),
+        );
+
+        assert_eq!(replaced, "before one:two after");
     }
 
     #[gpui::test]
@@ -3212,7 +3392,7 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
 #  Copyright (c) Microsoft Corporation. All rights reserved.
 #  Licensed under the MIT License. See License.txt in the project root for license information.
 ARG VARIANT="16-bullseye"
-FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT}
+FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT} AS dev_container_auto_added_stage_label
 
 RUN mkdir -p /workspaces && chown node:node /workspaces
 
@@ -3225,7 +3405,6 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
 && mkdir -p /home/$USERNAME/commandhistory \
 && touch /home/$USERNAME/commandhistory/.bash_history \
 && chown -R $USERNAME /home/$USERNAME/commandhistory
-FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT} AS dev_container_auto_added_stage_label
 
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
 USER root
@@ -3553,14 +3732,13 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             &feature_dockerfile,
             r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
 
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 # Include lld linker to improve build times either by using environment variable
 # RUSTFLAGS="-C link-arg=-fuse-ld=lld" or with Cargo's configuration file (i.e see .cargo/config.toml).
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && apt-get -y install clang lld \
     && apt-get autoremove -y && apt-get clean -y
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
 USER root
@@ -3944,14 +4122,13 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             &feature_dockerfile,
             r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
 
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 # Include lld linker to improve build times either by using environment variable
 # RUSTFLAGS="-C link-arg=-fuse-ld=lld" or with Cargo's configuration file (i.e see .cargo/config.toml).
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 && apt-get -y install clang lld \
 && apt-get autoremove -y && apt-get clean -y
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
 USER root
@@ -4124,14 +4301,13 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
             &feature_dockerfile,
             r#"ARG _DEV_CONTAINERS_BASE_IMAGE=placeholder
 
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 # Include lld linker to improve build times either by using environment variable
 # RUSTFLAGS="-C link-arg=-fuse-ld=lld" or with Cargo's configuration file (i.e see .cargo/config.toml).
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 && apt-get -y install clang lld \
 && apt-get autoremove -y && apt-get clean -y
-FROM mcr.microsoft.com/devcontainers/rust:2-1-bookworm AS dev_container_auto_added_stage_label
 
 FROM dev_container_feature_content_temp as dev_containers_feature_content_source
 
@@ -4388,7 +4564,7 @@ RUN echo "export HISTFILE=/home/$USERNAME/commandhistory/.bash_history" >> "/hom
 && mkdir -p /home/$USERNAME/commandhistory \
 && touch /home/$USERNAME/commandhistory/.bash_history \
 && chown -R $USERNAME /home/$USERNAME/commandhistory
-FROM mcr.microsoft.com/devcontainers/typescript-node:1-${VARIANT} AS dev_container_auto_added_stage_label
+FROM development AS dev_container_auto_added_stage_label
 
 FROM $_DEV_CONTAINERS_BASE_IMAGE AS dev_containers_feature_content_normalize
 USER root
@@ -4902,6 +5078,46 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
         )
     }
 
+    #[gpui::test]
+    async fn test_expands_compose_service_args_in_dockerfile(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+
+        let given_devcontainer_contents = r#"
+            {
+              "dockerComposeFile": "docker-compose-with-args.yml",
+              "service": "app",
+            }
+            "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
+                "FROM ${BASE_IMAGE}\nUSER root\n".to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let expanded = devcontainer_manifest
+            .expanded_dockerfile_content()
+            .await
+            .unwrap();
+
+        assert_eq!(expanded, "FROM test_image:latest\nUSER root");
+
+        let base_image =
+            image_from_dockerfile(expanded, &None).expect("base image resolves from compose args");
+        assert_eq!(base_image, "test_image:latest");
+    }
+
     #[test]
     fn test_aliases_dockerfile_with_pre_existing_aliases_for_build() {}
 
@@ -5140,6 +5356,35 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
                         },
                     )]),
                     volumes: HashMap::new(),
+                }));
+            }
+            if config_files.len() == 1
+                && config_files.get(0)
+                    == Some(
+                        &project_path
+                            .join(".devcontainer")
+                            .join("docker-compose-with-args.yml"),
+                    )
+            {
+                return Ok(Some(DockerComposeConfig {
+                    name: None,
+                    services: HashMap::from([(
+                        "app".to_string(),
+                        DockerComposeService {
+                            build: Some(DockerComposeServiceBuild {
+                                context: Some(".".to_string()),
+                                dockerfile: Some("Dockerfile".to_string()),
+                                args: Some(HashMap::from([(
+                                    "BASE_IMAGE".to_string(),
+                                    "test_image:latest".to_string(),
+                                )])),
+                                additional_contexts: None,
+                                target: None,
+                            }),
+                            ..Default::default()
+                        },
+                    )]),
+                    ..Default::default()
                 }));
             }
             if config_files.len() == 1

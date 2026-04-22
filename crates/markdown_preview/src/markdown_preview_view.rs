@@ -1,3 +1,4 @@
+use std::any::TypeId;
 use std::cmp::min;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -8,9 +9,9 @@ use anyhow::Result;
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource, InteractiveElement,
-    IntoElement, IsZero, Pixels, Render, Resource, RetainAllImageCache, ScrollHandle, SharedString,
-    SharedUri, Subscription, Task, WeakEntity, Window, point,
+    App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
+    InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource, RetainAllImageCache,
+    ScrollHandle, SharedString, SharedUri, Subscription, Task, WeakEntity, Window, point,
 };
 use language::LanguageRegistry;
 use markdown::{
@@ -20,7 +21,7 @@ use markdown::{
 use project::search::SearchQuery;
 use settings::Settings;
 use theme_settings::ThemeSettings;
-use ui::{WithScrollbar, prelude::*};
+use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
 use util::markdown::split_local_url_fragment;
 use util::normalize_path;
 use workspace::item::{Item, ItemBufferKind, ItemHandle};
@@ -824,6 +825,23 @@ impl EventEmitter<SearchEvent> for MarkdownPreviewView {}
 impl Item for MarkdownPreviewView {
     type Event = ();
 
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a Entity<Self>,
+        _: &'a App,
+    ) -> Option<gpui::AnyEntity> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.clone().into())
+        } else if type_id == TypeId::of::<Editor>() {
+            self.active_editor
+                .as_ref()
+                .map(|state| state.editor.clone().into())
+        } else {
+            None
+        }
+    }
+
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::FileDoc))
     }
@@ -882,7 +900,27 @@ impl Render for MarkdownPreviewView {
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
                     .p_4()
-                    .child(self.render_markdown_element(window, cx)),
+                    .child({
+                        let markdown_element = self.render_markdown_element(window, cx);
+                        let markdown = self.markdown.clone();
+                        right_click_menu("markdown-preview-context-menu")
+                            .trigger(move |_, _, _| markdown_element)
+                            .menu(move |window, cx| {
+                                let focus = window.focused(cx);
+                                let context_menu_link =
+                                    markdown.read(cx).context_menu_link().cloned();
+                                ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                    menu.when_some(focus, |menu, focus| menu.context(focus))
+                                        .when_some(context_menu_link, |menu, url| {
+                                            menu.entry("Copy Link", None, move |_, cx| {
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    url.to_string(),
+                                                ));
+                                            })
+                                        })
+                                })
+                            })
+                    }),
             )
             .vertical_scrollbar_for(&self.scroll_handle, window, cx)
     }
@@ -938,7 +976,12 @@ impl SearchableItem for MarkdownPreviewView {
         }
     }
 
-    fn query_suggestion(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> String {
+    fn query_suggestion(
+        &mut self,
+        _ignore_settings: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
         self.markdown.read(cx).selected_text().unwrap_or_default()
     }
 

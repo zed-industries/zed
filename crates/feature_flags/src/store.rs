@@ -70,6 +70,7 @@ macro_rules! register_feature_flag {
 pub struct FeatureFlagStore {
     staff: bool,
     server_flags: HashMap<String, String>,
+    server_flags_received: bool,
 
     _settings_subscription: Option<Subscription>,
 }
@@ -95,12 +96,17 @@ impl FeatureFlagStore {
         self.staff
     }
 
+    pub fn server_flags_received(&self) -> bool {
+        self.server_flags_received
+    }
+
     pub fn set_staff(&mut self, staff: bool) {
         self.staff = staff;
     }
 
     pub fn update_server_flags(&mut self, staff: bool, flags: Vec<String>) {
         self.staff = staff;
+        self.server_flags_received = true;
         self.server_flags.clear();
         for flag in flags {
             self.server_flags.insert(flag.clone(), flag);
@@ -370,5 +376,33 @@ mod tests {
         let store = FeatureFlagStore::default();
         assert_eq!(store.try_flag_value::<DemoFlag>(cx), None);
         assert_eq!(PresenceFlag::default(), PresenceFlag::Off);
+    }
+
+    #[gpui::test]
+    fn on_flags_ready_waits_for_server_flags(cx: &mut gpui::TestAppContext) {
+        use crate::FeatureFlagAppExt;
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        cx.update(|cx| {
+            init_settings_store(cx);
+            FeatureFlagStore::init(cx);
+        });
+
+        let fired = Rc::new(Cell::new(false));
+        cx.update({
+            let fired = fired.clone();
+            |cx| cx.on_flags_ready(move |_, _| fired.set(true)).detach()
+        });
+
+        // Settings-triggered no-op touch must not fire on_flags_ready.
+        cx.update(|cx| cx.update_default_global::<FeatureFlagStore, _>(|_, _| {}));
+        cx.run_until_parked();
+        assert!(!fired.get());
+
+        // Server flags arrive — now it should fire.
+        cx.update(|cx| cx.update_flags(true, vec![]));
+        cx.run_until_parked();
+        assert!(fired.get());
     }
 }

@@ -45,8 +45,8 @@ use std::{
 
 use ui::{
     CommonAnimationExt, IconButtonShape, KeyBinding, List, ListItem, ListSeparator, Modal,
-    ModalFooter, ModalHeader, Navigable, NavigableEntry, Section, Tooltip, WithScrollbar,
-    prelude::*,
+    ModalFooter, ModalHeader, Navigable, NavigableEntry, ScrollAxes, Scrollbars, Section, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt,
@@ -505,7 +505,7 @@ impl ProjectPicker {
                     }?;
 
                     let items = open_remote_project_with_existing_connection(
-                        connection, project, paths, app_state, window, None, cx,
+                        connection, project, paths, app_state, window, None, None, cx,
                     )
                     .await
                     .log_err();
@@ -2827,7 +2827,12 @@ impl RemoteServerProjects {
                             )
                             .size_full(),
                         )
-                        .vertical_scrollbar_for(&state.scroll_handle, window, cx),
+                        .custom_scrollbars(
+                            Scrollbars::always_visible(ScrollAxes::Vertical)
+                                .tracked_scroll_handle(&state.scroll_handle),
+                            window,
+                            cx,
+                        ),
                 ),
             )
             .footer(ModalFooter::new().end_slot({
