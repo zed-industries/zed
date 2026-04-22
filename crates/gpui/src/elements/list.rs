@@ -125,6 +125,14 @@ impl FollowState {
             *self = FollowState::Tail { is_following: true };
         }
     }
+
+    fn stop_following(&mut self) {
+        if let FollowState::Tail { is_following: true } = self {
+            *self = FollowState::Tail {
+                is_following: false,
+            };
+        }
+    }
 }
 
 /// Whether the list is scrolling from top to bottom or bottom to top.
@@ -464,9 +472,7 @@ impl ListState {
         let state = &mut *self.0.borrow_mut();
 
         if distance < px(0.) {
-            if let FollowState::Tail { is_following } = &mut state.follow_state {
-                *is_following = false;
-            }
+            state.follow_state.stop_following();
         }
 
         let mut cursor = state.items.cursor::<ListItemSummary>(());
@@ -544,9 +550,7 @@ impl ListState {
         }
 
         if scroll_top.item_ix < item_count {
-            if let FollowState::Tail { is_following } = &mut state.follow_state {
-                *is_following = false;
-            }
+            state.follow_state.stop_following();
         }
 
         state.logical_scroll_top = Some(scroll_top);
@@ -727,10 +731,8 @@ impl StateInner {
             });
         }
 
-        if let FollowState::Tail { is_following } = &mut self.follow_state {
-            if delta.y > px(0.) {
-                *is_following = false;
-            }
+        if delta.y > px(0.) {
+            self.follow_state.stop_following();
         }
 
         if let Some(handler) = self.scroll_handler.as_mut() {
@@ -1135,7 +1137,7 @@ impl StateInner {
             content_height - self.scrollbar_drag_start_height.unwrap_or(content_height);
         let new_scroll_top = (point.y - drag_offset).abs().max(px(0.)).min(scroll_max);
 
-        self.follow_state = FollowState::Normal;
+        self.follow_state.stop_following();
 
         if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
             self.logical_scroll_top = None;
