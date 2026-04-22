@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, CheckoutStep, named},
+    steps::{self, CheckoutStep, CommonJobConditions, named},
     vars::{StepOutput, WorkflowInput},
 };
 
@@ -44,7 +44,6 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
                 exit 1
                 ;;
             esac
-            which cargo-set-version > /dev/null || cargo install cargo-edit -f --no-default-features --features "set-version"
             version="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "tag_suffix=$tag_suffix" >> "$GITHUB_OUTPUT"
@@ -66,12 +65,11 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
 
     named::job(
         Job::default()
-            .cond(Expression::new(
-                "github.repository_owner == 'zed-industries'",
-            ))
-            .runs_on(runners::LINUX_XL)
+            .with_repository_owner_guard()
+            .runs_on(runners::LINUX_DEFAULT)
             .add_step(authenticate)
             .add_step(checkout_branch(branch, &token))
+            .add_step(steps::install_cargo_edit())
             .add_step(bump_version_step)
             .add_step(commit_step)
             .add_step(steps::CreateTagStep::new(

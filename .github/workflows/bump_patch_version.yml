@@ -10,7 +10,7 @@ on:
         type: string
 jobs:
   run_bump_patch_version:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - id: generate-token
@@ -25,6 +25,10 @@ jobs:
         clean: false
         ref: ${{ inputs.branch }}
         token: ${{ steps.generate-token.outputs.token }}
+    - name: steps::install_cargo_edit
+      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
+      with:
+        tool: cargo-edit
     - id: bump-version
       name: bump_patch_version::run_bump_patch_version::bump_version
       run: |
@@ -42,7 +46,6 @@ jobs:
             exit 1
             ;;
         esac
-        which cargo-set-version > /dev/null || cargo install cargo-edit -f --no-default-features --features "set-version"
         version="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
         echo "version=$version" >> "$GITHUB_OUTPUT"
         echo "tag_suffix=$tag_suffix" >> "$GITHUB_OUTPUT"

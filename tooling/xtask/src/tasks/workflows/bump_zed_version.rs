@@ -149,13 +149,9 @@ fn bump_main(
     versions_job: &steps::NamedJob,
     outputs: &ResolvedOutputs,
 ) -> steps::NamedJob {
-    fn bump_version(outputs: &ResolvedOutputs) -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            which cargo-set-version > /dev/null || cargo install cargo-edit -f --no-default-features --features "set-version"
-            cargo set-version -p zed --bump "$BUMP_TYPE"
-        "#})
-        .add_env(("BUMP_TYPE", "${{ inputs.bump_type }}"))
-        .add_env(("NEXT_VERSION", outputs.next_version.to_string()))
+    fn bump_version() -> Step<Run> {
+        named::bash(r#"cargo set-version -p zed --bump "$BUMP_TYPE""#)
+            .add_env(("BUMP_TYPE", "${{ inputs.bump_type }}"))
     }
 
     let (authenticate, token) = steps::authenticate_as_zippy().into();
@@ -182,11 +178,12 @@ fn bump_main(
                 tag_only.expr(),
             )))
             .needs(vec![versions_job.name.clone()])
-            .runs_on(runners::LINUX_XL)
+            .runs_on(runners::LINUX_DEFAULT)
             .add_step(authenticate)
             .add_step(steps::checkout_repo().with_token(&token).with_ref("main"))
             .add_step(main_sha_step)
-            .add_step(bump_version(outputs))
+            .add_step(steps::install_cargo_edit())
+            .add_step(bump_version())
             .add_step(steps::CreateBranchStep::new(
                 &outputs.pr_branch,
                 &main_sha,
@@ -233,7 +230,7 @@ fn create_preview_branch(
     )
     .with_files("crates/zed/RELEASE_CHANNEL")
     .into();
-    let commit_step = commit_step.if_condition(not_tag_only.clone());
+    let commit_step = commit_step.if_condition(not_tag_only);
     let commit_sha = StepOutput::new_unchecked(&commit_step, "commit");
 
     // Tag-only mode: determine tag from the checked-out preview branch
@@ -332,7 +329,7 @@ fn promote_to_stable(
     )
     .with_files("crates/zed/RELEASE_CHANNEL")
     .into();
-    let commit_step = commit_step.if_condition(not_tag_only.clone());
+    let commit_step = commit_step.if_condition(not_tag_only);
     let commit_sha = StepOutput::new_unchecked(&commit_step, "commit");
 
     // Single tag step: use commit SHA in normal mode, HEAD SHA in tag-only mode

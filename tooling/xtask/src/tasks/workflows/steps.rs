@@ -176,6 +176,20 @@ pub fn cargo_fmt() -> Step<Run> {
     named::bash("cargo fmt --all -- --check")
 }
 
+pub fn install_cargo_edit() -> Step<Use> {
+    cargo_install("cargo-edit")
+}
+
+pub fn cargo_install(tool: &str) -> Step<Use> {
+    Step::new(named::function_name(1))
+        .uses(
+            "taiki-e",
+            "install-action",
+            "02cc5f8ca9f2301050c0c099055816a41ee05507", // v2
+        )
+        .add_with(("tool", tool))
+}
+
 pub fn cargo_install_nextest() -> Step<Use> {
     named::uses(
         "taiki-e",

@@ -122,13 +122,14 @@ jobs:
     - id: main-sha
       name: bump_zed_version::bump_main
       run: echo "main_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+    - name: steps::install_cargo_edit
+      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
+      with:
+        tool: cargo-edit
     - name: bump_zed_version::bump_main::bump_version
-      run: |
-        which cargo-set-version > /dev/null || cargo install cargo-edit -f --no-default-features --features "set-version"
-        cargo set-version -p zed --bump "$BUMP_TYPE"
+      run: cargo set-version -p zed --bump "$BUMP_TYPE"
       env:
         BUMP_TYPE: ${{ inputs.bump_type }}
-        NEXT_VERSION: ${{ needs.resolve_versions.outputs.next_version }}
     - name: steps::create_git_branch
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
