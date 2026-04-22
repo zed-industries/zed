@@ -274,7 +274,7 @@ pub struct MergeDetails {
 
 #[derive(Clone)]
 pub enum CommitDataState {
-    Loading,
+    Loading(Option<Shared<oneshot::Receiver<Arc<GraphCommitData>>>>),
     Loaded(Arc<GraphCommitData>),
 }
 
@@ -311,16 +311,16 @@ pub struct JobInfo {
 struct GraphCommitDataHandler {
     _task: Task<()>,
     commit_data_request: smol::channel::Sender<Oid>,
+    completers: HashMap<Oid, oneshot::Sender<Arc<GraphCommitData>>>,
 }
 
 /// Represents the handler of a git cat-file --batch process within Zed
 /// It's used to lazily fetch commit data as needed (whatever a user is viewing)
 enum GraphCommitHandlerState {
-    /// The handler is starting up the process
-    Starting,
     /// The handler is open and processing requests
     Open(GraphCommitDataHandler),
     /// The handler closed because it didn't receive any requests in the last 10s
+    /// or hasn't been open before
     Closed,
 }
 
@@ -2540,13 +2540,36 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
-        repository_handle
-            .update(&mut cx, |repository, _| {
-                repository.fetch_commit_data(sha, cx)
-            })
-            .await??;
+        let shas: Vec<Oid> = envelope
+            .payload
+            .shas
+            .iter()
+            .filter_map(|s| Oid::from_str(s).ok())
+            .collect();
 
-        Ok(proto::Ack {})
+        let receivers = repository_handle.update(&mut cx, |repository, cx| {
+            shas.iter()
+                .filter_map(|&sha| match repository.fetch_commit_data(sha, true, cx) {
+                    CommitDataState::Loading(Some(shared)) => Some(shared.clone()),
+                    CommitDataState::Loaded(data) => {
+                        let (tx, rx) = oneshot::channel();
+                        tx.send(data.clone()).ok();
+                        Some(rx.shared())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        });
+
+        let results = future::join_all(receivers).await;
+
+        let commits = results
+            .into_iter()
+            .filter_map(|result| result.ok())
+            .map(|data| graph_commit_data_to_proto(&data))
+            .collect();
+
+        Ok(proto::GetGraphCommitDataResponse { commits })
     }
 
     async fn handle_edit_ref(
@@ -5022,30 +5045,48 @@ impl Repository {
         Ok(())
     }
 
-    pub fn fetch_commit_data(&mut self, sha: Oid, cx: &mut Context<Self>) -> &CommitDataState {
+    pub fn fetch_commit_data(
+        &mut self,
+        sha: Oid,
+        get_waiter: bool,
+        cx: &mut Context<Self>,
+    ) -> &CommitDataState {
         if !self.commit_data.contains_key(&sha) {
-            match &self.graph_commit_data_handler {
+            match &mut self.graph_commit_data_handler {
                 GraphCommitHandlerState::Open(handler) => {
-                    if handler.commit_data_request.try_send(sha).is_ok() {
-                        let old_value = self.commit_data.insert(sha, CommitDataState::Loading);
-                        debug_assert!(old_value.is_none(), "We should never overwrite commit data");
+                    if get_waiter {
+                        let (tx, rx) = oneshot::channel();
+                        handler.completers.insert(sha, tx);
+                        self.commit_data
+                            .insert(sha, CommitDataState::Loading(Some(rx.shared())));
+                    } else {
+                        self.commit_data.insert(sha, CommitDataState::Loading(None));
                     }
+
+                    handler.commit_data_request.try_send(sha).ok();
                 }
                 GraphCommitHandlerState::Closed => {
-                    self.open_graph_commit_data_handler(cx);
+                    let mut handler = self.open_graph_commit_data_handler(cx);
+
+                    if get_waiter {
+                        let (tx, rx) = oneshot::channel();
+                        handler.completers.insert(sha, tx);
+                        self.commit_data
+                            .insert(sha, CommitDataState::Loading(Some(rx.shared())));
+                    } else {
+                        self.commit_data.insert(sha, CommitDataState::Loading(None));
+                    }
+
+                    handler.commit_data_request.try_send(sha).ok();
+                    self.graph_commit_data_handler = GraphCommitHandlerState::Open(handler);
                 }
-                GraphCommitHandlerState::Starting => {}
             }
         }
 
-        self.commit_data
-            .get(&sha)
-            .unwrap_or(&CommitDataState::Loading)
+        &self.commit_data[&sha]
     }
 
-    fn open_graph_commit_data_handler(&mut self, cx: &mut Context<Self>) {
-        self.graph_commit_data_handler = GraphCommitHandlerState::Starting;
-
+    fn open_graph_commit_data_handler(&self, cx: &Context<Self>) -> GraphCommitDataHandler {
         let state = self.repository_state.clone();
         let (result_tx, result_rx) = smol::channel::bounded::<(Oid, GraphCommitData)>(64);
         let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
@@ -5053,13 +5094,24 @@ impl Repository {
         let foreground_task = cx.spawn(async move |this, cx| {
             while let Ok((sha, commit_data)) = result_rx.recv().await {
                 let result = this.update(cx, |this, cx| {
+                    let data = Arc::new(commit_data);
                     let old_value = this
                         .commit_data
-                        .insert(sha, CommitDataState::Loaded(Arc::new(commit_data)));
+                        .insert(sha, CommitDataState::Loaded(data.clone()));
                     debug_assert!(
                         !matches!(old_value, Some(CommitDataState::Loaded(_))),
                         "We should never overwrite commit data"
                     );
+
+                    if let GraphCommitHandlerState::Open(handler) =
+                        &mut this.graph_commit_data_handler
+                    {
+                        if let Some(completer) = handler.completers.remove(&sha) {
+                            completer.send(data.clone()).ok();
+                        }
+                    } else {
+                        debug_panic!("The handler state has to be open for this task to exist");
+                    }
 
                     cx.notify();
                 });
@@ -5108,10 +5160,11 @@ impl Repository {
         })
         .detach();
 
-        self.graph_commit_data_handler = GraphCommitHandlerState::Open(GraphCommitDataHandler {
+        GraphCommitDataHandler {
             _task: foreground_task,
             commit_data_request: request_tx_for_handler,
-        });
+            completers: HashMap::default(),
+        }
     }
 
     async fn local_commit_data_reader(
