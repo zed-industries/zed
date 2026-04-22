@@ -52,9 +52,9 @@ jobs:
         } >> "$GITHUB_OUTPUT"
     - name: bump_patch_version::run_bump_patch_version::verify_prior_release_exists
       run: |
-        released=$(script/get-released-version "$CHANNEL" "$VERSION")
-        if [[ "$released" != "$VERSION" ]]; then
-            echo "::error::version $VERSION has not been released on $CHANNEL yet — bump the patch version only after the current version is released"
+        status=$(curl -s -o /dev/null -w '%{http_code}' "https://cloud.zed.dev/releases/$CHANNEL/$VERSION/asset?asset=zed&os=macos&arch=aarch64")
+        if [[ "$status" != "200" ]]; then
+            echo "::error::version $VERSION has not been released on $CHANNEL yet (HTTP $status) — bump the patch version only after the current version is released"
             exit 1
         fi
       env:

@@ -3,22 +3,17 @@
 set -eu
 
 usage() {
-  echo "Usage: $0 <major|minor> [target]"
+  echo "Usage: $0 [target]"
   echo ""
-  echo "Triggers the bump_zed_version workflow to perform a release version bump."
+  echo "Triggers the bump_zed_version workflow to perform a minor release version bump "
+  echo "and update the stable and preview versions."
   echo ""
   echo "Arguments:"
-  echo "  bump_type   Version bump type: major or minor"
   echo "  target      Which channels to bump: all (default), main, preview, or stable"
   exit 1
 }
 
-bump_type="${1:-}"
-target="${2:-all}"
-
-if [[ "$bump_type" != "major" && "$bump_type" != "minor" ]]; then
-  usage
-fi
+target="${1:-all}"
 
 if [[ "$target" != "all" && "$target" != "main" && "$target" != "preview" && "$target" != "stable" ]]; then
   echo "error: invalid target '$target'" >&2
@@ -37,20 +32,6 @@ if [[ $day_of_week -ne 3 ]]; then
   fi
 fi
 
-if [[ "$bump_type" == "major" ]]; then
-  echo "Warning: You are about to bump the major version of Zed"
-  read -r -p "Are you sure? (y/N) " confirm
-  if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-    echo "Aborted."
-    exit 0
-  fi
-  read -r -p "Are you absolutely sure? (y/N) " confirm
-  if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-    echo "Aborted."
-    exit 0
-  fi
-fi
-
 which gh > /dev/null 2>&1 || {
   echo "error: GitHub CLI (gh) is required but not installed." >&2
   echo "Install it with: brew install gh" >&2
@@ -58,12 +39,10 @@ which gh > /dev/null 2>&1 || {
 }
 
 echo "Triggering bump_zed_version workflow:"
-echo "  bump_type: $bump_type"
 echo "  target:    $target"
 echo ""
 
 gh workflow run bump_zed_version.yml \
-  -f bump_type="$bump_type" \
   -f target="$target"
 
 echo ""

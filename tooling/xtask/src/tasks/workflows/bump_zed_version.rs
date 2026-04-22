@@ -7,23 +7,18 @@ use crate::tasks::workflows::{
 };
 
 pub fn bump_zed_version() -> Workflow {
-    let bump_type =
-        WorkflowInput::string("bump_type", None).description("Version bump type: major or minor");
     let target = WorkflowInput::string("target", Some("all".to_string()))
         .description("Which channels to bump: all, main, preview, or stable");
 
-    let (versions_job, outputs) = resolve_versions(&bump_type);
+    let (versions_job, outputs) = resolve_versions();
 
     let bump_main_job = bump_main(&target, &versions_job, &outputs);
     let preview_job = create_preview_branch(&target, &versions_job, &outputs);
     let stable_job = promote_to_stable(&target, &versions_job, &outputs);
 
     named::workflow()
-        .on(Event::default().workflow_dispatch(
-            WorkflowDispatch::default()
-                .add_input(bump_type.name, bump_type.input())
-                .add_input(target.name, target.input()),
-        ))
+        .on(Event::default()
+            .workflow_dispatch(WorkflowDispatch::default().add_input(target.name, target.input())))
         .add_job(versions_job.name, versions_job.job)
         .add_job(bump_main_job.name, bump_main_job.job)
         .add_job(preview_job.name, preview_job.job)
@@ -38,8 +33,8 @@ struct ResolvedOutputs {
     stable_branch: vars::JobOutput,
 }
 
-fn resolve_versions(bump_type: &WorkflowInput) -> (steps::NamedJob, ResolvedOutputs) {
-    fn extract_versions(bump_type: &WorkflowInput) -> Step<Run> {
+fn resolve_versions() -> (steps::NamedJob, ResolvedOutputs) {
+    fn extract_versions() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             version=$(script/get-crate-version zed)
             major=$(echo "$version" | cut -d. -f1)
@@ -52,22 +47,10 @@ fn resolve_versions(bump_type: &WorkflowInput) -> (steps::NamedJob, ResolvedOutp
             fi
 
             # Next main version after bump
-            case "$BUMP_TYPE" in
-                minor)
-                    next_version="${major}.$((minor + 1)).0"
-                    ;;
-                major)
-                    next_version="$((major + 1)).0.0"
-                    ;;
-                *)
-                    echo "::error::bump_type must be 'major' or 'minor', got: $BUMP_TYPE"
-                    exit 1
-                    ;;
-            esac
-
+            next_version="${major}.$((minor + 1)).0"
             next_major=$(echo "$next_version" | cut -d. -f1)
             next_minor=$(echo "$next_version" | cut -d. -f2)
-            pr_branch="bump-zed-to-${next_major}.${next_minor}"
+            pr_branch="bump-zed-to-v${next_major}.${next_minor}.0"
 
             # New preview branch from current main
             preview_branch="v${major}.${minor}.x"
@@ -102,11 +85,10 @@ fn resolve_versions(bump_type: &WorkflowInput) -> (steps::NamedJob, ResolvedOutp
             echo "Resolved: next=$next_version preview=$preview_branch($preview_tag) stable=$stable_branch pr=$pr_branch"
         "#})
         .id("versions")
-        .add_env(("BUMP_TYPE", bump_type.to_string()))
     }
 
     let (authenticate, token) = steps::authenticate_as_zippy().into();
-    let versions_step = extract_versions(bump_type);
+    let versions_step = extract_versions();
     let next_version = StepOutput::new(&versions_step, "next_version");
     let pr_branch = StepOutput::new(&versions_step, "pr_branch");
     let preview_branch = StepOutput::new(&versions_step, "preview_branch");
@@ -148,8 +130,7 @@ fn bump_main(
     outputs: &ResolvedOutputs,
 ) -> steps::NamedJob {
     fn bump_version() -> Step<Run> {
-        named::bash(r#"cargo set-version -p zed --bump "$BUMP_TYPE""#)
-            .add_env(("BUMP_TYPE", "${{ inputs.bump_type }}"))
+        named::bash("cargo set-version -p zed --bump minor")
     }
 
     let (authenticate, token) = steps::authenticate_as_zippy().into();

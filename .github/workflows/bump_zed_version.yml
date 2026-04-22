@@ -4,10 +4,6 @@ name: bump_zed_version
 on:
   workflow_dispatch:
     inputs:
-      bump_type:
-        description: 'Version bump type: major or minor'
-        required: true
-        type: string
       target:
         description: 'Which channels to bump: all, main, preview, or stable'
         type: string
@@ -43,22 +39,10 @@ jobs:
         fi
 
         # Next main version after bump
-        case "$BUMP_TYPE" in
-            minor)
-                next_version="${major}.$((minor + 1)).0"
-                ;;
-            major)
-                next_version="$((major + 1)).0.0"
-                ;;
-            *)
-                echo "::error::bump_type must be 'major' or 'minor', got: $BUMP_TYPE"
-                exit 1
-                ;;
-        esac
-
+        next_version="${major}.$((minor + 1)).0"
         next_major=$(echo "$next_version" | cut -d. -f1)
         next_minor=$(echo "$next_version" | cut -d. -f2)
-        pr_branch="bump-zed-to-${next_major}.${next_minor}"
+        pr_branch="bump-zed-to-v${next_major}.${next_minor}.0"
 
         # New preview branch from current main
         preview_branch="v${major}.${minor}.x"
@@ -91,8 +75,6 @@ jobs:
         } >> "$GITHUB_OUTPUT"
 
         echo "Resolved: next=$next_version preview=$preview_branch($preview_tag) stable=$stable_branch pr=$pr_branch"
-      env:
-        BUMP_TYPE: ${{ inputs.bump_type }}
     outputs:
       next_version: ${{ steps.versions.outputs.next_version }}
       pr_branch: ${{ steps.versions.outputs.pr_branch }}
@@ -122,9 +104,7 @@ jobs:
       with:
         tool: cargo-edit
     - name: bump_zed_version::bump_main::bump_version
-      run: cargo set-version -p zed --bump "$BUMP_TYPE"
-      env:
-        BUMP_TYPE: ${{ inputs.bump_type }}
+      run: cargo set-version -p zed --bump minor
     - name: steps::create_pull_request
       uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:

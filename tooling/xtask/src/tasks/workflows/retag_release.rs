@@ -66,8 +66,8 @@ fn run_retag_release(branch: &WorkflowInput) -> steps::NamedJob {
 
     fn verify_no_existing_release() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
-            released=$(script/get-released-version "$CHANNEL" "$VERSION")
-            if [[ "$released" == "$VERSION" ]]; then
+            status=$(curl -s -o /dev/null -w '%{http_code}' "https://cloud.zed.dev/releases/$CHANNEL/$VERSION/asset?asset=zed&os=macos&arch=aarch64")
+            if [[ "$status" == "200" ]]; then
                 echo "::error::version $VERSION is already released on $CHANNEL — cannot re-tag a released version"
                 exit 1
             fi
