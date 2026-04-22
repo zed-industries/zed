@@ -6,9 +6,10 @@ use crate::tasks::workflows::{
     vars::{StepOutput, WorkflowInput},
 };
 
-pub fn bump_patch_version() -> Workflow {
-    let branch = WorkflowInput::string("branch", None).description("Branch name to run on");
-    let bump_patch_version_job = run_bump_patch_version(&branch);
+pub fn retag_release() -> Workflow {
+    let branch = WorkflowInput::string("branch", None)
+        .description("Release branch to re-tag (e.g. v0.180.x)");
+    let retag_job = run_retag_release(&branch);
     named::workflow()
         .on(Event::default()
             .workflow_dispatch(WorkflowDispatch::default().add_input(branch.name, branch.input())))
@@ -18,18 +19,23 @@ pub fn bump_patch_version() -> Workflow {
             )))
             .cancel_in_progress(true),
         )
-        .add_job(bump_patch_version_job.name, bump_patch_version_job.job)
+        .add_job(retag_job.name, retag_job.job)
 }
 
-fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
+fn run_retag_release(branch: &WorkflowInput) -> steps::NamedJob {
     fn checkout_branch(branch: &WorkflowInput, token: &StepOutput) -> CheckoutStep {
         steps::checkout_repo()
             .with_token(token)
             .with_ref(branch.to_string())
     }
 
-    fn read_channel() -> Step<Run> {
+    fn resolve_tag(branch: &WorkflowInput) -> Step<Run> {
         named::bash(indoc::indoc! {r#"
+            if [[ ! "$BRANCH" =~ ^v[0-9]+\.[0-9]{1,3}\.x$ ]]; then
+                echo "::error::branch '$BRANCH' does not match the release branch pattern v[N].[N].x"
+                exit 1
+            fi
+
             channel="$(cat crates/zed/RELEASE_CHANNEL)"
 
             tag_suffix=""
@@ -51,59 +57,44 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
                 echo "channel=$channel"
                 echo "version=$version"
                 echo "tag_suffix=$tag_suffix"
+                echo "head_sha=$(git rev-parse HEAD)"
             } >> "$GITHUB_OUTPUT"
         "#})
-        .id("channel")
+        .id("info")
+        .add_env(("BRANCH", branch.to_string()))
     }
 
-    fn verify_prior_release_exists() -> Step<Run> {
+    fn verify_no_existing_release() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
             status=$(curl -s -o /dev/null -w '%{http_code}' "https://cloud.zed.dev/releases/$CHANNEL/$VERSION/asset?asset=zed&os=macos&arch=aarch64")
-            if [[ "$status" != "200" ]]; then
-                echo "::error::version $VERSION has not been released on $CHANNEL yet (HTTP $status) — bump the patch version only after the current version is released"
+            if [[ "$status" == "200" ]]; then
+                echo "::error::version $VERSION is already released on $CHANNEL — cannot re-tag a released version"
                 exit 1
             fi
         "#})
-        .add_env(("CHANNEL", "${{ steps.channel.outputs.channel }}"))
-        .add_env(("VERSION", "${{ steps.channel.outputs.version }}"))
-    }
-
-    fn bump_version() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            version="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
-            echo "version=$version" >> "$GITHUB_OUTPUT"
-        "#})
-        .id("bump-version")
+        .add_env(("CHANNEL", "${{ steps.info.outputs.channel }}"))
+        .add_env(("VERSION", "${{ steps.info.outputs.version }}"))
     }
 
     let (authenticate, token) = steps::authenticate_as_zippy().into();
-    let channel_step = read_channel();
-    let tag_suffix = StepOutput::new(&channel_step, "tag_suffix");
-    let bump_version_step = bump_version();
-    let version = StepOutput::new(&bump_version_step, "version");
-    let commit_step: Step<Use> = steps::BotCommitStep::new(
-        format!("Bump to {version} for @${{{{ github.actor }}}}"),
-        branch,
-        &token,
-    )
-    .into();
-    let commit_sha = StepOutput::new_unchecked(&commit_step, "commit");
+    let resolve_step = resolve_tag(branch);
+    let version = StepOutput::new(&resolve_step, "version");
+    let tag_suffix = StepOutput::new(&resolve_step, "tag_suffix");
+    let head_sha = StepOutput::new(&resolve_step, "head_sha");
 
     named::job(
         Job::default()
             .with_repository_owner_guard()
-            .runs_on(runners::LINUX_DEFAULT)
+            .runs_on(runners::LINUX_XL)
             .add_step(authenticate)
             .add_step(checkout_branch(branch, &token))
-            .add_step(channel_step)
-            .add_step(verify_prior_release_exists())
-            .add_step(steps::install_cargo_edit())
-            .add_step(bump_version_step)
-            .add_step(commit_step)
-            .add_step(steps::create_ref(
+            .add_step(resolve_step)
+            .add_step(verify_no_existing_release())
+            .add_step(steps::update_ref(
                 steps::GitRef::tag(format!("v{version}{tag_suffix}")),
-                &commit_sha,
+                &head_sha,
                 &token,
+                true,
             )),
     )
 }

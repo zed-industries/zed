@@ -61,12 +61,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
     }
 
     fn install_cargo_machete() -> Step<Use> {
-        named::uses(
-            "taiki-e",
-            "install-action",
-            "02cc5f8ca9f2301050c0c099055816a41ee05507",
-        )
-        .add_with(("tool", "cargo-machete@0.7.0"))
+        steps::taiki_install_action("cargo-machete@0.7.0")
     }
 
     fn run_cargo_fmt() -> Step<Run> {
