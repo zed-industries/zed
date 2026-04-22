@@ -311,12 +311,12 @@ fn promote_to_stable(
 
     // Shared: determine version and tag from the checked-out branch
     let read_version_step = named::bash(indoc::indoc! {r#"
-            stable_version=$(script/get-crate-version zed)
-            {
-                echo "stable_version=$stable_version"
-                echo "stable_tag=v${stable_version}"
-                echo "head_sha=$(git rev-parse HEAD)"
-            } >> "$GITHUB_OUTPUT"
+        stable_version=$(script/get-crate-version zed)
+        {
+            echo "stable_version=$stable_version"
+            echo "stable_tag=v${stable_version}"
+            echo "head_sha=$(git rev-parse HEAD)"
+        } >> "$GITHUB_OUTPUT"
         "#})
     .id("stable-info");
     let stable_tag = StepOutput::new(&read_version_step, "stable_tag");
