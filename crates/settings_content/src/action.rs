@@ -132,3 +132,71 @@ impl JsonSchema for ActionWithArguments {
         json_schema!(true)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_schema_produces_anyof_of_consts_per_name() {
+        let mut action_documentation = HashMap::default();
+        let mut deprecations = HashMap::default();
+        let mut deprecation_messages = HashMap::default();
+        action_documentation.insert("editor::Cancel", "Cancel the current operation.");
+        deprecations.insert("workspace::CloseCurrentItem", "workspace::CloseActiveItem");
+        deprecation_messages.insert("editor::Explode", "DO NOT USE!");
+
+        let schema = ActionName::build_schema(
+            [
+                "editor::Cancel",
+                "editor::Explode",
+                "workspace::CloseCurrentItem",
+                "workspace::CloseActiveItem",
+            ],
+            &action_documentation,
+            &deprecations,
+            &deprecation_messages,
+        );
+
+        let value = schema.to_value();
+        let values = value
+            .pointer("/anyOf")
+            .and_then(|v| v.as_array())
+            .expect("anyOf should be present");
+        assert_eq!(values.len(), 4);
+
+        let (name, schema_type, description) = (
+            values[0].get("const").and_then(Value::as_str),
+            values[0].get("type").and_then(Value::as_str),
+            values[0].get("description").and_then(Value::as_str),
+        );
+        assert_eq!(name, Some("editor::Cancel"));
+        assert_eq!(schema_type, Some("string"));
+        assert_eq!(description, Some("Cancel the current operation."));
+
+        let (name, schema_type, message) = (
+            values[1].get("const").and_then(Value::as_str),
+            values[1].get("type").and_then(Value::as_str),
+            values[1].get("deprecationMessage").and_then(Value::as_str),
+        );
+        assert_eq!(name, Some("editor::Explode"));
+        assert_eq!(schema_type, Some("string"));
+        assert_eq!(message, Some("DO NOT USE!"));
+
+        let (name, schema_type, message) = (
+            values[2].get("const").and_then(Value::as_str),
+            values[2].get("type").and_then(Value::as_str),
+            values[2].get("deprecationMessage").and_then(Value::as_str),
+        );
+        assert_eq!(name, Some("workspace::CloseCurrentItem"));
+        assert_eq!(schema_type, Some("string"));
+        assert_eq!(message, Some("Deprecated, use workspace::CloseActiveItem"));
+
+        let (name, schema_type) = (
+            values[3].get("const").and_then(Value::as_str),
+            values[3].get("type").and_then(Value::as_str),
+        );
+        assert_eq!(name, Some("workspace::CloseActiveItem"));
+        assert_eq!(schema_type, Some("string"));
+    }
+}
