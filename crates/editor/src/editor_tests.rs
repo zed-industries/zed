@@ -1636,9 +1636,7 @@ async fn test_fold_with_unindented_multiline_block_comment_includes_closing_brac
 }
 
 #[gpui::test]
-async fn test_fold_preserves_top_level_comments_between_python_classes(
-    cx: &mut TestAppContext,
-) {
+async fn test_fold_preserves_top_level_comments_between_python_classes(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -1691,9 +1689,7 @@ async fn test_fold_preserves_top_level_comments_between_python_classes(
 }
 
 #[gpui::test]
-async fn test_fold_preserves_top_level_comments_between_rust_functions(
-    cx: &mut TestAppContext,
-) {
+async fn test_fold_preserves_top_level_comments_between_rust_functions(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
