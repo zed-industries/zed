@@ -40,7 +40,6 @@ From the "New Thread…" menu you can:
 
 - Pick **Zed Agent** or any installed [external agent](./external-agents.md) to start a new thread with that agent.
 - Choose **New From Summary** to start a fresh Zed Agent thread seeded with a summary of the current conversation — useful for compacting long threads as you approach the context window limit.
-- Click **Add More Agents** to install additional external agents.
 
 When an external-agent thread is focused, {#action agent::NewExternalAgentThread} creates another thread with the same external agent.
 
@@ -50,7 +49,7 @@ You can also start a new thread from the [Threads Sidebar](./parallel-agents.md#
 
 You can run multiple agent threads at once, each working independently with its own agent, context window, and conversation history. Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar} to see all your threads grouped by project. Click any thread to switch to it, or use the thread switcher ({#kb agents_sidebar::ToggleThreadSwitcher}) to cycle between recent threads without opening the sidebar.
 
-Threads you're no longer working on can be archived by hovering over them in the sidebar and clicking the archive icon, or selecting them and pressing {#kb agent::ArchiveSelectedThread}. Thread History holds all your threads and you can restore them at any time.
+Threads you're no longer working on can be archived by hovering over them in the sidebar and clicking the archive icon, or selecting them and pressing {#kb agent::ArchiveSelectedThread}. The Thread History holds all your threads across all projects, sorted chronologically, and you can restore them at any time.
 
 If two threads might edit the same files, you can isolate one in a new Git worktree. Use the worktree picker in the title bar to pick which worktree the agent runs in, or create a new one. See [Worktree Isolation](./parallel-agents.md#worktree-isolation) for details.
 
