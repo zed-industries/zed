@@ -493,23 +493,6 @@ impl LanguageModel for OllamaLanguageModel {
         self.model.max_token_count()
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        _cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        // There is no endpoint for this _yet_ in Ollama
-        // see: https://github.com/ollama/ollama/issues/1716 and https://github.com/ollama/ollama/issues/3582
-        let token_count = request
-            .messages
-            .iter()
-            .map(|msg| msg.string_contents().chars().count())
-            .sum::<usize>()
-            / 4;
-
-        async move { Ok(token_count as u64) }.boxed()
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
