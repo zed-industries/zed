@@ -403,6 +403,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
                 self.model.reasoning_effort,
+                self.model.capabilities.interleaved_reasoning,
             );
             let completions = self.stream_completion(request, cx);
             async move {

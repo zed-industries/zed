@@ -600,6 +600,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     false,
                     None,
                     None,
+                    false,
                 );
                 let auth_context = token_provider.auth_context(cx);
                 let future = self.request_limiter.stream(async move {

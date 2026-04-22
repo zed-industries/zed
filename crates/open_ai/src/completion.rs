@@ -29,13 +29,18 @@ pub fn into_open_ai(
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
+    interleaved_reasoning: bool,
 ) -> crate::Request {
     let stream = !model_id.starts_with("o1-");
 
     let mut messages = Vec::new();
+    let mut current_reasoning: Option<String> = None;
     for message in request.messages {
         for content in message.content {
             match content {
+                MessageContent::Thinking { text, .. } if interleaved_reasoning => {
+                    current_reasoning.get_or_insert_default().push_str(&text);
+                }
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
                     let should_add = if message.role == Role::User {
                         // Including whitespace-only user messages can cause error with OpenAI compatible APIs
@@ -50,6 +55,15 @@ pub fn into_open_ai(
                             message.role,
                             &mut messages,
                         );
+                        if let Some(reasoning) = current_reasoning.take() {
+                            if let Some(crate::RequestMessage::Assistant {
+                                reasoning_content,
+                                ..
+                            }) = messages.last_mut()
+                            {
+                                *reasoning_content = Some(reasoning);
+                            }
+                        }
                     }
                 }
                 MessageContent::RedactedThinking(_) => {}
@@ -85,6 +99,7 @@ pub fn into_open_ai(
                         messages.push(crate::RequestMessage::Assistant {
                             content: None,
                             tool_calls: vec![tool_call],
+                            reasoning_content: current_reasoning.take(),
                         });
                     }
                 }
@@ -362,6 +377,7 @@ fn add_message_content_part(
                 Role::Assistant => crate::RequestMessage::Assistant {
                     content: Some(crate::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
+                    reasoning_content: None,
                 },
                 Role::System => crate::RequestMessage::System {
                     content: crate::MessageContent::from(vec![new_part]),
@@ -1688,6 +1704,99 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, LanguageModelCompletionEvent::Thinking { .. })),
             "OutputItemDone reasoning should not produce Thinking events"
+        );
+    }
+
+    #[test]
+    fn into_open_ai_interleaved_reasoning() {
+        let tool_use_id = LanguageModelToolUseId::from("call-1");
+        let tool_input = json!({"query": "foo"});
+        let tool_arguments = serde_json::to_string(&tool_input).unwrap();
+        let tool_use = LanguageModelToolUse {
+            id: tool_use_id.clone(),
+            name: Arc::from("search"),
+            raw_input: tool_arguments.clone(),
+            input: tool_input,
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        let tool_result = LanguageModelToolResult {
+            tool_use_id: tool_use_id,
+            tool_name: Arc::from("search"),
+            is_error: false,
+            content: LanguageModelToolResultContent::Text(Arc::from("result")),
+            output: None,
+        };
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("search for something".into())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![
+                        MessageContent::Thinking {
+                            text: "I should search".into(),
+                            signature: None,
+                        },
+                        MessageContent::Text("Searching now.".into()),
+                        MessageContent::ToolUse(tool_use),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::ToolResult(tool_result)],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            tools: vec![],
+            tool_choice: None,
+            stop: vec![],
+            temperature: None,
+            thinking_allowed: true,
+            thinking_effort: None,
+            speed: None,
+        };
+
+        let result = into_open_ai(request.clone(), "model", false, false, None, None, true);
+        assert_eq!(
+            serde_json::to_value(&result).unwrap()["messages"],
+            json!([
+                {"role": "user", "content": "search for something"},
+                {
+                    "role": "assistant",
+                    "content": "Searching now.",
+                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments}}],
+                    "reasoning_content": "I should search"
+                },
+                {"role": "tool", "content": "result", "tool_call_id": "call-1"}
+            ])
+        );
+
+        let result = into_open_ai(request, "model", false, false, None, None, false);
+        assert_eq!(
+            serde_json::to_value(&result).unwrap()["messages"],
+            json!([
+                {"role": "user", "content": "search for something"},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "I should search"},
+                        {"type": "text", "text": "Searching now."}
+                    ],
+                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments}}]
+                },
+                {"role": "tool", "content": "result", "tool_call_id": "call-1"}
+            ])
         );
     }
 }

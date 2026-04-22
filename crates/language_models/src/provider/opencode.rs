@@ -490,6 +490,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     false,
                     self.model.max_output_tokens(),
                     None,
+                    false,
                 );
                 let stream = self.stream_openai_chat(openai_request, cx);
                 async move {

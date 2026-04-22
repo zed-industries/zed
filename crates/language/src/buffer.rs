@@ -8,7 +8,7 @@ use crate::{
     outline::OutlineItem,
     row_chunk::RowChunks,
     syntax_map::{
-        MAX_BYTES_TO_QUERY, SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures,
+        MAX_CONTEXT_BYTES, SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures,
         SyntaxMapMatch, SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
@@ -3441,7 +3441,7 @@ impl BufferSnapshot {
             range.clone(),
             &self.text,
             TreeSitterOptions {
-                max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
+                max_context_bytes: Some(MAX_CONTEXT_BYTES),
                 max_start_depth: None,
             },
             |grammar| Some(&grammar.indents_config.as_ref()?.query),
@@ -3722,12 +3722,20 @@ impl BufferSnapshot {
 
     #[ztracing::instrument(skip_all)]
     fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures<'_>, Vec<HighlightMap>) {
-        let captures = self.syntax.captures(range, &self.text, |grammar| {
-            grammar
-                .highlights_config
-                .as_ref()
-                .map(|config| &config.query)
-        });
+        let captures = self.syntax.captures_with_options(
+            range,
+            &self.text,
+            TreeSitterOptions {
+                max_context_bytes: Some(1024),
+                max_start_depth: None,
+            },
+            |grammar| {
+                grammar
+                    .highlights_config
+                    .as_ref()
+                    .map(|config| &config.query)
+            },
+        );
         let highlight_maps = captures
             .grammars()
             .iter()
@@ -4251,7 +4259,10 @@ impl BufferSnapshot {
         items
     }
 
-    pub fn outline_range_containing<T: ToOffset>(&self, range: Range<T>) -> Option<Range<Point>> {
+    pub fn outline_ranges_containing<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = Range<Point>> + '_ {
         let range = range.to_offset(self);
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.outline_config.as_ref().map(|c| &c.query)
@@ -4262,35 +4273,41 @@ impl BufferSnapshot {
             .map(|g| g.outline_config.as_ref().unwrap())
             .collect::<Vec<_>>();
 
-        while let Some(mat) = matches.peek() {
-            let config = &configs[mat.grammar_index];
-            let containing_item_node = maybe!({
-                let item_node = mat.captures.iter().find_map(|cap| {
-                    if cap.index == config.item_capture_ix {
-                        Some(cap.node)
-                    } else {
+        std::iter::from_fn(move || {
+            while let Some(mat) = matches.peek() {
+                let config = &configs[mat.grammar_index];
+                let containing_item_node = maybe!({
+                    let item_node = mat.captures.iter().find_map(|cap| {
+                        if cap.index == config.item_capture_ix {
+                            Some(cap.node)
+                        } else {
+                            None
+                        }
+                    })?;
+
+                    let item_byte_range = item_node.byte_range();
+                    if item_byte_range.end < range.start || item_byte_range.start > range.end {
                         None
+                    } else {
+                        Some(item_node)
                     }
-                })?;
+                });
 
-                let item_byte_range = item_node.byte_range();
-                if item_byte_range.end < range.start || item_byte_range.start > range.end {
-                    None
-                } else {
-                    Some(item_node)
-                }
-            });
-
-            if let Some(item_node) = containing_item_node {
-                return Some(
+                let range = containing_item_node.as_ref().map(|item_node| {
                     Point::from_ts_point(item_node.start_position())
-                        ..Point::from_ts_point(item_node.end_position()),
-                );
+                        ..Point::from_ts_point(item_node.end_position())
+                });
+                matches.advance();
+                if range.is_some() {
+                    return range;
+                }
             }
+            None
+        })
+    }
 
-            matches.advance();
-        }
-        None
+    pub fn outline_range_containing<T: ToOffset>(&self, range: Range<T>) -> Option<Range<Point>> {
+        self.outline_ranges_containing(range).next()
     }
 
     pub fn outline_items_containing<T: ToOffset>(
@@ -4611,7 +4628,7 @@ impl BufferSnapshot {
                 chunk_range.clone(),
                 &self.text,
                 TreeSitterOptions {
-                    max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
+                    max_context_bytes: Some(MAX_CONTEXT_BYTES),
                     max_start_depth: None,
                 },
                 |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),

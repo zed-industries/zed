@@ -2113,12 +2113,24 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             return Err(DevContainerError::DevContainerParseFailed);
         };
 
-        let devcontainer_args = self
-            .dev_container()
-            .build
-            .as_ref()
-            .and_then(|b| b.args.clone())
-            .unwrap_or_default();
+        // For docker-compose configs the build args live on the primary
+        // compose service rather than on dev_container.build.
+        let devcontainer_args = match self.dev_container().build_type() {
+            DevContainerBuildType::DockerCompose => {
+                let compose = self.docker_compose_manifest().await?;
+                find_primary_service(&compose, self)?
+                    .1
+                    .build
+                    .and_then(|b| b.args)
+                    .unwrap_or_default()
+            }
+            _ => self
+                .dev_container()
+                .build
+                .as_ref()
+                .and_then(|b| b.args.clone())
+                .unwrap_or_default(),
+        };
         let contents = self.fs.load(&dockerfile_path).await.map_err(|e| {
             log::error!("Failed to load Dockerfile: {e}");
             DevContainerError::FilesystemError
@@ -5066,6 +5078,46 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
         )
     }
 
+    #[gpui::test]
+    async fn test_expands_compose_service_args_in_dockerfile(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+
+        let given_devcontainer_contents = r#"
+            {
+              "dockerComposeFile": "docker-compose-with-args.yml",
+              "service": "app",
+            }
+            "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
+                "FROM ${BASE_IMAGE}\nUSER root\n".to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let expanded = devcontainer_manifest
+            .expanded_dockerfile_content()
+            .await
+            .unwrap();
+
+        assert_eq!(expanded, "FROM test_image:latest\nUSER root");
+
+        let base_image =
+            image_from_dockerfile(expanded, &None).expect("base image resolves from compose args");
+        assert_eq!(base_image, "test_image:latest");
+    }
+
     #[test]
     fn test_aliases_dockerfile_with_pre_existing_aliases_for_build() {}
 
@@ -5304,6 +5356,35 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
                         },
                     )]),
                     volumes: HashMap::new(),
+                }));
+            }
+            if config_files.len() == 1
+                && config_files.get(0)
+                    == Some(
+                        &project_path
+                            .join(".devcontainer")
+                            .join("docker-compose-with-args.yml"),
+                    )
+            {
+                return Ok(Some(DockerComposeConfig {
+                    name: None,
+                    services: HashMap::from([(
+                        "app".to_string(),
+                        DockerComposeService {
+                            build: Some(DockerComposeServiceBuild {
+                                context: Some(".".to_string()),
+                                dockerfile: Some("Dockerfile".to_string()),
+                                args: Some(HashMap::from([(
+                                    "BASE_IMAGE".to_string(),
+                                    "test_image:latest".to_string(),
+                                )])),
+                                additional_contexts: None,
+                                target: None,
+                            }),
+                            ..Default::default()
+                        },
+                    )]),
+                    ..Default::default()
                 }));
             }
             if config_files.len() == 1
