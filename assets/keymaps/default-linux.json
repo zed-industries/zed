@@ -748,7 +748,7 @@
   {
     "context": "Workspace && debugger_running",
     "bindings": {
-      "f5": "zed::NoAction",
+      "f5": null,
     },
   },
   {
