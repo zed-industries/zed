@@ -244,6 +244,7 @@ pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> Option
         | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0316SeedMultiRegions
         | ZetaFormat::V0317SeedMultiRegions
+        | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::V0318SeedMultiRegions => 4096,
         ZetaFormat::V0327SingleFile => 16384,
     };
@@ -1036,6 +1037,7 @@ pub fn format_expected_output(
         | ZetaFormat::v0226Hashline
         | ZetaFormat::V0304VariableEdit
         | ZetaFormat::V0304SeedNoEdits
+        | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::V0306SeedMultiRegions => {
             let (mut result, first_hunk_offset) = if empty_patch {
                 (old_editable.clone(), None)
