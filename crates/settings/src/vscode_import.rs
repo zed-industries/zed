@@ -1036,7 +1036,6 @@ impl VsCodeSettings {
 
     fn worktree_settings_content(&self) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
-            project_name: None,
             prevent_sharing_in_public_channels: false,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")
