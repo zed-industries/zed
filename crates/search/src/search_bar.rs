@@ -1,5 +1,7 @@
 use editor::{Editor, EditorElement, EditorStyle, MultiBufferOffset, ToOffset};
-use gpui::{Action, App, Entity, FocusHandle, Hsla, IntoElement, TextStyle};
+use gpui::{
+    Action, App, ClickEvent, Context, Entity, FocusHandle, Hsla, IntoElement, TextStyle, Window,
+};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{IconButton, IconButtonShape};
@@ -37,28 +39,30 @@ pub(super) enum ActionButtonState {
     Toggled,
 }
 
-pub(super) fn render_action_button(
+pub(super) fn render_local_action_button<T: 'static>(
+    cx: &Context<T>,
     id_prefix: &'static str,
     icon: ui::IconName,
     button_state: Option<ActionButtonState>,
     tooltip: &'static str,
     action: &'static dyn Action,
     focus_handle: FocusHandle,
+    on_click: impl Fn(&mut T, &mut Window, &mut Context<T>) + 'static,
 ) -> impl IntoElement {
     IconButton::new(
         SharedString::from(format!("{id_prefix}-{}", action.name())),
         icon,
     )
     .shape(IconButtonShape::Square)
-    .on_click({
+    .on_click(cx.listener({
         let focus_handle = focus_handle.clone();
-        move |_, window, cx| {
+        move |this, _: &ClickEvent, window, cx| {
             if !focus_handle.is_focused(window) {
                 window.focus(&focus_handle, cx);
             }
-            window.dispatch_action(action.boxed_clone(), cx);
+            on_click(this, window, cx);
         }
-    })
+    }))
     .tooltip(move |_window, cx| Tooltip::for_action_in(tooltip, action, &focus_handle, cx))
     .when_some(button_state, |this, state| match state {
         ActionButtonState::Toggled => this.toggle_state(true),
