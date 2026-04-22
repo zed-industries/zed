@@ -645,20 +645,25 @@ impl Item for Editor {
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        self.buffer()
-            .read(cx)
+        let multi_buffer = self.buffer().read(cx);
+        if let Some(file) = multi_buffer
             .as_singleton()
             .and_then(|buffer| buffer.read(cx).file())
             .and_then(|file| File::from_dyn(Some(file)))
-            .map(|file| {
+        {
+            Some(
                 file.worktree
                     .read(cx)
                     .absolutize(&file.path)
                     .compact()
                     .to_string_lossy()
                     .into_owned()
-                    .into()
-            })
+                    .into(),
+            )
+        } else {
+            let title = multi_buffer.title(cx);
+            (!title.is_empty()).then(|| title.to_string().into())
+        }
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -1012,10 +1017,10 @@ impl Item for Editor {
         if let Some(workspace_entity) = &workspace.weak_handle().upgrade() {
             cx.subscribe(
                 workspace_entity,
-                |editor, _, event: &workspace::Event, _cx| {
+                |editor, _, event: &workspace::Event, cx| {
                     if let workspace::Event::ModalOpened = event {
                         editor.mouse_context_menu.take();
-                        editor.inline_blame_popover.take();
+                        editor.hide_blame_popover(true, cx);
                     }
                 },
             )
@@ -1655,8 +1660,17 @@ impl SearchableItem for Editor {
         }
     }
 
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
-        let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
+    fn query_suggestion(
+        &mut self,
+        ignore_settings: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
+        let setting = if ignore_settings {
+            SeedQuerySetting::Always
+        } else {
+            EditorSettings::get_global(cx).seed_search_query_from_cursor
+        };
         let snapshot = self.snapshot(window, cx);
         let selection = self.selections.newest_adjusted(&snapshot.display_snapshot);
         let buffer_snapshot = snapshot.buffer_snapshot();

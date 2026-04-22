@@ -782,7 +782,16 @@ impl UserStore {
     }
 
     /// Returns whether the user's account is too new to use the service.
+    ///
+    /// This only applies when operating under the user's personal organization,
+    /// not a business organization.
     pub fn account_too_young(&self) -> bool {
+        if let Some(org) = &self.current_organization {
+            if !org.is_personal {
+                return false;
+            }
+        }
+
         self.plan_info
             .as_ref()
             .map(|plan| plan.is_account_too_young)

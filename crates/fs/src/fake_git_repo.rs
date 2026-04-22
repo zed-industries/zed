@@ -4,14 +4,15 @@ use crate::{FakeFs, FakeFsEntry, Fs, RemoveOptions, RenameOptions};
 use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
+use git::repository::GitCommitTemplate;
 use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
-        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
-        RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
+        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -109,6 +110,20 @@ impl FakeGitRepository {
         .boxed()
     }
 
+    fn edit_ref(&self, edit: RefEdit) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            match edit {
+                RefEdit::Update { ref_name, commit } => {
+                    state.refs.insert(ref_name, commit);
+                }
+                RefEdit::Delete { ref_name } => {
+                    state.refs.remove(&ref_name);
+                }
+            }
+            Ok(())
+        })
+    }
+
     /// Scans `.git/worktrees/*/gitdir` to find the admin entry directory for a
     /// worktree at the given checkout path. Used when the working tree directory
     /// has already been deleted and we can't read its `.git` pointer file.
@@ -155,6 +170,10 @@ impl GitRepository for FakeGitRepository {
                 .cloned()
         });
         self.executor.spawn(async move { fut.await.ok() }).boxed()
+    }
+
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
+        async { Ok(None) }.boxed()
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {
@@ -1437,17 +1456,11 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
-        self.with_state_async(true, move |state| {
-            state.refs.insert(ref_name, commit);
-            Ok(())
-        })
+        self.edit_ref(RefEdit::Update { ref_name, commit })
     }
 
     fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>> {
-        self.with_state_async(true, move |state| {
-            state.refs.remove(&ref_name);
-            Ok(())
-        })
+        self.edit_ref(RefEdit::Delete { ref_name })
     }
 
     fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>> {

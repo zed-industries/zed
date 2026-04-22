@@ -12,6 +12,9 @@ use uuid::Uuid;
 /// The name of the header used to indicate which version of Zed the client is running.
 pub const ZED_VERSION_HEADER_NAME: &str = "x-zed-version";
 
+/// The name of the header used to indicate which edit prediction experiment should be used.
+pub const PREFERRED_EXPERIMENT_HEADER_NAME: &str = "x-zed-preferred-experiment";
+
 /// The name of the header used to indicate when a request failed due to an
 /// expired LLM token.
 ///
