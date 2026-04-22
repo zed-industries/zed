@@ -3643,6 +3643,7 @@ mod tests {
                 .collect(),
             true,
             0,
+            false,
         ))
     }
 
