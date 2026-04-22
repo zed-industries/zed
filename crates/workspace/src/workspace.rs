@@ -6945,6 +6945,7 @@ impl Workspace {
                         workspace.zoomed = None;
                         workspace.zoomed_position = None;
                     }
+                    cx.emit(Event::ZoomChanged);
 
                     if let Some(active_pane) = active_pane.or(zoomed_pane) {
                         workspace.set_active_pane(&active_pane, window, cx);
