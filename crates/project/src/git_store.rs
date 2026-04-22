@@ -8089,6 +8089,14 @@ mod tests {
             GraphCommitHandlerState::Open(handler) => {
                 verify_loading_entries_are_pending(repository, handler)?;
                 verify_await_result_loading_entries_have_completion_senders(repository, handler)?;
+                verify_pending_requests_are_loading(repository, handler)?;
+                verify_completion_senders_are_await_result_loading(repository, handler)?;
+                verify_completion_senders_are_pending(handler)?;
+                verify_non_await_result_loading_entries_have_no_completion_sender(
+                    repository, handler,
+                )?;
+                verify_loaded_entries_are_not_pending(repository, handler)?;
+                verify_loaded_entries_have_no_completion_sender(repository, handler)?;
             }
             GraphCommitHandlerState::Closed => {
                 verify_closed_handler_invariants(repository)?;
@@ -8130,6 +8138,101 @@ mod tests {
         Ok(())
     }
 
+    fn verify_pending_requests_are_loading(
+        repository: &Repository,
+        handler: &GraphCommitDataHandler,
+    ) -> anyhow::Result<()> {
+        for sha in &handler.pending_requests {
+            anyhow::ensure!(
+                matches!(
+                    repository.commit_data.get(sha),
+                    Some(CommitDataState::Loading(_))
+                ),
+                "pending request for {sha} must correspond to loading commit data"
+            );
+        }
+
+        Ok(())
+    }
+
+    fn verify_completion_senders_are_await_result_loading(
+        repository: &Repository,
+        handler: &GraphCommitDataHandler,
+    ) -> anyhow::Result<()> {
+        for sha in handler.completion_senders.keys() {
+            anyhow::ensure!(
+                matches!(
+                    repository.commit_data.get(sha),
+                    Some(CommitDataState::Loading(Some(_)))
+                ),
+                "completion sender for {sha} must correspond to await-result loading commit data"
+            );
+        }
+
+        Ok(())
+    }
+
+    fn verify_completion_senders_are_pending(
+        handler: &GraphCommitDataHandler,
+    ) -> anyhow::Result<()> {
+        for sha in handler.completion_senders.keys() {
+            anyhow::ensure!(
+                handler.pending_requests.contains(sha),
+                "completion sender for {sha} must also be tracked as pending"
+            );
+        }
+
+        Ok(())
+    }
+
+    fn verify_non_await_result_loading_entries_have_no_completion_sender(
+        repository: &Repository,
+        handler: &GraphCommitDataHandler,
+    ) -> anyhow::Result<()> {
+        for (sha, state) in &repository.commit_data {
+            if matches!(state, CommitDataState::Loading(None)) {
+                anyhow::ensure!(
+                    !handler.completion_senders.contains_key(sha),
+                    "non-await-result loading commit data for {sha} must not have a completion sender"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_loaded_entries_are_not_pending(
+        repository: &Repository,
+        handler: &GraphCommitDataHandler,
+    ) -> anyhow::Result<()> {
+        for (sha, state) in &repository.commit_data {
+            if matches!(state, CommitDataState::Loaded(_)) {
+                anyhow::ensure!(
+                    !handler.pending_requests.contains(sha),
+                    "loaded commit data for {sha} must not still be pending"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_loaded_entries_have_no_completion_sender(
+        repository: &Repository,
+        handler: &GraphCommitDataHandler,
+    ) -> anyhow::Result<()> {
+        for (sha, state) in &repository.commit_data {
+            if matches!(state, CommitDataState::Loaded(_)) {
+                anyhow::ensure!(
+                    !handler.completion_senders.contains_key(sha),
+                    "loaded commit data for {sha} must not keep a completion sender"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     fn verify_closed_handler_invariants(repository: &Repository) -> anyhow::Result<()> {
         for (sha, state) in &repository.commit_data {
             anyhow::ensure!(
@@ -8139,16 +8242,6 @@ mod tests {
         }
 
         Ok(())
-    }
-
-    fn verify_repository_invariants(
-        repository: &Entity<Repository>,
-        context: impl FnOnce() -> String,
-        cx: &mut TestAppContext,
-    ) {
-        repository.read_with(cx, |repository, _cx| {
-            verify_invariants(repository).with_context(context).unwrap();
-        });
     }
 
     #[gpui::property_test(config = ProptestConfig {
@@ -8257,26 +8350,26 @@ mod tests {
             }
 
             cx.run_until_parked();
-            verify_repository_invariants(
-                &repository,
-                || {
-                    format!(
-                        "commit data invariant violation after draining through step {}",
-                        chunk_end,
-                    )
-                },
-                cx,
-            );
+            repository.read_with(cx, |repository, _cx| {
+                verify_invariants(repository)
+                    .with_context(|| {
+                        format!(
+                            "commit data invariant violation after draining through step {}",
+                            chunk_end,
+                        )
+                    })
+                    .unwrap();
+            });
 
             next_step = chunk_end;
         }
 
         cx.run_until_parked();
-        verify_repository_invariants(
-            &repository,
-            || "commit data invariant violation after final drain".to_string(),
-            cx,
-        );
+        repository.read_with(cx, |repository, _cx| {
+            verify_invariants(repository)
+                .with_context(|| "commit data invariant violation after final drain".to_string())
+                .unwrap();
+        });
     }
 }
 
