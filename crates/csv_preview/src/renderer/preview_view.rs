@@ -7,6 +7,9 @@ use crate::CsvPreviewView;
 impl Render for CsvPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        self.row_height = window
+            .text_style()
+            .line_height_in_pixels(window.rem_size());
 
         let render_prep_start = Instant::now();
         let table_with_settings = v_flex()

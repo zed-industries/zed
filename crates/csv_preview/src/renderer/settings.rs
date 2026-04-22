@@ -1,6 +1,7 @@
 use ui::{
-    ActiveTheme as _, AnyElement, ButtonSize, Context, ContextMenu, DropdownMenu, ElementId,
-    IntoElement as _, ParentElement as _, Styled as _, Tooltip, Window, div, h_flex,
+    ActiveTheme as _, AnyElement, Button, ButtonCommon as _, ButtonSize, ButtonStyle, Clickable as _,
+    Context, ContextMenu, DropdownMenu, ElementId, IntoElement as _, ParentElement as _, Styled as _,
+    Toggleable as _, Tooltip, Window, div, h_flex,
 };
 
 use crate::{
@@ -121,6 +122,39 @@ impl CsvPreviewView {
                     ),
             );
 
+        let multiline_enabled = self.settings.multiline_cells_enabled;
+        let panel = panel.child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().colors().text_muted)
+                        .child("Wrap Text:"),
+                )
+                .child({
+                    let view = view.clone();
+                    Button::new(
+                        ElementId::Name("wrap-text-toggle".into()),
+                        if multiline_enabled { "On" } else { "Off" },
+                    )
+                    .style(ButtonStyle::Subtle)
+                    .size(ButtonSize::Compact)
+                    .toggle_state(multiline_enabled)
+                    .tooltip(Tooltip::text(
+                        "Toggle cell text wrapping (multiline rows)",
+                    ))
+                    .on_click(move |_event, _window, cx| {
+                        view.update(cx, |this, cx| {
+                            this.settings.multiline_cells_enabled =
+                                !this.settings.multiline_cells_enabled;
+                            cx.notify();
+                        });
+                    })
+                }),
+        );
+
         #[cfg(feature = "dev-tools")]
         let panel = panel.child(
             h_flex()
@@ -171,7 +205,6 @@ fn create_dev_only_popover_menu(
                                     view_entity.update(cx, |view, cx| {
                                         view.settings.rendering_with =
                                             RowRenderMechanism::VariableList;
-                                        view.settings.multiline_cells_enabled = true;
                                         cx.notify();
                                     })
                                 }
@@ -188,7 +221,6 @@ fn create_dev_only_popover_menu(
                                     view_entity.update(cx, |view, cx| {
                                         view.settings.rendering_with =
                                             RowRenderMechanism::UniformList;
-                                        view.settings.multiline_cells_enabled = false;
                                         cx.notify();
                                     })
                                 }
