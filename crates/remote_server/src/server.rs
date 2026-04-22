@@ -3,9 +3,6 @@ mod headless_project;
 #[cfg(test)]
 mod remote_editing_tests;
 
-#[cfg(windows)]
-pub mod windows;
-
 pub use headless_project::{HeadlessAppState, HeadlessProject};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -948,24 +945,30 @@ async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
 
 #[cfg(windows)]
 fn spawn_server_windows(binary_name: &Path, paths: &ServerPaths) -> Result<(), SpawnServerError> {
-    let binary_path = binary_name.to_string_lossy().to_string();
-    let parameters = format!(
-        "run --log-file \"{}\" --pid-file \"{}\" --stdin-socket \"{}\" --stdout-socket \"{}\" --stderr-socket \"{}\"",
-        paths.log_file.to_string_lossy(),
-        paths.pid_file.to_string_lossy(),
-        paths.stdin_socket.to_string_lossy(),
-        paths.stdout_socket.to_string_lossy(),
-        paths.stderr_socket.to_string_lossy()
-    );
-
-    let directory = binary_name
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
-
-    crate::windows::shell_execute_from_explorer(&binary_path, &parameters, &directory)
-        .map_err(|e| SpawnServerError::ProcessStatus(std::io::Error::other(e)))?;
-
+    use smol::process::windows::CommandExt;
+    // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: the daemon has no console and is
+    // in its own process group, so it survives after the parent proxy exits and is
+    // not killed by Ctrl+C/Break broadcast to the parent's group.
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    smol::process::Command::new(binary_name)
+        .stdin(util::command::Stdio::null())
+        .stdout(util::command::Stdio::null())
+        .stderr(util::command::Stdio::null())
+        .arg("run")
+        .arg("--log-file")
+        .arg(&paths.log_file)
+        .arg("--pid-file")
+        .arg(&paths.pid_file)
+        .arg("--stdin-socket")
+        .arg(&paths.stdin_socket)
+        .arg("--stdout-socket")
+        .arg(&paths.stdout_socket)
+        .arg("--stderr-socket")
+        .arg(&paths.stderr_socket)
+        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
+        .spawn()
+        .map_err(SpawnServerError::ProcessStatus)?;
     Ok(())
 }
 
