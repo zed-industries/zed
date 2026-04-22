@@ -1032,7 +1032,7 @@ impl editor::CompletionProvider for FeedbackCompletionProvider {
                 new_text: format!("{} {}", key, description),
                 label: CodeLabel::plain(format!("{}: {}", key, description), None),
                 documentation: None,
-                source: CompletionSource::Custom,
+                source: CompletionSource::custom(),
                 icon_path: None,
                 match_start: None,
                 snippet_deduplication_key: None,

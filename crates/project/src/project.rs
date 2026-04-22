@@ -577,7 +577,11 @@ pub enum CompletionSource {
         /// The sort text for this completion.
         sort_text: String,
     },
-    Custom,
+    Custom {
+        /// When [Some], used as the inserted text for [`CompletionIntent::Compose`] (e.g. Tab)
+        /// instead of [`Completion::new_text`], so the user can continue composing before committing.
+        compose_new_text: Option<String>,
+    },
     BufferWord {
         word_range: Range<Anchor>,
         resolved: bool,
@@ -585,6 +589,12 @@ pub enum CompletionSource {
 }
 
 impl CompletionSource {
+    pub fn custom() -> Self {
+        Self::Custom {
+            compose_new_text: None,
+        }
+    }
+
     pub fn server_id(&self) -> Option<LanguageServerId> {
         if let CompletionSource::Lsp { server_id, .. } = self {
             Some(*server_id)

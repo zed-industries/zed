@@ -100,7 +100,7 @@ impl CompletionProvider for ActionCompletionProvider {
                         label: language::CodeLabel::plain(humanized.to_string(), None),
                         new_text: action_name.to_string(),
                         documentation: None,
-                        source: project::CompletionSource::Custom,
+                        source: project::CompletionSource::custom(),
                         icon_path: None,
                         match_start: None,
                         snippet_deduplication_key: None,

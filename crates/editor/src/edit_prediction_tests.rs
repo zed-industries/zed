@@ -1530,7 +1530,7 @@ impl CompletionProvider for FakeCompletionMenuProvider {
                 new_text: label.to_string(),
                 label: CodeLabel::plain(label.to_string(), None),
                 documentation: None,
-                source: CompletionSource::Custom,
+                source: CompletionSource::custom(),
                 icon_path: None,
                 match_start: None,
                 snippet_deduplication_key: None,
