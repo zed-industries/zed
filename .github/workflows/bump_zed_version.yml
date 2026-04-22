@@ -257,9 +257,11 @@ jobs:
       name: bump_zed_version::promote_to_stable
       run: |
         stable_version=$(script/get-crate-version zed)
-        echo "stable_version=$stable_version" >> "$GITHUB_OUTPUT"
-        echo "stable_tag=v${stable_version}" >> "$GITHUB_OUTPUT"
-        echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        {
+            echo "stable_version=$stable_version"
+            echo "stable_tag=v${stable_version}"
+            echo "head_sha=$(git rev-parse HEAD)"
+        } >> "$GITHUB_OUTPUT"
     - name: bump_zed_version::promote_to_stable
       if: inputs.tag_only != true
       run: echo -n stable > crates/zed/RELEASE_CHANNEL
