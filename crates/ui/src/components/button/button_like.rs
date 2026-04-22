@@ -138,6 +138,9 @@ pub enum ButtonStyle {
     /// A more de-emphasized version of the outlined button.
     OutlinedGhost,
 
+    /// Like [`ButtonStyle::Outlined`], but with a caller-provided border color.
+    OutlinedCustom(Hsla),
+
     /// The default button style, used for most buttons. Has a transparent background,
     /// but has a background color to indicate states like hover and active.
     #[default]
@@ -230,6 +233,12 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::OutlinedCustom(border_color) => ButtonLikeStyles {
+                background: transparent_black(),
+                border_color,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_background,
                 border_color: transparent_black(),
@@ -280,6 +289,12 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::OutlinedCustom(border_color) => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_hover,
+                border_color,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
                 border_color: transparent_black(),
@@ -324,6 +339,12 @@ impl ButtonStyle {
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
+            ButtonStyle::OutlinedCustom(border_color) => ButtonLikeStyles {
+                background: cx.theme().colors().element_active,
+                border_color,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
             ButtonStyle::Transparent => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: transparent_black(),
@@ -360,6 +381,12 @@ impl ButtonStyle {
             ButtonStyle::OutlinedGhost => ButtonLikeStyles {
                 background: transparent_black(),
                 border_color: cx.theme().colors().border,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedCustom(border_color) => ButtonLikeStyles {
+                background: cx.theme().colors().ghost_element_background,
+                border_color,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
             },
@@ -401,6 +428,12 @@ impl ButtonStyle {
             },
             ButtonStyle::OutlinedGhost => ButtonLikeStyles {
                 background: transparent_black(),
+                border_color: cx.theme().colors().border_disabled,
+                label_color: Color::Default.color(cx),
+                icon_color: Color::Default.color(cx),
+            },
+            ButtonStyle::OutlinedCustom(_) => ButtonLikeStyles {
+                background: cx.theme().colors().element_disabled,
                 border_color: cx.theme().colors().border_disabled,
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -640,7 +673,7 @@ impl RenderOnce for ButtonLike {
 
         let is_outlined = matches!(
             self.style,
-            ButtonStyle::Outlined | ButtonStyle::OutlinedGhost
+            ButtonStyle::Outlined | ButtonStyle::OutlinedGhost | ButtonStyle::OutlinedCustom(_)
         );
 
         self.base

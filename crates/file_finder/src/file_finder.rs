@@ -9,7 +9,8 @@ use client::ChannelId;
 use collections::HashMap;
 use editor::Editor;
 use file_icons::FileIcons;
-use fuzzy::{CharBag, PathMatch, PathMatchCandidate, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
@@ -35,7 +36,6 @@ use std::{
         atomic::{self, AtomicBool},
     },
 };
-use text::Point;
 use ui::{
     ButtonLike, ContextMenu, HighlightedLabel, Indicator, KeyBinding, ListItem, ListItemSpacing,
     PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
@@ -563,18 +563,21 @@ impl Matches {
                 .extend(history_items.into_iter().map(path_to_entry));
             return;
         };
-        // If several worktress are open we have to set the worktree root names in path prefix
-        let several_worktrees = worktree_store.read(cx).worktrees().count() > 1;
-        let worktree_name_by_id = several_worktrees.then(|| {
-            worktree_store
-                .read(cx)
-                .worktrees()
-                .map(|worktree| {
-                    let snapshot = worktree.read(cx).snapshot();
-                    (snapshot.id(), snapshot.root_name().into())
-                })
-                .collect()
-        });
+
+        let worktree_name_by_id = if should_hide_root_in_entry_path(&worktree_store, cx) {
+            None
+        } else {
+            Some(
+                worktree_store
+                    .read(cx)
+                    .worktrees()
+                    .map(|worktree| {
+                        let snapshot = worktree.read(cx).snapshot();
+                        (snapshot.id(), snapshot.root_name().into())
+                    })
+                    .collect(),
+            )
+        };
         let new_history_matches = matching_history_items(
             history_items,
             currently_opened,
@@ -661,15 +664,6 @@ impl Matches {
 
         // For file-vs-file matches, use the existing detailed comparison.
         if let (Some(a_panel), Some(b_panel)) = (a.panel_match(), b.panel_match()) {
-            let a_in_filename = Self::is_filename_match(a_panel);
-            let b_in_filename = Self::is_filename_match(b_panel);
-
-            match (a_in_filename, b_in_filename) {
-                (true, false) => return cmp::Ordering::Greater,
-                (false, true) => return cmp::Ordering::Less,
-                _ => {}
-            }
-
             return a_panel.cmp(b_panel);
         }
 
@@ -689,32 +683,6 @@ impl Matches {
             Match::CreateNew(_) => 0.0,
         }
     }
-
-    /// Determines if the match occurred within the filename rather than in the path
-    fn is_filename_match(panel_match: &ProjectPanelOrdMatch) -> bool {
-        if panel_match.0.positions.is_empty() {
-            return false;
-        }
-
-        if let Some(filename) = panel_match.0.path.file_name() {
-            let path_str = panel_match.0.path.as_unix_str();
-
-            if let Some(filename_pos) = path_str.rfind(filename)
-                && panel_match.0.positions[0] >= filename_pos
-            {
-                let mut prev_position = panel_match.0.positions[0];
-                for p in &panel_match.0.positions[1..] {
-                    if *p != prev_position + 1 {
-                        return false;
-                    }
-                    prev_position = *p;
-                }
-                return true;
-            }
-        }
-
-        false
-    }
 }
 
 fn matching_history_items<'a>(
@@ -729,25 +697,21 @@ fn matching_history_items<'a>(
     let history_items_by_worktrees = history_items
         .into_iter()
         .chain(currently_opened)
-        .filter_map(|found_path| {
-            let candidate = PathMatchCandidate {
-                is_dir: false, // You can't open directories as project items
-                path: &found_path.project.path,
-                // Only match history items names, otherwise their paths may match too many queries, producing false positives.
-                // E.g. `foo` would match both `something/foo/bar.rs` and `something/foo/foo.rs` and if the former is a history item,
-                // it would be shown first always, despite the latter being a better match.
-                char_bag: CharBag::from_iter(
-                    found_path
-                        .project
-                        .path
-                        .file_name()?
-                        .to_string()
-                        .to_lowercase()
-                        .chars(),
-                ),
-            };
+        .map(|found_path| {
+            // Only match history items names, otherwise their paths may match too many queries,
+            // producing false positives. E.g. `foo` would match both `something/foo/bar.rs` and
+            // `something/foo/foo.rs` and if the former is a history item, it would be shown first
+            // always, despite the latter being a better match.
+            let candidate = PathMatchCandidate::new(
+                &found_path.project.path,
+                false,
+                worktree_name_by_id
+                    .as_ref()
+                    .and_then(|m| m.get(&found_path.project.worktree_id))
+                    .map(|prefix| prefix.as_ref()),
+            );
             candidates_paths.insert(&found_path.project, found_path);
-            Some((found_path.project.worktree_id, candidate))
+            (found_path.project.worktree_id, candidate)
         })
         .fold(
             HashMap::default(),
@@ -765,17 +729,30 @@ fn matching_history_items<'a>(
         let worktree_root_name = worktree_name_by_id
             .as_ref()
             .and_then(|w| w.get(&worktree).cloned());
+
         matching_history_paths.extend(
-            fuzzy::match_fixed_path_set(
+            fuzzy_nucleo::match_fixed_path_set(
                 candidates,
                 worktree.to_usize(),
                 worktree_root_name,
                 query.path_query(),
-                false,
+                fuzzy_nucleo::Case::Ignore,
                 max_results,
                 path_style,
             )
             .into_iter()
+            // filter matches where at least one matched position is in filename portion, to prevent directory matches, nucleo scores them higher as history items are matched against their full path
+            .filter(|path_match| {
+                if let Some(filename) = path_match.path.file_name() {
+                    let filename_start = path_match.path.as_unix_str().len() - filename.len();
+                    path_match
+                        .positions
+                        .iter()
+                        .any(|&pos| pos >= filename_start)
+                } else {
+                    true
+                }
+            })
             .filter_map(|path_match| {
                 candidates_paths
                     .remove_entry(&ProjectPath {
@@ -795,6 +772,16 @@ fn matching_history_items<'a>(
         );
     }
     matching_history_paths
+}
+
+fn should_hide_root_in_entry_path(worktree_store: &Entity<WorktreeStore>, cx: &App) -> bool {
+    let multiple_worktrees = worktree_store
+        .read(cx)
+        .visible_worktrees(cx)
+        .filter(|worktree| !worktree.read(cx).is_single_file())
+        .nth(1)
+        .is_some();
+    ProjectPanelSettings::get_global(cx).hide_root && !multiple_worktrees
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -902,14 +889,12 @@ impl FileFinderDelegate {
             .currently_opened_path
             .as_ref()
             .map(|found_path| Arc::clone(&found_path.project.path));
-        let worktrees = self
-            .project
-            .read(cx)
-            .worktree_store()
+        let worktree_store = self.project.read(cx).worktree_store();
+        let worktrees = worktree_store
             .read(cx)
             .visible_worktrees_and_single_files(cx)
             .collect::<Vec<_>>();
-        let include_root_name = worktrees.len() > 1;
+        let include_root_name = !should_hide_root_in_entry_path(&worktree_store, cx);
         let candidate_sets = worktrees
             .into_iter()
             .map(|worktree| {
@@ -930,11 +915,11 @@ impl FileFinderDelegate {
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
         cx.spawn_in(window, async move |picker, cx| {
-            let matches = fuzzy::match_path_sets(
+            let matches = fuzzy_nucleo::match_path_sets(
                 candidate_sets.as_slice(),
                 query.path_query(),
                 &relative_to,
-                false,
+                fuzzy_nucleo::Case::Ignore,
                 100,
                 &cancel_flag,
                 cx.background_executor().clone(),
@@ -1135,17 +1120,8 @@ impl FileFinderDelegate {
                     if let Some(panel_match) = panel_match {
                         self.labels_for_path_match(&panel_match.0, path_style)
                     } else if let Some(worktree) = worktree {
-                        let multiple_folders_open = self
-                            .project
-                            .read(cx)
-                            .visible_worktrees(cx)
-                            .filter(|worktree| !worktree.read(cx).is_single_file())
-                            .nth(1)
-                            .is_some();
-
-                        let full_path = if ProjectPanelSettings::get_global(cx).hide_root
-                            && !multiple_folders_open
-                        {
+                        let worktree_store = self.project.read(cx).worktree_store();
+                        let full_path = if should_hide_root_in_entry_path(&worktree_store, cx) {
                             entry_path.project.path.clone()
                         } else {
                             worktree.read(cx).root_name().join(&entry_path.project.path)
@@ -1451,7 +1427,6 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
 
         let raw_query = match &raw_query.get(0..2) {
@@ -1698,7 +1673,12 @@ impl PickerDelegate for FileFinderDelegate {
                     active_editor
                         .downgrade()
                         .update_in(cx, |editor, window, cx| {
-                            editor.go_to_singleton_buffer_point(Point::new(row, col), window, cx);
+                            let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+                                return;
+                            };
+                            let buffer_snapshot = buffer.read(cx).snapshot();
+                            let point = buffer_snapshot.point_from_external_input(row, col);
+                            editor.go_to_singleton_buffer_point(point, window, cx);
                         })
                         .log_err();
                 }
@@ -1790,8 +1770,8 @@ impl PickerDelegate for FileFinderDelegate {
                 .child(
                     PopoverMenu::new("filter-menu-popover")
                         .with_handle(self.filter_popover_menu_handle.clone())
-                        .attach(gpui::Corner::BottomRight)
-                        .anchor(gpui::Corner::BottomLeft)
+                        .attach(gpui::Anchor::BottomRight)
+                        .anchor(gpui::Anchor::BottomLeft)
                         .offset(gpui::Point {
                             x: px(1.0),
                             y: px(1.0),
@@ -1850,8 +1830,8 @@ impl PickerDelegate for FileFinderDelegate {
                         .child(
                             PopoverMenu::new("split-menu-popover")
                                 .with_handle(self.split_popover_menu_handle.clone())
-                                .attach(gpui::Corner::BottomRight)
-                                .anchor(gpui::Corner::BottomLeft)
+                                .attach(gpui::Anchor::BottomRight)
+                                .anchor(gpui::Anchor::BottomLeft)
                                 .offset(gpui::Point {
                                     x: px(1.0),
                                     y: px(1.0),

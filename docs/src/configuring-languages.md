@@ -351,6 +351,23 @@ To run linter fixes automatically on save:
 }
 ```
 
+### Formatting Selections
+
+Zed supports formatting only the selected text via `editor: format selections` ({#kb editor::FormatSelections}). How
+this works depends on the configured formatter:
+
+- The action is only shown when the active formatter can actually format ranges for at least one
+  selected buffer.
+- **Language server**: Sends an LSP range formatting request for each selection. This provides the
+  most precise selection-only formatting, and is only available when the configured language server
+  advertises range-formatting support.
+- **Prettier**: Uses Prettier's built-in range formatting to format the encompassing range of all selections. Any
+  resulting edits that fall outside the selected ranges are discarded, so only the selected code is modified.
+- **External commands**: External command formatters do not support range formatting and are skipped when formatting
+  selections.
+- **Code action formatters**: Code actions operate on the whole buffer, so they do not enable
+  `format selections` on their own.
+
 ### Integrating Formatting and Linting
 
 Zed allows you to run both formatting and linting on save. Here's an example that uses Prettier for formatting and ESLint for linting JavaScript files:

@@ -139,6 +139,7 @@ impl CsvPreviewView {
                             RowIdentifiers::SrcLines => RowIdentifiers::RowNum,
                             RowIdentifiers::RowNum => RowIdentifiers::SrcLines,
                         };
+                        this.sync_column_widths(cx);
                         cx.notify();
                     });
                 }),

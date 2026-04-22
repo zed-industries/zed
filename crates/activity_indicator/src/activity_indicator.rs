@@ -758,7 +758,7 @@ impl Render for ActivityIndicator {
                             }),
                     ),
                 )
-                .anchor(gpui::Corner::BottomLeft)
+                .anchor(gpui::Anchor::BottomLeft)
                 .menu(move |window, cx| {
                     let strong_this = activity_indicator.upgrade()?;
                     let mut has_work = false;

@@ -1,7 +1,6 @@
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{
-    Anchor, Editor, ExcerptId, HighlightKey, MultiBufferOffset, SelectionEffects,
-    scroll::Autoscroll,
+    Anchor, Editor, HighlightKey, MultiBufferOffset, SelectionEffects, scroll::Autoscroll,
 };
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
@@ -125,7 +124,6 @@ impl EditorState {
 #[derive(Clone)]
 struct BufferState {
     buffer: Entity<Buffer>,
-    excerpt_id: ExcerptId,
     active_layer: Option<OwnedSyntaxLayer>,
 }
 
@@ -253,18 +251,18 @@ impl SyntaxTreeView {
         let snapshot = editor_state
             .editor
             .update(cx, |editor, cx| editor.snapshot(window, cx));
-        let (buffer, range, excerpt_id) = editor_state.editor.update(cx, |editor, cx| {
+        let (buffer, range) = editor_state.editor.update(cx, |editor, cx| {
             let selection_range = editor
                 .selections
                 .last::<MultiBufferOffset>(&editor.display_snapshot(cx))
                 .range();
             let multi_buffer = editor.buffer().read(cx);
-            let (buffer, range, excerpt_id) = snapshot
+            let (buffer, range, _) = snapshot
                 .buffer_snapshot()
-                .range_to_buffer_ranges(selection_range.start..=selection_range.end)
+                .range_to_buffer_ranges(selection_range.start..selection_range.end)
                 .pop()?;
             let buffer = multi_buffer.buffer(buffer.remote_id()).unwrap();
-            Some((buffer, range, excerpt_id))
+            Some((buffer, range))
         })?;
 
         // If the cursor has moved into a different excerpt, retrieve a new syntax layer
@@ -273,16 +271,14 @@ impl SyntaxTreeView {
             .active_buffer
             .get_or_insert_with(|| BufferState {
                 buffer: buffer.clone(),
-                excerpt_id,
                 active_layer: None,
             });
         let mut prev_layer = None;
         if did_reparse {
             prev_layer = buffer_state.active_layer.take();
         }
-        if buffer_state.buffer != buffer || buffer_state.excerpt_id != excerpt_id {
+        if buffer_state.buffer != buffer {
             buffer_state.buffer = buffer.clone();
-            buffer_state.excerpt_id = excerpt_id;
             buffer_state.active_layer = None;
         }
 
@@ -360,8 +356,7 @@ impl SyntaxTreeView {
         // Build a multibuffer anchor range.
         let multibuffer = editor_state.editor.read(cx).buffer();
         let multibuffer = multibuffer.read(cx).snapshot(cx);
-        let excerpt_id = buffer_state.excerpt_id;
-        let range = multibuffer.anchor_range_in_excerpt(excerpt_id, range)?;
+        let range = multibuffer.buffer_anchor_range_to_anchor_range(range)?;
         let key = cx.entity_id().as_u64() as usize;
 
         // Update the editor with the anchor range.
