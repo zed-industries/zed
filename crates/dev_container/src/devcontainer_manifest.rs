@@ -29,6 +29,7 @@ use crate::{
     get_oci_token,
     oci::{TokenResponse, download_oci_tarball, get_oci_manifest},
     safe_id_lower,
+    sanitize_docker_tag,
 };
 
 enum ConfigStatus {
@@ -301,6 +302,7 @@ impl DevContainerManifest {
             None => "zed-dc",
         };
         let prefix = prefix.get(..6).unwrap_or(prefix);
+        let prefix = sanitize_docker_tag(prefix);
 
         dockerfile_build_path.hash(&mut hasher);
 
