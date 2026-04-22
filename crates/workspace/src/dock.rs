@@ -7,7 +7,7 @@ use client::proto;
 use db::kvp::KeyValueStore;
 
 use gpui::{
-    Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter, FocusHandle,
+    Action, Anchor, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
     Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
     px,
@@ -338,6 +338,15 @@ pub struct PanelButtons {
 
 pub(crate) const PANEL_SIZE_STATE_KEY: &str = "dock_panel_size";
 
+fn panel_uses_flexible_width(
+    position: DockPosition,
+    panel: &dyn PanelHandle,
+    window: &Window,
+    cx: &App,
+) -> bool {
+    position.axis() == Axis::Horizontal && panel.has_flexible_size(window, cx)
+}
+
 fn resize_panel_entry(
     position: DockPosition,
     entry: &mut PanelEntry,
@@ -347,8 +356,8 @@ fn resize_panel_entry(
     cx: &mut App,
 ) -> (&'static str, PanelSizeState) {
     let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
-    let use_flex = entry.panel.has_flexible_size(window, cx) && position.axis() == Axis::Horizontal;
-    if use_flex {
+    let uses_flexible_width = panel_uses_flexible_width(position, entry.panel.as_ref(), window, cx);
+    if uses_flexible_width {
         entry.size_state.flex = flex;
     } else {
         entry.size_state.size = size;
@@ -960,11 +969,31 @@ impl Dock {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let size_states_to_persist: Vec<_> = self
-            .panel_entries
-            .iter_mut()
-            .map(|entry| resize_panel_entry(self.position, entry, size, flex, window, cx))
-            .collect();
+        let Some(active_panel_index) = self.active_panel_index else {
+            return;
+        };
+
+        let active_panel_uses_flexible_width = {
+            let Some(active_entry) = self.panel_entries.get(active_panel_index) else {
+                return;
+            };
+            panel_uses_flexible_width(self.position, active_entry.panel.as_ref(), window, cx)
+        };
+        let mut size_states_to_persist = Vec::new();
+        for entry in &mut self.panel_entries {
+            if panel_uses_flexible_width(self.position, entry.panel.as_ref(), window, cx)
+                == active_panel_uses_flexible_width
+            {
+                size_states_to_persist.push(resize_panel_entry(
+                    self.position,
+                    entry,
+                    size,
+                    flex,
+                    window,
+                    cx,
+                ));
+            }
+        }
 
         let workspace = self.workspace.clone();
         cx.defer(move |cx| {
@@ -1160,8 +1189,8 @@ impl Render for PanelButtons {
         let dock_position = dock.position;
 
         let (menu_anchor, menu_attach) = match dock.position {
-            DockPosition::Left => (Corner::BottomLeft, Corner::TopLeft),
-            DockPosition::Bottom | DockPosition::Right => (Corner::BottomRight, Corner::TopRight),
+            DockPosition::Left => (Anchor::BottomLeft, Anchor::TopLeft),
+            DockPosition::Bottom | DockPosition::Right => (Anchor::BottomRight, Anchor::TopRight),
         };
 
         let dock_entity = self.dock.clone();

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crate::DEFAULT_THREAD_TITLE;
-use crate::ThreadHistory;
+use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use acp_thread::MentionUri;
 use agent_client_protocol as acp;
 use anyhow::Result;
@@ -222,7 +222,6 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    history: Option<WeakEntity<ThreadHistory>>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
@@ -232,7 +231,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        history: Option<WeakEntity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -241,7 +239,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             editor,
             mention_set,
             workspace,
-            history,
             prompt_store,
         }
     }
@@ -918,16 +915,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             }
 
             Some(PromptContextType::Thread) => {
-                if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
-                    let sessions = history
-                        .read(cx)
-                        .sessions()
-                        .iter()
-                        .map(|session| SessionMatch {
-                            session_id: session.session_id.clone(),
-                            title: session_title(session.title.clone()),
-                        })
-                        .collect::<Vec<_>>();
+                let sessions = collect_session_matches(cx);
+                if !sessions.is_empty() {
                     let search_task =
                         filter_sessions_by_query(query, cancellation_flag, sessions, cx);
                     cx.spawn(async move |_cx| {
@@ -1144,29 +1133,21 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             return Task::ready(recent);
         }
 
-        if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
-            const RECENT_COUNT: usize = 2;
-            recent.extend(
-                history
-                    .read(cx)
-                    .sessions()
-                    .into_iter()
-                    .map(|session| SessionMatch {
-                        session_id: session.session_id.clone(),
-                        title: session_title(session.title.clone()),
-                    })
-                    .filter(|session| {
-                        let uri = MentionUri::Thread {
-                            id: session.session_id.clone(),
-                            name: session.title.to_string(),
-                        };
-                        !mentions.contains(&uri)
-                    })
-                    .take(RECENT_COUNT)
-                    .map(Match::RecentThread),
-            );
-            return Task::ready(recent);
-        }
+        let sessions = collect_session_matches(cx);
+        const RECENT_COUNT: usize = 2;
+        recent.extend(
+            sessions
+                .into_iter()
+                .filter(|session| {
+                    let uri = MentionUri::Thread {
+                        id: session.session_id.clone(),
+                        name: session.title.to_string(),
+                    };
+                    !mentions.contains(&uri)
+                })
+                .take(RECENT_COUNT)
+                .map(Match::RecentThread),
+        );
 
         Task::ready(recent)
     }
@@ -2028,6 +2009,28 @@ pub(crate) fn search_symbols(
             })
             .collect()
     })
+}
+
+fn collect_session_matches(cx: &App) -> Vec<SessionMatch> {
+    let Some(store) = ThreadMetadataStore::try_global(cx) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<&ThreadMetadata> = store
+        .read(cx)
+        .entries()
+        .filter(|t| !t.archived && t.agent_id == *agent::ZED_AGENT_ID)
+        .collect();
+    entries.sort_by_key(|t| Reverse(t.updated_at));
+    entries
+        .into_iter()
+        .map(|metadata| {
+            let info = acp_thread::AgentSessionInfo::from(metadata);
+            SessionMatch {
+                session_id: info.session_id,
+                title: session_title(info.title),
+            }
+        })
+        .collect()
 }
 
 fn filter_sessions_by_query(

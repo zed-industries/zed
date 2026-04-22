@@ -698,13 +698,18 @@ fn matching_history_items<'a>(
         .into_iter()
         .chain(currently_opened)
         .map(|found_path| {
-            let candidate = PathMatchCandidate {
-                is_dir: false, // You can't open directories as project items
-                path: &found_path.project.path,
-                // Only match history items names, otherwise their paths may match too many queries, producing false positives.
-                // E.g. `foo` would match both `something/foo/bar.rs` and `something/foo/foo.rs` and if the former is a history item,
-                // it would be shown first always, despite the latter being a better match.
-            };
+            // Only match history items names, otherwise their paths may match too many queries,
+            // producing false positives. E.g. `foo` would match both `something/foo/bar.rs` and
+            // `something/foo/foo.rs` and if the former is a history item, it would be shown first
+            // always, despite the latter being a better match.
+            let candidate = PathMatchCandidate::new(
+                &found_path.project.path,
+                false,
+                worktree_name_by_id
+                    .as_ref()
+                    .and_then(|m| m.get(&found_path.project.worktree_id))
+                    .map(|prefix| prefix.as_ref()),
+            );
             candidates_paths.insert(&found_path.project, found_path);
             (found_path.project.worktree_id, candidate)
         })
@@ -731,7 +736,7 @@ fn matching_history_items<'a>(
                 worktree.to_usize(),
                 worktree_root_name,
                 query.path_query(),
-                false,
+                fuzzy_nucleo::Case::Ignore,
                 max_results,
                 path_style,
             )
@@ -914,7 +919,7 @@ impl FileFinderDelegate {
                 candidate_sets.as_slice(),
                 query.path_query(),
                 &relative_to,
-                false,
+                fuzzy_nucleo::Case::Ignore,
                 100,
                 &cancel_flag,
                 cx.background_executor().clone(),
@@ -1765,8 +1770,8 @@ impl PickerDelegate for FileFinderDelegate {
                 .child(
                     PopoverMenu::new("filter-menu-popover")
                         .with_handle(self.filter_popover_menu_handle.clone())
-                        .attach(gpui::Corner::BottomRight)
-                        .anchor(gpui::Corner::BottomLeft)
+                        .attach(gpui::Anchor::BottomRight)
+                        .anchor(gpui::Anchor::BottomLeft)
                         .offset(gpui::Point {
                             x: px(1.0),
                             y: px(1.0),
@@ -1825,8 +1830,8 @@ impl PickerDelegate for FileFinderDelegate {
                         .child(
                             PopoverMenu::new("split-menu-popover")
                                 .with_handle(self.split_popover_menu_handle.clone())
-                                .attach(gpui::Corner::BottomRight)
-                                .anchor(gpui::Corner::BottomLeft)
+                                .attach(gpui::Anchor::BottomRight)
+                                .anchor(gpui::Anchor::BottomLeft)
                                 .offset(gpui::Point {
                                     x: px(1.0),
                                     y: px(1.0),

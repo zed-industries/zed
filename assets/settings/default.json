@@ -145,9 +145,10 @@
   // an explicit `-e` (existing window) or `-n` (new window) flag.
   //
   // May take 2 values:
-  //  1. Add to the existing Zed window
+  //  1. Open directories as a new workspace in the current Zed window's sidebar
   //         "cli_default_open_behavior": "existing_window"
-  //  2. Open a new Zed window
+  //  2. Open directories in a new window (reuse existing windows for files
+  //     that are already part of an open project)
   //         "cli_default_open_behavior": "new_window"
   "cli_default_open_behavior": "existing_window",
   // Whether to attempt to restore previous file's state when opening it again.
@@ -472,8 +473,8 @@
   "use_system_window_tabs": false,
   // Titlebar related settings
   "title_bar": {
-    // Whether to show the branch icon beside branch switcher in the titlebar.
-    "show_branch_icon": false,
+    // Whether to show git status indicators on the branch icon in the titlebar.
+    "show_branch_status_icon": false,
     // Whether to show the branch name button in the titlebar.
     "show_branch_name": true,
     // Whether to show the project host and name in the titlebar.
@@ -613,6 +614,8 @@
     "line_numbers": true,
     // Whether to show runnables buttons in the gutter.
     "runnables": true,
+    // Whether to show bookmarks in the gutter.
+    "bookmarks": true,
     // Whether to show breakpoints in the gutter.
     "breakpoints": true,
     // Whether to show fold buttons in the gutter.
@@ -989,7 +992,11 @@
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
-    // Maximum content width when the agent panel is wider than this value.
+    // Whether to limit the content width in the agent panel. When enabled,
+    // content will be constrained to `max_content_width` and centered when
+    // the panel is wider, for optimal readability.
+    "limit_content_width": true,
+    // Maximum content width in pixels when limit_content_width is enabled.
     // Content will be centered within the panel.
     "max_content_width": 850,
     // The default model to use when creating new threads.
@@ -1390,9 +1397,7 @@
   //      "soft_wrap": "prefer_line", // (deprecated, same as "none")
   // 2. Soft wrap lines that overflow the editor.
   //      "soft_wrap": "editor_width",
-  // 3. Soft wrap lines at the preferred line length.
-  //      "soft_wrap": "preferred_line_length",
-  // 4. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
+  // 3. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
   //      "soft_wrap": "bounded",
   "soft_wrap": "none",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
@@ -2081,10 +2086,10 @@
       "ensure_final_newline_on_save": false,
     },
     "EEx": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "Elixir": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "!emmet-language-server", "..."],
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "!emmet-language-server", "..."],
     },
     "Elm": {
       "tab_size": 4,
@@ -2110,7 +2115,7 @@
       },
     },
     "HEEx": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "HTML": {
       "prettier": {

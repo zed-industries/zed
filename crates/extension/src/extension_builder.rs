@@ -15,7 +15,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use util::command::Stdio;
+use util::{command::Stdio, rel_path::PathExt};
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
 
@@ -108,7 +108,7 @@ impl ExtensionBuilder {
 
         for (debug_adapter_name, meta) in &mut extension_manifest.debug_adapters {
             let debug_adapter_schema_path =
-                extension_dir.join(build_debug_adapter_schema_path(debug_adapter_name, meta));
+                extension_dir.join(build_debug_adapter_schema_path(debug_adapter_name, meta)?);
 
             let debug_adapter_schema = fs::read_to_string(&debug_adapter_schema_path)
                 .with_context(|| {
@@ -582,8 +582,9 @@ async fn populate_defaults(
             let language_dir = language_dir?;
             let config_path = language_dir.join(LanguageConfig::FILE_NAME);
             if fs.is_file(config_path.as_path()).await {
-                let relative_language_dir =
-                    language_dir.strip_prefix(extension_path)?.to_path_buf();
+                let relative_language_dir = language_dir
+                    .strip_prefix(extension_path)?
+                    .to_rel_path_buf()?;
                 if !manifest.languages.contains(&relative_language_dir) {
                     manifest.languages.push(relative_language_dir);
                 }
@@ -601,7 +602,8 @@ async fn populate_defaults(
         while let Some(theme_path) = theme_dir_entries.next().await {
             let theme_path = theme_path?;
             if theme_path.extension() == Some("json".as_ref()) {
-                let relative_theme_path = theme_path.strip_prefix(extension_path)?.to_path_buf();
+                let relative_theme_path =
+                    theme_path.strip_prefix(extension_path)?.to_rel_path_buf()?;
                 if !manifest.themes.contains(&relative_theme_path) {
                     manifest.themes.push(relative_theme_path);
                 }
@@ -619,8 +621,9 @@ async fn populate_defaults(
         while let Some(icon_theme_path) = icon_theme_dir_entries.next().await {
             let icon_theme_path = icon_theme_path?;
             if icon_theme_path.extension() == Some("json".as_ref()) {
-                let relative_icon_theme_path =
-                    icon_theme_path.strip_prefix(extension_path)?.to_path_buf();
+                let relative_icon_theme_path = icon_theme_path
+                    .strip_prefix(extension_path)?
+                    .to_rel_path_buf()?;
                 if !manifest.icon_themes.contains(&relative_icon_theme_path) {
                     manifest.icon_themes.push(relative_icon_theme_path);
                 }

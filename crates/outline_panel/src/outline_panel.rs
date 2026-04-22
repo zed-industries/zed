@@ -51,7 +51,8 @@ use theme::SyntaxTheme;
 use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, FluentBuilder, HighlightedLabel, IconButton, IconButtonShape, IndentGuideColors,
-    IndentGuideLayout, ListItem, ScrollAxes, Scrollbars, Tab, Tooltip, WithScrollbar, prelude::*,
+    IndentGuideLayout, KeyBinding, ListItem, ScrollAxes, Scrollbars, Tab, Tooltip, WithScrollbar,
+    prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, debug_panic, rel_path::RelPath};
 use workspace::{
@@ -4561,18 +4562,30 @@ impl OutlinePanel {
                             .child(Label::new(query)),
                     )
                 })
-                .child(h_flex().justify_center().child({
-                    let keystroke = match self.position(window, cx) {
-                        DockPosition::Left => window.keystroke_text_for(&workspace::ToggleLeftDock),
-                        DockPosition::Bottom => {
-                            window.keystroke_text_for(&workspace::ToggleBottomDock)
-                        }
-                        DockPosition::Right => {
-                            window.keystroke_text_for(&workspace::ToggleRightDock)
-                        }
-                    };
-                    Label::new(format!("Toggle Panel With {keystroke}")).color(Color::Muted)
-                }))
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .justify_center()
+                        .child(Label::new("Toggle Panel With").color(Color::Muted))
+                        .child({
+                            let key_binding = match self.position(window, cx) {
+                                DockPosition::Left => {
+                                    KeyBinding::for_action(&workspace::ToggleLeftDock, cx)
+                                        .into_any_element()
+                                }
+                                DockPosition::Bottom => {
+                                    KeyBinding::for_action(&workspace::ToggleBottomDock, cx)
+                                        .into_any_element()
+                                }
+                                DockPosition::Right => {
+                                    KeyBinding::for_action(&workspace::ToggleRightDock, cx)
+                                        .into_any_element()
+                                }
+                            };
+
+                            key_binding
+                        }),
+                )
         } else {
             let list_contents = {
                 let items_len = self.cached_entries.len();
@@ -4712,7 +4725,7 @@ impl OutlinePanel {
             deferred(
                 anchored()
                     .position(*position)
-                    .anchor(gpui::Corner::TopLeft)
+                    .anchor(gpui::Anchor::TopLeft)
                     .child(menu.clone()),
             )
             .with_priority(1)
@@ -4722,10 +4735,10 @@ impl OutlinePanel {
     }
 
     fn render_filter_footer(&mut self, pinned: bool, cx: &mut Context<Self>) -> Div {
-        let (icon, icon_tooltip) = if pinned {
-            (IconName::Unpin, "Unpin Outline")
+        let (pin_button_id, icon, icon_tooltip) = if pinned {
+            ("unpin_button", IconName::Unpin, "Unpin Outline")
         } else {
-            (IconName::Pin, "Pin Active Outline")
+            ("pin_button", IconName::Pin, "Pin Active Outline")
         };
 
         let has_query = self.query(cx).is_some();
@@ -4763,7 +4776,7 @@ impl OutlinePanel {
                         )
                     })
                     .child(
-                        IconButton::new("pin_button", icon)
+                        IconButton::new(pin_button_id, icon)
                             .tooltip(Tooltip::text(icon_tooltip))
                             .shape(IconButtonShape::Square)
                             .on_click(cx.listener(|outline_panel, _, window, cx| {

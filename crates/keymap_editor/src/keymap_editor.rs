@@ -25,7 +25,7 @@ use gpui::{
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use project::{CompletionDisplayOptions, Project};
 use settings::{
     BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets, infer_json_indent_size,
@@ -1665,7 +1665,7 @@ impl KeymapEditor {
                     }
                 }))
             })
-            .anchor(gpui::Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -2357,7 +2357,7 @@ impl Render for KeymapEditor {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::Corner::TopLeft)
+                        .anchor(gpui::Anchor::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)
@@ -2883,8 +2883,12 @@ impl KeybindingEditorModal {
                                 format!("Saved edits to the {} action.", humanized_action_name),
                                 cx,
                                 move |this, _cx| {
-                                    this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
-                                        .dismiss_button(true)
+                                    this.icon(
+                                        Icon::new(IconName::Check)
+                                            .size(IconSize::Small)
+                                            .color(Color::Success),
+                                    )
+                                    .dismiss_button(true)
                                     // .action("Undo", f) todo: wire the undo functionality
                                 },
                             );
