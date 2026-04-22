@@ -8169,16 +8169,6 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(seed);
 
         let commit_shas = (0..2000).map(|_| Oid::random(&mut rng)).collect::<Vec<_>>();
-        let commits = commit_shas
-            .iter()
-            .map(|sha| {
-                Arc::new(InitialGraphCommitData {
-                    sha: *sha,
-                    parents: SmallVec::new(),
-                    ref_names: Vec::new(),
-                })
-            })
-            .collect::<Vec<_>>();
         let failing_shas = failing_commit_indexes
             .into_iter()
             .map(|index| commit_shas[index % commit_shas.len()])
@@ -8214,7 +8204,6 @@ mod tests {
             }),
         )
         .await;
-        fs.set_graph_commits(Path::new("/project/.git"), commits);
         fs.set_commit_data(Path::new("/project/.git"), commit_data);
 
         let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
