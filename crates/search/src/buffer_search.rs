@@ -1660,9 +1660,6 @@ impl BufferSearchBar {
         }
     }
 
-    // TODO!(dino): We probably can remove this now that we no longer react to
-    // `ActiveMatchChanged` events so as to avoid updating the
-    // `active_match_index` on every cursor movement.
     pub fn update_match_index(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let direction = self.reverse_direction_if_backwards(Direction::Next);
         let new_index = self

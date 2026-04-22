@@ -974,11 +974,6 @@ impl SearchableItem for MarkdownPreviewView {
                 markdown.set_active_search_highlight(Some(index), cx);
                 markdown.request_autoscroll_to_source_index(start, cx);
             });
-            // TODO!(dino): Double-check we need this in order for the
-            // `active_match_index` to be updated, otherwise clicking the
-            // next/prev button would only update the match highlight and not
-            // update the index?
-            cx.emit(SearchEvent::ActiveMatchChanged);
         }
     }
 

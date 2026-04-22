@@ -1105,9 +1105,6 @@ fn subscribe_for_terminal_events(
                 Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
                 Event::SelectionsChanged => {
                     window.invalidate_character_coordinates();
-                    // TODO!(dino): Double-check we need this because, when the
-                    // user clicks the terminla's content, we find the closes
-                    // match and udpate the `active_match_index` accordingly.
                     cx.emit(SearchEvent::ActiveMatchChanged)
                 }
             }
