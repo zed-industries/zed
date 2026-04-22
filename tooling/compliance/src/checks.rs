@@ -5,8 +5,8 @@ use itertools::Itertools as _;
 use crate::{
     git::{AutomatedChangeKind, CommitDetails, CommitList, ZED_ZIPPY_LOGIN},
     github::{
-        CommitAuthor, GithubApiClient, GithubLogin, PullRequestComment, PullRequestData,
-        PullRequestReview, Repository, ReviewState,
+        CommitAuthor, CommitFileChange, CommitMetadata, GithubApiClient, GithubLogin,
+        PullRequestComment, PullRequestData, PullRequestReview, Repository, ReviewState,
     },
     report::Report,
 };
@@ -144,6 +144,37 @@ impl fmt::Display for AutomatedChangeFailure {
     }
 }
 
+impl AutomatedChangeKind {
+    fn validate_changes(
+        self,
+        metadata: &CommitMetadata,
+        files: &[CommitFileChange],
+    ) -> Result<(), AutomatedChangeFailure> {
+        let expected_loc = self.expected_loc();
+        if metadata.additions() != expected_loc || metadata.deletions() != expected_loc {
+            return Err(AutomatedChangeFailure::UnexpectedLineChanges {
+                kind: self,
+                additions: metadata.additions(),
+                deletions: metadata.deletions(),
+            });
+        }
+
+        let files_differ = files.len() != self.expected_files().len()
+            || files
+                .iter()
+                .any(|f| self.expected_files().contains(&f.filename.as_str()).not());
+
+        if files_differ {
+            return Err(AutomatedChangeFailure::UnexpectedFiles {
+                kind: self,
+                found: files.into_iter().map(|f| f.filename.clone()).collect(),
+            });
+        }
+
+        Ok(())
+    }
+}
+
 pub(crate) type ReviewResult = Result<ReviewSuccess, ReviewFailure>;
 
 impl<E: Into<anyhow::Error>> From<E> for ReviewFailure {
@@ -264,35 +295,14 @@ impl Reporter {
             ));
         }
 
-        let expected_loc = change_kind.expected_loc();
-        if metadata.additions() != expected_loc || metadata.deletions() != expected_loc {
-            return Err(ReviewFailure::UnexpectedZippyAction(
-                AutomatedChangeFailure::UnexpectedLineChanges {
-                    kind: change_kind,
-                    additions: metadata.additions(),
-                    deletions: metadata.deletions(),
-                },
-            ));
-        }
-
         let files = self
             .github_client
             .get_commit_files(&Repository::ZED, commit.sha())
             .await?;
 
-        let mut found_files: Vec<&str> = files.iter().map(|f| f.filename.as_str()).collect();
-        found_files.sort();
-        let mut expected_files = change_kind.expected_files().to_vec();
-        expected_files.sort();
-
-        if found_files != expected_files {
-            return Err(ReviewFailure::UnexpectedZippyAction(
-                AutomatedChangeFailure::UnexpectedFiles {
-                    kind: change_kind,
-                    found: files.into_iter().map(|f| f.filename).collect(),
-                },
-            ));
-        }
+        change_kind
+            .validate_changes(metadata, &files)
+            .map_err(ReviewFailure::UnexpectedZippyAction)?;
 
         Ok(ReviewSuccess::ZedZippyCommit(
             change_kind,
