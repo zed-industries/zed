@@ -5837,7 +5837,7 @@ impl Editor {
             _ => self.open_or_update_completions_menu(
                 None,
                 Some(text.to_owned()).filter(|x| !x.is_empty()),
-                true,
+                trigger_in_words,
                 window,
                 cx,
             ),
@@ -6325,8 +6325,15 @@ impl Editor {
         let provider_responses = if let Some(provider) = &provider
             && load_provider_completions
         {
-            let trigger_character =
-                trigger.filter(|trigger| buffer.read(cx).completion_triggers().contains(trigger));
+            let trigger_character = trigger
+                .as_ref()
+                .filter(|trigger| {
+                    buffer
+                        .read(cx)
+                        .completion_triggers()
+                        .contains(trigger.as_str())
+                })
+                .cloned();
             let completion_context = CompletionContext {
                 trigger_kind: match &trigger_character {
                     Some(_) => CompletionTriggerKind::TRIGGER_CHARACTER,
@@ -6374,16 +6381,51 @@ impl Editor {
             Task::ready(BTreeMap::default())
         };
 
+        let snippet_char_classifier = buffer_snapshot
+            .char_classifier_at(buffer_position)
+            .scope_context(Some(CharScopeContext::Completion));
+
         let snippets = if let Some(provider) = &provider
             && provider.show_snippets()
             && let Some(project) = self.project()
         {
-            let char_classifier = buffer_snapshot
-                .char_classifier_at(buffer_position)
-                .scope_context(Some(CharScopeContext::Completion));
-            project.update(cx, |project, cx| {
-                snippet_completions(project, &buffer, buffer_position, char_classifier, cx)
-            })
+            let word_trigger = trigger.as_ref().is_some_and(|trigger| {
+                !trigger.is_empty()
+                    && trigger
+                        .chars()
+                        .all(|character| snippet_char_classifier.is_word(character))
+            });
+            let requires_strong_snippet_match = !menu_is_open && !trigger_in_words && word_trigger;
+            let load_snippet_completions = !requires_strong_snippet_match
+                || query.as_ref().is_some_and(|query| {
+                    let project = project.read(cx);
+                    has_strong_snippet_prefix_match(
+                        &project,
+                        &buffer,
+                        buffer_position,
+                        &snippet_char_classifier,
+                        query,
+                        cx,
+                    )
+                });
+
+            if load_snippet_completions {
+                project.update(cx, |project, cx| {
+                    snippet_completions(
+                        project,
+                        &buffer,
+                        buffer_position,
+                        snippet_char_classifier,
+                        cx,
+                    )
+                })
+            } else {
+                Task::ready(Ok(CompletionResponse {
+                    completions: Vec::new(),
+                    display_options: Default::default(),
+                    is_incomplete: false,
+                }))
+            }
         } else {
             Task::ready(Ok(CompletionResponse {
                 completions: Vec::new(),
@@ -27749,6 +27791,33 @@ impl CodeActionProvider for Entity<Project> {
             project.apply_code_action(buffer_handle, action, push_to_history, cx)
         })
     }
+}
+
+fn has_strong_snippet_prefix_match(
+    project: &Project,
+    buffer: &Entity<Buffer>,
+    buffer_anchor: text::Anchor,
+    classifier: &CharClassifier,
+    query: &str,
+    cx: &App,
+) -> bool {
+    if query.chars().take(2).count() < 2 {
+        return false;
+    }
+
+    let query = query.to_lowercase();
+    let is_word_char = |character| classifier.is_word(character);
+    let languages = buffer.read(cx).languages_at(buffer_anchor);
+    let snippet_store = project.snippets().read(cx);
+
+    languages.iter().any(|language| {
+        snippet_store
+            .snippets_for(Some(language.lsp_id()), cx)
+            .iter()
+            .flat_map(|snippet| snippet.prefix.iter())
+            .flat_map(|prefix| snippet_candidate_suffixes(prefix, &is_word_char))
+            .any(|candidate| candidate.to_lowercase().starts_with(&query))
+    })
 }
 
 fn snippet_completions(

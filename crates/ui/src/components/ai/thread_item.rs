@@ -387,6 +387,7 @@ impl RenderOnce for ThreadItem {
             .cursor_pointer()
             .group("thread-item")
             .relative()
+            .flex_shrink_0()
             .overflow_hidden()
             .w_full()
             .py_1()
@@ -417,14 +418,15 @@ impl RenderOnce for ThreadItem {
                     .when(self.hovered, |this| {
                         this.when_some(self.action_slot, |this, slot| {
                             let overlay = GradientFade::new(base_bg, hover_bg, hover_bg)
-                                .width(px(64.0))
-                                .right(px(6.))
-                                .gradient_stop(0.75)
+                                .width(px(80.0))
+                                .right(px(8.))
+                                .gradient_stop(0.80)
                                 .group_name("thread-item");
 
                             this.child(
                                 h_flex()
                                     .relative()
+                                    .pr_1p5()
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()
                                     })

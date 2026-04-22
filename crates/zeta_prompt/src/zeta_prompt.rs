@@ -15,7 +15,6 @@ pub use crate::excerpt_ranges::{
 };
 
 pub const CURSOR_MARKER: &str = "<|user_cursor|>";
-pub const MAX_PROMPT_TOKENS: usize = 4096;
 
 /// Use up to this amount of the editable region for prefill.
 /// Larger values may result in more robust generation, but
@@ -230,7 +229,25 @@ pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: Zet
 }
 
 pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> Option<String> {
-    format_prompt_with_budget_for_format(input, format, MAX_PROMPT_TOKENS)
+    let max_prompt_tokens = match format {
+        ZetaFormat::V0112MiddleAtEnd
+        | ZetaFormat::V0113Ordered
+        | ZetaFormat::V0114180EditableRegion
+        | ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill
+        | ZetaFormat::V0211SeedCoder
+        | ZetaFormat::v0226Hashline
+        | ZetaFormat::V0304VariableEdit
+        | ZetaFormat::V0304SeedNoEdits
+        | ZetaFormat::V0306SeedMultiRegions
+        | ZetaFormat::V0316SeedMultiRegions
+        | ZetaFormat::V0317SeedMultiRegions
+        | ZetaFormat::V0318SeedMultiRegions => 4096,
+        ZetaFormat::V0327SingleFile => 16384,
+    };
+
+    format_prompt_with_budget_for_format(input, format, max_prompt_tokens)
 }
 
 pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
@@ -973,7 +990,7 @@ pub fn format_expected_output(
                 multi_region::V0316_END_MARKER,
             )
         }
-        ZetaFormat::V0318SeedMultiRegions => {
+        ZetaFormat::V0318SeedMultiRegions | ZetaFormat::V0327SingleFile => {
             let (new_editable, first_hunk_offset) =
                 udiff::apply_diff_to_string_with_hunk_offset(patch, &old_editable)?;
             let cursor_in_new = cursor_in_new_text(cursor_offset, first_hunk_offset, &new_editable);
@@ -999,7 +1016,17 @@ pub fn format_expected_output(
         }
         // V0131-style formats and fallback: produce new editable text with
         // cursor marker inserted, followed by the end marker.
-        _ => {
+        ZetaFormat::V0112MiddleAtEnd
+        | ZetaFormat::V0113Ordered
+        | ZetaFormat::V0114180EditableRegion
+        | ZetaFormat::V0120GitMergeMarkers
+        | ZetaFormat::V0131GitMergeMarkersPrefix
+        | ZetaFormat::V0211Prefill
+        | ZetaFormat::V0211SeedCoder
+        | ZetaFormat::v0226Hashline
+        | ZetaFormat::V0304VariableEdit
+        | ZetaFormat::V0304SeedNoEdits
+        | ZetaFormat::V0306SeedMultiRegions => {
             let (mut result, first_hunk_offset) = if empty_patch {
                 (old_editable.clone(), None)
             } else {

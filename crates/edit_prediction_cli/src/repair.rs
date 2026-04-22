@@ -134,6 +134,18 @@ fn build_score_feedback(example: &Example) -> Option<String> {
         );
     }
 
+    if score.discarded_chars.unwrap_or(0) > 80 && score.exact_lines_fp > 5 {
+        issues.push(
+            "Automated analysis detected that this prediction might be too large or speculative. \
+            Please review it and think if we should keep it or generate a more focused prediction. \
+            Examples of more focused predictions: \
+            - Predicting a function outline but not its body. \
+            - Predicting only the first logical step and not speculating about further steps.
+            In general, the smaller the prediction you make, the higher the chance it will be correct."
+                .to_string(),
+        );
+    }
+
     if issues.is_empty() {
         return None;
     }

@@ -326,14 +326,10 @@ pub struct ThreadView {
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
-    pub recent_history_entries: Vec<AgentSessionInfo>,
-    pub hovered_recent_history_item: Option<usize>,
     pub show_external_source_prompt_warning: bool,
     pub show_codex_windows_warning: bool,
     pub multi_root_callout_dismissed: bool,
     pub generating_indicator_in_list: bool,
-    pub history: Option<Entity<ThreadHistory>>,
-    pub _history_subscription: Option<Subscription>,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -375,7 +371,6 @@ impl ThreadView {
         resumed_without_history: bool,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: Option<Entity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_content: Option<AgentInitialContent>,
         mut subscriptions: Vec<Subscription>,
@@ -388,12 +383,6 @@ impl ThreadView {
         let has_commands = !session_capabilities.read().available_commands().is_empty();
         let placeholder = placeholder_text(agent_display_name.as_ref(), has_commands);
 
-        let history_subscription = history.as_ref().map(|h| {
-            cx.observe(h, |this, history, cx| {
-                this.update_recent_history_from_cache(&history, cx);
-            })
-        });
-
         let mut should_auto_submit = false;
         let mut show_external_source_prompt_warning = false;
 
@@ -402,7 +391,6 @@ impl ThreadView {
                 workspace.clone(),
                 project.clone(),
                 thread_store,
-                history.as_ref().map(|h| h.downgrade()),
                 prompt_store,
                 session_capabilities.clone(),
                 agent_id.clone(),
@@ -501,11 +489,6 @@ impl ThreadView {
             }));
         }));
 
-        let recent_history_entries = history
-            .as_ref()
-            .map(|h| h.read(cx).get_recent_sessions(3))
-            .unwrap_or_default();
-
         let mut this = Self {
             session_id,
             parent_session_id,
@@ -568,11 +551,7 @@ impl ThreadView {
             add_context_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
             project,
-            recent_history_entries,
-            hovered_recent_history_item: None,
             show_external_source_prompt_warning,
-            history,
-            _history_subscription: history_subscription,
             show_codex_windows_warning,
             multi_root_callout_dismissed: false,
             generating_indicator_in_list: false,
@@ -5765,15 +5744,15 @@ impl ThreadView {
                     let this = entity.read(cx);
                     let is_at_top = this.list_state.logical_scroll_top().item_ix == 0;
 
-                    let has_selection = this
-                        .thread
-                        .read(cx)
-                        .entries()
-                        .get(entry_ix)
-                        .and_then(|entry| match &entry {
-                            AgentThreadEntry::AssistantMessage(msg) => Some(&msg.chunks),
-                            _ => None,
-                        })
+                    let chunks =
+                        this.thread.read(cx).entries().get(entry_ix).and_then(
+                            |entry| match &entry {
+                                AgentThreadEntry::AssistantMessage(msg) => Some(&msg.chunks),
+                                _ => None,
+                            },
+                        );
+
+                    let has_selection = chunks
                         .map(|chunks| {
                             chunks.iter().any(|chunk| {
                                 let md = match chunk {
@@ -5784,6 +5763,16 @@ impl ThreadView {
                             })
                         })
                         .unwrap_or(false);
+
+                    let context_menu_link = chunks.and_then(|chunks| {
+                        chunks.iter().find_map(|chunk| {
+                            let md = match chunk {
+                                AssistantMessageChunk::Message { block } => block.markdown(),
+                                AssistantMessageChunk::Thought { block } => block.markdown(),
+                            };
+                            md.and_then(|m| m.read(cx).context_menu_link().cloned())
+                        })
+                    });
 
                     let copy_this_agent_response =
                         ContextMenuEntry::new("Copy This Agent Response").handler({
@@ -5836,6 +5825,12 @@ impl ThreadView {
                         });
 
                     menu.when_some(focus, |menu, focus| menu.context(focus))
+                        .when_some(context_menu_link, |menu, url| {
+                            menu.entry("Copy Link", None, move |_, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(url.to_string()));
+                            })
+                            .separator()
+                        })
                         .action_disabled_when(
                             !has_selection,
                             "Copy Selection",
@@ -8664,16 +8659,6 @@ impl ThreadView {
             .title("Resumed Session")
             .description(description)
             .into_any_element()
-    }
-
-    fn update_recent_history_from_cache(
-        &mut self,
-        history: &Entity<ThreadHistory>,
-        cx: &mut Context<Self>,
-    ) {
-        self.recent_history_entries = history.read(cx).get_recent_sessions(3);
-        self.hovered_recent_history_item = None;
-        cx.notify();
     }
 
     fn render_codex_windows_warning(&self, cx: &mut Context<Self>) -> Callout {

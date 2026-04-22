@@ -11,6 +11,7 @@ use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent,
     Render, SharedString, Task, WeakEntity, Window,
 };
+use itertools::Itertools as _;
 use notifications::status_toast::StatusToast;
 use project::{AgentId, AgentRegistryStore, AgentServerStore};
 use release_channel::ReleaseChannel;
@@ -138,6 +139,7 @@ impl ThreadImportModal {
                     icon_path,
                 }
             })
+            .sorted_unstable_by_key(|entry| entry.display_name.to_lowercase())
             .collect::<Vec<_>>();
 
         Self {
@@ -501,9 +503,10 @@ fn find_threads_to_import(
         }
     }
 
-    let mut session_list_tasks = Vec::new();
     cx.spawn(async move |cx| {
         let results = futures::future::join_all(wait_for_connection_tasks).await;
+
+        let mut page_tasks = Vec::new();
         for (agent_id, remote_connection, result) in results {
             let Some(state) = result.log_err() else {
                 continue;
@@ -511,33 +514,50 @@ fn find_threads_to_import(
             let Some(list) = cx.update(|cx| state.connection.session_list(cx)) else {
                 continue;
             };
-            let task = cx.update(|cx| {
-                list.list_sessions(AgentSessionListRequest::default(), cx)
-                    .map({
-                        let remote_connection = remote_connection.clone();
-                        move |response| (agent_id, remote_connection, response)
-                    })
-            });
-            session_list_tasks.push(task);
+            page_tasks.push(cx.spawn({
+                let list = list.clone();
+                async move |cx| collect_all_sessions(agent_id, remote_connection, list, cx).await
+            }));
         }
 
-        let mut sessions_by_agent = Vec::new();
-        let results = futures::future::join_all(session_list_tasks).await;
-        for (agent_id, remote_connection, result) in results {
-            let Some(response) = result.log_err() else {
-                continue;
-            };
-            sessions_by_agent.push(SessionByAgent {
-                agent_id,
-                remote_connection,
-                sessions: response.sessions,
-            });
-        }
+        let sessions_by_agent = futures::future::join_all(page_tasks)
+            .await
+            .into_iter()
+            .filter_map(|result| result.log_err())
+            .collect();
 
         Ok(collect_importable_threads(
             sessions_by_agent,
             existing_sessions,
         ))
+    })
+}
+
+async fn collect_all_sessions(
+    agent_id: AgentId,
+    remote_connection: Option<RemoteConnectionOptions>,
+    list: std::rc::Rc<dyn acp_thread::AgentSessionList>,
+    cx: &mut gpui::AsyncApp,
+) -> anyhow::Result<SessionByAgent> {
+    let mut sessions = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let request = AgentSessionListRequest {
+            cursor: cursor.clone(),
+            ..Default::default()
+        };
+        let task = cx.update(|cx| list.list_sessions(request, cx));
+        let response = task.await?;
+        sessions.extend(response.sessions);
+        match response.next_cursor {
+            Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
+            _ => break,
+        }
+    }
+    Ok(SessionByAgent {
+        agent_id,
+        remote_connection,
+        sessions,
     })
 }
 

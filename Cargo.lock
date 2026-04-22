@@ -281,8 +281,6 @@ dependencies = [
  "action_log",
  "agent-client-protocol",
  "anyhow",
- "async-pipe",
- "async-trait",
  "chrono",
  "client",
  "collections",
@@ -432,7 +430,6 @@ dependencies = [
  "theme",
  "theme_settings",
  "time",
- "time_format",
  "tree-sitter-md",
  "ui",
  "ui_input",
@@ -9349,13 +9346,14 @@ dependencies = [
 
 [[package]]
 name = "jupyter-websocket-client"
-version = "1.0.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ef5a543b517583059b5b11daceb37690d6ac206f9321075993cd82ab1541c28"
+checksum = "7c2ae4d8d5344f69bf9734b264e969c2139e30e932ce9b6455de9f65663ed614"
 dependencies = [
  "anyhow",
  "async-trait",
  "async-tungstenite",
+ "bytes 1.11.1",
  "futures 0.3.32",
  "jupyter-protocol",
  "serde",
@@ -16339,7 +16337,6 @@ dependencies = [
  "theme_settings",
  "ui",
  "util",
- "vim_mode_setting",
  "workspace",
  "zed_actions",
 ]
@@ -21948,7 +21945,6 @@ dependencies = [
  "postage",
  "pretty_assertions",
  "project",
- "release_channel",
  "remote",
  "schemars 1.0.4",
  "serde",
