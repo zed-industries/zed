@@ -153,19 +153,6 @@ fn bump_main(
     }
 
     let (authenticate, token) = steps::authenticate_as_zippy().into();
-    let main_sha_step =
-        named::bash("echo \"main_sha=$(git rev-parse HEAD)\" >> \"$GITHUB_OUTPUT\"").id("main-sha");
-    let main_sha = StepOutput::new(&main_sha_step, "main_sha");
-
-    let commit_step: Step<Use> = steps::BotCommitStep::new(
-        format!(
-            "Bump to v{} for @${{{{ github.actor }}}}",
-            outputs.next_version
-        ),
-        &outputs.pr_branch,
-        &token,
-    )
-    .into();
 
     named::job(
         Job::default()
@@ -175,18 +162,11 @@ fn bump_main(
                 target.expr(),
             )))
             .needs(vec![versions_job.name.clone()])
-            .runs_on(runners::LINUX_XL)
+            .runs_on(runners::LINUX_DEFAULT)
             .add_step(authenticate)
             .add_step(steps::checkout_repo().with_token(&token).with_ref("main"))
-            .add_step(main_sha_step)
             .add_step(steps::install_cargo_edit())
             .add_step(bump_version())
-            .add_step(steps::create_ref(
-                steps::GitRef::branch(&outputs.pr_branch),
-                &main_sha,
-                &token,
-            ))
-            .add_step(commit_step)
             .add_step(steps::CreatePrStep::new(
                 format!("Bump Zed to v{}", outputs.next_version),
                 &outputs.pr_branch,
@@ -200,13 +180,18 @@ fn create_preview_branch(
     versions_job: &steps::NamedJob,
     outputs: &ResolvedOutputs,
 ) -> steps::NamedJob {
+    fn promote_to_preview() -> Step<Run> {
+        named::bash("echo -n preview > crates/zed/RELEASE_CHANNEL")
+    }
+
+    fn get_main_sha() -> Step<Run> {
+        named::bash("echo \"main_sha=$(git rev-parse HEAD)\" >> \"$GITHUB_OUTPUT\"").id("main-sha")
+    }
+
     let (authenticate, token) = steps::authenticate_as_zippy().into();
 
-    let main_sha_step =
-        named::bash("echo \"main_sha=$(git rev-parse HEAD)\" >> \"$GITHUB_OUTPUT\"").id("main-sha");
+    let main_sha_step = get_main_sha();
     let main_sha = StepOutput::new(&main_sha_step, "main_sha");
-
-    let write_channel = named::bash("echo -n preview > crates/zed/RELEASE_CHANNEL");
 
     let commit_step: Step<Use> = steps::BotCommitStep::new(
         format!("{} preview", outputs.preview_branch),
@@ -225,11 +210,11 @@ fn create_preview_branch(
                 target.expr(),
             )))
             .needs(vec![versions_job.name.clone()])
-            .runs_on(runners::LINUX_XL)
+            .runs_on(runners::LINUX_DEFAULT)
             .add_step(authenticate)
             .add_step(steps::checkout_repo().with_token(&token).with_ref("main"))
             .add_step(main_sha_step)
-            .add_step(write_channel)
+            .add_step(promote_to_preview())
             .add_step(steps::create_ref(
                 steps::GitRef::branch(&outputs.preview_branch),
                 &main_sha,
@@ -279,7 +264,7 @@ fn promote_to_stable(
                 target.expr(),
             )))
             .needs(vec![versions_job.name.clone()])
-            .runs_on(runners::LINUX_XL)
+            .runs_on(runners::LINUX_DEFAULT)
             .add_step(authenticate)
             .add_step(
                 steps::checkout_repo()
