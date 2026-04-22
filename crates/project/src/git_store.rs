@@ -8085,17 +8085,23 @@ mod tests {
     }
 
     fn verify_invariants(repository: &Repository) -> anyhow::Result<()> {
-        verify_loading_entries_are_pending(repository)?;
-        verify_await_result_loading_entries_have_completion_senders(repository)?;
-        verify_closed_handler_has_no_loading_entries(repository)?;
+        match &repository.graph_commit_data_handler {
+            GraphCommitHandlerState::Open(handler) => {
+                verify_loading_entries_are_pending(repository, handler)?;
+                verify_await_result_loading_entries_have_completion_senders(repository, handler)?;
+            }
+            GraphCommitHandlerState::Closed => {
+                verify_closed_handler_invariants(repository)?;
+            }
+        }
+
         Ok(())
     }
 
-    fn verify_loading_entries_are_pending(repository: &Repository) -> anyhow::Result<()> {
-        let GraphCommitHandlerState::Open(handler) = &repository.graph_commit_data_handler else {
-            return Ok(());
-        };
-
+    fn verify_loading_entries_are_pending(
+        repository: &Repository,
+        handler: &GraphCommitDataHandler,
+    ) -> anyhow::Result<()> {
         for (sha, state) in &repository.commit_data {
             if matches!(state, CommitDataState::Loading(_)) {
                 anyhow::ensure!(
@@ -8110,11 +8116,8 @@ mod tests {
 
     fn verify_await_result_loading_entries_have_completion_senders(
         repository: &Repository,
+        handler: &GraphCommitDataHandler,
     ) -> anyhow::Result<()> {
-        let GraphCommitHandlerState::Open(handler) = &repository.graph_commit_data_handler else {
-            return Ok(());
-        };
-
         for (sha, state) in &repository.commit_data {
             if matches!(state, CommitDataState::Loading(Some(_))) {
                 anyhow::ensure!(
@@ -8127,14 +8130,7 @@ mod tests {
         Ok(())
     }
 
-    fn verify_closed_handler_has_no_loading_entries(repository: &Repository) -> anyhow::Result<()> {
-        if !matches!(
-            repository.graph_commit_data_handler,
-            GraphCommitHandlerState::Closed
-        ) {
-            return Ok(());
-        }
-
+    fn verify_closed_handler_invariants(repository: &Repository) -> anyhow::Result<()> {
         for (sha, state) in &repository.commit_data {
             anyhow::ensure!(
                 !matches!(state, CommitDataState::Loading(_)),
