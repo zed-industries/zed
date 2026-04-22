@@ -934,16 +934,21 @@ pub enum FormatOnSave {
 pub enum LineEndingSetting {
     /// Preserve the existing line endings of the file. New files use the
     /// platform default line ending.
+    #[strum(serialize = "Detect")]
     Detect,
     /// Use LF for new files and files with no existing line-ending
     /// convention, while preserving existing LF or CRLF files.
+    #[strum(serialize = "Prefer LF")]
     PreferLf,
     /// Use CRLF for new files and files with no existing line-ending
     /// convention, while preserving existing LF or CRLF files.
+    #[strum(serialize = "Prefer CRLF")]
     PreferCrlf,
     /// Normalize line endings to LF (`\n`) during format and save.
+    #[strum(serialize = "Enforce LF")]
     EnforceLf,
     /// Normalize line endings to CRLF (`\r\n`) during format and save.
+    #[strum(serialize = "Enforce CRLF")]
     EnforceCrlf,
 }
 

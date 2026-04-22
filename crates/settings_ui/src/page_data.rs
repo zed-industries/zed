@@ -8107,7 +8107,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn formatting_section() -> [SettingsPageItem; 7] {
+    fn formatting_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Formatting"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8172,6 +8172,28 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                     },
                 }),
                 metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Line Ending",
+                description: "How line endings should be handled for new files and during format and save operations.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).line_ending"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.line_ending.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.line_ending = value;
+                        })
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    should_do_titlecase: Some(false),
+                    ..Default::default()
+                })),
                 files: USER | PROJECT,
             }),
             SettingsPageItem::SettingItem(SettingItem {
