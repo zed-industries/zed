@@ -3359,7 +3359,7 @@ pub(crate) mod tests {
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         // Simulate a previous run that persisted metadata for this session.
-        let resume_session_id = SessionId::new("persistent-session");
+        let resume_session_id = acp::SessionId::new("persistent-session");
         let stored_title: SharedString = "Persistent chat".into();
         cx.update(|_window, cx| {
             ThreadMetadataStore::global(cx).update(cx, |store, cx| {
