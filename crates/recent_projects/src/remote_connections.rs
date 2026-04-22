@@ -134,6 +134,7 @@ pub async fn open_remote_project(
     cx: &mut AsyncApp,
 ) -> Result<WindowHandle<MultiWorkspace>> {
     let created_new_window = open_options.requesting_window.is_none();
+    let paths = normalize_remote_paths_for_matching(&connection_options, paths, cx).await;
 
     let (existing, open_visible) = find_existing_workspace(
         &paths,
@@ -437,6 +438,76 @@ pub async fn open_remote_project(
         })
         .ok();
     Ok(window)
+}
+
+fn path_needs_remote_normalization(path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    path.starts_with("/~") || path.starts_with('~')
+}
+
+fn remote_path_for_metadata_lookup(path: &Path) -> String {
+    let mut path = path.to_string_lossy().into_owned();
+    if path.starts_with("/~") {
+        path = path[1..].to_string();
+    }
+    if path.is_empty() {
+        path = "~/".to_string();
+    }
+    path
+}
+
+async fn normalize_remote_paths_for_matching(
+    connection_options: &RemoteConnectionOptions,
+    paths: Vec<PathBuf>,
+    cx: &mut AsyncApp,
+) -> Vec<PathBuf> {
+    if !paths
+        .iter()
+        .any(|path| path_needs_remote_normalization(path))
+    {
+        return paths;
+    }
+
+    let project = cx.update(|cx| {
+        workspace::workspace_windows_for_location(
+            &SerializedWorkspaceLocation::Remote(connection_options.clone()),
+            cx,
+        )
+        .into_iter()
+        .find_map(|window| {
+            window.read(cx).ok().and_then(|multi_workspace| {
+                multi_workspace.workspaces().find_map(|workspace| {
+                    let project = workspace.read(cx).project().clone();
+                    project.read(cx).remote_client()?;
+                    Some(project)
+                })
+            })
+        })
+    });
+
+    let Some(project) = project else {
+        return paths;
+    };
+
+    let mut normalized_paths = Vec::with_capacity(paths.len());
+    for path in paths {
+        if !path_needs_remote_normalization(&path) {
+            normalized_paths.push(path);
+            continue;
+        }
+
+        let lookup_path = remote_path_for_metadata_lookup(&path);
+        let resolved_path = cx.update(|cx| project.read(cx).resolve_abs_path(&lookup_path, cx));
+        match resolved_path
+            .await
+            .and_then(|resolved_path| resolved_path.into_abs_path())
+        {
+            Some(resolved_path) => normalized_paths.push(PathBuf::from(resolved_path)),
+            None => normalized_paths.push(path),
+        }
+    }
+
+    normalized_paths
 }
 
 pub fn navigate_to_positions(
@@ -914,6 +985,17 @@ mod tests {
             "/~/{}/src/main.rs",
             project_path_relative_to_home.to_string_lossy()
         ));
+        let normalized_paths = normalize_remote_paths_for_matching(
+            &opts,
+            vec![tilde_project_path.clone()],
+            &mut async_cx,
+        )
+        .await;
+        assert_eq!(
+            normalized_paths,
+            vec![canonical_project_path.join("src/main.rs")],
+            "/~/ paths should be normalized to the canonical remote home path before matching"
+        );
 
         match futures::future::select(
             Box::pin(open_remote_project(
@@ -931,7 +1013,9 @@ mod tests {
                 result.expect("second open_remote_project should complete");
             }
             futures::future::Either::Right(_) => {
-                panic!("second open_remote_project timed out instead of reusing the existing window");
+                panic!(
+                    "second open_remote_project timed out instead of reusing the existing window"
+                );
             }
         }
 
