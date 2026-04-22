@@ -5060,6 +5060,19 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> &CommitDataState {
         if self.commit_data.contains_key(&sha) {
+            let data = &self.commit_data[&sha];
+
+            if let CommitDataState::Loading(None) = data
+                && get_waiter
+            {
+                let (tx, rx) = oneshot::channel();
+                self.commit_data
+                    .insert(sha, CommitDataState::Loading(Some(rx.shared())));
+
+                let handler = self.get_handler(cx);
+                handler.completers.insert(sha, tx);
+            }
+
             return &self.commit_data[&sha];
         }
 
@@ -5072,27 +5085,31 @@ impl Repository {
 
         self.commit_data.insert(sha, state);
 
-        match &mut self.graph_commit_data_handler {
-            GraphCommitHandlerState::Open(handler) => {
-                if let Some(tx) = completer {
-                    handler.completers.insert(sha, tx);
-                }
-                handler.commit_data_request.try_send(sha).ok();
-            }
-            GraphCommitHandlerState::Closed => {
-                let mut handler = self.open_graph_commit_data_handler(cx);
-                if let Some(tx) = completer {
-                    handler.completers.insert(sha, tx);
-                }
-                handler.commit_data_request.try_send(sha).ok();
-                self.graph_commit_data_handler = GraphCommitHandlerState::Open(handler);
-            }
+        let handler = self.get_handler(cx);
+        if let Some(tx) = completer {
+            handler.completers.insert(sha, tx);
         }
+        handler.commit_data_request.try_send(sha).ok();
 
         &self.commit_data.get(&sha).unwrap_or_else(|| {
             debug_panic!("This should always be inserted");
             &CommitDataState::Loading(None)
         })
+    }
+
+    fn get_handler(&mut self, cx: &mut Context<Self>) -> &mut GraphCommitDataHandler {
+        if matches!(
+            self.graph_commit_data_handler,
+            GraphCommitHandlerState::Closed
+        ) {
+            self.graph_commit_data_handler =
+                GraphCommitHandlerState::Open(self.open_graph_commit_data_handler(cx));
+        }
+
+        match &mut self.graph_commit_data_handler {
+            GraphCommitHandlerState::Open(handler) => handler,
+            GraphCommitHandlerState::Closed => unreachable!(),
+        }
     }
 
     fn open_graph_commit_data_handler(&self, cx: &Context<Self>) -> GraphCommitDataHandler {
