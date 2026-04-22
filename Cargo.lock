@@ -15171,7 +15171,6 @@ dependencies = [
  "util",
  "uuid",
  "watch",
- "windows 0.61.3",
  "worktree",
  "zlog",
 ]
