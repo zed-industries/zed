@@ -360,8 +360,9 @@ impl WrappedLineLayout {
 
     /// Returns the pixel position for the given byte index.
     pub fn position_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
+        let num_wraps = self.wrap_boundaries.len();
         let mut line_start_ix = 0;
-        let mut line_end_indices = self
+        let line_end_indices = self
             .wrap_boundaries
             .iter()
             .map(|wrap_boundary| {
@@ -373,9 +374,18 @@ impl WrappedLineLayout {
             .enumerate();
         for (ix, line_end_ix) in line_end_indices {
             let line_y = ix as f32 * line_height;
+            // For wrap boundaries, the index `line_end_ix` is the first index of the
+            // *next* visual line, so an index equal to the boundary belongs there.
+            // For the final (non-wrap) entry, `line_end_ix == self.len()` is still on
+            // the last line (end-of-text cursor position), so keep the strict `>`.
+            let past_this_line = if ix < num_wraps {
+                index >= line_end_ix
+            } else {
+                index > line_end_ix
+            };
             if index < line_start_ix {
                 break;
-            } else if index > line_end_ix {
+            } else if past_this_line {
                 line_start_ix = line_end_ix;
                 continue;
             } else {
