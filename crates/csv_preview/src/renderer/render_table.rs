@@ -128,14 +128,20 @@ impl CsvPreviewView {
 
             let display_cell_id = DisplayCellId::new(display_row, col);
 
-            let cell = div().size_full().whitespace_nowrap().text_ellipsis().child(
-                CsvPreviewView::create_selectable_cell(
+            let cell = div()
+                .size_full()
+                .when(!this.settings.multiline_cells_enabled, |div| {
+                    div.whitespace_nowrap()
+                        .text_ellipsis()
+                        .h(this.row_height)
+                        .overflow_hidden()
+                })
+                .child(CsvPreviewView::create_selectable_cell(
                     display_cell_id,
                     cell_content,
                     this.settings.vertical_alignment,
                     cx,
-                ),
-            );
+                ));
 
             elements.push(
                 div()
@@ -154,7 +160,6 @@ impl CsvPreviewView {
                             },
                         ))
                     })
-                    .text_ui(cx)
                     .child(cell)
                     .into_any_element(),
             );

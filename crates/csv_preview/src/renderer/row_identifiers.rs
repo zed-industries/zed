@@ -34,7 +34,7 @@ impl LineNumber {
                     if start + 1 == end {
                         format!("{start}\n{end}")
                     } else {
-                        format!("{start}\n...\n{end}")
+                        format!("{start}\n-\n{end}")
                     }
                 }
                 RowIdentDisplayMode::Horizontal => {

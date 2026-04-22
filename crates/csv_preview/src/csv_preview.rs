@@ -49,6 +49,9 @@ pub struct CsvPreviewView {
     /// Performance metrics for debugging and monitoring CSV operations.
     pub(crate) performance_metrics: PerformanceMetrics,
     pub(crate) list_state: gpui::ListState,
+    /// Cached row height used as a scroll height hint for off-screen list items.
+    /// Updated each render frame from the actual text line height.
+    pub(crate) row_height: Pixels,
     /// Time when the last parsing operation ended, used for smart debouncing
     pub(crate) last_parse_end_time: Option<std::time::Instant>,
 }
@@ -187,6 +190,7 @@ impl CsvPreviewView {
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
                     .with_uniform_item_height(px(24.)),
+                row_height: px(24.),
                 settings: CsvPreviewSettings::default(),
                 last_parse_end_time: None,
                 engine: TableDataEngine::default(),
@@ -241,9 +245,8 @@ impl CsvPreviewView {
                 let visible_rows = view.engine.d2d_mapping().visible_row_count();
                 // Approximation of single csv table row height. Will be re-measured on scrolling.
                 // This cheap solution allow to render scrollbar with fraction of a cost compared to `.measure_all()` call
-                let approximate_height = px(24.);
                 view.list_state
-                    .reset_with_uniform_height(visible_rows, approximate_height);
+                    .reset_with_uniform_height(visible_rows, view.row_height);
                 cx.notify();
             })
             .ok();
