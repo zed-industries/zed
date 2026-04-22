@@ -5744,15 +5744,15 @@ impl ThreadView {
                     let this = entity.read(cx);
                     let is_at_top = this.list_state.logical_scroll_top().item_ix == 0;
 
-                    let has_selection = this
-                        .thread
-                        .read(cx)
-                        .entries()
-                        .get(entry_ix)
-                        .and_then(|entry| match &entry {
-                            AgentThreadEntry::AssistantMessage(msg) => Some(&msg.chunks),
-                            _ => None,
-                        })
+                    let chunks =
+                        this.thread.read(cx).entries().get(entry_ix).and_then(
+                            |entry| match &entry {
+                                AgentThreadEntry::AssistantMessage(msg) => Some(&msg.chunks),
+                                _ => None,
+                            },
+                        );
+
+                    let has_selection = chunks
                         .map(|chunks| {
                             chunks.iter().any(|chunk| {
                                 let md = match chunk {
@@ -5763,6 +5763,16 @@ impl ThreadView {
                             })
                         })
                         .unwrap_or(false);
+
+                    let context_menu_link = chunks.and_then(|chunks| {
+                        chunks.iter().find_map(|chunk| {
+                            let md = match chunk {
+                                AssistantMessageChunk::Message { block } => block.markdown(),
+                                AssistantMessageChunk::Thought { block } => block.markdown(),
+                            };
+                            md.and_then(|m| m.read(cx).context_menu_link().cloned())
+                        })
+                    });
 
                     let copy_this_agent_response =
                         ContextMenuEntry::new("Copy This Agent Response").handler({
@@ -5815,6 +5825,12 @@ impl ThreadView {
                         });
 
                     menu.when_some(focus, |menu, focus| menu.context(focus))
+                        .when_some(context_menu_link, |menu, url| {
+                            menu.entry("Copy Link", None, move |_, cx| {
+                                cx.write_to_clipboard(ClipboardItem::new_string(url.to_string()));
+                            })
+                            .separator()
+                        })
                         .action_disabled_when(
                             !has_selection,
                             "Copy Selection",
