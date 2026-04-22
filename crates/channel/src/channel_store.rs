@@ -166,17 +166,18 @@ impl ChannelStore {
     }
 
     pub fn is_channel_favorited(&self, channel_id: ChannelId) -> bool {
-        self.favorite_channel_ids.binary_search(&channel_id).is_ok()
+        self.favorite_channel_ids.contains(&channel_id)
     }
 
     pub fn toggle_favorite_channel(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
-        match self.favorite_channel_ids.binary_search(&channel_id) {
-            Ok(ix) => {
-                self.favorite_channel_ids.remove(ix);
-            }
-            Err(ix) => {
-                self.favorite_channel_ids.insert(ix, channel_id);
-            }
+        if let Some(ix) = self
+            .favorite_channel_ids
+            .iter()
+            .position(|id| *id == channel_id)
+        {
+            self.favorite_channel_ids.remove(ix);
+        } else {
+            self.favorite_channel_ids.push(channel_id);
         }
         cx.notify();
     }

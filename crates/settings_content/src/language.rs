@@ -180,9 +180,6 @@ pub struct EditPredictionSettingsContent {
     pub ollama: Option<OllamaEditPredictionSettingsContent>,
     /// Settings specific to using custom OpenAI-compatible servers for edit prediction.
     pub open_ai_compatible_api: Option<CustomEditPredictionProviderSettingsContent>,
-    /// Whether edit predictions are enabled in the assistant prompt editor.
-    /// This has no effect if globally disabled.
-    pub enabled_in_text_threads: Option<bool>,
     /// The directory where manually captured edit prediction examples are stored.
     pub examples_dir: Option<Arc<Path>>,
 }
@@ -397,9 +394,8 @@ pub enum SoftWrap {
     PreferLine,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
-    /// Soft wrap lines at the preferred line length.
-    PreferredLineLength,
     /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
+    #[serde(alias = "preferred_line_length")]
     Bounded,
 }
 

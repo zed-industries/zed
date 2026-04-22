@@ -5,13 +5,11 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use crate::DEFAULT_THREAD_TITLE;
-use crate::ThreadHistory;
+use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use acp_thread::MentionUri;
 use agent_client_protocol as acp;
 use anyhow::Result;
-use editor::{
-    CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
-};
+use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
 use futures::FutureExt as _;
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{App, BackgroundExecutor, Entity, SharedString, Task, WeakEntity};
@@ -28,7 +26,7 @@ use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
 use settings::{Settings, TerminalDockPosition};
 use terminal::terminal_settings::TerminalSettings;
-use terminal_view::terminal_panel::TerminalPanel;
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::{Anchor, ToOffset as _, ToPoint as _};
 use ui::IconName;
 use ui::prelude::*;
@@ -224,7 +222,6 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    history: Option<WeakEntity<ThreadHistory>>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
@@ -234,7 +231,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        history: Option<WeakEntity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -243,7 +239,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             editor,
             mention_set,
             workspace,
-            history,
             prompt_store,
         }
     }
@@ -562,8 +557,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     .collect();
 
                 // Collect terminal selections from all terminal views if the terminal panel is visible
-                let terminal_selections: Vec<String> =
-                    terminal_selections_if_panel_open(workspace, cx);
+                let terminal_selections: Vec<String> = terminal_selections(workspace, cx);
 
                 const EDITOR_PLACEHOLDER: &str = "selection ";
                 const TERMINAL_PLACEHOLDER: &str = "terminal ";
@@ -622,7 +616,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                 for (terminal_text, terminal_range) in terminal_ranges {
                                     let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
                                     let Some(start) =
-                                        snapshot.as_singleton_anchor(source_range.start)
+                                        snapshot.anchor_in_excerpt(source_range.start)
                                     else {
                                         return;
                                     };
@@ -921,16 +915,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             }
 
             Some(PromptContextType::Thread) => {
-                if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
-                    let sessions = history
-                        .read(cx)
-                        .sessions()
-                        .iter()
-                        .map(|session| SessionMatch {
-                            session_id: session.session_id.clone(),
-                            title: session_title(session.title.clone()),
-                        })
-                        .collect::<Vec<_>>();
+                let sessions = collect_session_matches(cx);
+                if !sessions.is_empty() {
                     let search_task =
                         filter_sessions_by_query(query, cancellation_flag, sessions, cx);
                     cx.spawn(async move |_cx| {
@@ -1147,29 +1133,21 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             return Task::ready(recent);
         }
 
-        if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
-            const RECENT_COUNT: usize = 2;
-            recent.extend(
-                history
-                    .read(cx)
-                    .sessions()
-                    .into_iter()
-                    .map(|session| SessionMatch {
-                        session_id: session.session_id.clone(),
-                        title: session_title(session.title.clone()),
-                    })
-                    .filter(|session| {
-                        let uri = MentionUri::Thread {
-                            id: session.session_id.clone(),
-                            name: session.title.to_string(),
-                        };
-                        !mentions.contains(&uri)
-                    })
-                    .take(RECENT_COUNT)
-                    .map(Match::RecentThread),
-            );
-            return Task::ready(recent);
-        }
+        let sessions = collect_session_matches(cx);
+        const RECENT_COUNT: usize = 2;
+        recent.extend(
+            sessions
+                .into_iter()
+                .filter(|session| {
+                    let uri = MentionUri::Thread {
+                        id: session.session_id.clone(),
+                        name: session.title.to_string(),
+                    };
+                    !mentions.contains(&uri)
+                })
+                .take(RECENT_COUNT)
+                .map(Match::RecentThread),
+        );
 
         Task::ready(recent)
     }
@@ -1198,7 +1176,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 })
             });
 
-        let has_terminal_selection = !terminal_selections_if_panel_open(workspace, cx).is_empty();
+        let has_terminal_selection = !terminal_selections(workspace, cx).is_empty();
 
         if has_editor_selection || has_terminal_selection {
             entries.push(PromptContextEntry::Action(
@@ -1236,7 +1214,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletionProvider<T> {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _trigger: CompletionContext,
@@ -2034,6 +2011,28 @@ pub(crate) fn search_symbols(
     })
 }
 
+fn collect_session_matches(cx: &App) -> Vec<SessionMatch> {
+    let Some(store) = ThreadMetadataStore::try_global(cx) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<&ThreadMetadata> = store
+        .read(cx)
+        .entries()
+        .filter(|t| !t.archived && t.agent_id == *agent::ZED_AGENT_ID)
+        .collect();
+    entries.sort_by_key(|t| Reverse(t.updated_at));
+    entries
+        .into_iter()
+        .map(|metadata| {
+            let info = acp_thread::AgentSessionInfo::from(metadata);
+            SessionMatch {
+                session_id: info.session_id,
+                title: session_title(info.title),
+            }
+        })
+        .collect()
+}
+
 fn filter_sessions_by_query(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
@@ -2148,7 +2147,7 @@ fn build_code_label_for_path(
         .theme()
         .syntax()
         .highlight_id("variable")
-        .map(HighlightId);
+        .map(HighlightId::new);
     let mut label = CodeLabelBuilder::default();
 
     label.push_str(file, None);
@@ -2169,28 +2168,45 @@ fn build_code_label_for_path(
     label.build()
 }
 
-/// Returns terminal selections from all terminal views if the terminal panel is open.
-fn terminal_selections_if_panel_open(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
-    let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
-        return Vec::new();
-    };
+fn terminal_selections(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
+    let mut selections = Vec::new();
 
-    // Check if the dock containing this panel is open
-    let position = match TerminalSettings::get_global(cx).dock {
-        TerminalDockPosition::Left => DockPosition::Left,
-        TerminalDockPosition::Bottom => DockPosition::Bottom,
-        TerminalDockPosition::Right => DockPosition::Right,
-    };
-    let dock_is_open = workspace
+    // Check if the active item is a terminal (in a panel or not)
+    if let Some(terminal_view) = workspace
         .read(cx)
-        .dock_at_position(position)
-        .read(cx)
-        .is_open();
-    if !dock_is_open {
-        return Vec::new();
+        .active_item(cx)
+        .and_then(|item| item.act_as::<TerminalView>(cx))
+    {
+        if let Some(text) = terminal_view
+            .read(cx)
+            .terminal()
+            .read(cx)
+            .last_content
+            .selection_text
+            .clone()
+            .filter(|text| !text.is_empty())
+        {
+            selections.push(text);
+        }
     }
 
-    panel.read(cx).terminal_selections(cx)
+    if let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) {
+        let position = match TerminalSettings::get_global(cx).dock {
+            TerminalDockPosition::Left => DockPosition::Left,
+            TerminalDockPosition::Bottom => DockPosition::Bottom,
+            TerminalDockPosition::Right => DockPosition::Right,
+        };
+        let dock_is_open = workspace
+            .read(cx)
+            .dock_at_position(position)
+            .read(cx)
+            .is_open();
+        if dock_is_open {
+            selections.extend(panel.read(cx).terminal_selections(cx));
+        }
+    }
+
+    selections
 }
 
 fn selection_ranges(
@@ -2213,17 +2229,8 @@ fn selection_ranges(
 
         selections
             .into_iter()
-            .map(|s| {
-                let (start, end) = if s.is_empty() {
-                    let row = multi_buffer::MultiBufferRow(s.start.row);
-                    let line_start = text::Point::new(s.start.row, 0);
-                    let line_end = text::Point::new(s.start.row, snapshot.line_len(row));
-                    (line_start, line_end)
-                } else {
-                    (s.start, s.end)
-                };
-                snapshot.anchor_after(start)..snapshot.anchor_before(end)
-            })
+            .filter(|s| !s.is_empty())
+            .map(|s| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
             .flat_map(|range| {
                 let (start_buffer, start) = buffer.text_anchor_for_position(range.start, cx)?;
                 let (end_buffer, end) = buffer.text_anchor_for_position(range.end, cx)?;

@@ -6,10 +6,35 @@ use project::AgentId;
 use project::Project;
 use settings::SettingsStore;
 use std::any::Any;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::AgentPanel;
 use crate::agent_panel;
+
+thread_local! {
+    static STUB_AGENT_CONNECTION: RefCell<Option<StubAgentConnection>> = const { RefCell::new(None) };
+}
+
+/// Registers a `StubAgentConnection` that will be used by `Agent::Stub`.
+///
+/// Returns the same connection so callers can hold onto it and control
+/// the stub's behavior (e.g. `connection.set_next_prompt_updates(...)`).
+pub fn set_stub_agent_connection(connection: StubAgentConnection) -> StubAgentConnection {
+    STUB_AGENT_CONNECTION.with(|cell| {
+        *cell.borrow_mut() = Some(connection.clone());
+    });
+    connection
+}
+
+/// Returns the shared `StubAgentConnection` used by `Agent::Stub`,
+/// creating a default one if none was registered.
+pub fn stub_agent_connection() -> StubAgentConnection {
+    STUB_AGENT_CONNECTION.with(|cell| {
+        let mut borrow = cell.borrow_mut();
+        borrow.get_or_insert_with(StubAgentConnection::new).clone()
+    })
+}
 
 pub struct StubAgentServer<C> {
     connection: C,
@@ -73,6 +98,9 @@ pub fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        cx.set_global(acp_thread::StubSessionCounter(
+            std::sync::atomic::AtomicUsize::new(0),
+        ));
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         release_channel::init("0.0.0".parse().unwrap(), cx);
@@ -127,4 +155,11 @@ pub fn active_session_id(panel: &Entity<AgentPanel>, cx: &VisualTestContext) -> 
         let thread = panel.active_agent_thread(cx).unwrap();
         thread.read(cx).session_id().clone()
     })
+}
+
+pub fn active_thread_id(
+    panel: &Entity<AgentPanel>,
+    cx: &VisualTestContext,
+) -> crate::thread_metadata_store::ThreadId {
+    panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap())
 }

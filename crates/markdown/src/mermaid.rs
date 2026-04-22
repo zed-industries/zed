@@ -266,7 +266,10 @@ mod tests {
         CachedMermaidDiagram, MermaidDiagramCache, MermaidState,
         ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, parse_mermaid_info,
     };
-    use crate::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownOptions, MarkdownStyle};
+    use crate::{
+        CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions,
+        MarkdownStyle,
+    };
     use collections::HashMap;
     use gpui::{Context, IntoElement, Render, RenderImage, TestAppContext, Window, size};
     use std::sync::Arc;
@@ -309,8 +312,7 @@ mod tests {
             |_window, _cx| {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -369,7 +371,7 @@ mod tests {
     #[test]
     fn test_extract_mermaid_diagrams_parses_scale() {
         let markdown = "```mermaid 150\ngraph TD;\n```\n\n```rust\nfn main() {}\n```";
-        let events = crate::parser::parse_markdown_with_options(markdown, false).events;
+        let events = crate::parser::parse_markdown_with_options(markdown, false, false).events;
         let diagrams = extract_mermaid_diagrams(markdown, &events);
 
         assert_eq!(diagrams.len(), 1);
@@ -581,8 +583,7 @@ mod tests {
             |_window, _cx| {
                 MarkdownElement::new(markdown.clone(), MarkdownStyle::default())
                     .code_block_renderer(CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     })
             },

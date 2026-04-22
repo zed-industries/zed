@@ -13,7 +13,7 @@ use language::language_settings::{EditPredictionProvider, all_language_settings}
 use client::proto;
 use collections::HashSet;
 use editor::{Editor, EditorEvent};
-use gpui::{Corner, Entity, Subscription, Task, WeakEntity, actions};
+use gpui::{Anchor, Entity, Subscription, Task, WeakEntity, actions};
 use language::{BinaryStatus, BufferId, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use project::{
@@ -1179,13 +1179,20 @@ impl StatusItemView for LspButton {
                         .and_then(|active_editor| active_editor.editor.upgrade())
                         .as_ref()
                 {
-                    let editor_buffers =
-                        HashSet::from_iter(editor.read(cx).buffer().read(cx).excerpt_buffer_ids());
+                    let editor_buffers = HashSet::from_iter(
+                        editor
+                            .read(cx)
+                            .buffer()
+                            .read(cx)
+                            .snapshot(cx)
+                            .excerpts()
+                            .map(|excerpt| excerpt.context.start.buffer_id),
+                    );
                     let _editor_subscription = cx.subscribe_in(
                         &editor,
                         window,
                         |lsp_button, _, e: &EditorEvent, window, cx| match e {
-                            EditorEvent::ExcerptsAdded { buffer, .. } => {
+                            EditorEvent::BufferRangesUpdated { buffer, .. } => {
                                 let updated = lsp_button.server_state.update(cx, |state, cx| {
                                     if let Some(active_editor) = state.active_editor.as_mut() {
                                         let buffer_id = buffer.read(cx).remote_id();
@@ -1198,9 +1205,7 @@ impl StatusItemView for LspButton {
                                     lsp_button.refresh_lsp_menu(false, window, cx);
                                 }
                             }
-                            EditorEvent::ExcerptsRemoved {
-                                removed_buffer_ids, ..
-                            } => {
+                            EditorEvent::BuffersRemoved { removed_buffer_ids } => {
                                 let removed = lsp_button.server_state.update(cx, |state, _| {
                                     let mut removed = false;
                                     if let Some(active_editor) = state.active_editor.as_mut() {
@@ -1316,7 +1321,7 @@ impl Render for LspButton {
                         .ok()
                         .flatten()
                 })
-                .anchor(Corner::BottomLeft)
+                .anchor(Anchor::BottomLeft)
                 .with_handle(self.popover_menu_handle.clone())
                 .trigger_with_tooltip(
                     IconButton::new("zed-lsp-tool-button", IconName::BoltOutlined)

@@ -684,7 +684,7 @@ fn test_build_code_label() {
     );
     let code_runs = code_ranges
         .into_iter()
-        .map(|range| (range, HighlightId(0)))
+        .map(|range| (range, HighlightId::new(0)))
         .collect::<Vec<_>>();
 
     let label = build_code_label(
@@ -707,7 +707,7 @@ fn test_build_code_label() {
         marked_text_ranges("pqrs.tuv: «fn»(«Bcd»(«Efgh»)) -> «Ijklm»", false);
     let label_runs = label_ranges
         .into_iter()
-        .map(|range| (range, HighlightId(0)))
+        .map(|range| (range, HighlightId::new(0)))
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -723,7 +723,7 @@ fn test_build_code_label_with_invalid_ranges() {
     let (code, code_ranges) = marked_text_ranges("const «a»: «B» = '🏀'", false);
     let code_runs = code_ranges
         .into_iter()
-        .map(|range| (range, HighlightId(0)))
+        .map(|range| (range, HighlightId::new(0)))
         .collect::<Vec<_>>();
 
     // A span uses a code range that is invalid because it starts inside of
