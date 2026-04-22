@@ -271,6 +271,7 @@ impl VsCodeSettings {
             hover_popover_sticky: self.read_bool("editor.hover.sticky"),
             hover_popover_hiding_delay: self.read_u64("editor.hover.hidingDelay").map(Into::into),
             inline_code_actions: None,
+            code_lens: None,
             jupyter: None,
             lsp_document_colors: None,
             lsp_highlight_debounce: None,
@@ -540,6 +541,12 @@ impl VsCodeSettings {
             edit_predictions_disabled_in: None,
             enable_language_server: None,
             ensure_final_newline_on_save: self.read_bool("files.insertFinalNewline"),
+            line_ending: self.read_enum("files.eol", |s| match s {
+                "\n" => Some(LineEndingSetting::PreferLf),
+                "\r\n" => Some(LineEndingSetting::PreferCrlf),
+                "auto" => Some(LineEndingSetting::Detect),
+                _ => None,
+            }),
             extend_comment_on_newline: None,
             extend_list_on_newline: None,
             indent_list_on_tab: None,
@@ -1036,7 +1043,6 @@ impl VsCodeSettings {
 
     fn worktree_settings_content(&self) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
-            project_name: None,
             prevent_sharing_in_public_channels: false,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")

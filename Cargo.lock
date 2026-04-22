@@ -21936,7 +21936,6 @@ dependencies = [
  "ui",
  "util",
  "uuid",
- "vim_mode_setting",
  "windows 0.61.3",
  "zed_actions",
  "zlog",

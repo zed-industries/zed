@@ -692,3 +692,23 @@ message RunGitHook {
   uint64 repository_id = 2;
   GitHook hook = 3;
 }
+
+message GetCommitData {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  repeated string shas = 3;
+}
+
+message CommitData {
+  string sha = 1;
+  repeated string parents = 2;
+  string author_name = 3;
+  string author_email = 4;
+  int64 commit_timestamp = 5;
+  string subject = 6;
+  string message = 7;
+}
+
+message GetCommitDataResponse {
+  repeated CommitData commits = 1;
+}

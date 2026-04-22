@@ -839,7 +839,11 @@ fn image_format_from_external_content(format: image::ImageFormat) -> Option<Imag
         image::ImageFormat::Bmp => Some(ImageFormat::Bmp),
         image::ImageFormat::Tiff => Some(ImageFormat::Tiff),
         image::ImageFormat::Ico => Some(ImageFormat::Ico),
-        _ => None,
+        image::ImageFormat::Pnm => Some(ImageFormat::Pnm),
+        _ => {
+            debug_panic!("An unhandled image format: {format:?}");
+            None
+        }
     }
 }
 
