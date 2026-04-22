@@ -704,70 +704,79 @@ impl From<BotCommitStep> for Step<Use> {
     }
 }
 
-pub(crate) fn create_tag(
-    tag_name: impl ToString,
-    sha: impl ToString,
-    token: &StepOutput,
-) -> impl Into<Step<Use>> {
-    CreateOrUpdateTag {
-        operation: TagOperation::Create,
-        job_name: "steps::create_tag",
-        tag_name: tag_name.to_string(),
-        sha: sha.to_string(),
-        token: token.to_string(),
+pub(crate) enum GitRef {
+    Tag(String),
+    Branch(String),
+}
+
+impl GitRef {
+    pub fn tag(name: impl ToString) -> Self {
+        Self::Tag(name.to_string())
+    }
+
+    pub fn branch(name: impl ToString) -> Self {
+        Self::Branch(name.to_string())
+    }
+
+    fn create_ref_path(&self) -> String {
+        match self {
+            Self::Tag(name) => format!("refs/tags/{name}"),
+            Self::Branch(name) => format!("refs/heads/{name}"),
+        }
+    }
+
+    fn update_ref_path(&self) -> String {
+        match self {
+            Self::Tag(name) => format!("tags/{name}"),
+            Self::Branch(name) => format!("heads/{name}"),
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Tag(_) => "tag",
+            Self::Branch(_) => "branch",
+        }
     }
 }
 
-pub(crate) fn update_tag(
-    tag_name: impl ToString,
-    sha: impl ToString,
-    token: &StepOutput,
-    force: bool,
-) -> impl Into<Step<Use>> {
-    CreateOrUpdateTag {
-        operation: TagOperation::Update { force },
-        job_name: "steps::update_tag",
-        tag_name: tag_name.to_string(),
-        sha: sha.to_string(),
-        token: token.to_string(),
-    }
-}
-
-pub(crate) enum TagOperation {
+#[allow(unused)]
+enum RefOperation {
     Create,
     Update { force: bool },
 }
 
-pub(crate) struct CreateOrUpdateTag {
-    operation: TagOperation,
-    job_name: &'static str,
-    tag_name: String,
+struct RefOp {
+    git_ref: GitRef,
+    operation: RefOperation,
     sha: String,
     token: String,
 }
 
-impl From<CreateOrUpdateTag> for Step<Use> {
-    fn from(op: CreateOrUpdateTag) -> Self {
+impl From<RefOp> for Step<Use> {
+    fn from(op: RefOp) -> Self {
+        let (api_method, ref_path, force_line) = match &op.operation {
+            RefOperation::Create => ("createRef", op.git_ref.create_ref_path(), String::new()),
+            RefOperation::Update { force } => (
+                "updateRef",
+                op.git_ref.update_ref_path(),
+                format!(",\nforce: {force}"),
+            ),
+        };
+        let step_name = match &op.operation {
+            RefOperation::Create => format!("steps::create_{}", op.git_ref.kind()),
+            RefOperation::Update { .. } => format!("steps::update_{}", op.git_ref.kind()),
+        };
+        let sha = &op.sha;
         let script = indoc::formatdoc! {r#"
-            github.rest.git.{operation}({{
+            github.rest.git.{api_method}({{
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                ref: 'refs/tags/{tag_name}',
+                ref: '{ref_path}',
                 sha: '{sha}'{force_line}
             }})
-            "#,
-            operation = match op.operation {
-                TagOperation::Create => "createRef",
-                TagOperation::Update { .. } => "updateRef",
-            },
-            tag_name = op.tag_name,
-            sha = op.sha,
-            force_line = matches!(op.operation, TagOperation::Update { force: true })
-                .then_some(",\nforce: true")
-                .unwrap_or_default()
-        };
-
-        Step::new(op.job_name)
+        "#};
+        Step::new(step_name)
             .uses(
                 "actions",
                 "github-script",
@@ -781,47 +790,31 @@ impl From<CreateOrUpdateTag> for Step<Use> {
     }
 }
 
-pub(crate) struct CreateBranchStep {
-    branch_name: String,
-    sha: String,
-    token: String,
-}
-
-impl CreateBranchStep {
-    pub fn new(branch_name: impl ToString, sha: impl ToString, token: &StepOutput) -> Self {
-        Self {
-            branch_name: branch_name.to_string(),
-            sha: sha.to_string(),
-            token: token.to_string(),
-        }
+pub(crate) fn create_ref(
+    git_ref: GitRef,
+    sha: impl ToString,
+    token: &StepOutput,
+) -> impl Into<Step<Use>> {
+    RefOp {
+        git_ref,
+        operation: RefOperation::Create,
+        sha: sha.to_string(),
+        token: token.to_string(),
     }
 }
 
-impl From<CreateBranchStep> for Step<Use> {
-    fn from(step: CreateBranchStep) -> Self {
-        let branch_name = &step.branch_name;
-        let sha = &step.sha;
-        Step::new("steps::create_git_branch")
-            .uses(
-                "actions",
-                "github-script",
-                "f28e40c7f34bde8b3046d885e986cb6290c5673b", // v7
-            )
-            .with(
-                Input::default()
-                    .add(
-                        "script",
-                        indoc::formatdoc! {r#"
-                            await github.rest.git.createRef({{
-                                owner: context.repo.owner,
-                                repo: context.repo.repo,
-                                ref: 'refs/heads/{branch_name}',
-                                sha: '{sha}'
-                            }})
-                        "#},
-                    )
-                    .add("github-token", step.token),
-            )
+#[allow(unused)]
+pub(crate) fn update_ref(
+    git_ref: GitRef,
+    sha: impl ToString,
+    token: &StepOutput,
+    force: bool,
+) -> impl Into<Step<Use>> {
+    RefOp {
+        git_ref,
+        operation: RefOperation::Update { force },
+        sha: sha.to_string(),
+        token: token.to_string(),
     }
 }
 

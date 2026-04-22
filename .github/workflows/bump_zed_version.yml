@@ -128,11 +128,11 @@ jobs:
       run: cargo set-version -p zed --bump "$BUMP_TYPE"
       env:
         BUMP_TYPE: ${{ inputs.bump_type }}
-    - name: steps::create_git_branch
+    - name: steps::create_branch
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         script: |
-          await github.rest.git.createRef({
+          github.rest.git.createRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
               ref: 'refs/heads/${{ needs.resolve_versions.outputs.pr_branch }}',
@@ -187,11 +187,11 @@ jobs:
       run: echo "main_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
     - name: bump_zed_version::create_preview_branch
       run: echo -n preview > crates/zed/RELEASE_CHANNEL
-    - name: steps::create_git_branch
+    - name: steps::create_branch
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         script: |
-          await github.rest.git.createRef({
+          github.rest.git.createRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
               ref: 'refs/heads/${{ needs.resolve_versions.outputs.preview_branch }}',

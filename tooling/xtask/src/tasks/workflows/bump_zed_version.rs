@@ -181,8 +181,8 @@ fn bump_main(
             .add_step(main_sha_step)
             .add_step(steps::install_cargo_edit())
             .add_step(bump_version())
-            .add_step(steps::CreateBranchStep::new(
-                &outputs.pr_branch,
+            .add_step(steps::create_ref(
+                steps::GitRef::branch(&outputs.pr_branch),
                 &main_sha,
                 &token,
             ))
@@ -230,13 +230,17 @@ fn create_preview_branch(
             .add_step(steps::checkout_repo().with_token(&token).with_ref("main"))
             .add_step(main_sha_step)
             .add_step(write_channel)
-            .add_step(steps::CreateBranchStep::new(
-                &outputs.preview_branch,
+            .add_step(steps::create_ref(
+                steps::GitRef::branch(&outputs.preview_branch),
                 &main_sha,
                 &token,
             ))
             .add_step(commit_step)
-            .add_step(steps::create_tag(&outputs.preview_tag, &commit_sha, &token)),
+            .add_step(steps::create_ref(
+                steps::GitRef::tag(&outputs.preview_tag),
+                &commit_sha,
+                &token,
+            )),
     )
 }
 
@@ -285,6 +289,10 @@ fn promote_to_stable(
             .add_step(read_version_step)
             .add_step(write_channel)
             .add_step(commit_step)
-            .add_step(steps::create_tag(&stable_tag, &commit_sha, &token)),
+            .add_step(steps::create_ref(
+                steps::GitRef::tag(&stable_tag),
+                &commit_sha,
+                &token,
+            )),
     )
 }
