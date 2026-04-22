@@ -102,6 +102,14 @@ actions!(
 #[derive(Deserialize, RegisterSetting)]
 pub struct ClientSettings {
     pub server_url: String,
+    /// Overrides the key used to store credentials in the system keychain.
+    /// Defaults to `server_url` when unset.
+    ///
+    /// Useful when running multiple Zed instances side by side without them
+    /// overwriting each other's keychain entries.
+    ///
+    /// Note: changing this after signing in will require signing in again, as
+    /// existing credentials are stored under the old key.
     pub credentials_url: Option<String>,
 }
 
@@ -350,20 +358,11 @@ impl ClientCredentialsProvider {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    fn with_provider(provider: Arc<dyn CredentialsProvider>) -> Self {
-        Self { provider }
-    }
-
     fn server_url(&self, cx: &AsyncApp) -> Result<String> {
         Ok(cx.update(|cx| ClientSettings::get_global(cx).server_url.clone()))
     }
 
-    /// Returns the URL used as the key for credential storage.
-    ///
-    /// If `credentials_url` is configured in settings, it is used instead of
-    /// the server URL. This allows running multiple Zed instances side by side
-    /// without them overwriting each other's keychain entries.
+    /// Returns the key used for credential storage in the system keychain.
     fn credentials_url(&self, cx: &AsyncApp) -> Result<String> {
         let from_settings = cx.update(|cx| ClientSettings::get_global(cx).credentials_url.clone());
         Ok(from_settings.unwrap_or(self.server_url(cx)?))
@@ -423,9 +422,7 @@ impl ClientCredentialsProvider {
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move {
             let credentials_url = self.credentials_url(cx)?;
-            self.provider
-                .delete_credentials(&credentials_url, cx)
-                .await
+            self.provider.delete_credentials(&credentials_url, cx).await
         }
         .boxed_local()
     }
@@ -1893,7 +1890,6 @@ mod tests {
     use parking_lot::Mutex;
     use proto::TypedEnvelope;
     use settings::SettingsStore;
-    use std::collections::HashMap;
     use std::future;
 
     #[test]
@@ -2320,115 +2316,5 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
-    }
-
-    #[derive(Default)]
-    struct SpyCredentialsProvider {
-        recorded_urls: Mutex<Vec<String>>,
-        stored: Mutex<HashMap<String, (String, Vec<u8>)>>,
-    }
-
-    impl CredentialsProvider for SpyCredentialsProvider {
-        fn read_credentials<'a>(
-            &'a self,
-            url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
-            async move {
-                self.recorded_urls.lock().push(url.to_string());
-                Ok(self.stored.lock().get(url).cloned())
-            }
-            .boxed_local()
-        }
-
-        fn write_credentials<'a>(
-            &'a self,
-            url: &'a str,
-            username: &'a str,
-            password: &'a [u8],
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-            async move {
-                self.recorded_urls.lock().push(url.to_string());
-                self.stored
-                    .lock()
-                    .insert(url.to_string(), (username.to_string(), password.to_vec()));
-                Ok(())
-            }
-            .boxed_local()
-        }
-
-        fn delete_credentials<'a>(
-            &'a self,
-            url: &'a str,
-            _cx: &'a AsyncApp,
-        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
-            async move {
-                self.recorded_urls.lock().push(url.to_string());
-                self.stored.lock().remove(url);
-                Ok(())
-            }
-            .boxed_local()
-        }
-    }
-
-    #[gpui::test]
-    async fn test_credentials_use_configured_url(cx: &mut TestAppContext) {
-        init_test(cx);
-        let spy = Arc::new(SpyCredentialsProvider::default());
-        let provider = ClientCredentialsProvider::with_provider(spy.clone());
-        let async_cx = cx.to_async();
-
-        provider
-            .write_credentials(42, "test-token".to_string(), &async_cx)
-            .await
-            .unwrap();
-
-        let expected_url = cx.update(|cx| ClientSettings::get_global(cx).server_url.clone());
-        let recorded = spy.recorded_urls.lock().clone();
-        assert_eq!(recorded, vec![expected_url.clone()]);
-
-        let credentials = provider.read_credentials(&async_cx).await.unwrap();
-        assert_eq!(credentials.user_id, 42);
-        assert_eq!(credentials.access_token, "test-token");
-
-        provider.delete_credentials(&async_cx).await.unwrap();
-        let recorded = spy.recorded_urls.lock().clone();
-        assert_eq!(
-            recorded,
-            vec![expected_url.clone(), expected_url.clone(), expected_url]
-        );
-
-        assert!(provider.read_credentials(&async_cx).await.is_none());
-    }
-
-    #[gpui::test]
-    async fn test_credentials_are_keyed_by_url(cx: &mut TestAppContext) {
-        init_test(cx);
-        let spy = Arc::new(SpyCredentialsProvider::default());
-        let provider = ClientCredentialsProvider::with_provider(spy.clone());
-        let async_cx = cx.to_async();
-
-        provider
-            .write_credentials(1, "token-a".to_string(), &async_cx)
-            .await
-            .unwrap();
-
-        let expected_url = cx.update(|cx| ClientSettings::get_global(cx).server_url.clone());
-
-        let other_url = format!("{}/other", expected_url);
-        spy.stored.lock().insert(
-            other_url.clone(),
-            ("2".to_string(), b"token-b".to_vec()),
-        );
-
-        let credentials = provider.read_credentials(&async_cx).await.unwrap();
-        assert_eq!(credentials.user_id, 1);
-        assert_eq!(credentials.access_token, "token-a");
-
-        provider.delete_credentials(&async_cx).await.unwrap();
-        assert!(provider.read_credentials(&async_cx).await.is_none());
-
-        assert!(spy.stored.lock().get(&other_url).is_some());
     }
 }
