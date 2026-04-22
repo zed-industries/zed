@@ -520,7 +520,7 @@ async-recursion = "1.0.0"
 async-tar = "0.5.1"
 async-task = "4.7"
 async-trait = "0.1"
-async-tungstenite = "0.31.0"
+async-tungstenite = "0.34.0"
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.8.10", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.8", features = [
@@ -733,7 +733,6 @@ sysinfo = "0.37.0"
 take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
-tiktoken-rs = { git = "https://github.com/zed-industries/tiktoken-rs", rev = "2570c4387a8505fb8f1d3f3557454b474f1e8271" }
 time = { version = "0.3", features = [
     "macros",
     "parsing",

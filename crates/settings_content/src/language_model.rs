@@ -289,6 +289,8 @@ pub struct OpenAiCompatibleModelCapabilities {
     pub prompt_cache_key: bool,
     #[serde(default = "default_true")]
     pub chat_completions: bool,
+    #[serde(default)]
+    pub interleaved_reasoning: bool,
 }
 
 impl Default for OpenAiCompatibleModelCapabilities {
@@ -299,6 +301,7 @@ impl Default for OpenAiCompatibleModelCapabilities {
             parallel_tool_calls: false,
             prompt_cache_key: false,
             chat_completions: default_true(),
+            interleaved_reasoning: false,
         }
     }
 }
