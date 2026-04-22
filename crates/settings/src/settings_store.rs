@@ -1266,14 +1266,16 @@ impl SettingsStore {
             });
         }
 
-        replace_subschema::<ActionName>(&mut generator, || {
-            ActionName::build_schema(
-                params.action_names.iter().copied(),
-                params.action_documentation,
-                params.deprecations,
-                params.deprecation_messages,
-            )
-        });
+        if !params.action_names.is_empty() {
+            replace_subschema::<ActionName>(&mut generator, || {
+                ActionName::build_schema(
+                    params.action_names.iter().copied(),
+                    params.action_documentation,
+                    params.deprecations,
+                    params.deprecation_messages,
+                )
+            });
+        }
 
         generator
             .root_schema_for::<UserSettingsContent>()
