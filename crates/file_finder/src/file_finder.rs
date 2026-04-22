@@ -13,8 +13,8 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
-    Window, actions, rems,
+    KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Task, WeakEntity, Window, actions, rems,
 };
 use open_path_prompt::{
     OpenPathPrompt,
@@ -37,8 +37,8 @@ use std::{
     },
 };
 use ui::{
-    ButtonLike, ContextMenu, HighlightedLabel, Indicator, KeyBinding, ListItem, ListItemSpacing,
-    PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    ButtonLike, CommonAnimationExt, ContextMenu, HighlightedLabel, Indicator, KeyBinding, ListItem,
+    ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::{
     ResultExt, maybe,
@@ -1759,6 +1759,10 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
+        let is_project_scan_running = {
+            let worktree_store = self.project.read(cx).worktree_store();
+            !worktree_store.read(cx).initial_scan_completed()
+        };
 
         Some(
             h_flex()
@@ -1768,60 +1772,78 @@ impl PickerDelegate for FileFinderDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    PopoverMenu::new("filter-menu-popover")
-                        .with_handle(self.filter_popover_menu_handle.clone())
-                        .attach(gpui::Anchor::BottomRight)
-                        .anchor(gpui::Anchor::BottomLeft)
-                        .offset(gpui::Point {
-                            x: px(1.0),
-                            y: px(1.0),
-                        })
-                        .trigger_with_tooltip(
-                            IconButton::new("filter-trigger", IconName::Sliders)
-                                .icon_size(IconSize::Small)
-                                .icon_size(IconSize::Small)
-                                .toggle_state(self.include_ignored.unwrap_or(false))
-                                .when(self.include_ignored.is_some(), |this| {
-                                    this.indicator(Indicator::dot().color(Color::Info))
-                                }),
-                            {
-                                let focus_handle = focus_handle.clone();
-                                move |_window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Filter Options",
-                                        &ToggleFilterMenu,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                }
-                            },
-                        )
-                        .menu({
-                            let focus_handle = focus_handle.clone();
-                            let include_ignored = self.include_ignored;
-
-                            move |window, cx| {
-                                Some(ContextMenu::build(window, cx, {
-                                    let focus_handle = focus_handle.clone();
-                                    move |menu, _, _| {
-                                        menu.context(focus_handle.clone())
-                                            .header("Filter Options")
-                                            .toggleable_entry(
-                                                "Include Ignored Files",
-                                                include_ignored.unwrap_or(false),
-                                                ui::IconPosition::End,
-                                                Some(ToggleIncludeIgnored.boxed_clone()),
-                                                move |window, cx| {
-                                                    window.focus(&focus_handle, cx);
-                                                    window.dispatch_action(
-                                                        ToggleIncludeIgnored.boxed_clone(),
-                                                        cx,
-                                                    );
-                                                },
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            PopoverMenu::new("filter-menu-popover")
+                                .with_handle(self.filter_popover_menu_handle.clone())
+                                .attach(gpui::Anchor::BottomRight)
+                                .anchor(gpui::Anchor::BottomLeft)
+                                .offset(gpui::Point {
+                                    x: px(1.0),
+                                    y: px(1.0),
+                                })
+                                .trigger_with_tooltip(
+                                    IconButton::new("filter-trigger", IconName::Sliders)
+                                        .icon_size(IconSize::Small)
+                                        .icon_size(IconSize::Small)
+                                        .toggle_state(self.include_ignored.unwrap_or(false))
+                                        .when(self.include_ignored.is_some(), |this| {
+                                            this.indicator(Indicator::dot().color(Color::Info))
+                                        }),
+                                    {
+                                        let focus_handle = focus_handle.clone();
+                                        move |_window, cx| {
+                                            Tooltip::for_action_in(
+                                                "Filter Options",
+                                                &ToggleFilterMenu,
+                                                &focus_handle,
+                                                cx,
                                             )
+                                        }
+                                    },
+                                )
+                                .menu({
+                                    let focus_handle = focus_handle.clone();
+                                    let include_ignored = self.include_ignored;
+
+                                    move |window, cx| {
+                                        Some(ContextMenu::build(window, cx, {
+                                            let focus_handle = focus_handle.clone();
+                                            move |menu, _, _| {
+                                                menu.context(focus_handle.clone())
+                                                    .header("Filter Options")
+                                                    .toggleable_entry(
+                                                        "Include Ignored Files",
+                                                        include_ignored.unwrap_or(false),
+                                                        ui::IconPosition::End,
+                                                        Some(ToggleIncludeIgnored.boxed_clone()),
+                                                        move |window, cx| {
+                                                            window.focus(&focus_handle, cx);
+                                                            window.dispatch_action(
+                                                                ToggleIncludeIgnored.boxed_clone(),
+                                                                cx,
+                                                            );
+                                                        },
+                                                    )
+                                            }
+                                        }))
                                     }
-                                }))
-                            }
+                                }),
+                        )
+                        .when(is_project_scan_running, |this| {
+                            this.child(
+                                h_flex()
+                                    .id("project-scan-indicator")
+                                    .tooltip(Tooltip::text("Project scan in progress..."))
+                                    .child(
+                                        Icon::new(IconName::ArrowCircle)
+                                            .color(Color::Accent)
+                                            .size(IconSize::Small)
+                                            .with_rotate_animation(2),
+                                    )
+                                    .into_any_element(),
+                            )
                         }),
                 )
                 .child(
