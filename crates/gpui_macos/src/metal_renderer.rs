@@ -7,9 +7,9 @@ use cocoa::{
     quartzcore::AutoresizingMask,
 };
 use gpui::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    AtlasTextureId, Background, BlurRect, Bounds, ContentMask, DevicePixels, LensRect,
+    MonochromeSprite, PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Surface, Underline, point, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -133,6 +133,21 @@ pub(crate) struct MetalRenderer {
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
     path_sample_count: u32,
+    blur_downsample_pipeline_state: metal::RenderPipelineState,
+    blur_upsample_pipeline_state: metal::RenderPipelineState,
+    blur_rect_pipeline_state: metal::RenderPipelineState,
+    lens_rect_pipeline_state: metal::RenderPipelineState,
+    blur_sampler: metal::SamplerState,
+    blur_snapshot_texture: Option<metal::Texture>,
+    blur_half_texture: Option<metal::Texture>,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct BlurParams {
+    viewport_size: [f32; 2],
+    offset_multiplier: f32,
+    _pad: f32,
 }
 
 #[repr(C)]
@@ -155,8 +170,9 @@ impl MetalRenderer {
         // https://developer.apple.com/documentation/metal/managing-your-game-window-for-metal-in-macos
         layer.set_opaque(!transparent);
         layer.set_maximum_drawable_count(3);
-        // Allow texture reading for visual tests (captures screenshots without ScreenCaptureKit)
-        #[cfg(any(test, feature = "test-support"))]
+        // Disabled so the blit encoder can read the drawable as the input of
+        // the BlurRect/LensRect dual-Kawase snapshot (`snapshot_and_blur_frame`).
+        // Also enables visual tests to capture screenshots without ScreenCaptureKit.
         layer.set_framebuffer_only(false);
         unsafe {
             let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
@@ -319,6 +335,48 @@ impl MetalRenderer {
             MTLPixelFormat::BGRA8Unorm,
         );
 
+        let blur_downsample_pipeline_state = build_blur_io_pipeline_state(
+            &device,
+            &library,
+            "blur_downsample",
+            "blur_fullscreen_vertex",
+            "blur_downsample_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
+        let blur_upsample_pipeline_state = build_blur_io_pipeline_state(
+            &device,
+            &library,
+            "blur_upsample",
+            "blur_fullscreen_vertex",
+            "blur_upsample_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
+        let blur_rect_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "blur_rect",
+            "blur_rect_vertex",
+            "blur_rect_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
+        let lens_rect_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "lens_rect",
+            "lens_rect_vertex",
+            "lens_rect_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
+
+        let blur_sampler = {
+            let desc = metal::SamplerDescriptor::new();
+            desc.set_min_filter(metal::MTLSamplerMinMagFilter::Linear);
+            desc.set_mag_filter(metal::MTLSamplerMinMagFilter::Linear);
+            desc.set_address_mode_s(metal::MTLSamplerAddressMode::ClampToEdge);
+            desc.set_address_mode_t(metal::MTLSamplerAddressMode::ClampToEdge);
+            device.new_sampler(&desc)
+        };
+
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), is_apple_gpu));
         let core_video_texture_cache =
@@ -347,6 +405,13 @@ impl MetalRenderer {
             path_intermediate_texture: None,
             path_intermediate_msaa_texture: None,
             path_sample_count: PATH_SAMPLE_COUNT,
+            blur_downsample_pipeline_state,
+            blur_upsample_pipeline_state,
+            blur_rect_pipeline_state,
+            lens_rect_pipeline_state,
+            blur_sampler,
+            blur_snapshot_texture: None,
+            blur_half_texture: None,
         }
     }
 
@@ -395,6 +460,8 @@ impl MetalRenderer {
         if size.width.0 <= 0 || size.height.0 <= 0 {
             self.path_intermediate_texture = None;
             self.path_intermediate_msaa_texture = None;
+            self.blur_snapshot_texture = None;
+            self.blur_half_texture = None;
             return;
         }
 
@@ -424,6 +491,26 @@ impl MetalRenderer {
         } else {
             self.path_intermediate_msaa_texture = None;
         }
+
+        let full_descriptor = metal::TextureDescriptor::new();
+        full_descriptor.set_width(size.width.0 as u64);
+        full_descriptor.set_height(size.height.0 as u64);
+        full_descriptor.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
+        full_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+        full_descriptor.set_usage(
+            metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+        );
+        self.blur_snapshot_texture = Some(self.device.new_texture(&full_descriptor));
+
+        let half_descriptor = metal::TextureDescriptor::new();
+        half_descriptor.set_width((size.width.0 as u64).max(1) / 2);
+        half_descriptor.set_height((size.height.0 as u64).max(1) / 2);
+        half_descriptor.set_pixel_format(metal::MTLPixelFormat::BGRA8Unorm);
+        half_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
+        half_descriptor.set_usage(
+            metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+        );
+        self.blur_half_texture = Some(self.device.new_texture(&half_descriptor));
     }
 
     pub fn update_transparency(&mut self, transparent: bool) {
@@ -843,6 +930,64 @@ impl MetalRenderer {
                     command_encoder,
                 ),
                 PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
+                PrimitiveBatch::BlurRects(range) => {
+                    let rects = &scene.blur_rects[range];
+                    if rects.is_empty() {
+                        true
+                    } else {
+                        command_encoder.end_encoding();
+                        let did_snapshot = self
+                            .snapshot_and_blur_frame(texture, viewport_size, command_buffer);
+                        command_encoder = new_command_encoder_for_texture(
+                            command_buffer,
+                            texture,
+                            viewport_size,
+                            |color_attachment| {
+                                color_attachment.set_load_action(metal::MTLLoadAction::Load);
+                            },
+                        );
+                        if did_snapshot {
+                            self.draw_blur_rects(
+                                rects,
+                                instance_buffer,
+                                &mut instance_offset,
+                                viewport_size,
+                                command_encoder,
+                            )
+                        } else {
+                            true
+                        }
+                    }
+                }
+                PrimitiveBatch::LensRects(range) => {
+                    let rects = &scene.lens_rects[range];
+                    if rects.is_empty() {
+                        true
+                    } else {
+                        command_encoder.end_encoding();
+                        let did_snapshot = self
+                            .snapshot_and_blur_frame(texture, viewport_size, command_buffer);
+                        command_encoder = new_command_encoder_for_texture(
+                            command_buffer,
+                            texture,
+                            viewport_size,
+                            |color_attachment| {
+                                color_attachment.set_load_action(metal::MTLLoadAction::Load);
+                            },
+                        );
+                        if did_snapshot {
+                            self.draw_lens_rects(
+                                rects,
+                                instance_buffer,
+                                &mut instance_offset,
+                                viewport_size,
+                                command_encoder,
+                            )
+                        } else {
+                            true
+                        }
+                    }
+                }
             };
             if !ok {
                 command_encoder.end_encoding();
@@ -1167,6 +1312,245 @@ impl MetalRenderer {
         );
         *instance_offset = next_offset;
 
+        true
+    }
+
+    fn snapshot_and_blur_frame(
+        &self,
+        texture: &metal::TextureRef,
+        viewport_size: Size<DevicePixels>,
+        command_buffer: &metal::CommandBufferRef,
+    ) -> bool {
+        let (Some(snapshot), Some(half)) = (
+            self.blur_snapshot_texture.as_ref(),
+            self.blur_half_texture.as_ref(),
+        ) else {
+            return false;
+        };
+        if viewport_size.width.0 <= 0 || viewport_size.height.0 <= 0 {
+            return false;
+        }
+
+        let blit = command_buffer.new_blit_command_encoder();
+        blit.copy_from_texture(
+            texture,
+            0,
+            0,
+            metal::MTLOrigin { x: 0, y: 0, z: 0 },
+            metal::MTLSize {
+                width: texture.width(),
+                height: texture.height(),
+                depth: 1,
+            },
+            snapshot,
+            0,
+            0,
+            metal::MTLOrigin { x: 0, y: 0, z: 0 },
+        );
+        blit.end_encoding();
+
+        // Downsample snapshot (full) -> half.
+        let full_size = [
+            viewport_size.width.0 as f32,
+            viewport_size.height.0 as f32,
+        ];
+        let half_size = [
+            (viewport_size.width.0 as f32) * 0.5,
+            (viewport_size.height.0 as f32) * 0.5,
+        ];
+
+        self.run_blur_pass(
+            command_buffer,
+            snapshot,
+            half,
+            &self.blur_downsample_pipeline_state,
+            BlurParams {
+                viewport_size: full_size,
+                offset_multiplier: 1.0,
+                _pad: 0.0,
+            },
+        );
+        self.run_blur_pass(
+            command_buffer,
+            half,
+            snapshot,
+            &self.blur_upsample_pipeline_state,
+            BlurParams {
+                viewport_size: half_size,
+                offset_multiplier: 1.0,
+                _pad: 0.0,
+            },
+        );
+        true
+    }
+
+    fn run_blur_pass(
+        &self,
+        command_buffer: &metal::CommandBufferRef,
+        input: &metal::TextureRef,
+        output: &metal::TextureRef,
+        pipeline: &metal::RenderPipelineStateRef,
+        params: BlurParams,
+    ) {
+        let descriptor = metal::RenderPassDescriptor::new();
+        let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
+        color_attachment.set_texture(Some(output));
+        color_attachment.set_load_action(metal::MTLLoadAction::DontCare);
+        color_attachment.set_store_action(metal::MTLStoreAction::Store);
+
+        let encoder = command_buffer.new_render_command_encoder(descriptor);
+        encoder.set_render_pipeline_state(pipeline);
+        encoder.set_fragment_texture(BlurIoInputIndex::InputTexture as u64, Some(input));
+        encoder.set_fragment_sampler_state(
+            BlurIoInputIndex::InputSampler as u64,
+            Some(&self.blur_sampler),
+        );
+        encoder.set_fragment_bytes(
+            BlurIoInputIndex::Params as u64,
+            mem::size_of::<BlurParams>() as u64,
+            &params as *const BlurParams as *const _,
+        );
+        encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 3);
+        encoder.end_encoding();
+    }
+
+    fn draw_blur_rects(
+        &self,
+        rects: &[BlurRect],
+        instance_buffer: &mut InstanceBuffer,
+        instance_offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) -> bool {
+        if rects.is_empty() {
+            return true;
+        }
+        let Some(ref snapshot) = self.blur_snapshot_texture else {
+            return false;
+        };
+        align_offset(instance_offset);
+
+        command_encoder.set_render_pipeline_state(&self.blur_rect_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            BlurRectInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_buffer(
+            BlurRectInputIndex::Rects as u64,
+            Some(&instance_buffer.metal_buffer),
+            *instance_offset as u64,
+        );
+        command_encoder.set_fragment_buffer(
+            BlurRectInputIndex::Rects as u64,
+            Some(&instance_buffer.metal_buffer),
+            *instance_offset as u64,
+        );
+        command_encoder.set_vertex_bytes(
+            BlurRectInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+        command_encoder.set_fragment_bytes(
+            BlurRectInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+        command_encoder
+            .set_fragment_texture(BlurRectInputIndex::BlurTexture as u64, Some(snapshot));
+        command_encoder.set_fragment_sampler_state(
+            BlurRectInputIndex::BlurSampler as u64,
+            Some(&self.blur_sampler),
+        );
+
+        let bytes_len = mem::size_of_val(rects);
+        let next_offset = *instance_offset + bytes_len;
+        if next_offset > instance_buffer.size {
+            return false;
+        }
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
+        unsafe {
+            ptr::copy_nonoverlapping(rects.as_ptr() as *const u8, buffer_contents, bytes_len);
+        }
+
+        command_encoder.draw_primitives_instanced(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            rects.len() as u64,
+        );
+        *instance_offset = next_offset;
+        true
+    }
+
+    fn draw_lens_rects(
+        &self,
+        rects: &[LensRect],
+        instance_buffer: &mut InstanceBuffer,
+        instance_offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) -> bool {
+        if rects.is_empty() {
+            return true;
+        }
+        let Some(ref snapshot) = self.blur_snapshot_texture else {
+            return false;
+        };
+        align_offset(instance_offset);
+
+        command_encoder.set_render_pipeline_state(&self.lens_rect_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            LensRectInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_buffer(
+            LensRectInputIndex::Rects as u64,
+            Some(&instance_buffer.metal_buffer),
+            *instance_offset as u64,
+        );
+        command_encoder.set_fragment_buffer(
+            LensRectInputIndex::Rects as u64,
+            Some(&instance_buffer.metal_buffer),
+            *instance_offset as u64,
+        );
+        command_encoder.set_vertex_bytes(
+            LensRectInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+        command_encoder.set_fragment_bytes(
+            LensRectInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+        command_encoder
+            .set_fragment_texture(LensRectInputIndex::BlurTexture as u64, Some(snapshot));
+        command_encoder.set_fragment_sampler_state(
+            LensRectInputIndex::BlurSampler as u64,
+            Some(&self.blur_sampler),
+        );
+
+        let bytes_len = mem::size_of_val(rects);
+        let next_offset = *instance_offset + bytes_len;
+        if next_offset > instance_buffer.size {
+            return false;
+        }
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
+        unsafe {
+            ptr::copy_nonoverlapping(rects.as_ptr() as *const u8, buffer_contents, bytes_len);
+        }
+
+        command_encoder.draw_primitives_instanced(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            rects.len() as u64,
+        );
+        *instance_offset = next_offset;
         true
     }
 
@@ -1576,6 +1960,34 @@ fn build_path_sprite_pipeline_state(
         .expect("could not create render pipeline state")
 }
 
+fn build_blur_io_pipeline_state(
+    device: &metal::DeviceRef,
+    library: &metal::LibraryRef,
+    label: &str,
+    vertex_fn_name: &str,
+    fragment_fn_name: &str,
+    pixel_format: metal::MTLPixelFormat,
+) -> metal::RenderPipelineState {
+    let vertex_fn = library
+        .get_function(vertex_fn_name, None)
+        .expect("error locating blur-io vertex function");
+    let fragment_fn = library
+        .get_function(fragment_fn_name, None)
+        .expect("error locating blur-io fragment function");
+
+    let descriptor = metal::RenderPipelineDescriptor::new();
+    descriptor.set_label(label);
+    descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
+    descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
+    let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
+    color_attachment.set_pixel_format(pixel_format);
+    color_attachment.set_blending_enabled(false);
+
+    device
+        .new_render_pipeline_state(&descriptor)
+        .expect("could not create blur-io pipeline state")
+}
+
 fn build_path_rasterization_pipeline_state(
     device: &metal::DeviceRef,
     library: &metal::LibraryRef,
@@ -1664,6 +2076,31 @@ enum SurfaceInputIndex {
 enum PathRasterizationInputIndex {
     Vertices = 0,
     ViewportSize = 1,
+}
+
+#[repr(C)]
+enum BlurIoInputIndex {
+    Params = 0,
+    InputTexture = 1,
+    InputSampler = 2,
+}
+
+#[repr(C)]
+enum BlurRectInputIndex {
+    Vertices = 0,
+    Rects = 1,
+    ViewportSize = 2,
+    BlurTexture = 3,
+    BlurSampler = 4,
+}
+
+#[repr(C)]
+enum LensRectInputIndex {
+    Vertices = 0,
+    Rects = 1,
+    ViewportSize = 2,
+    BlurTexture = 3,
+    BlurSampler = 4,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

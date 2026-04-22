@@ -36,6 +36,8 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    pub blur_rects: Vec<BlurRect>,
+    pub lens_rects: Vec<LensRect>,
 }
 
 #[expect(missing_docs)]
@@ -52,6 +54,8 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.blur_rects.clear();
+        self.lens_rects.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -119,6 +123,14 @@ impl Scene {
                 surface.order = order;
                 self.surfaces.push(surface.clone());
             }
+            Primitive::BlurRect(blur) => {
+                blur.order = order;
+                self.blur_rects.push(blur.clone());
+            }
+            Primitive::LensRect(lens) => {
+                lens.order = order;
+                self.lens_rects.push(lens.clone());
+            }
         }
         self.paint_operations
             .push(PaintOperation::Primitive(primitive));
@@ -146,6 +158,8 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
+        self.blur_rects.sort_by_key(|blur| blur.order);
+        self.lens_rects.sort_by_key(|lens| lens.order);
     }
 
     #[cfg_attr(
@@ -173,6 +187,10 @@ impl Scene {
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
+            blur_rects_start: 0,
+            blur_rects_iter: self.blur_rects.iter().peekable(),
+            lens_rects_start: 0,
+            lens_rects_iter: self.lens_rects.iter().peekable(),
         }
     }
 }
@@ -195,6 +213,8 @@ pub(crate) enum PrimitiveKind {
     SubpixelSprite,
     PolychromeSprite,
     Surface,
+    BlurRect,
+    LensRect,
 }
 
 pub(crate) enum PaintOperation {
@@ -214,6 +234,8 @@ pub enum Primitive {
     SubpixelSprite(SubpixelSprite),
     PolychromeSprite(PolychromeSprite),
     Surface(PaintSurface),
+    BlurRect(BlurRect),
+    LensRect(LensRect),
 }
 
 #[expect(missing_docs)]
@@ -228,6 +250,8 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+            Primitive::BlurRect(blur) => &blur.bounds,
+            Primitive::LensRect(lens) => &lens.bounds,
         }
     }
 
@@ -241,6 +265,8 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
+            Primitive::BlurRect(blur) => &blur.content_mask,
+            Primitive::LensRect(lens) => &lens.content_mask,
         }
     }
 }
@@ -269,6 +295,10 @@ struct BatchIterator<'a> {
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
+    blur_rects_start: usize,
+    blur_rects_iter: Peekable<slice::Iter<'a, BlurRect>>,
+    lens_rects_start: usize,
+    lens_rects_iter: Peekable<slice::Iter<'a, LensRect>>,
 }
 
 impl<'a> Iterator for BatchIterator<'a> {
@@ -301,6 +331,14 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.surfaces_iter.peek().map(|s| s.order),
                 PrimitiveKind::Surface,
+            ),
+            (
+                self.blur_rects_iter.peek().map(|b| b.order),
+                PrimitiveKind::BlurRect,
+            ),
+            (
+                self.lens_rects_iter.peek().map(|l| l.order),
+                PrimitiveKind::LensRect,
             ),
         ];
         orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
@@ -447,6 +485,34 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.surfaces_start = surfaces_end;
                 Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
             }
+            PrimitiveKind::BlurRect => {
+                let blur_rects_start = self.blur_rects_start;
+                let mut blur_rects_end = blur_rects_start + 1;
+                self.blur_rects_iter.next();
+                while self
+                    .blur_rects_iter
+                    .next_if(|blur| (blur.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    blur_rects_end += 1;
+                }
+                self.blur_rects_start = blur_rects_end;
+                Some(PrimitiveBatch::BlurRects(blur_rects_start..blur_rects_end))
+            }
+            PrimitiveKind::LensRect => {
+                let lens_rects_start = self.lens_rects_start;
+                let mut lens_rects_end = lens_rects_start + 1;
+                self.lens_rects_iter.next();
+                while self
+                    .lens_rects_iter
+                    .next_if(|lens| (lens.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    lens_rects_end += 1;
+                }
+                self.lens_rects_start = lens_rects_end;
+                Some(PrimitiveBatch::LensRects(lens_rects_start..lens_rects_end))
+            }
         }
     }
 }
@@ -479,6 +545,8 @@ pub enum PrimitiveBatch {
         range: Range<usize>,
     },
     Surfaces(Range<usize>),
+    BlurRects(Range<usize>),
+    LensRects(Range<usize>),
 }
 
 #[derive(Default, Debug, Clone)]
@@ -535,6 +603,71 @@ pub struct Shadow {
 impl From<Shadow> for Primitive {
     fn from(shadow: Shadow) -> Self {
         Primitive::Shadow(shadow)
+    }
+}
+
+/// A rounded rectangle that samples the framebuffer behind it, runs a
+/// dual-Kawase blur, and composites the result with a tint. Used for
+/// backdrop-blurred materials like Apple's Liquid Glass.
+///
+/// Unlike `Quad` / `Shadow` / etc., a `BlurRect` is not drawn with an
+/// instanced pipeline — each one breaks the current render pass so the
+/// framebuffer can be sampled, then runs its own post-process chain before
+/// the main pass resumes. Overuse is therefore expensive; prefer a handful
+/// per frame.
+#[derive(Debug, Clone)]
+#[repr(C)]
+#[allow(missing_docs)]
+pub struct BlurRect {
+    pub order: DrawOrder,
+    pub kernel_levels: u32,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub corner_radii: Corners<ScaledPixels>,
+    pub blur_radius: ScaledPixels,
+    pub _pad: f32,
+    pub tint: Hsla,
+}
+
+impl From<BlurRect> for Primitive {
+    fn from(blur: BlurRect) -> Self {
+        Primitive::BlurRect(blur)
+    }
+}
+
+/// A rounded rectangle with a full Liquid Glass composite: backdrop blur
+/// plus parabolic refraction, chromatic aberration, and a directional
+/// Fresnel edge highlight. Field layout mirrors the reference shader at
+/// `tahoe-gpui/crates/tahoe-gpui/src/foundations/shaders/glass_composite.wgsl`.
+///
+/// Same caveat as `BlurRect`: each `LensRect` forces a render-pass break.
+#[derive(Debug, Clone)]
+#[repr(C)]
+#[allow(missing_docs)]
+pub struct LensRect {
+    pub order: DrawOrder,
+    pub kernel_levels: u32,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub corner_radii: Corners<ScaledPixels>,
+    pub blur_radius: ScaledPixels,
+    pub refraction: f32,
+    pub depth: f32,
+    pub dispersion: f32,
+    pub splay: ScaledPixels,
+    pub light_dir: Point<f32>,
+    pub light_intensity: f32,
+    pub _pad: f32,
+    pub tint: Hsla,
+    // Pad struct size to 112 bytes so that its WGSL `array<LensRect>` stride
+    // (rounded to the 8-byte alignment imposed by the nested `Bounds`' `vec2<f32>`)
+    // matches the Rust storage-buffer stride.
+    pub _pad2: f32,
+}
+
+impl From<LensRect> for Primitive {
+    fn from(lens: LensRect) -> Self {
+        Primitive::LensRect(lens)
     }
 }
 
@@ -892,5 +1025,109 @@ impl PathVertex<Pixels> {
             st_position: self.st_position,
             content_mask: self.content_mask.scale(factor),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BlurRect, LensRect, PrimitiveBatch, Scene};
+    use crate::{Bounds, ContentMask, Corners, Hsla, Point, ScaledPixels, point, size};
+
+    fn test_bounds() -> Bounds<ScaledPixels> {
+        Bounds {
+            origin: point(ScaledPixels(10.0), ScaledPixels(20.0)),
+            size: size(ScaledPixels(100.0), ScaledPixels(50.0)),
+        }
+    }
+
+    fn test_content_mask() -> ContentMask<ScaledPixels> {
+        ContentMask {
+            bounds: Bounds {
+                origin: point(ScaledPixels(0.0), ScaledPixels(0.0)),
+                size: size(ScaledPixels(1000.0), ScaledPixels(1000.0)),
+            },
+        }
+    }
+
+    fn test_corners() -> Corners<ScaledPixels> {
+        Corners {
+            top_left: ScaledPixels(4.0),
+            top_right: ScaledPixels(4.0),
+            bottom_right: ScaledPixels(4.0),
+            bottom_left: ScaledPixels(4.0),
+        }
+    }
+
+    #[test]
+    fn blur_rect_round_trip() {
+        let mut scene = Scene::default();
+        scene.insert_primitive(BlurRect {
+            order: 0,
+            kernel_levels: 3,
+            bounds: test_bounds(),
+            content_mask: test_content_mask(),
+            corner_radii: test_corners(),
+            blur_radius: ScaledPixels(12.0),
+            _pad: 0.0,
+            tint: Hsla {
+                h: 0.0,
+                s: 0.0,
+                l: 0.0,
+                a: 0.3,
+            },
+        });
+        scene.finish();
+
+        assert_eq!(scene.blur_rects.len(), 1);
+        assert!(scene.lens_rects.is_empty());
+
+        let batches: Vec<_> = scene.batches().collect();
+        assert!(
+            batches
+                .iter()
+                .any(|b| matches!(b, PrimitiveBatch::BlurRects(r) if r.len() == 1)),
+            "expected a BlurRects batch of size 1, got {:?}",
+            batches
+        );
+    }
+
+    #[test]
+    fn lens_rect_round_trip() {
+        let mut scene = Scene::default();
+        scene.insert_primitive(LensRect {
+            order: 0,
+            kernel_levels: 3,
+            bounds: test_bounds(),
+            content_mask: test_content_mask(),
+            corner_radii: test_corners(),
+            blur_radius: ScaledPixels(8.0),
+            refraction: 12.0,
+            depth: 6.0,
+            dispersion: 2.0,
+            splay: ScaledPixels(1.5),
+            light_dir: Point { x: 0.5, y: 0.5 },
+            light_intensity: 0.2,
+            _pad: 0.0,
+            tint: Hsla {
+                h: 0.6,
+                s: 0.2,
+                l: 0.8,
+                a: 0.1,
+            },
+            _pad2: 0.0,
+        });
+        scene.finish();
+
+        assert_eq!(scene.lens_rects.len(), 1);
+        assert!(scene.blur_rects.is_empty());
+
+        let batches: Vec<_> = scene.batches().collect();
+        assert!(
+            batches
+                .iter()
+                .any(|b| matches!(b, PrimitiveBatch::LensRects(r) if r.len() == 1)),
+            "expected a LensRects batch of size 1, got {:?}",
+            batches
+        );
     }
 }

@@ -62,6 +62,11 @@ mod macos_build {
             "SurfaceInputIndex".into(),
             "SurfaceBounds".into(),
             "TransformationMatrix".into(),
+            "BlurRect".into(),
+            "LensRect".into(),
+            "BlurIoInputIndex".into(),
+            "BlurRectInputIndex".into(),
+            "LensRectInputIndex".into(),
         ]);
         config.no_includes = true;
         config.enumeration.prefix_with_name = true;

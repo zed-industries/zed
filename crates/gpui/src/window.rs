@@ -2,11 +2,11 @@
 use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
-    AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
-    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    AsyncWindowContext, AvailableSpace, Background, BlurRect, BorderStyle, Bounds, BoxShadow,
+    Capslock, Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
+    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LensRect,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
@@ -3238,6 +3238,83 @@ impl Window {
         });
     }
 
+    /// Paint a dual-Kawase backdrop blur behind the given rounded rectangle.
+    /// Samples the framebuffer under `bounds`, blurs it, and composites with
+    /// `effect.tint`. Used for backdrop-blurred materials like Apple's Liquid
+    /// Glass.
+    ///
+    /// Each `paint_blur_rect` call forces the renderer to break the current
+    /// render pass so the framebuffer can be sampled — using many per frame
+    /// is expensive. Prefer one per glass surface.
+    ///
+    /// This method should only be called as part of the paint phase of
+    /// element drawing.
+    pub fn paint_blur_rect(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        effect: BlurEffect,
+    ) {
+        self.invalidator.debug_assert_paint();
+
+        let scale_factor = self.scale_factor();
+        let content_mask = self.content_mask();
+        let opacity = self.element_opacity();
+        self.next_frame.scene.insert_primitive(BlurRect {
+            order: 0,
+            kernel_levels: effect.kernel_levels,
+            bounds: bounds.scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
+            corner_radii: corner_radii.scale(scale_factor),
+            blur_radius: effect.radius.scale(scale_factor),
+            _pad: 0.0,
+            tint: effect.tint.opacity(opacity),
+        });
+    }
+
+    /// Paint a Liquid Glass composite behind the given rounded rectangle:
+    /// backdrop blur plus parabolic refraction, chromatic aberration, and a
+    /// directional Fresnel edge glow.
+    ///
+    /// Same render-pass-break caveat as `paint_blur_rect` — keep the number
+    /// of lens rects per frame small.
+    ///
+    /// This method should only be called as part of the paint phase of
+    /// element drawing.
+    pub fn paint_lens_rect(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        effect: LensEffect,
+    ) {
+        self.invalidator.debug_assert_paint();
+
+        let scale_factor = self.scale_factor();
+        let content_mask = self.content_mask();
+        let opacity = self.element_opacity();
+        let light_dir = Point {
+            x: effect.light_angle_radians.cos(),
+            y: effect.light_angle_radians.sin(),
+        };
+        self.next_frame.scene.insert_primitive(LensRect {
+            order: 0,
+            kernel_levels: effect.kernel_levels,
+            bounds: bounds.scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
+            corner_radii: corner_radii.scale(scale_factor),
+            blur_radius: effect.radius.scale(scale_factor),
+            refraction: effect.refraction,
+            depth: effect.depth,
+            dispersion: effect.dispersion,
+            splay: effect.splay.scale(scale_factor),
+            light_dir,
+            light_intensity: effect.light_intensity,
+            _pad: 0.0,
+            tint: effect.tint.opacity(opacity),
+            _pad2: 0.0,
+        });
+    }
+
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
@@ -5727,5 +5804,74 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+    }
+}
+
+/// A dual-Kawase backdrop blur with tint, applied to a rounded rectangle.
+/// Passed to [`Window::paint_blur_rect`].
+#[derive(Clone, Copy, Debug)]
+pub struct BlurEffect {
+    /// Gaussian-equivalent blur radius, in window pixels.
+    pub radius: Pixels,
+    /// Number of Kawase downsample/upsample passes. Higher = wider blur,
+    /// lower = sharper. Clamped to 1..=5 by the renderer. Typical: 3.
+    pub kernel_levels: u32,
+    /// Colour layered on top of the blurred backdrop.
+    pub tint: Hsla,
+}
+
+impl Default for BlurEffect {
+    fn default() -> Self {
+        Self {
+            radius: px(20.0),
+            kernel_levels: 3,
+            tint: transparent_black(),
+        }
+    }
+}
+
+/// A Liquid Glass composite (backdrop blur + refraction + chromatic
+/// aberration + Fresnel edge glow), applied to a rounded rectangle. Passed
+/// to [`Window::paint_lens_rect`].
+///
+/// HIG defaults: refraction 100, depth 16, dispersion 0, splay 6 pt, light
+/// angle -45°, light intensity 67%.
+#[derive(Clone, Copy, Debug)]
+pub struct LensEffect {
+    /// Backdrop-blur radius, in window pixels.
+    pub radius: Pixels,
+    /// Number of Kawase downsample/upsample passes.
+    pub kernel_levels: u32,
+    /// Parabolic refraction strength (Figma 0..100).
+    pub refraction: f32,
+    /// Glass thickness (Figma 0..100). Modulates the refraction envelope —
+    /// thicker glass bends more.
+    pub depth: f32,
+    /// Chromatic aberration amount. 0 = disabled.
+    pub dispersion: f32,
+    /// Fresnel edge-highlight band width, in window pixels.
+    pub splay: Pixels,
+    /// Light source direction, in radians. 0 = +x (right); rotates
+    /// counterclockwise. HIG default = -45° (upper-left quadrant).
+    pub light_angle_radians: f32,
+    /// Intensity of the Fresnel edge highlight, 0..1.
+    pub light_intensity: f32,
+    /// Colour overlay applied after refraction.
+    pub tint: Hsla,
+}
+
+impl Default for LensEffect {
+    fn default() -> Self {
+        Self {
+            radius: px(20.0),
+            kernel_levels: 3,
+            refraction: 100.0,
+            depth: 16.0,
+            dispersion: 0.0,
+            splay: px(6.0),
+            light_angle_radians: -std::f32::consts::FRAC_PI_4,
+            light_intensity: 0.67,
+            tint: transparent_black(),
+        }
     }
 }

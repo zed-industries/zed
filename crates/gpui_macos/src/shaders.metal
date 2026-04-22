@@ -1258,9 +1258,228 @@ float4 fill_color(Background background,
         
         color = solid_color;
         color.a *= saturate(should_be_colored);
-        break; 
+        break;
     }
   }
 
   return color;
+}
+
+// ============================================================================
+// Dual-Kawase blur inner passes (Marius Bjorge, ARM, SIGGRAPH 2015) and the
+// BlurRect / LensRect composite pipelines. Mirrors the WGSL implementation in
+// `gpui_wgpu/src/blur_io_shaders.wgsl` and the blur/lens entry points in
+// `gpui_wgpu/src/shaders.wgsl`.
+// ============================================================================
+
+struct BlurParams {
+  float2 viewport_size;
+  float offset_multiplier;
+  float pad;
+};
+
+struct BlurFullscreenVarying {
+  float4 position [[position]];
+  float2 uv;
+};
+
+// Fullscreen-triangle vertex shader (3 vertices cover the NDC [-1,1] square).
+vertex BlurFullscreenVarying blur_fullscreen_vertex(uint vertex_id [[vertex_id]]) {
+  BlurFullscreenVarying out;
+  float2 uv = float2(float((vertex_id << 1u) & 2u), float(vertex_id & 2u));
+  out.uv = float2(uv.x, 1.0 - uv.y);
+  out.position = float4(uv * 2.0 - float2(1.0, 1.0), 0.0, 1.0);
+  return out;
+}
+
+static float3 blur_linearize(float3 c) {
+  return pow(c, float3(2.2));
+}
+
+static float3 blur_encode_srgb(float3 c) {
+  return pow(c, float3(1.0 / 2.2));
+}
+
+static float4 blur_sample_linear(texture2d<float> tex, sampler smp, float2 uv) {
+  float4 s = tex.sample(smp, uv);
+  return float4(blur_linearize(s.rgb), s.a);
+}
+
+fragment float4 blur_downsample_fragment(
+  BlurFullscreenVarying input [[stage_in]],
+  texture2d<float> blur_input [[texture(BlurIoInputIndex_InputTexture)]],
+  sampler blur_sampler [[sampler(BlurIoInputIndex_InputSampler)]],
+  constant BlurParams *params [[buffer(BlurIoInputIndex_Params)]]
+) {
+  float2 o = 0.5 / params->viewport_size * params->offset_multiplier;
+  float4 color = blur_sample_linear(blur_input, blur_sampler, input.uv) * 4.0;
+  color += blur_sample_linear(blur_input, blur_sampler, input.uv + float2(-o.x, -o.y));
+  color += blur_sample_linear(blur_input, blur_sampler, input.uv + float2( o.x, -o.y));
+  color += blur_sample_linear(blur_input, blur_sampler, input.uv + float2(-o.x,  o.y));
+  color += blur_sample_linear(blur_input, blur_sampler, input.uv + float2( o.x,  o.y));
+  float4 averaged = color / 8.0;
+  return float4(blur_encode_srgb(averaged.rgb), averaged.a);
+}
+
+fragment float4 blur_upsample_fragment(
+  BlurFullscreenVarying input [[stage_in]],
+  texture2d<float> blur_input [[texture(BlurIoInputIndex_InputTexture)]],
+  sampler blur_sampler [[sampler(BlurIoInputIndex_InputSampler)]],
+  constant BlurParams *params [[buffer(BlurIoInputIndex_Params)]]
+) {
+  float2 o = 0.5 / params->viewport_size * params->offset_multiplier;
+  float4 color = blur_sample_linear(blur_input, blur_sampler, input.uv + float2(-o.x,  o.y)) * 2.0;
+  color += blur_sample_linear(blur_input, blur_sampler, input.uv + float2( o.x,  o.y)) * 2.0;
+  color += blur_sample_linear(blur_input, blur_sampler, input.uv + float2(-o.x, -o.y)) * 2.0;
+  color += blur_sample_linear(blur_input, blur_sampler, input.uv + float2( o.x, -o.y)) * 2.0;
+  color += blur_sample_linear(blur_input, blur_sampler, input.uv + float2(-o.x * 2.0, 0.0));
+  color += blur_sample_linear(blur_input, blur_sampler, input.uv + float2( o.x * 2.0, 0.0));
+  color += blur_sample_linear(blur_input, blur_sampler, input.uv + float2(0.0, -o.y * 2.0));
+  color += blur_sample_linear(blur_input, blur_sampler, input.uv + float2(0.0,  o.y * 2.0));
+  float4 averaged = color / 12.0;
+  return float4(blur_encode_srgb(averaged.rgb), averaged.a);
+}
+
+// --- BlurRect: rounded rect that samples the blurred framebuffer ---
+
+struct BlurRectVarying {
+  uint rect_id [[flat]];
+  float4 position [[position]];
+  float clip_distance [[clip_distance]][4];
+};
+
+struct BlurRectFragmentInput {
+  uint rect_id [[flat]];
+  float4 position [[position]];
+};
+
+vertex BlurRectVarying blur_rect_vertex(
+  uint unit_vertex_id [[vertex_id]],
+  uint rect_id [[instance_id]],
+  constant float2 *unit_vertices [[buffer(BlurRectInputIndex_Vertices)]],
+  constant BlurRect *rects [[buffer(BlurRectInputIndex_Rects)]],
+  constant Size_DevicePixels *viewport_size [[buffer(BlurRectInputIndex_ViewportSize)]]
+) {
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  BlurRect rect = rects[rect_id];
+  BlurRectVarying out;
+  out.position = to_device_position(unit_vertex, rect.bounds, viewport_size);
+  out.rect_id = rect_id;
+  float4 clip = distance_from_clip_rect(unit_vertex, rect.bounds, rect.content_mask.bounds);
+  out.clip_distance[0] = clip.x;
+  out.clip_distance[1] = clip.y;
+  out.clip_distance[2] = clip.z;
+  out.clip_distance[3] = clip.w;
+  return out;
+}
+
+fragment float4 blur_rect_fragment(
+  BlurRectFragmentInput input [[stage_in]],
+  constant BlurRect *rects [[buffer(BlurRectInputIndex_Rects)]],
+  constant Size_DevicePixels *viewport_size [[buffer(BlurRectInputIndex_ViewportSize)]],
+  texture2d<float> blur_input [[texture(BlurRectInputIndex_BlurTexture)]],
+  sampler blur_sampler [[sampler(BlurRectInputIndex_BlurSampler)]]
+) {
+  BlurRect rect = rects[input.rect_id];
+  float2 viewport_f = float2((float)viewport_size->width, (float)viewport_size->height);
+  float2 fb_uv = input.position.xy / viewport_f;
+  float4 color = blur_input.sample(blur_sampler, fb_uv);
+  float4 tint_rgba = hsla_to_rgba(rect.tint);
+  color = float4(mix(color.rgb, tint_rgba.rgb, tint_rgba.a), 1.0);
+
+  float sdf = quad_sdf(input.position.xy, rect.bounds, rect.corner_radii);
+  const float antialias_threshold = 0.5;
+  float aa = saturate(antialias_threshold - sdf);
+  return float4(color.rgb, color.a * aa);
+}
+
+// --- LensRect: Liquid Glass composite (refraction + CA + Fresnel) ---
+
+struct LensRectVarying {
+  uint rect_id [[flat]];
+  float4 position [[position]];
+  float clip_distance [[clip_distance]][4];
+};
+
+struct LensRectFragmentInput {
+  uint rect_id [[flat]];
+  float4 position [[position]];
+};
+
+vertex LensRectVarying lens_rect_vertex(
+  uint unit_vertex_id [[vertex_id]],
+  uint rect_id [[instance_id]],
+  constant float2 *unit_vertices [[buffer(LensRectInputIndex_Vertices)]],
+  constant LensRect *rects [[buffer(LensRectInputIndex_Rects)]],
+  constant Size_DevicePixels *viewport_size [[buffer(LensRectInputIndex_ViewportSize)]]
+) {
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  LensRect rect = rects[rect_id];
+  LensRectVarying out;
+  out.position = to_device_position(unit_vertex, rect.bounds, viewport_size);
+  out.rect_id = rect_id;
+  float4 clip = distance_from_clip_rect(unit_vertex, rect.bounds, rect.content_mask.bounds);
+  out.clip_distance[0] = clip.x;
+  out.clip_distance[1] = clip.y;
+  out.clip_distance[2] = clip.z;
+  out.clip_distance[3] = clip.w;
+  return out;
+}
+
+fragment float4 lens_rect_fragment(
+  LensRectFragmentInput input [[stage_in]],
+  constant LensRect *rects [[buffer(LensRectInputIndex_Rects)]],
+  constant Size_DevicePixels *viewport_size [[buffer(LensRectInputIndex_ViewportSize)]],
+  texture2d<float> blur_input [[texture(LensRectInputIndex_BlurTexture)]],
+  sampler blur_sampler [[sampler(LensRectInputIndex_BlurSampler)]]
+) {
+  LensRect rect = rects[input.rect_id];
+  float2 viewport_f = float2((float)viewport_size->width, (float)viewport_size->height);
+
+  float2 origin = float2(rect.bounds.origin.x, rect.bounds.origin.y);
+  float2 size = float2(rect.bounds.size.width, rect.bounds.size.height);
+  float2 center = origin + size * 0.5;
+  float2 half_size = size * 0.5;
+  float2 local_pos = input.position.xy - center;
+  float local_len = length(local_pos);
+  float2 direction = local_len > 0.001 ? local_pos / max(local_len, 0.0001) : float2(0.0, 0.0);
+  float2 safe_half = max(half_size, float2(1.0, 1.0));
+  float normalized_dist = clamp(length(local_pos / safe_half), 0.0, 1.0);
+
+  float depth_scale = clamp(rect.depth * 0.01, 0.0, 1.0);
+  float distortion = (1.0 - normalized_dist * normalized_dist) * (1.0 + depth_scale);
+  float2 offset_px = distortion * direction * rect.refraction * 0.5;
+  float2 base_uv = input.position.xy / viewport_f;
+  float2 refracted_uv = base_uv - offset_px / viewport_f;
+
+  float ca_shift = normalized_dist * rect.dispersion;
+  float2 ca_dir = direction / viewport_f;
+  float4 color;
+  color.r = blur_input.sample(blur_sampler, refracted_uv - ca_dir * ca_shift).r;
+  color.g = blur_input.sample(blur_sampler, refracted_uv).g;
+  color.b = blur_input.sample(blur_sampler, refracted_uv + ca_dir * ca_shift).b;
+  color.a = 1.0;
+
+  float4 tint_rgba = hsla_to_rgba(rect.tint);
+  color = float4(mix(color.rgb, tint_rgba.rgb, tint_rgba.a), 1.0);
+
+  float2 light_dir = float2(rect.light_dir.x, rect.light_dir.y);
+  float sdf = quad_sdf(input.position.xy, rect.bounds, rect.corner_radii);
+  float edge_dist = fabs(sdf);
+  float splay_px = max(rect.splay, 1.0);
+  float corner_avg = 0.25 * (
+    rect.corner_radii.top_left
+    + rect.corner_radii.top_right
+    + rect.corner_radii.bottom_right
+    + rect.corner_radii.bottom_left
+  );
+  float edge_band = max(corner_avg * 0.5, splay_px);
+  float edge_falloff = smoothstep(edge_band, 0.0, edge_dist);
+  float facing = local_len > 0.001 ? clamp(dot(direction, light_dir), 0.0, 1.0) : 1.0;
+  float edge_glow = edge_falloff * facing * rect.light_intensity;
+  color = color + float4(edge_glow, edge_glow, edge_glow, 0.0);
+
+  const float antialias_threshold = 0.5;
+  float aa = saturate(antialias_threshold - sdf);
+  return float4(color.rgb, color.a * aa);
 }

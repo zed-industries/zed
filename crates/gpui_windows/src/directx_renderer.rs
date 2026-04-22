@@ -335,6 +335,13 @@ impl DirectXRenderer {
                     self.draw_polychrome_sprites(texture_id, range.start, range.len())
                 }
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
+                PrimitiveBatch::BlurRects(_) | PrimitiveBatch::LensRects(_) => {
+                    // Stage 1 API plumbing only. Renderer implementation lives in a
+                    // follow-up commit; the target shaders are reference implementations
+                    // in tahoe-gpui/src/foundations/shaders/ (dual_kawase.wgsl and
+                    // glass_composite.wgsl).
+                    Ok(())
+                }
             }
             .context(format!(
                 "scene too large:\

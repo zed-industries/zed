@@ -1333,3 +1333,178 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
 
     return ycbcr_to_RGB * y_cb_cr;
 }
+
+// ============================================================================
+// BlurRect / LensRect primitives — rect-shaped draws that sample a blurred
+// framebuffer texture. The dual-Kawase blur that produces that input texture
+// runs through a separate, standalone shader module (`blur_io_shaders.wgsl`).
+//
+// These entry points fit the existing two-group pattern:
+//   @group(0) = globals (shared uniforms)
+//   @group(1) = instance storage buffer + blurred texture + sampler
+//
+// Each pipeline uses only a subset of group(1)'s bindings:
+//   blur_rect: binding 0 (b_blur_rects), binding 2 (t_blur_input), binding 3
+//   lens_rect: binding 1 (b_lens_rects), binding 2, binding 3
+// Declaring both storage buffers at distinct bindings lets a single shader
+// module host both pipelines without binding collisions.
+// ============================================================================
+
+struct BlurRect {
+    order: u32,
+    kernel_levels: u32,
+    bounds: Bounds,
+    content_mask: Bounds,
+    corner_radii: Corners,
+    blur_radius: f32,
+    pad: f32,
+    tint: Hsla,
+}
+
+struct LensRect {
+    order: u32,
+    kernel_levels: u32,
+    bounds: Bounds,
+    content_mask: Bounds,
+    corner_radii: Corners,
+    blur_radius: f32,
+    refraction: f32,
+    depth: f32,
+    dispersion: f32,
+    splay: f32,
+    // Stored as two scalars to match Rust's `Point<f32>` natural alignment.
+    light_dir_x: f32,
+    light_dir_y: f32,
+    light_intensity: f32,
+    pad: f32,
+    tint: Hsla,
+    // Aligns the struct stride to 112 bytes (matching the Rust side).
+    pad2: f32,
+}
+
+@group(1) @binding(0) var<storage, read> b_blur_rects: array<BlurRect>;
+@group(1) @binding(1) var<storage, read> b_lens_rects: array<LensRect>;
+@group(1) @binding(2) var t_blur_input: texture_2d<f32>;
+@group(1) @binding(3) var s_blur_input: sampler;
+
+// --- BlurRect: rounded rect that samples the blurred framebuffer ---
+
+struct BlurRectVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) @interpolate(flat) rect_id: u32,
+    @location(1) clip_distances: vec4<f32>,
+}
+
+@vertex
+fn vs_blur_rect(
+    @builtin(vertex_index) vertex_id: u32,
+    @builtin(instance_index) instance_id: u32,
+) -> BlurRectVarying {
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let rect = b_blur_rects[instance_id];
+    var out = BlurRectVarying();
+    out.position = to_device_position(unit_vertex, rect.bounds);
+    out.rect_id = instance_id;
+    out.clip_distances = distance_from_clip_rect(unit_vertex, rect.bounds, rect.content_mask);
+    return out;
+}
+
+@fragment
+fn fs_blur_rect(input: BlurRectVarying) -> @location(0) vec4<f32> {
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
+        return vec4<f32>(0.0);
+    }
+    let rect = b_blur_rects[input.rect_id];
+    let fb_uv = input.position.xy / globals.viewport_size;
+    var color = textureSample(t_blur_input, s_blur_input, fb_uv);
+    let tint_rgba = hsla_to_rgba(rect.tint);
+    color = vec4<f32>(mix(color.rgb, tint_rgba.rgb, tint_rgba.a), 1.0);
+
+    let sdf = quad_sdf(input.position.xy, rect.bounds, rect.corner_radii);
+    let antialias_threshold = 0.5;
+    let aa = saturate(antialias_threshold - sdf);
+    return blend_color(color, aa);
+}
+
+// --- LensRect: Liquid Glass composite (refraction + CA + Fresnel) ---
+
+struct LensRectVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) @interpolate(flat) rect_id: u32,
+    @location(1) clip_distances: vec4<f32>,
+}
+
+@vertex
+fn vs_lens_rect(
+    @builtin(vertex_index) vertex_id: u32,
+    @builtin(instance_index) instance_id: u32,
+) -> LensRectVarying {
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let rect = b_lens_rects[instance_id];
+    var out = LensRectVarying();
+    out.position = to_device_position(unit_vertex, rect.bounds);
+    out.rect_id = instance_id;
+    out.clip_distances = distance_from_clip_rect(unit_vertex, rect.bounds, rect.content_mask);
+    return out;
+}
+
+@fragment
+fn fs_lens_rect(input: LensRectVarying) -> @location(0) vec4<f32> {
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
+        return vec4<f32>(0.0);
+    }
+    let rect = b_lens_rects[input.rect_id];
+
+    let center = rect.bounds.origin + rect.bounds.size * 0.5;
+    let half_size = rect.bounds.size * 0.5;
+    let local_pos = input.position.xy - center;
+    let local_len = length(local_pos);
+    let direction = select(
+        vec2<f32>(0.0, 0.0),
+        local_pos / max(local_len, 0.0001),
+        local_len > 0.001,
+    );
+    let safe_half = max(half_size, vec2<f32>(1.0, 1.0));
+    let normalized_dist = clamp(length(local_pos / safe_half), 0.0, 1.0);
+
+    let depth_scale = clamp(rect.depth * 0.01, 0.0, 1.0);
+    let distortion = (1.0 - normalized_dist * normalized_dist) * (1.0 + depth_scale);
+    let offset_px = distortion * direction * rect.refraction * 0.5;
+    let base_uv = input.position.xy / globals.viewport_size;
+    let refracted_uv = base_uv - offset_px / globals.viewport_size;
+
+    let ca_shift = normalized_dist * rect.dispersion;
+    let ca_dir = direction / globals.viewport_size;
+    var color: vec4<f32>;
+    color.r = textureSample(t_blur_input, s_blur_input, refracted_uv - ca_dir * ca_shift).r;
+    color.g = textureSample(t_blur_input, s_blur_input, refracted_uv).g;
+    color.b = textureSample(t_blur_input, s_blur_input, refracted_uv + ca_dir * ca_shift).b;
+    color.a = 1.0;
+
+    let tint_rgba = hsla_to_rgba(rect.tint);
+    color = vec4<f32>(mix(color.rgb, tint_rgba.rgb, tint_rgba.a), 1.0);
+
+    let light_dir = vec2<f32>(rect.light_dir_x, rect.light_dir_y);
+    let sdf = quad_sdf(input.position.xy, rect.bounds, rect.corner_radii);
+    let edge_dist = abs(sdf);
+    let splay_px = max(rect.splay, 1.0);
+    let corner_avg = 0.25 * (
+        rect.corner_radii.top_left
+        + rect.corner_radii.top_right
+        + rect.corner_radii.bottom_right
+        + rect.corner_radii.bottom_left
+    );
+    let edge_band = max(corner_avg * 0.5, splay_px);
+    let edge_falloff = smoothstep(edge_band, 0.0, edge_dist);
+    let facing = select(
+        1.0,
+        clamp(dot(direction, light_dir), 0.0, 1.0),
+        local_len > 0.001,
+    );
+    let edge_glow = edge_falloff * facing * rect.light_intensity;
+    color = color + vec4<f32>(edge_glow, edge_glow, edge_glow, 0.0);
+
+    let antialias_threshold = 0.5;
+    let aa = saturate(antialias_threshold - sdf);
+    return blend_color(color, aa);
+}
