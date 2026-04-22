@@ -5282,8 +5282,7 @@ impl Repository {
                         .boxed()
                         .fuse();
                     }
-                    NextGraphCommitDataRequest::Idle => {}
-                    NextGraphCommitDataRequest::Closed => break,
+                    NextGraphCommitDataRequest::Closed | NextGraphCommitDataRequest::Idle => break,
                 }
             }
 
