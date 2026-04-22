@@ -33,6 +33,7 @@ use ui::{
     ButtonLike, CalloutBorderPosition, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle,
     Tab,
 };
+use util::paths::PathStyle;
 use workspace::notifications::NotificationId;
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
@@ -41,6 +42,12 @@ use super::*;
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
 const USER_MESSAGE_ROW_BOTTOM_PADDING: Pixels = px(12.0);
 const STICKY_USER_MESSAGE_HEADER_HEIGHT: Pixels = px(36.0);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum StickyUserMessageSegment {
+    Text(String),
+    Mention { uri: MentionUri, label: String },
+}
 
 #[derive(Default)]
 struct ThreadFeedbackState {
@@ -52,6 +59,7 @@ struct ThreadFeedbackState {
 pub(crate) struct StickyUserMessageState {
     pub(crate) message_index: usize,
     pub(crate) message_preview: String,
+    message_segments: Vec<StickyUserMessageSegment>,
     pub(crate) has_more_message_content: bool,
     pub(crate) top_offset: Pixels,
 }
@@ -8920,28 +8928,167 @@ impl ThreadView {
             }))
     }
 
-    fn sticky_user_message_preview(markdown: &str) -> (String, bool) {
-        let mut first_non_empty_line = None;
-        let mut has_more_message_content = false;
+    fn sticky_user_message_reference_segment(
+        uri: &str,
+        path_style: PathStyle,
+    ) -> StickyUserMessageSegment {
+        MentionUri::parse(uri, path_style)
+            .log_err()
+            .map(|mention| StickyUserMessageSegment::Mention {
+                label: format!("@{}", mention.name()),
+                uri: mention,
+            })
+            .unwrap_or_else(|| StickyUserMessageSegment::Text(uri.to_string()))
+    }
 
-        for line in markdown.lines() {
-            let trimmed_line = line.trim();
-            if trimmed_line.is_empty() {
-                continue;
+    fn sticky_user_message_segment_text(segment: &StickyUserMessageSegment) -> &str {
+        match segment {
+            StickyUserMessageSegment::Text(text) => text,
+            StickyUserMessageSegment::Mention { label, .. } => label,
+        }
+    }
+
+    fn trim_sticky_user_message_segments(
+        mut segments: Vec<StickyUserMessageSegment>,
+    ) -> Vec<StickyUserMessageSegment> {
+        while matches!(segments.first(), Some(StickyUserMessageSegment::Text(text)) if text.trim_start().is_empty())
+        {
+            segments.remove(0);
+        }
+        while matches!(segments.last(), Some(StickyUserMessageSegment::Text(text)) if text.trim_end().is_empty())
+        {
+            segments.pop();
+        }
+
+        if let Some(StickyUserMessageSegment::Text(text)) = segments.first_mut() {
+            *text = text.trim_start().to_string();
+        }
+        if let Some(StickyUserMessageSegment::Text(text)) = segments.last_mut() {
+            *text = text.trim_end().to_string();
+        }
+
+        segments.retain(
+            |segment| !matches!(segment, StickyUserMessageSegment::Text(text) if text.is_empty()),
+        );
+        segments
+    }
+
+    fn sticky_user_message_segmented_line(
+        chunks: &[acp::ContentBlock],
+        path_style: PathStyle,
+    ) -> (Vec<StickyUserMessageSegment>, bool) {
+        fn finish_line(
+            current_line_segments: &mut Vec<StickyUserMessageSegment>,
+            first_non_empty_line_segments: &mut Option<Vec<StickyUserMessageSegment>>,
+        ) -> bool {
+            let trimmed_segments = ThreadView::trim_sticky_user_message_segments(std::mem::take(
+                current_line_segments,
+            ));
+            if trimmed_segments.is_empty() {
+                return false;
             }
 
-            if first_non_empty_line.is_none() {
-                first_non_empty_line = Some(trimmed_line.to_string());
+            if first_non_empty_line_segments.is_none() {
+                *first_non_empty_line_segments = Some(trimmed_segments);
+                false
             } else {
-                has_more_message_content = true;
+                true
+            }
+        }
+
+        let mut first_non_empty_line_segments = None;
+        let mut current_line_segments = Vec::new();
+        let mut has_more_message_content = false;
+
+        for chunk in chunks {
+            match chunk {
+                acp::ContentBlock::Text(text_content) => {
+                    let mut lines = text_content.text.split('\n').peekable();
+                    while let Some(line) = lines.next() {
+                        if !line.is_empty() {
+                            current_line_segments
+                                .push(StickyUserMessageSegment::Text(line.to_string()));
+                        }
+
+                        if lines.peek().is_some()
+                            && finish_line(
+                                &mut current_line_segments,
+                                &mut first_non_empty_line_segments,
+                            )
+                        {
+                            has_more_message_content = true;
+                            break;
+                        }
+                    }
+                }
+                acp::ContentBlock::ResourceLink(resource_link) => {
+                    current_line_segments.push(
+                        MentionUri::parse(&resource_link.uri, path_style)
+                            .log_err()
+                            .map(|mention| StickyUserMessageSegment::Mention {
+                                label: format!("@{}", mention.name()),
+                                uri: mention,
+                            })
+                            .unwrap_or_else(|| {
+                                StickyUserMessageSegment::Text(format!("@{}", resource_link.name))
+                            }),
+                    );
+                }
+                acp::ContentBlock::Resource(acp::EmbeddedResource {
+                    resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
+                    ..
+                }) => current_line_segments.push(Self::sticky_user_message_reference_segment(
+                    &resource.uri,
+                    path_style,
+                )),
+                acp::ContentBlock::Image(acp::ImageContent { uri, .. }) => {
+                    current_line_segments.push(
+                        uri.as_deref()
+                            .map(|uri| Self::sticky_user_message_reference_segment(uri, path_style))
+                            .unwrap_or_else(|| StickyUserMessageSegment::Mention {
+                                uri: MentionUri::PastedImage {
+                                    name: "Image".to_string(),
+                                },
+                                label: "@Image".to_string(),
+                            }),
+                    );
+                }
+                _ => {}
+            }
+
+            if has_more_message_content {
                 break;
             }
         }
 
+        if !has_more_message_content
+            && finish_line(
+                &mut current_line_segments,
+                &mut first_non_empty_line_segments,
+            )
+        {
+            has_more_message_content = true;
+        }
+
         (
-            first_non_empty_line.unwrap_or_else(|| "Message".to_string()),
+            first_non_empty_line_segments
+                .unwrap_or_else(|| vec![StickyUserMessageSegment::Text("Message".to_string())]),
             has_more_message_content,
         )
+    }
+
+    fn sticky_user_message_preview(
+        chunks: &[acp::ContentBlock],
+        path_style: PathStyle,
+    ) -> (Vec<StickyUserMessageSegment>, String, bool) {
+        let (segments, has_more_message_content) =
+            Self::sticky_user_message_segmented_line(chunks, path_style);
+        let preview = segments
+            .iter()
+            .map(Self::sticky_user_message_segment_text)
+            .collect::<String>();
+
+        (segments, preview, has_more_message_content)
     }
 
     fn sticky_user_message_candidate_index(
@@ -8993,6 +9140,9 @@ impl ThreadView {
             return None;
         }
 
+        let path_style = self
+            .thread
+            .read_with(cx, |thread, cx| thread.project().read(cx).path_style(cx));
         let entries = self.thread.read(cx).entries();
         if entries.is_empty() {
             return None;
@@ -9036,12 +9186,13 @@ impl ThreadView {
             _ => return None,
         };
 
-        let (message_preview, has_more_message_content) =
-            Self::sticky_user_message_preview(&message.content.to_markdown(cx));
+        let (message_segments, message_preview, has_more_message_content) =
+            Self::sticky_user_message_preview(&message.chunks, path_style);
 
         Some(StickyUserMessageState {
             message_index,
             message_preview,
+            message_segments,
             has_more_message_content,
             top_offset: Self::sticky_user_message_top_offset(push_progress),
         })
@@ -9050,15 +9201,49 @@ impl ThreadView {
     fn render_sticky_user_message(
         &self,
         state: StickyUserMessageState,
-        cx: &Context<Self>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let StickyUserMessageState {
             message_index,
-            message_preview,
+            message_segments,
             has_more_message_content,
             top_offset,
         } = state;
+
+        let rendered_preview: Vec<AnyElement> = message_segments
+            .into_iter()
+            .enumerate()
+            .map(|(index, segment)| match segment {
+                StickyUserMessageSegment::Text(text) => Label::new(text)
+                    .size(LabelSize::Small)
+                    .color(Color::Default)
+                    .truncate()
+                    .into_any_element(),
+                StickyUserMessageSegment::Mention { uri, label } => h_flex()
+                    .id(("sticky-user-message-mention", index))
+                    .flex_none()
+                    .h_5()
+                    .px_1p5()
+                    .gap_1()
+                    .items_center()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .bg(cx.theme().colors().element_background)
+                    .child(
+                        Icon::from_path(uri.icon_path(cx))
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(label)
+                            .size(LabelSize::Small)
+                            .color(Color::Default),
+                    )
+                    .into_any_element(),
+            })
+            .collect();
 
         div()
             .absolute()
@@ -9098,12 +9283,7 @@ impl ThreadView {
                                         .flex_1()
                                         .gap_1()
                                         .items_center()
-                                        .child(
-                                            Label::new(message_preview)
-                                                .size(LabelSize::Small)
-                                                .color(Color::Default)
-                                                .truncate(),
-                                        )
+                                        .children(rendered_preview)
                                         .when(has_more_message_content, |this| {
                                             this.child(
                                                 Label::new("…")
@@ -11936,5 +12116,58 @@ mod sticky_user_message_tests {
             ThreadView::sticky_user_message_top_offset(push_progress),
             -STICKY_USER_MESSAGE_HEADER_HEIGHT * (1.0 - push_progress)
         );
+    }
+
+    #[test]
+    fn sticky_user_message_preview_uses_structured_labels_for_references() {
+        let chunks = vec![
+            acp::ContentBlock::Text(acp::TextContent::new("Check ")),
+            acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                "main.rs",
+                "file:///project/main.rs",
+            )),
+            acp::ContentBlock::Text(acp::TextContent::new(" and ")),
+            acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents::new("fn main() {}", "file:///project/lib.rs"),
+                ),
+            )),
+        ];
+
+        let (segments, preview, has_more_message_content) =
+            ThreadView::sticky_user_message_preview(&chunks, PathStyle::Posix);
+
+        assert!(matches!(
+            segments.as_slice(),
+            [
+                StickyUserMessageSegment::Text(_),
+                StickyUserMessageSegment::Mention { .. },
+                StickyUserMessageSegment::Text(_),
+                StickyUserMessageSegment::Mention { .. }
+            ]
+        ));
+        assert_eq!(preview, "Check @main.rs and @lib.rs");
+        assert!(!has_more_message_content);
+    }
+
+    #[test]
+    fn sticky_user_message_preview_uses_image_label_instead_of_markdown_placeholder() {
+        let chunks = vec![
+            acp::ContentBlock::Image(
+                acp::ImageContent::new("ignored", "image/png")
+                    .uri("zed:///agent/pasted-image?name=Diagram"),
+            ),
+            acp::ContentBlock::Text(acp::TextContent::new("\nExplain this diagram")),
+        ];
+
+        let (segments, preview, has_more_message_content) =
+            ThreadView::sticky_user_message_preview(&chunks, PathStyle::Posix);
+
+        assert!(matches!(
+            segments.as_slice(),
+            [StickyUserMessageSegment::Mention { .. }]
+        ));
+        assert_eq!(preview, "@Diagram");
+        assert!(has_more_message_content);
     }
 }
