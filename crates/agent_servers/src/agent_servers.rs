@@ -9,15 +9,19 @@ use collections::{HashMap, HashSet};
 pub use custom::*;
 use fs::Fs;
 use http_client::read_no_proxy_from_env;
-use project::agent_server_store::AgentServerStore;
+use project::{AgentId, Project, agent_server_store::AgentServerStore};
 
 use acp_thread::AgentConnection;
 use anyhow::Result;
-use gpui::{App, AppContext, Entity, SharedString, Task};
+use gpui::{App, AppContext, Entity, Task};
 use settings::SettingsStore;
 use std::{any::Any, rc::Rc, sync::Arc};
 
-pub use acp::AcpConnection;
+#[cfg(any(test, feature = "test-support"))]
+pub use acp::test_support::{
+    FakeAcpAgentServer, FakeAcpConnectionHarness, connect_fake_acp_connection,
+};
+pub use acp::{AcpConnection, GEMINI_TERMINAL_AUTH_METHOD_ID};
 
 pub struct AgentServerDelegate {
     store: Entity<AgentServerStore>,
@@ -38,10 +42,11 @@ impl AgentServerDelegate {
 
 pub trait AgentServer: Send {
     fn logo(&self) -> ui::IconName;
-    fn name(&self) -> SharedString;
+    fn agent_id(&self) -> AgentId;
     fn connect(
         &self,
         delegate: AgentServerDelegate,
+        project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>>;
 

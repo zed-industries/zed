@@ -5,10 +5,12 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
-use gpui::{App, AsyncApp, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
-use language::language_settings::language_settings;
-use language::{ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller, Symbol};
+use language::language_settings::LanguageSettings;
+use language::{
+    Buffer, ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller, Symbol,
+};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
@@ -24,7 +26,7 @@ use project::lsp_store::language_server_settings;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use settings::Settings;
+use settings::{SemanticTokenRules, Settings};
 use terminal::terminal_settings::TerminalSettings;
 
 use smol::lock::OnceCell;
@@ -49,6 +51,14 @@ use std::{
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
 
+pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
+    let content = grammars::get_file("python/semantic_token_rules.json")
+        .expect("missing python/semantic_token_rules.json");
+    let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
+    settings::parse_json_with_comments::<SemanticTokenRules>(json)
+        .expect("failed to parse python semantic_token_rules.json")
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PythonToolchainData {
     #[serde(flatten)]
@@ -72,14 +82,30 @@ impl ManifestProvider for PyprojectTomlManifestProvider {
             delegate,
         }: ManifestQuery,
     ) -> Option<Arc<RelPath>> {
+        const WORKSPACE_LOCKFILES: &[&str] =
+            &["uv.lock", "poetry.lock", "pdm.lock", "Pipfile.lock"];
+
+        let mut innermost_pyproject = None;
+        let mut outermost_workspace_root = None;
+
         for path in path.ancestors().take(depth) {
-            let p = path.join(RelPath::unix("pyproject.toml").unwrap());
-            if delegate.exists(&p, Some(false)) {
-                return Some(path.into());
+            let pyproject_path = path.join(RelPath::unix("pyproject.toml").unwrap());
+            if delegate.exists(&pyproject_path, Some(false)) {
+                if innermost_pyproject.is_none() {
+                    innermost_pyproject = Some(Arc::from(path));
+                }
+
+                let has_lockfile = WORKSPACE_LOCKFILES.iter().any(|lockfile| {
+                    let lockfile_path = path.join(RelPath::unix(lockfile).unwrap());
+                    delegate.exists(&lockfile_path, Some(false))
+                });
+                if has_lockfile {
+                    outermost_workspace_root = Some(Arc::from(path));
+                }
             }
         }
 
-        None
+        outermost_workspace_root.or(innermost_pyproject)
     }
 }
 
@@ -437,7 +463,7 @@ impl LspInstaller for TyLspAdapter {
         async_fs::create_dir_all(&destination_path).await?;
 
         let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path
+            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path
                 .join(Self::build_asset_name()?.0)
                 .join("ty"),
             AssetKind::Zip => destination_path.clone().join("ty.exe"),
@@ -527,7 +553,7 @@ impl LspInstaller for TyLspAdapter {
 
             let path = last.context("no cached binary")?;
             let path = match TyLspAdapter::GITHUB_ASSET_KIND {
-                AssetKind::TarGz | AssetKind::Gz => {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => {
                     path.join(Self::build_asset_name()?.0).join("ty")
                 }
                 AssetKind::Zip => path.join("ty.exe"),
@@ -822,11 +848,10 @@ impl ContextProvider for PythonContextProvider {
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
-        let test_target =
-            match selected_test_runner(location.file_location.buffer.read(cx).file(), cx) {
-                TestRunner::UNITTEST => self.build_unittest_target(variables),
-                TestRunner::PYTEST => self.build_pytest_target(variables),
-            };
+        let test_target = match selected_test_runner(Some(&location.file_location.buffer), cx) {
+            TestRunner::UNITTEST => self.build_unittest_target(variables),
+            TestRunner::PYTEST => self.build_pytest_target(variables),
+        };
 
         let module_target = self.build_module_target(variables);
         let location_file = location.file_location.buffer.read(cx).file().cloned();
@@ -864,10 +889,10 @@ impl ContextProvider for PythonContextProvider {
 
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn language::File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
-        let test_runner = selected_test_runner(file.as_ref(), cx);
+        let test_runner = selected_test_runner(buffer.as_ref(), cx);
 
         let mut tasks = vec![
             // Execute a selection
@@ -974,9 +999,11 @@ impl ContextProvider for PythonContextProvider {
     }
 }
 
-fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {
+fn selected_test_runner(location: Option<&Entity<Buffer>>, cx: &App) -> TestRunner {
     const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
-    language_settings(Some(LanguageName::new_static("Python")), location, cx)
+    let language = LanguageName::new_static("Python");
+    let settings = LanguageSettings::resolve(location.map(|b| b.read(cx)), Some(&language), cx);
+    settings
         .tasks
         .variables
         .get(TEST_RUNNER_VARIABLE)
@@ -1101,6 +1128,7 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
         PythonEnvironmentKind::Venv => "venv",
         PythonEnvironmentKind::VirtualEnv => "virtualenv",
         PythonEnvironmentKind::VirtualEnvWrapper => "virtualenvwrapper",
+        PythonEnvironmentKind::WinPython => "WinPython",
         PythonEnvironmentKind::WindowsStore => "global (Windows Store)",
         PythonEnvironmentKind::WindowsRegistry => "global (Windows Registry)",
         PythonEnvironmentKind::Uv => "uv",
@@ -1108,7 +1136,15 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
     }
 }
 
-pub(crate) struct PythonToolchainProvider;
+pub(crate) struct PythonToolchainProvider {
+    fs: Arc<dyn Fs>,
+}
+
+impl PythonToolchainProvider {
+    pub fn new(fs: Arc<dyn Fs>) -> Self {
+        Self { fs }
+    }
+}
 
 static ENV_PRIORITY_LIST: &[PythonEnvironmentKind] = &[
     // Prioritize non-Conda environments.
@@ -1223,8 +1259,8 @@ impl ToolchainLister for PythonToolchainProvider {
         worktree_root: PathBuf,
         subroot_relative_path: Arc<RelPath>,
         project_env: Option<HashMap<String, String>>,
-        fs: &dyn Fs,
     ) -> ToolchainList {
+        let fs = &*self.fs;
         let env = project_env.unwrap_or_default();
         let environment = EnvironmentApi::from_env(&env);
         let locators = pet::locators::create_locators(
@@ -1355,8 +1391,8 @@ impl ToolchainLister for PythonToolchainProvider {
         &self,
         path: PathBuf,
         env: Option<HashMap<String, String>>,
-        fs: &dyn Fs,
     ) -> anyhow::Result<Toolchain> {
+        let fs = &*self.fs;
         let env = env.unwrap_or_default();
         let environment = EnvironmentApi::from_env(&env);
         let locators = pet::locators::create_locators(
@@ -2507,7 +2543,7 @@ impl LspInstaller for RuffLspAdapter {
         } = latest_version;
         let destination_path = container_dir.join(format!("ruff-{name}"));
         let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path
+            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path
                 .join(Self::build_asset_name()?.0)
                 .join("ruff"),
             AssetKind::Zip => destination_path.clone().join("ruff.exe"),
@@ -2597,7 +2633,7 @@ impl LspInstaller for RuffLspAdapter {
 
             let path = last.context("no cached binary")?;
             let path = match Self::GITHUB_ASSET_KIND {
-                AssetKind::TarGz | AssetKind::Gz => {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => {
                     path.join(Self::build_asset_name()?.0).join("ruff")
                 }
                 AssetKind::Zip => path.join("ruff.exe"),
@@ -2651,7 +2687,8 @@ mod tests {
             });
         });
 
-        let provider = PythonToolchainProvider;
+        let fs = project::FakeFs::new(cx.executor());
+        let provider = PythonToolchainProvider::new(fs);
         let malicious_name = "foo; rm -rf /";
 
         let manager_executable = std::env::current_exe().unwrap();
@@ -2996,5 +3033,138 @@ mod tests {
         assert!(enum_values.contains(&serde_json::json!("double")));
         assert!(enum_values.contains(&serde_json::json!("single")));
         assert!(enum_values.contains(&serde_json::json!("preserve")));
+    }
+
+    mod pyproject_manifest_tests {
+        use std::collections::HashSet;
+        use std::sync::Arc;
+
+        use language::{ManifestDelegate, ManifestProvider, ManifestQuery};
+        use settings::WorktreeId;
+        use util::rel_path::RelPath;
+
+        use crate::python::PyprojectTomlManifestProvider;
+
+        struct FakeManifestDelegate {
+            existing_files: HashSet<&'static str>,
+        }
+
+        impl ManifestDelegate for FakeManifestDelegate {
+            fn worktree_id(&self) -> WorktreeId {
+                WorktreeId::from_usize(0)
+            }
+
+            fn exists(&self, path: &RelPath, _is_dir: Option<bool>) -> bool {
+                self.existing_files.contains(path.as_unix_str())
+            }
+        }
+
+        fn search(files: &[&'static str], query_path: &str) -> Option<Arc<RelPath>> {
+            let delegate = Arc::new(FakeManifestDelegate {
+                existing_files: files.iter().copied().collect(),
+            });
+            let provider = PyprojectTomlManifestProvider;
+            provider.search(ManifestQuery {
+                path: RelPath::unix(query_path).unwrap().into(),
+                depth: 10,
+                delegate,
+            })
+        }
+
+        #[test]
+        fn test_simple_project_no_lockfile() {
+            let result = search(&["project/pyproject.toml"], "project/src/main.py");
+            assert_eq!(result.as_deref(), RelPath::unix("project").ok());
+        }
+
+        #[test]
+        fn test_uv_workspace_returns_root() {
+            let result = search(
+                &[
+                    "pyproject.toml",
+                    "uv.lock",
+                    "packages/subproject/pyproject.toml",
+                ],
+                "packages/subproject/src/main.py",
+            );
+            assert_eq!(result.as_deref(), RelPath::unix("").ok());
+        }
+
+        #[test]
+        fn test_poetry_workspace_returns_root() {
+            let result = search(
+                &["pyproject.toml", "poetry.lock", "libs/mylib/pyproject.toml"],
+                "libs/mylib/src/main.py",
+            );
+            assert_eq!(result.as_deref(), RelPath::unix("").ok());
+        }
+
+        #[test]
+        fn test_pdm_workspace_returns_root() {
+            let result = search(
+                &[
+                    "pyproject.toml",
+                    "pdm.lock",
+                    "packages/mypackage/pyproject.toml",
+                ],
+                "packages/mypackage/src/main.py",
+            );
+            assert_eq!(result.as_deref(), RelPath::unix("").ok());
+        }
+
+        #[test]
+        fn test_independent_subprojects_no_lockfile_at_root() {
+            let result_a = search(
+                &["project-a/pyproject.toml", "project-b/pyproject.toml"],
+                "project-a/src/main.py",
+            );
+            assert_eq!(result_a.as_deref(), RelPath::unix("project-a").ok());
+
+            let result_b = search(
+                &["project-a/pyproject.toml", "project-b/pyproject.toml"],
+                "project-b/src/main.py",
+            );
+            assert_eq!(result_b.as_deref(), RelPath::unix("project-b").ok());
+        }
+
+        #[test]
+        fn test_no_pyproject_returns_none() {
+            let result = search(&[], "src/main.py");
+            assert_eq!(result, None);
+        }
+
+        #[test]
+        fn test_subproject_with_own_lockfile_and_workspace_root() {
+            // Both root and subproject have lockfiles; should return root (outermost)
+            let result = search(
+                &[
+                    "pyproject.toml",
+                    "uv.lock",
+                    "packages/sub/pyproject.toml",
+                    "packages/sub/uv.lock",
+                ],
+                "packages/sub/src/main.py",
+            );
+            assert_eq!(result.as_deref(), RelPath::unix("").ok());
+        }
+
+        #[test]
+        fn test_depth_limits_search() {
+            let delegate = Arc::new(FakeManifestDelegate {
+                existing_files: ["pyproject.toml", "uv.lock", "deep/nested/pyproject.toml"]
+                    .into_iter()
+                    .collect(),
+            });
+            let provider = PyprojectTomlManifestProvider;
+            // depth=3 from "deep/nested/src/main.py" searches:
+            //   "deep/nested/src/main.py", "deep/nested/src", and "deep/nested"
+            // It won't reach "deep" or root ""
+            let result = provider.search(ManifestQuery {
+                path: RelPath::unix("deep/nested/src/main.py").unwrap().into(),
+                depth: 3,
+                delegate,
+            });
+            assert_eq!(result.as_deref(), RelPath::unix("deep/nested").ok());
+        }
     }
 }

@@ -1145,6 +1145,9 @@ impl RunningState {
                     args,
                     ..task.resolved.clone()
                 };
+
+                Workspace::save_for_task(&weak_workspace, task_with_shell.save, cx).await;
+
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
@@ -1313,6 +1316,7 @@ impl RunningState {
             show_summary: false,
             show_command: false,
             show_rerun: false,
+            save: task::SaveStrategy::default(),
         };
 
         let workspace = self.workspace.clone();
@@ -1501,9 +1505,14 @@ impl RunningState {
                     return;
                 };
 
-                persistence::serialize_pane_layout(adapter_name, pane_layout)
-                    .await
-                    .log_err();
+                let kvp = this
+                    .read_with(cx, |_, cx| db::kvp::KeyValueStore::global(cx))
+                    .ok();
+                if let Some(kvp) = kvp {
+                    persistence::serialize_pane_layout(adapter_name, pane_layout, kvp)
+                        .await
+                        .log_err();
+                }
 
                 this.update(cx, |this, _| {
                     this._schedule_serialize.take();

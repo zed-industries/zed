@@ -14,7 +14,7 @@ use settings::{
     merge_from::MergeFrom,
 };
 use task::Shell;
-use theme::FontFamilyName;
+use theme_settings::FontFamilyName;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Toolbar {
@@ -40,6 +40,7 @@ pub struct TerminalSettings {
     pub keep_selection_on_copy: bool,
     pub button: bool,
     pub dock: TerminalDockPosition,
+    pub flexible: bool,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub detect_venv: VenvSettings,
@@ -51,6 +52,7 @@ pub struct TerminalSettings {
     pub minimum_contrast: f32,
     pub path_hyperlink_regexes: Vec<String>,
     pub path_hyperlink_timeout_ms: u64,
+    pub show_count_badge: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -110,6 +112,7 @@ impl settings::Settings for TerminalSettings {
             dock: user_content.dock.unwrap(),
             default_width: px(user_content.default_width.unwrap()),
             default_height: px(user_content.default_height.unwrap()),
+            flexible: user_content.flexible.unwrap(),
             detect_venv: project_content.detect_venv.unwrap(),
             scroll_multiplier: user_content.scroll_multiplier.unwrap(),
             scroll_on_output: user_content.scroll_on_output.unwrap(),
@@ -131,6 +134,7 @@ impl settings::Settings for TerminalSettings {
                 })
                 .collect(),
             path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
+            show_count_badge: user_content.show_count_badge.unwrap(),
         }
     }
 }

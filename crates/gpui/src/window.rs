@@ -28,6 +28,8 @@ use futures::FutureExt;
 use futures::channel::oneshot;
 use gpui_util::post_inc;
 use gpui_util::{ResultExt, measure};
+#[cfg(feature = "input-latency-histogram")]
+use hdrhistogram::Histogram;
 use itertools::FoldWhile::{Continue, Done};
 use itertools::Itertools;
 use parking_lot::RwLock;
@@ -61,7 +63,7 @@ use crate::util::atomic_incr_if_not_zero;
 pub use prompts::*;
 
 /// Default window size used when no explicit size is provided.
-pub const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(864.));
+pub const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1536.), px(1095.));
 
 /// A 6:5 aspect ratio minimum window size to be used for functional,
 /// additional-to-main-Zed windows, like the settings and rules library windows.
@@ -105,6 +107,7 @@ struct WindowInvalidatorInner {
     pub dirty: bool,
     pub draw_phase: DrawPhase,
     pub dirty_views: FxHashSet<EntityId>,
+    pub update_count: usize,
 }
 
 #[derive(Clone)]
@@ -119,12 +122,14 @@ impl WindowInvalidator {
                 dirty: true,
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
+                update_count: 0,
             })),
         }
     }
 
     pub fn invalidate_view(&self, entity: EntityId, cx: &mut App) -> bool {
         let mut inner = self.inner.borrow_mut();
+        inner.update_count += 1;
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
             inner.dirty = true;
@@ -140,11 +145,19 @@ impl WindowInvalidator {
     }
 
     pub fn set_dirty(&self, dirty: bool) {
-        self.inner.borrow_mut().dirty = dirty
+        let mut inner = self.inner.borrow_mut();
+        inner.dirty = dirty;
+        if dirty {
+            inner.update_count += 1;
+        }
     }
 
     pub fn set_phase(&self, phase: DrawPhase) {
         self.inner.borrow_mut().draw_phase = phase
+    }
+
+    pub fn update_count(&self) -> usize {
+        self.inner.borrow().update_count
     }
 
     pub fn take_views(&self) -> FxHashSet<EntityId> {
@@ -559,8 +572,20 @@ pub enum WindowControlArea {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct HitboxId(u64);
 
+#[cfg(feature = "test-support")]
 impl HitboxId {
-    /// Checks if the hitbox with this ID is currently hovered. Except when handling
+    /// A placeholder HitboxId exclusively for integration testing API's that
+    /// need a hitbox but where the value of the hitbox does not matter. The
+    /// alternative is to make the Hitbox optional but that complicates the
+    /// implementation.
+    pub const fn placeholder() -> Self {
+        Self(0)
+    }
+}
+
+impl HitboxId {
+    /// Checks if the hitbox with this ID is currently hovered. Returns `false` during keyboard
+    /// input modality so that keyboard navigation suppresses hover highlights. Except when handling
     /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
     /// events or paint hover styles.
     ///
@@ -569,6 +594,9 @@ impl HitboxId {
         // If this hitbox has captured the pointer, it's always considered hovered
         if window.captured_hitbox == Some(self) {
             return true;
+        }
+        if window.last_input_was_keyboard() {
+            return false;
         }
         let hit_test = &window.mouse_hit_test;
         for id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
@@ -608,13 +636,15 @@ pub struct Hitbox {
 }
 
 impl Hitbox {
-    /// Checks if the hitbox is currently hovered. Except when handling `ScrollWheelEvent`, this is
-    /// typically what you want when determining whether to handle mouse events or paint hover
-    /// styles.
+    /// Checks if the hitbox is currently hovered. Returns `false` during keyboard input modality
+    /// so that keyboard navigation suppresses hover highlights. Except when handling
+    /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
+    /// events or paint hover styles.
     ///
     /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
     /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`) or
-    /// `HitboxBehavior::BlockMouseExceptScroll` (`InteractiveElement::block_mouse_except_scroll`).
+    /// `HitboxBehavior::BlockMouseExceptScroll` (`InteractiveElement::block_mouse_except_scroll`),
+    /// or if the current input modality is keyboard (see [`Window::last_input_was_keyboard`]).
     ///
     /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
     /// Concretely, this is due to use-cases like overlays that cause the elements under to be
@@ -945,12 +975,15 @@ pub struct Window {
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
+    pub(crate) button_layout_observers: SubscriberSet<(), AnyObserver>,
     active: Rc<Cell<bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
+    #[cfg(feature = "input-latency-histogram")]
+    input_latency_tracker: InputLatencyTracker,
     last_input_modality: InputModality,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
@@ -1016,6 +1049,88 @@ impl InputRateTracker {
     fn prune_old_timestamps(&mut self, now: Instant) {
         self.timestamps
             .retain(|&t| now.duration_since(t) <= self.window);
+    }
+}
+
+/// A point-in-time snapshot of the input-latency histograms for a window,
+/// suitable for external formatting.
+#[cfg(feature = "input-latency-histogram")]
+pub struct InputLatencySnapshot {
+    /// Histogram of input-to-frame latency samples, in nanoseconds.
+    pub latency_histogram: Histogram<u64>,
+    /// Histogram of input events coalesced per rendered frame.
+    pub events_per_frame_histogram: Histogram<u64>,
+    /// Count of input events that arrived mid-draw and were excluded from
+    /// latency recording.
+    pub mid_draw_events_dropped: u64,
+}
+
+/// Records the time between when the first input event in a frame is dispatched
+/// and when the resulting frame is presented, capturing worst-case latency when
+/// multiple events are coalesced into a single frame.
+#[cfg(feature = "input-latency-histogram")]
+struct InputLatencyTracker {
+    /// Timestamp of the first unrendered input event in the current frame;
+    /// cleared when a frame is presented.
+    first_input_at: Option<Instant>,
+    /// Count of input events received since the last frame was presented.
+    pending_input_count: u64,
+    /// Histogram of input-to-frame latency samples, in nanoseconds.
+    latency_histogram: Histogram<u64>,
+    /// Histogram of input events coalesced per rendered frame.
+    events_per_frame_histogram: Histogram<u64>,
+    /// Count of input events that arrived mid-draw and were excluded from
+    /// latency recording because their effects won't appear until the next frame.
+    mid_draw_events_dropped: u64,
+}
+
+#[cfg(feature = "input-latency-histogram")]
+impl InputLatencyTracker {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            first_input_at: None,
+            pending_input_count: 0,
+            latency_histogram: Histogram::new(3)
+                .map_err(|e| anyhow!("Failed to create input latency histogram: {e}"))?,
+            events_per_frame_histogram: Histogram::new(3)
+                .map_err(|e| anyhow!("Failed to create events per frame histogram: {e}"))?,
+            mid_draw_events_dropped: 0,
+        })
+    }
+
+    /// Record that an input event was dispatched at the given time.
+    /// Only the first event's timestamp per frame is retained (worst-case latency).
+    fn record_input(&mut self, dispatch_time: Instant) {
+        self.first_input_at.get_or_insert(dispatch_time);
+        self.pending_input_count += 1;
+    }
+
+    /// Record that an input event arrived during a draw phase and was excluded
+    /// from latency tracking.
+    fn record_mid_draw_input(&mut self) {
+        self.mid_draw_events_dropped += 1;
+    }
+
+    /// Record that a frame was presented, flushing pending latency and coalescing samples.
+    fn record_frame_presented(&mut self) {
+        if let Some(first_input_at) = self.first_input_at.take() {
+            let latency_nanos = first_input_at.elapsed().as_nanos() as u64;
+            self.latency_histogram.record(latency_nanos).ok();
+        }
+        if self.pending_input_count > 0 {
+            self.events_per_frame_histogram
+                .record(self.pending_input_count)
+                .ok();
+            self.pending_input_count = 0;
+        }
+    }
+
+    fn snapshot(&self) -> InputLatencySnapshot {
+        InputLatencySnapshot {
+            latency_histogram: self.latency_histogram.clone(),
+            events_per_frame_histogram: self.events_per_frame_histogram.clone(),
+            mid_draw_events_dropped: self.mid_draw_events_dropped,
+        }
     }
 }
 
@@ -1126,6 +1241,11 @@ impl Window {
             app_id,
             window_min_size,
             window_decorations,
+            #[cfg_attr(
+                not(any(target_os = "linux", target_os = "freebsd")),
+                allow(unused_variables)
+            )]
+            icon,
             #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
             tabbing_identifier,
         } = options;
@@ -1144,6 +1264,7 @@ impl Window {
                 show,
                 display_id,
                 window_min_size,
+                icon,
                 #[cfg(target_os = "macos")]
                 tabbing_identifier,
             },
@@ -1204,18 +1325,38 @@ impl Window {
                     .update(&mut cx, |_, _, cx| cx.thermal_state())
                     .log_err();
 
-                if thermal_state == Some(ThermalState::Serious)
-                    || thermal_state == Some(ThermalState::Critical)
+                // Throttle frame rate based on conditions:
+                // - Thermal pressure (Serious/Critical): cap to ~60fps
+                // - Inactive window (not focused): cap to ~30fps to save energy
+                let min_frame_interval = if !request_frame_options.force_render
+                    && !request_frame_options.require_presentation
+                    && next_frame_callbacks.borrow().is_empty()
                 {
-                    let now = Instant::now();
-                    let last_frame_time = last_frame_time.replace(Some(now));
+                    None
+                } else if !active.get() {
+                    Some(Duration::from_micros(33333))
+                } else if let Some(ThermalState::Critical | ThermalState::Serious) = thermal_state {
+                    Some(Duration::from_micros(16667))
+                } else {
+                    None
+                };
 
-                    if let Some(last_frame) = last_frame_time
-                        && now.duration_since(last_frame) < Duration::from_micros(16667)
+                let now = Instant::now();
+                if let Some(min_interval) = min_frame_interval {
+                    if let Some(last_frame) = last_frame_time.get()
+                        && now.duration_since(last_frame) < min_interval
                     {
+                        // Must still complete the frame on platforms that require it.
+                        // On Wayland, `surface.frame()` was already called to request the
+                        // next frame callback, so we must call `surface.commit()` (via
+                        // `complete_frame`) or the compositor won't send another callback.
+                        handle
+                            .update(&mut cx, |_, window, _| window.complete_frame())
+                            .log_err();
                         return;
                     }
                 }
+                last_frame_time.set(Some(now));
 
                 let next_frame_callbacks = next_frame_callbacks.take();
                 if !next_frame_callbacks.is_empty() {
@@ -1279,6 +1420,14 @@ impl Window {
             move || {
                 handle
                     .update(&mut cx, |_, window, cx| window.appearance_changed(cx))
+                    .log_err();
+            }
+        }));
+        platform_window.on_button_layout_changed(Box::new({
+            let mut cx = cx.to_async();
+            move || {
+                handle
+                    .update(&mut cx, |_, window, cx| window.button_layout_changed(cx))
                     .log_err();
             }
         }));
@@ -1436,10 +1585,13 @@ impl Window {
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
+            button_layout_observers: SubscriberSet::new(),
             active,
             hovered,
             needs_present,
             input_rate_tracker,
+            #[cfg(feature = "input-latency-histogram")]
+            input_latency_tracker: InputLatencyTracker::new()?,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -1475,7 +1627,7 @@ pub struct DispatchEventResult {
 /// Indicates which region of the window is visible. Content falling outside of this mask will not be
 /// rendered. Currently, only rectangular content masks are supported, but we give the mask its own type
 /// to leave room to support more complex shapes in the future.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct ContentMask<P: Clone + Debug + Default + PartialEq> {
     /// The bounds
@@ -1518,6 +1670,22 @@ impl Window {
         mut callback: impl FnMut(&mut Window, &mut App) + 'static,
     ) -> Subscription {
         let (subscription, activate) = self.appearance_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Registers a callback to be invoked when the window button layout changes.
+    pub fn observe_button_layout_changed(
+        &self,
+        mut callback: impl FnMut(&mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.button_layout_observers.insert(
             (),
             Box::new(move |window, cx| {
                 callback(window, cx);
@@ -1950,6 +2118,12 @@ impl Window {
             .retain(&(), |callback| callback(self, cx));
     }
 
+    pub(crate) fn button_layout_changed(&mut self, cx: &mut App) {
+        self.button_layout_observers
+            .clone()
+            .retain(&(), |callback| callback(self, cx));
+    }
+
     /// Returns the appearance of the current window.
     pub fn appearance(&self) -> WindowAppearance {
         self.appearance
@@ -2303,10 +2477,18 @@ impl Window {
     }
 
     #[profiling::function]
-    fn present(&self) {
+    fn present(&mut self) {
         self.platform_window.draw(&self.rendered_frame.scene);
+        #[cfg(feature = "input-latency-histogram")]
+        self.input_latency_tracker.record_frame_presented();
         self.needs_present.set(false);
         profiling::finish_frame!();
+    }
+
+    /// Returns a snapshot of the current input-latency histograms.
+    #[cfg(feature = "input-latency-histogram")]
+    pub fn input_latency_snapshot(&self) -> InputLatencySnapshot {
+        self.input_latency_tracker.snapshot()
     }
 
     fn draw_roots(&mut self, cx: &mut App) {
@@ -2338,10 +2520,7 @@ impl Window {
         #[cfg(any(feature = "inspector", debug_assertions))]
         let inspector_element = self.prepaint_inspector(_inspector_width, cx);
 
-        let mut sorted_deferred_draws =
-            (0..self.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
-        sorted_deferred_draws.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
-        self.prepaint_deferred_draws(&sorted_deferred_draws, cx);
+        self.prepaint_deferred_draws(cx);
 
         let mut prompt_element = None;
         let mut active_drag_element = None;
@@ -2370,7 +2549,7 @@ impl Window {
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector(inspector_element, cx);
 
-        self.paint_deferred_draws(&sorted_deferred_draws, cx);
+        self.paint_deferred_draws(cx);
 
         if let Some(mut prompt_element) = prompt_element {
             prompt_element.paint(self, cx);
@@ -2453,25 +2632,40 @@ impl Window {
         None
     }
 
-    fn prepaint_deferred_draws(&mut self, deferred_draw_indices: &[usize], cx: &mut App) {
+    fn prepaint_deferred_draws(&mut self, cx: &mut App) {
         assert_eq!(self.element_id_stack.len(), 0);
 
-        let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
-        for deferred_draw_ix in deferred_draw_indices {
-            let deferred_draw = &mut deferred_draws[*deferred_draw_ix];
-            self.element_id_stack
-                .clone_from(&deferred_draw.element_id_stack);
-            self.text_style_stack
-                .clone_from(&deferred_draw.text_style_stack);
-            self.next_frame
-                .dispatch_tree
-                .set_active_node(deferred_draw.parent_node);
+        let mut completed_draws = Vec::new();
 
-            let prepaint_start = self.prepaint_index();
-            let content_mask = deferred_draw.content_mask.clone();
-            if let Some(element) = deferred_draw.element.as_mut() {
-                self.with_rendered_view(deferred_draw.current_view, |window| {
-                    window.with_content_mask(content_mask, |window| {
+        // Process deferred draws in multiple rounds to support nesting.
+        // Each round processes all current deferred draws, which may produce new ones.
+        let mut depth = 0;
+        loop {
+            // Limit maximum nesting depth to prevent infinite loops.
+            assert!(depth < 10, "Exceeded maximum (10) deferred depth");
+            depth += 1;
+            let deferred_count = self.next_frame.deferred_draws.len();
+            if deferred_count == 0 {
+                break;
+            }
+
+            // Sort by priority for this round
+            let traversal_order = self.deferred_draw_traversal_order();
+            let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
+
+            for deferred_draw_ix in traversal_order {
+                let deferred_draw = &mut deferred_draws[deferred_draw_ix];
+                self.element_id_stack
+                    .clone_from(&deferred_draw.element_id_stack);
+                self.text_style_stack
+                    .clone_from(&deferred_draw.text_style_stack);
+                self.next_frame
+                    .dispatch_tree
+                    .set_active_node(deferred_draw.parent_node);
+
+                let prepaint_start = self.prepaint_index();
+                if let Some(element) = deferred_draw.element.as_mut() {
+                    self.with_rendered_view(deferred_draw.current_view, |window| {
                         window.with_rem_size(Some(deferred_draw.rem_size), |window| {
                             window.with_absolute_element_offset(
                                 deferred_draw.absolute_offset,
@@ -2480,30 +2674,38 @@ impl Window {
                                 },
                             );
                         });
-                    });
-                })
-            } else {
-                self.reuse_prepaint(deferred_draw.prepaint_range.clone());
+                    })
+                } else {
+                    self.reuse_prepaint(deferred_draw.prepaint_range.clone());
+                }
+                let prepaint_end = self.prepaint_index();
+                deferred_draw.prepaint_range = prepaint_start..prepaint_end;
             }
-            let prepaint_end = self.prepaint_index();
-            deferred_draw.prepaint_range = prepaint_start..prepaint_end;
+
+            // Save completed draws and continue with newly added ones
+            completed_draws.append(&mut deferred_draws);
+
+            self.element_id_stack.clear();
+            self.text_style_stack.clear();
         }
-        assert_eq!(
-            self.next_frame.deferred_draws.len(),
-            0,
-            "cannot call defer_draw during deferred drawing"
-        );
-        self.next_frame.deferred_draws = deferred_draws;
-        self.element_id_stack.clear();
-        self.text_style_stack.clear();
+
+        // Restore all completed draws
+        self.next_frame.deferred_draws = completed_draws;
     }
 
-    fn paint_deferred_draws(&mut self, deferred_draw_indices: &[usize], cx: &mut App) {
+    fn paint_deferred_draws(&mut self, cx: &mut App) {
         assert_eq!(self.element_id_stack.len(), 0);
 
+        // Paint all deferred draws in priority order.
+        // Since prepaint has already processed nested deferreds, we just paint them all.
+        if self.next_frame.deferred_draws.len() == 0 {
+            return;
+        }
+
+        let traversal_order = self.deferred_draw_traversal_order();
         let mut deferred_draws = mem::take(&mut self.next_frame.deferred_draws);
-        for deferred_draw_ix in deferred_draw_indices {
-            let mut deferred_draw = &mut deferred_draws[*deferred_draw_ix];
+        for deferred_draw_ix in traversal_order {
+            let mut deferred_draw = &mut deferred_draws[deferred_draw_ix];
             self.element_id_stack
                 .clone_from(&deferred_draw.element_id_stack);
             self.next_frame
@@ -2511,7 +2713,7 @@ impl Window {
                 .set_active_node(deferred_draw.parent_node);
 
             let paint_start = self.paint_index();
-            let content_mask = deferred_draw.content_mask.clone();
+            let content_mask = deferred_draw.content_mask;
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
                     window.with_content_mask(content_mask, |window| {
@@ -2528,6 +2730,13 @@ impl Window {
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
+    }
+
+    fn deferred_draw_traversal_order(&mut self) -> SmallVec<[usize; 8]> {
+        let deferred_count = self.next_frame.deferred_draws.len();
+        let mut sorted_indices = (0..deferred_count).collect::<SmallVec<[_; 8]>>();
+        sorted_indices.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
+        sorted_indices
     }
 
     pub(crate) fn prepaint_index(&self) -> PrepaintStateIndex {
@@ -2581,7 +2790,7 @@ impl Window {
                     parent_node: reused_subtree.refresh_node_id(deferred_draw.parent_node),
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
-                    content_mask: deferred_draw.content_mask.clone(),
+                    content_mask: deferred_draw.content_mask,
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
                     element: None,
@@ -4028,14 +4237,21 @@ impl Window {
     /// Dispatch a mouse or keyboard event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
-        // Track whether this input was keyboard-based for focus-visible styling
+        #[cfg(feature = "input-latency-histogram")]
+        let dispatch_time = Instant::now();
+        let update_count_before = self.invalidator.update_count();
+        // Track input modality for focus-visible styling and hover suppression.
+        // Hover is suppressed during keyboard modality so that keyboard navigation
+        // doesn't show hover highlights on the item under the mouse cursor.
+        let old_modality = self.last_input_modality;
         self.last_input_modality = match &event {
-            PlatformInput::KeyDown(_) | PlatformInput::ModifiersChanged(_) => {
-                InputModality::Keyboard
-            }
-            PlatformInput::MouseDown(e) if e.is_focusing() => InputModality::Mouse,
+            PlatformInput::KeyDown(_) => InputModality::Keyboard,
+            PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
             _ => self.last_input_modality,
         };
+        if self.last_input_modality != old_modality {
+            self.refresh();
+        }
 
         // Handlers may set this to false by calling `stop_propagation`.
         cx.propagate_event = true;
@@ -4077,7 +4293,6 @@ impl Window {
                 self.modifiers = scroll_wheel.modifiers;
                 PlatformInput::ScrollWheel(scroll_wheel)
             }
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
             PlatformInput::Pinch(pinch) => {
                 self.mouse_position = pinch.position;
                 self.modifiers = pinch.modifiers;
@@ -4134,8 +4349,14 @@ impl Window {
             self.dispatch_key_event(any_key_event, cx);
         }
 
-        if self.invalidator.is_dirty() {
+        if self.invalidator.update_count() > update_count_before {
             self.input_rate_tracker.borrow_mut().record_input();
+            #[cfg(feature = "input-latency-histogram")]
+            if self.invalidator.not_drawing() {
+                self.input_latency_tracker.record_input(dispatch_time);
+            } else {
+                self.input_latency_tracker.record_mid_draw_input();
+            }
         }
 
         DispatchEventResult {
@@ -4956,6 +5177,12 @@ impl Window {
             .set_tabbing_identifier(tabbing_identifier)
     }
 
+    /// Request the OS to play an alert sound. On some platforms this is associated
+    /// with the window, for others it's just a simple global function call.
+    pub fn play_system_bell(&self) {
+        self.platform_window.play_system_bell()
+    }
+
     /// Toggles the inspector mode on this window.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn toggle_inspector(&mut self, cx: &mut App) {
@@ -5422,6 +5649,8 @@ pub enum ElementId {
     CodeLocation(core::panic::Location<'static>),
     /// A labeled child of an element.
     NamedChild(Arc<ElementId>, SharedString),
+    /// A byte array ID (used for text-anchors)
+    OpaqueId([u8; 20]),
 }
 
 impl ElementId {
@@ -5443,6 +5672,7 @@ impl Display for ElementId {
             ElementId::Path(path) => write!(f, "{}", path.display())?,
             ElementId::CodeLocation(location) => write!(f, "{}", location)?,
             ElementId::NamedChild(id, name) => write!(f, "{}-{}", id, name)?,
+            ElementId::OpaqueId(opaque_id) => write!(f, "{:x?}", opaque_id)?,
         }
 
         Ok(())
@@ -5554,6 +5784,12 @@ impl<T: Into<SharedString>> From<(ElementId, T)> for ElementId {
 impl From<&'static core::panic::Location<'static>> for ElementId {
     fn from(location: &'static core::panic::Location<'static>) -> Self {
         ElementId::CodeLocation(*location)
+    }
+}
+
+impl From<[u8; 20]> for ElementId {
+    fn from(opaque_id: [u8; 20]) -> Self {
+        ElementId::OpaqueId(opaque_id)
     }
 }
 

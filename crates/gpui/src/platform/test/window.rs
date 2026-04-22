@@ -353,8 +353,8 @@ impl PlatformAtlas for TestAtlas {
         >,
     ) -> anyhow::Result<Option<crate::AtlasTile>> {
         let mut state = self.0.lock();
-        if let Some(tile) = state.tiles.get(key) {
-            return Ok(Some(tile.clone()));
+        if let Some(&tile) = state.tiles.get(key) {
+            return Ok(Some(tile));
         }
         drop(state);
 
@@ -384,7 +384,7 @@ impl PlatformAtlas for TestAtlas {
             },
         );
 
-        Ok(Some(state.tiles[key].clone()))
+        Ok(Some(state.tiles[key]))
     }
 
     fn remove(&self, key: &AtlasKey) {
