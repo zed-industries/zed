@@ -379,19 +379,33 @@ pub fn into_deepseek(
                 }
                 MessageContent::ToolResult(tool_result) => {
                     // DeepSeek's Chat Completions tool role only accepts a single
-                    // string. Concatenate all text parts; non-text parts are dropped.
-                    let mut text_content = String::new();
+                    // string. Concatenate all text parts with newline separators;
+                    // non-text parts are replaced with a placeholder so the tool
+                    // response is still present (the API rejects assistant
+                    // `tool_calls` that aren't followed by matching tool messages).
+                    let mut text_parts: Vec<String> = Vec::new();
                     for part in &tool_result.content {
-                        if let LanguageModelToolResultContent::Text(text) = part {
-                            text_content.push_str(text);
+                        match part {
+                            LanguageModelToolResultContent::Text(text) => {
+                                text_parts.push(text.to_string());
+                            }
+                            LanguageModelToolResultContent::Image(_) => {
+                                text_parts.push(
+                                    "[Tool responded with an image, but Zed doesn't support these in DeepSeek models yet]"
+                                        .to_string(),
+                                );
+                            }
                         }
                     }
-                    if !text_content.is_empty() {
-                        messages.push(deepseek::RequestMessage::Tool {
-                            content: text_content,
-                            tool_call_id: tool_result.tool_use_id.to_string(),
-                        });
-                    }
+                    let content = if text_parts.is_empty() {
+                        "<Tool returned an empty string>".to_string()
+                    } else {
+                        text_parts.join("\n")
+                    };
+                    messages.push(deepseek::RequestMessage::Tool {
+                        content,
+                        tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
                 }
             }
         }

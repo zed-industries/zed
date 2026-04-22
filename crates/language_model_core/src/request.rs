@@ -348,8 +348,24 @@ pub struct LanguageModelRequestMessage {
 impl LanguageModelRequestMessage {
     pub fn string_contents(&self) -> String {
         let mut buffer = String::new();
-        for string in self.content.iter().filter_map(|content| content.to_str()) {
-            buffer.push_str(string);
+        for content in &self.content {
+            match content {
+                MessageContent::ToolResult(tool_result) => {
+                    // Walk tool-result parts directly so we don't truncate
+                    // multi-part results to the first `Text` part (which is what
+                    // `MessageContent::to_str` returns for a borrowed string).
+                    for part in &tool_result.content {
+                        if let LanguageModelToolResultContent::Text(text) = part {
+                            buffer.push_str(text);
+                        }
+                    }
+                }
+                other => {
+                    if let Some(text) = other.to_str() {
+                        buffer.push_str(text);
+                    }
+                }
+            }
         }
         buffer
     }
@@ -592,5 +608,31 @@ mod tests {
         let roundtripped: LanguageModelToolResult =
             serde_json::from_value(serde_json::to_value(&result).unwrap()).unwrap();
         assert_eq!(roundtripped, result);
+    }
+
+    #[test]
+    fn test_string_contents_includes_all_tool_result_text_parts() {
+        let tool_result = LanguageModelToolResult {
+            tool_use_id: LanguageModelToolUseId::from("id".to_string()),
+            tool_name: Arc::from("tool"),
+            is_error: false,
+            content: vec![
+                LanguageModelToolResultContent::Text(Arc::from("first ")),
+                LanguageModelToolResultContent::Image(LanguageModelImage::empty()),
+                LanguageModelToolResultContent::Text(Arc::from("second")),
+            ],
+            output: None,
+        };
+        let message = LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![
+                MessageContent::Text("prefix ".to_string()),
+                MessageContent::ToolResult(tool_result),
+                MessageContent::Text(" suffix".to_string()),
+            ],
+            cache: false,
+            reasoning_details: None,
+        };
+        assert_eq!(message.string_contents(), "prefix first second suffix");
     }
 }

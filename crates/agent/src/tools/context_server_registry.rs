@@ -390,9 +390,9 @@ impl AnyAgentTool for ContextServerTool {
                 return Err(AgentToolOutput::from_error(error_message));
             }
 
-            let mut llm_output: Vec<LanguageModelToolResultContent> = Vec::new();
+            let mut llm_output = Vec::new();
             let mut concatenated_text = String::new();
-            let mut has_non_text = false;
+            let mut image_count: usize = 0;
             for content in response.content {
                 match content {
                     context_server::types::ToolResponseContent::Text { text } => {
@@ -403,7 +403,7 @@ impl AnyAgentTool for ContextServerTool {
                         // `LanguageModelImage` is currently PNG-only; drop other
                         // mime types with the existing warning behavior.
                         if mime_type == "image/png" {
-                            has_non_text = true;
+                            image_count += 1;
                             llm_output.push(LanguageModelToolResultContent::Image(
                                 LanguageModelImage {
                                     source: data.into(),
@@ -424,14 +424,19 @@ impl AnyAgentTool for ContextServerTool {
                     }
                 }
             }
-            // Preserve the pre-refactor `raw_output` shape when the response only
-            // contained text parts, so existing replays keep deserializing the
-            // same way. When there are non-text parts too, we fall back to
-            // serializing each LLM-visible content part.
-            let raw_output = if has_non_text {
-                serde_json::to_value(&llm_output).unwrap_or(serde_json::Value::Null)
-            } else {
+            // `raw_output` is persisted alongside the thread, so avoid embedding
+            // raw base64 image bytes here (they're already in `llm_output`).
+            // When the response only contained text parts, preserve the
+            // pre-refactor shape so existing replays keep deserializing the
+            // same way. When there are image parts too, record a small summary
+            // instead of the full content.
+            let raw_output = if image_count == 0 {
                 serde_json::Value::String(concatenated_text)
+            } else {
+                serde_json::json!({
+                    "text": concatenated_text,
+                    "images": image_count,
+                })
             };
             Ok(AgentToolOutput {
                 raw_output,

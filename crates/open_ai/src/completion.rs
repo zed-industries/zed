@@ -1651,7 +1651,7 @@ mod tests {
             tool_use_id: tool_use_id,
             tool_name: Arc::from("search"),
             is_error: false,
-            content: LanguageModelToolResultContent::Text(Arc::from("result")),
+            content: vec![LanguageModelToolResultContent::Text(Arc::from("result"))],
             output: None,
         };
         let request = LanguageModelRequest {

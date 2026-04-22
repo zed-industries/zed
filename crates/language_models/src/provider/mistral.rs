@@ -393,19 +393,19 @@ pub fn into_mistral(
                             // Mistral's tool role only accepts a single string. Text parts
                             // are concatenated; each non-text part contributes a placeholder
                             // line (matching the original single-element behavior).
-                            let mut tool_content = String::new();
+                            let mut text_parts: Vec<String> = Vec::new();
                             for part in &tool_result.content {
                                 match part {
                                     LanguageModelToolResultContent::Text(text) => {
-                                        tool_content.push_str(text);
+                                        text_parts.push(text.to_string());
                                     }
                                     LanguageModelToolResultContent::Image(_) => {
-                                        tool_content.push_str("[Tool responded with an image, but Zed doesn't support these in Mistral models yet]");
+                                        text_parts.push("[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string());
                                     }
                                 }
                             }
                             messages.push(mistral::RequestMessage::Tool {
-                                content: tool_content,
+                                content: text_parts.join("\n"),
                                 tool_call_id: tool_result.tool_use_id.to_string(),
                             });
                         }

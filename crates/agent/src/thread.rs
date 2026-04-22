@@ -2423,10 +2423,34 @@ impl Thread {
                         .iter()
                         .any(|part| matches!(part, LanguageModelToolResultContent::Image(_)));
                     if contains_image && !supports_images {
-                        output = AgentToolOutput::from_error(
-                            "Attempted to read an image, but this model doesn't support it.",
-                        );
-                        (true, output)
+                        // Replace each image part with an inline placeholder so
+                        // any accompanying text is still presented to the model.
+                        // If there's nothing else in the output, surface an error
+                        // to match the pre-multi-part behavior for image-only
+                        // tool results.
+                        let placeholder = LanguageModelToolResultContent::Text(Arc::from(
+                            "[Tool responded with an image, but this model doesn't support images]",
+                        ));
+                        let has_non_image = output
+                            .llm_output
+                            .iter()
+                            .any(|part| !matches!(part, LanguageModelToolResultContent::Image(_)));
+                        if has_non_image {
+                            output.llm_output = output
+                                .llm_output
+                                .into_iter()
+                                .map(|part| match part {
+                                    LanguageModelToolResultContent::Image(_) => placeholder.clone(),
+                                    other => other,
+                                })
+                                .collect();
+                            (false, output)
+                        } else {
+                            let output = AgentToolOutput::from_error(
+                                "Attempted to read an image, but this model doesn't support it.",
+                            );
+                            (true, output)
+                        }
                     } else {
                         (false, output)
                     }
