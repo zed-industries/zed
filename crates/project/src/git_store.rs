@@ -312,6 +312,7 @@ struct GraphCommitDataHandler {
     _task: Task<()>,
     commit_data_request: smol::channel::Sender<Oid>,
     completers: HashMap<Oid, oneshot::Sender<Arc<GraphCommitData>>>,
+    pending_requests: HashSet<Oid>,
 }
 
 /// Represents the handler of a git cat-file --batch process within Zed
@@ -5095,7 +5096,11 @@ impl Repository {
         if let Some(tx) = completer {
             handler.completers.insert(sha, tx);
         }
-        handler.commit_data_request.try_send(sha).ok();
+        if handler.commit_data_request.try_send(sha).is_ok() {
+            handler.pending_requests.insert(sha);
+        } else {
+            handler.completers.remove(&sha);
+        }
 
         &self.commit_data.get(&sha).unwrap_or_else(|| {
             debug_panic!("This should always be inserted");
@@ -5131,6 +5136,7 @@ impl Repository {
                     if let GraphCommitHandlerState::Open(handler) =
                         &mut this.graph_commit_data_handler
                     {
+                        handler.pending_requests.remove(&sha);
                         if let Some(completer) = handler.completers.remove(&sha) {
                             completer.send(data.clone()).ok();
                         }
@@ -5152,7 +5158,17 @@ impl Repository {
             }
 
             this.update(cx, |this, _cx| {
-                this.graph_commit_data_handler = GraphCommitHandlerState::Closed;
+                let GraphCommitHandlerState::Open(handler) = std::mem::replace(
+                    &mut this.graph_commit_data_handler,
+                    GraphCommitHandlerState::Closed,
+                ) else {
+                    debug_panic!("The handler state has to be open for this task to exist");
+                    return;
+                };
+
+                for sha in handler.pending_requests {
+                    this.commit_data.remove(&sha);
+                }
             })
             .ok();
         });
@@ -5195,6 +5211,7 @@ impl Repository {
             _task: foreground_task,
             commit_data_request: request_tx_for_handler,
             completers: HashMap::default(),
+            pending_requests: HashSet::default(),
         }
     }
 
