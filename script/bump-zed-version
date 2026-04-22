@@ -29,8 +29,22 @@ fi
 day_of_week=$(date +%u)
 if [[ $day_of_week -ne 3 ]]; then
   day_name=$(date +%A)
-  echo "Warning: Today is $day_name. Release version bumps are typically only done on Wednesdays."
+  echo "Warning: Today is $day_name. Release version bumps are typically only done on Zednesdays."
   read -r -p "Continue anyway? (y/N) " confirm
+  if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo "Aborted."
+    exit 0
+  fi
+fi
+
+if [[ "$bump_type" == "major" ]]; then
+  echo "Warning: You are about to bump the major version of Zed"
+  read -r -p "Are you sure? (y/N) " confirm
+  if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+    echo "Aborted."
+    exit 0
+  fi
+  read -r -p "Are you absolutely sure? (y/N) " confirm
   if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
     echo "Aborted."
     exit 0
