@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::{
-    CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity, ShowIndentGuides,
-    ShowScrollbar, serialize_optional_f32_with_two_decimal_places,
+    ActionName, CenteredPaddingSettings, DelayMs, DockPosition, DockSide, InactiveOpacity,
+    ShowIndentGuides, ShowScrollbar, serialize_optional_f32_with_two_decimal_places,
 };
 
 #[with_fallible_options]
@@ -88,9 +88,9 @@ pub struct WorkspaceSettingsContent {
     /// Aliases for the command palette. When you type a key in this map,
     /// it will be assumed to equal the value.
     ///
-    /// Default: true
+    /// Default: {}
     #[serde(default)]
-    pub command_aliases: HashMap<String, String>,
+    pub command_aliases: HashMap<String, ActionName>,
     /// Maximum open tabs in a pane. Will not close an unsaved
     /// tab. Set to `None` for unlimited tabs.
     ///
