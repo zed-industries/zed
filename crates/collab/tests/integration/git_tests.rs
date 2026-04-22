@@ -10,7 +10,10 @@ use git::{
 };
 use git_ui::{git_panel::GitPanel, project_diff::ProjectDiff};
 use gpui::{AppContext as _, BackgroundExecutor, SharedString, TestAppContext, VisualTestContext};
-use project::{ProjectPath, git_store::Repository};
+use project::{
+    ProjectPath,
+    git_store::{CommitDataState, Repository},
+};
 use serde_json::json;
 
 use util::{path, rel_path::rel_path};
@@ -98,30 +101,34 @@ async fn load_commit_data_batch(
     executor: &BackgroundExecutor,
     cx: &mut TestAppContext,
 ) -> HashMap<Oid, CommitData> {
-    cx.update(|cx| {
-        for sha in shas {
-            repository.update(cx, |repository, cx| {
-                repository.fetch_commit_data(*sha, true, cx);
-            });
-        }
+    let states = cx.update(|cx| {
+        shas.iter()
+            .map(|sha| {
+                (
+                    *sha,
+                    repository.update(cx, |repository, cx| {
+                        repository.fetch_commit_data(*sha, true, cx).clone()
+                    }),
+                )
+            })
+            .collect::<Vec<_>>()
     });
 
     executor.run_until_parked();
 
-    let loaded_commit_data = cx.update(|cx| {
-        repository.update(cx, |repository, _| repository.loaded_commit_data_for_test())
-    });
-    shas.iter()
-        .map(|sha| {
-            (
-                *sha,
-                loaded_commit_data
-                    .get(sha)
-                    .unwrap_or_else(|| panic!("missing loaded commit data for {sha}"))
-                    .clone(),
-            )
-        })
-        .collect()
+    let mut commit_data = HashMap::default();
+    for (sha, state) in states {
+        let data = match state {
+            CommitDataState::Loaded(data) => data.as_ref().clone(),
+            CommitDataState::Loading(Some(shared)) => shared.await.unwrap().as_ref().clone(),
+            CommitDataState::Loading(None) => {
+                panic!("fetch_commit_data(..., true) should return an await-result state")
+            }
+        };
+        commit_data.insert(sha, data);
+    }
+
+    commit_data
 }
 
 fn assert_remote_cache_matches_local_cache(
