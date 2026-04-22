@@ -26,6 +26,9 @@ if [[ -n $apt ]]; then
     libfontconfig-dev
     libgit2-dev
     libglib2.0-dev
+    libgtk-3-dev
+    libsoup-3.0-dev
+    libwebkit2gtk-4.1-dev
     libssl-dev
     libva-dev
     libvulkan1
@@ -101,6 +104,9 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     alsa-lib-devel
     fontconfig-devel
     glib2-devel
+    gtk3-devel
+    libsoup3-devel
+    webkit2gtk4.1-devel
     libva-devel
     wayland-devel
     libxcb-devel

@@ -1679,7 +1679,7 @@ impl PlatformWindow for MacWindow {
     }
 
     fn play_system_bell(&self) {
-        unsafe { NSBeep() }
+        NSBeep()
     }
 
     #[cfg(any(test, feature = "test-support"))]
