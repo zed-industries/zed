@@ -375,7 +375,7 @@ impl CompletionsMenu {
                 documentation: None,
                 confirm: None,
                 insert_text_mode: None,
-                source: CompletionSource::Custom,
+                source: CompletionSource::custom(),
             })
             .collect();
 

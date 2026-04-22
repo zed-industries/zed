@@ -674,7 +674,7 @@ impl ConsoleQueryBarCompletionProvider {
                             variable_value.into(),
                         )),
                         confirm: None,
-                        source: project::CompletionSource::Custom,
+                        source: project::CompletionSource::custom(),
                         insert_text_mode: None,
                     })
                 })
