@@ -4024,10 +4024,12 @@ impl RepositorySnapshot {
     }
 
     fn repo_path_to_abs_path(&self, repo_path: &RepoPath) -> PathBuf {
-        self.path_style
-            .join(&self.work_directory_abs_path, repo_path.as_std_path())
-            .unwrap()
-            .into()
+        let repo_path = repo_path.display(self.path_style);
+        PathBuf::from(
+            self.path_style
+                .join(&self.work_directory_abs_path, repo_path.as_ref())
+                .unwrap(),
+        )
     }
 
     #[inline]

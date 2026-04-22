@@ -347,6 +347,7 @@ impl LanguageModel for XAiLanguageModel {
             self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
             None,
+            false,
         );
         let completions = self.stream_completion(request, cx);
         async move {

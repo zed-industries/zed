@@ -1498,6 +1498,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        window.focus(&self.focus_handle, cx);
         self.agent_panel_menu_handle.toggle(window, cx);
     }
 
