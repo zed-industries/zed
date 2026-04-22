@@ -3955,9 +3955,7 @@ impl EditorElement {
             Block::Custom(custom) => {
                 let block_start = custom.start().to_point(&snapshot.buffer_snapshot());
                 let block_end = custom.end().to_point(&snapshot.buffer_snapshot());
-                if block.is_near_or_inline()
-                    && snapshot.is_line_folded(MultiBufferRow(block_start.row))
-                {
+                if block.place_near() && snapshot.is_line_folded(MultiBufferRow(block_start.row)) {
                     return None;
                 }
                 let align_to = block_start.to_display_point(snapshot);
@@ -4151,26 +4149,11 @@ impl EditorElement {
         if let BlockId::Custom(custom_block_id) = block_id
             && block.has_height()
         {
-            if block.is_near_or_inline()
+            if block.place_near()
                 && let Some((x_target, line_width)) = x_position
             {
                 let margin = em_width * 2;
-                if block.height() == 0 && block.style() == BlockStyle::Fixed {
-                    // Render inline at cursor position (for helix jump labels)
-                    // Check this FIRST before the diagnostic block check, because
-                    // helix jump labels also have element_height_in_lines == 1.
-                    if row.0 > 0 {
-                        row = DisplayRow(row.0 - 1);
-                    }
-                    is_block = false;
-                    element_height_in_lines = 0;
-                    let max_offset =
-                        editor_width + editor_margins.gutter.full_width() - final_size.width;
-                    let min_offset = (x_target + em_width - final_size.width)
-                        .max(editor_margins.gutter.full_width());
-                    x_offset = x_target.min(max_offset).max(min_offset);
-                    row_block_types.insert(row, is_block);
-                } else if line_width + final_size.width + margin
+                if line_width + final_size.width + margin
                     < editor_width + editor_margins.gutter.full_width()
                     && !row_block_types.contains_key(&(row - 1))
                     && element_height_in_lines == 1
@@ -4372,7 +4355,7 @@ impl EditorElement {
 
         for (row, block) in non_fixed_blocks {
             let style = block.style();
-            let width = match (style, block.is_near_or_inline()) {
+            let width = match (style, block.place_near()) {
                 (_, true) => AvailableSpace::MinContent,
                 (BlockStyle::Sticky, _) => hitbox.size.width.into(),
                 (BlockStyle::Flex, _) => hitbox
@@ -4431,7 +4414,7 @@ impl EditorElement {
                     element,
                     available_space: size(width, element_size.height.into()),
                     style,
-                    overlaps_gutter: !block.is_near_or_inline() && style != BlockStyle::Spacer,
+                    overlaps_gutter: !block.place_near() && style != BlockStyle::Spacer,
                     is_buffer_header: block.is_buffer_header(),
                 };
                 if style == BlockStyle::Spacer {

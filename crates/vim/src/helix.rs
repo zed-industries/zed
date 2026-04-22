@@ -5,12 +5,10 @@ mod paste;
 mod select;
 mod surround;
 
-use editor::display_map::{
-    BlockContext, BlockPlacement, BlockProperties, BlockStyle, DisplayRow, DisplaySnapshot,
-};
+use editor::display_map::{DisplayRow, DisplaySnapshot};
 use editor::{
-    Anchor, DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
-    SelectionEffects, ToOffset, ToPoint, movement,
+    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
+    NavigationOverlayLabel, NavigationTargetOverlay, SelectionEffects, ToOffset, ToPoint, movement,
 };
 use gpui::actions;
 use gpui::{App, Context, Font, Hsla, Pixels, Window, WindowTextSystem};
@@ -19,7 +17,7 @@ use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
 use settings::{RegisterSetting, Settings};
 use text::{Bias, SelectionGoal};
-use ui::prelude::*;
+use ui::px;
 use workspace::searchable::{self, Direction, FilteredSearchRange};
 
 use crate::motion::{self, MotionKind};
@@ -28,7 +26,7 @@ use crate::{
     PushHelixSurroundAdd, PushHelixSurroundDelete, PushHelixSurroundReplace, Vim,
     motion::{Motion, right},
 };
-use std::{ops::Range, sync::Arc};
+use std::ops::Range;
 
 pub(crate) const HELIX_JUMP_ACCENT: Hsla = Hsla {
     h: 0.0,
@@ -1016,7 +1014,7 @@ impl Vim {
             return;
         }
 
-        if !self.apply_helix_jump_ui(data.highlights, data.blocks, window, cx) {
+        if !self.apply_helix_jump_ui(data.overlays, window, cx) {
             return;
         }
 
@@ -1057,8 +1055,8 @@ impl Vim {
             let style = editor.style(cx);
             let font = style.text.font();
             let font_size = style.text.font_size.to_pixels(window.rem_size());
-
             let accent = HelixSettings::get_global(cx).jump_label_accent;
+
             Self::build_helix_jump_ui_data(
                 buffer_snapshot,
                 start_offset,
@@ -1126,8 +1124,7 @@ impl Vim {
 
         // Now assign labels and build UI data
         let mut labels = Vec::with_capacity(ordered_candidates.len());
-        let mut highlights = Vec::with_capacity(ordered_candidates.len());
-        let mut blocks = Vec::with_capacity(ordered_candidates.len());
+        let mut overlays = Vec::with_capacity(ordered_candidates.len());
 
         let width_of = |text: &str| -> Pixels {
             if text.is_empty() {
@@ -1152,6 +1149,7 @@ impl Vim {
             let start_anchor = buffer.anchor_after(candidate.word_start);
             let end_anchor = buffer.anchor_after(candidate.word_end);
             let label = Self::jump_label_for_index(label_index);
+            let label_text = label.iter().collect::<String>();
             // Monospace fonts: the label always matches the width of the first two characters,
             // so no per-word measurement is needed.
             // Proportional fonts: a label like "mw" can be wider than a short word like "if",
@@ -1160,7 +1158,6 @@ impl Vim {
             let fit = if is_monospace {
                 JumpLabelFit::monospace(candidate.first_two_end)
             } else {
-                let label_text: String = label.iter().collect();
                 let label_width = width_of(&label_text);
                 Self::fit_proportional_jump_label(
                     buffer,
@@ -1172,33 +1169,25 @@ impl Vim {
             };
 
             let hide_end_anchor = buffer.anchor_after(fit.hide_end_offset);
-            highlights.push(start_anchor..hide_end_anchor);
 
             labels.push(HelixJumpLabel {
                 label,
                 range: start_anchor..end_anchor,
             });
 
-            blocks.push(Self::jump_label_block(
-                start_anchor,
-                label,
-                accent,
-                label_index,
-                font.clone(),
-                font_size,
-                fit.scale_factor,
-                fit.left_shift,
-            ));
+            overlays.push(NavigationTargetOverlay {
+                target_range: start_anchor..end_anchor,
+                label: NavigationOverlayLabel {
+                    text: label_text.into(),
+                    text_color: accent,
+                    x_offset: -fit.left_shift,
+                    scale_factor: fit.scale_factor,
+                },
+                covered_text_range: Some(start_anchor..hide_end_anchor),
+            });
         }
 
-        // Sort highlights by position - the editor's binary search expects them sorted
-        highlights.sort_by(|a, b| a.start.cmp(&b.start, buffer));
-
-        HelixJumpUiData {
-            labels,
-            highlights,
-            blocks,
-        }
+        HelixJumpUiData { labels, overlays }
     }
 
     fn collect_jump_candidates(
@@ -1589,37 +1578,6 @@ impl Vim {
             preserve_full_scale,
         }
     }
-
-    fn jump_label_block(
-        anchor: Anchor,
-        label: [char; 2],
-        accent: Hsla,
-        label_index: usize,
-        font: Font,
-        font_size: Pixels,
-        scale_factor: f32,
-        left_shift: Pixels,
-    ) -> BlockProperties<Anchor> {
-        let text: SharedString = label.iter().collect::<String>().into();
-        BlockProperties {
-            placement: BlockPlacement::Inline(anchor),
-            height: Some(0),
-            style: BlockStyle::Fixed,
-            render: Arc::new(move |_cx: &mut BlockContext| {
-                let scaled_font_size = (font_size * scale_factor).max(px(1.0));
-                div()
-                    .block_mouse_except_scroll()
-                    .relative()
-                    .left(-left_shift)
-                    .font(font.clone())
-                    .text_size(scaled_font_size)
-                    .text_color(accent)
-                    .child(text.clone())
-                    .into_any_element()
-            }),
-            priority: label_index,
-        }
-    }
 }
 
 #[derive(RegisterSetting)]
@@ -1762,8 +1720,7 @@ impl HiddenPrefixFitState {
 #[derive(Default)]
 struct HelixJumpUiData {
     labels: Vec<HelixJumpLabel>,
-    highlights: Vec<Range<Anchor>>,
-    blocks: Vec<BlockProperties<Anchor>>,
+    overlays: Vec<NavigationTargetOverlay>,
 }
 
 #[cfg(test)]
@@ -1771,19 +1728,19 @@ mod test {
     use std::fmt::Write;
 
     use editor::{HighlightKey, MultiBufferOffset};
-    use gpui::{KeyBinding, UpdateGlobal, VisualTestContext};
+    use gpui::{KeyBinding, UpdateGlobal, VisualTestContext, hsla};
     use indoc::indoc;
     use language::Point;
     use project::FakeFs;
     use search::{ProjectSearchView, project_search};
     use serde_json::json;
-    use settings::{Settings, SettingsStore};
+    use settings::{HelixSettingsContent, Settings, SettingsStore};
     use util::path;
     use workspace::{DeploySearch, MultiWorkspace};
 
-    use super::{HELIX_JUMP_LABEL_LIMIT, HelixSettings};
+    use super::{HELIX_JUMP_ACCENT, HELIX_JUMP_LABEL_LIMIT, HelixSettings};
     use crate::{
-        Vim, VimAddon,
+        HELIX_JUMP_OVERLAY_KEY, Vim, VimAddon,
         state::{Mode, Operator},
         test::VimTestContext,
     };
@@ -1846,20 +1803,19 @@ mod test {
     }
 
     fn active_helix_jump_overlay_counts(cx: &mut VimTestContext) -> (usize, usize) {
-        cx.update_editor(|editor, window, cx| {
+        let covered_text_range_count = cx.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
-            let highlight_count = snapshot
-                .text_highlight_ranges(HighlightKey::VimHelixJump)
+            snapshot
+                .text_highlight_ranges(HighlightKey::NavigationOverlay(HELIX_JUMP_OVERLAY_KEY))
                 .map(|ranges| ranges.as_ref().clone().1.len())
-                .unwrap_or_default();
-            let max_row = snapshot.max_point().row().0.saturating_add(1);
-            let block_count = snapshot
-                .blocks_in_range(
-                    editor::display_map::DisplayRow(0)..editor::display_map::DisplayRow(max_row),
-                )
-                .count();
-            (highlight_count, block_count)
-        })
+                .unwrap_or_default()
+        });
+        let label_count = match cx.active_operator() {
+            Some(Operator::HelixJump { labels, .. }) => labels.len(),
+            _ => 0,
+        };
+
+        (covered_text_range_count, label_count)
     }
 
     fn assert_helix_jump_cleared(cx: &mut VimTestContext, expected_overlay_counts: (usize, usize)) {
@@ -3572,6 +3528,63 @@ mod test {
                 ("ae".to_string(), "ggg".to_string()),
                 ("af".to_string(), "aaa".to_string()),
             ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_jump_uses_configured_label_accent(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        let accent = hsla(0.36, 0.76, 0.48, 1.0);
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.helix = Some(HelixSettingsContent {
+                        jump_label_accent: Some(accent),
+                    });
+                });
+            });
+        });
+        let configured_accent = cx.update(|_, cx| HelixSettings::get_global(cx).jump_label_accent);
+        assert_ne!(configured_accent, HELIX_JUMP_ACCENT);
+        cx.set_state("ˇalpha beta gamma", Mode::HelixNormal);
+
+        let label_colors = cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let display_snapshot = &snapshot.display_snapshot;
+            let buffer_snapshot = display_snapshot.buffer_snapshot();
+            let selections = editor.selections.all::<Point>(display_snapshot);
+            let skip_data = Vim::selection_skip_offsets(buffer_snapshot, &selections, false);
+            let cursor_offset = selections
+                .first()
+                .map(|selection| buffer_snapshot.point_to_offset(selection.head()))
+                .unwrap_or(MultiBufferOffset(0));
+            let style = editor.style(cx);
+            let font = style.text.font();
+            let font_size = style.text.font_size.to_pixels(window.rem_size());
+            let data = Vim::build_helix_jump_ui_data(
+                buffer_snapshot,
+                MultiBufferOffset(0),
+                buffer_snapshot.len(),
+                cursor_offset,
+                configured_accent,
+                &skip_data,
+                window.text_system(),
+                font,
+                font_size,
+            );
+
+            data.overlays
+                .into_iter()
+                .map(|overlay| overlay.label.text_color)
+                .collect::<Vec<_>>()
+        });
+
+        assert!(!label_colors.is_empty());
+        assert!(
+            label_colors
+                .into_iter()
+                .all(|color| color == configured_accent)
         );
     }
 

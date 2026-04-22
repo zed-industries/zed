@@ -157,6 +157,9 @@ pub struct SettingsContent {
     /// Default: false
     pub helix_mode: Option<bool>,
 
+    /// Settings related to Helix mode overlays.
+    pub helix: Option<HelixSettingsContent>,
+
     pub journal: Option<JournalSettingsContent>,
 
     /// A map of log scopes to the desired log level.
@@ -198,9 +201,6 @@ pub struct SettingsContent {
     ///
     /// Default: false
     pub vim_mode: Option<bool>,
-
-    /// Settings related to Helix mode overlays.
-    pub helix: Option<HelixSettingsContent>,
 
     // Settings related to calls in Zed
     pub calls: Option<CallSettingsContent>,

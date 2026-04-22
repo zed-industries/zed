@@ -130,8 +130,6 @@ pub enum BlockPlacement<T> {
     Below(T),
     /// Place the block next the given position.
     Near(T),
-    /// Place the block inline with the given position.
-    Inline(T),
     /// Replace the given range of positions with the block.
     Replace(RangeInclusive<T>),
 }
@@ -142,7 +140,6 @@ impl<T> BlockPlacement<T> {
             BlockPlacement::Above(position) => position,
             BlockPlacement::Below(position) => position,
             BlockPlacement::Near(position) => position,
-            BlockPlacement::Inline(position) => position,
             BlockPlacement::Replace(range) => range.start(),
         }
     }
@@ -152,7 +149,6 @@ impl<T> BlockPlacement<T> {
             BlockPlacement::Above(position) => position,
             BlockPlacement::Below(position) => position,
             BlockPlacement::Near(position) => position,
-            BlockPlacement::Inline(position) => position,
             BlockPlacement::Replace(range) => range.end(),
         }
     }
@@ -162,7 +158,6 @@ impl<T> BlockPlacement<T> {
             BlockPlacement::Above(position) => BlockPlacement::Above(position),
             BlockPlacement::Below(position) => BlockPlacement::Below(position),
             BlockPlacement::Near(position) => BlockPlacement::Near(position),
-            BlockPlacement::Inline(position) => BlockPlacement::Inline(position),
             BlockPlacement::Replace(range) => BlockPlacement::Replace(range.start()..=range.end()),
         }
     }
@@ -172,7 +167,6 @@ impl<T> BlockPlacement<T> {
             BlockPlacement::Above(position) => BlockPlacement::Above(f(position)),
             BlockPlacement::Below(position) => BlockPlacement::Below(f(position)),
             BlockPlacement::Near(position) => BlockPlacement::Near(f(position)),
-            BlockPlacement::Inline(position) => BlockPlacement::Inline(f(position)),
             BlockPlacement::Replace(range) => {
                 let (start, end) = range.into_inner();
                 BlockPlacement::Replace(f(start)..=f(end))
@@ -184,9 +178,8 @@ impl<T> BlockPlacement<T> {
         match self {
             BlockPlacement::Replace(_) => 0,
             BlockPlacement::Above(_) => 1,
-            BlockPlacement::Inline(_) => 2,
-            BlockPlacement::Near(_) => 3,
-            BlockPlacement::Below(_) => 4,
+            BlockPlacement::Near(_) => 2,
+            BlockPlacement::Below(_) => 3,
         }
     }
 }
@@ -203,41 +196,35 @@ impl BlockPlacement<Anchor> {
     #[ztracing::instrument(skip_all)]
     fn to_wrap_row(&self, wrap_snapshot: &WrapSnapshot) -> Option<BlockPlacement<WrapRow>> {
         let buffer_snapshot = wrap_snapshot.buffer_snapshot();
-        let wrap_row_for_point =
-            |point: Point| wrap_snapshot.make_wrap_point(point, Bias::Left).row();
-        let wrap_row_for_exact_position =
-            |position: &Anchor| wrap_row_for_point(position.to_point(buffer_snapshot));
-        let wrap_row_for_line_start = |position: &Anchor| {
-            let mut point = position.to_point(buffer_snapshot);
-            point.column = 0;
-            wrap_row_for_point(point)
-        };
-        let wrap_row_for_line_end = |position: &Anchor| {
-            let mut point = position.to_point(buffer_snapshot);
-            point.column = buffer_snapshot.line_len(MultiBufferRow(point.row));
-            wrap_row_for_point(point)
-        };
         match self {
             BlockPlacement::Above(position) => {
-                Some(BlockPlacement::Above(wrap_row_for_line_start(position)))
+                let mut position = position.to_point(buffer_snapshot);
+                position.column = 0;
+                let wrap_row = wrap_snapshot.make_wrap_point(position, Bias::Left).row();
+                Some(BlockPlacement::Above(wrap_row))
             }
             BlockPlacement::Near(position) => {
-                Some(BlockPlacement::Near(wrap_row_for_line_end(position)))
+                let mut position = position.to_point(buffer_snapshot);
+                position.column = buffer_snapshot.line_len(MultiBufferRow(position.row));
+                let wrap_row = wrap_snapshot.make_wrap_point(position, Bias::Left).row();
+                Some(BlockPlacement::Near(wrap_row))
             }
-            BlockPlacement::Inline(position) => Some(BlockPlacement::Inline(
-                wrap_row_for_exact_position(position),
-            )),
             BlockPlacement::Below(position) => {
-                Some(BlockPlacement::Below(wrap_row_for_line_end(position)))
+                let mut position = position.to_point(buffer_snapshot);
+                position.column = buffer_snapshot.line_len(MultiBufferRow(position.row));
+                let wrap_row = wrap_snapshot.make_wrap_point(position, Bias::Left).row();
+                Some(BlockPlacement::Below(wrap_row))
             }
             BlockPlacement::Replace(range) => {
-                let start = range.start().to_point(buffer_snapshot);
-                let end = range.end().to_point(buffer_snapshot);
+                let mut start = range.start().to_point(buffer_snapshot);
+                let mut end = range.end().to_point(buffer_snapshot);
                 if start == end {
                     None
                 } else {
-                    let start_wrap_row = wrap_row_for_line_start(range.start());
-                    let end_wrap_row = wrap_row_for_line_end(range.end());
+                    start.column = 0;
+                    let start_wrap_row = wrap_snapshot.make_wrap_point(start, Bias::Left).row();
+                    end.column = buffer_snapshot.line_len(MultiBufferRow(end.row));
+                    let end_wrap_row = wrap_snapshot.make_wrap_point(end, Bias::Left).row();
                     Some(BlockPlacement::Replace(start_wrap_row..=end_wrap_row))
                 }
             }
@@ -428,12 +415,9 @@ impl Block {
         }
     }
 
-    pub fn is_near_or_inline(&self) -> bool {
+    pub fn place_near(&self) -> bool {
         match self {
-            Block::Custom(block) => matches!(
-                block.placement,
-                BlockPlacement::Near(_) | BlockPlacement::Inline(_)
-            ),
+            Block::Custom(block) => matches!(block.placement, BlockPlacement::Near(_)),
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => false,
             Block::BufferHeader { .. } => false,
@@ -445,7 +429,7 @@ impl Block {
         match self {
             Block::Custom(block) => matches!(
                 block.placement,
-                BlockPlacement::Below(_) | BlockPlacement::Near(_) | BlockPlacement::Inline(_)
+                BlockPlacement::Below(_) | BlockPlacement::Near(_)
             ),
             Block::FoldedBuffer { .. } => false,
             Block::ExcerptBoundary { .. } => false,
@@ -1116,9 +1100,7 @@ impl BlockMap {
                         rows_before_block = delta;
                         just_processed_folded_buffer = false;
                     }
-                    &BlockPlacement::Inline(position)
-                    | &BlockPlacement::Near(position)
-                    | &BlockPlacement::Below(position) => {
+                    &BlockPlacement::Near(position) | &BlockPlacement::Below(position) => {
                         if just_processed_folded_buffer {
                             continue;
                         }
@@ -1738,9 +1720,7 @@ pub(crate) fn balancing_block(
             }
         }
         // Not supported for balancing
-        BlockPlacement::Inline(_) | BlockPlacement::Near(_) | BlockPlacement::Replace(_) => {
-            return None;
-        }
+        BlockPlacement::Near(_) | BlockPlacement::Replace(_) => return None,
     };
     Some(BlockProperties {
         placement: their_placement,
@@ -4641,81 +4621,6 @@ mod tests {
 
         let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default(), None);
         assert_eq!(blocks_snapshot.text(), "");
-    }
-
-    #[gpui::test]
-    fn test_zero_height_fixed_inline_blocks_use_anchor_wrap_row(cx: &mut gpui::TestAppContext) {
-        cx.update(init_test);
-
-        let text = format!("{}\n", "a".repeat(200));
-        let buffer = cx.update(|cx| {
-            MultiBuffer::build_multi(
-                [(text.as_str(), vec![Point::new(0, 0)..Point::new(1, 0)])],
-                cx,
-            )
-        });
-        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
-
-        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
-        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-
-        let wrap_snapshot = cx.update(|cx| {
-            let font = test_font();
-            let font_size = px(14.0);
-            let font_id = cx.text_system().resolve_font(&font);
-            let mut wrap_width = px(0.0);
-            for _ in 0..10 {
-                wrap_width += cx
-                    .text_system()
-                    .advance(font_id, font_size, 'a')
-                    .unwrap()
-                    .width;
-            }
-
-            WrapMap::new(tab_snapshot, font, font_size, Some(wrap_width), cx).1
-        });
-        let mut block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
-
-        let anchor = buffer_snapshot.anchor_after(Point::new(0, 0));
-        let anchor_point = anchor.to_point(&buffer_snapshot);
-        let anchor_wrap_row = wrap_snapshot
-            .make_wrap_point(anchor_point, anchor.bias())
-            .row();
-
-        let line_end_column = buffer_snapshot.line_len(MultiBufferRow(0));
-        let line_end_point = Point::new(0, line_end_column);
-        let line_end_wrap_row = wrap_snapshot
-            .make_wrap_point(line_end_point, Bias::Left)
-            .row();
-        assert!(
-            line_end_wrap_row > anchor_wrap_row,
-            "expected test line to wrap"
-        );
-
-        let base_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default(), None);
-        let expected_block_row = base_snapshot
-            .to_block_point(WrapPoint::new(anchor_wrap_row + WrapRow(1), 0))
-            .row();
-
-        let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
-        let block_id = writer.insert(vec![BlockProperties {
-            style: BlockStyle::Fixed,
-            placement: BlockPlacement::Inline(anchor),
-            height: Some(0),
-            render: Arc::new(|_| div().into_any()),
-            priority: 0,
-        }])[0];
-
-        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default(), None);
-        let actual_block_row = blocks_snapshot
-            .blocks_in_range(BlockRow(0)..BlockRow(10_000))
-            .find_map(|(row, block)| match block.id() {
-                BlockId::Custom(id) if id == block_id => Some(row),
-                _ => None,
-            });
-
-        assert_eq!(actual_block_row, Some(expected_block_row));
     }
 
     #[gpui::test]

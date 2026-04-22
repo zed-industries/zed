@@ -20,18 +20,17 @@ mod surrounds;
 mod visual;
 
 use crate::normal::paste::Paste as VimPaste;
-use collections::{HashMap, HashSet};
-use editor::display_map::{BlockProperties, CustomBlockId};
+use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, HighlightKey,
-    MultiBufferOffset, SelectionEffects,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
+    NavigationOverlayKey, NavigationTargetOverlay, SelectionEffects,
     actions::Paste,
     display_map::ToDisplayPoint,
     movement::{self, FindRange},
 };
 use gpui::{
-    Action, App, AppContext, Axis, Context, Entity, EventEmitter, Focusable, HighlightStyle,
-    KeyContext, KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window, actions,
+    Action, App, AppContext, Axis, Context, Entity, EventEmitter, Focusable, KeyContext,
+    KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -62,6 +61,11 @@ use crate::{
     normal::{GoToPreviousTab, GoToTab},
     state::ReplayableAction,
 };
+
+enum HelixJumpNavigationOverlay {}
+
+pub(crate) const HELIX_JUMP_OVERLAY_KEY: NavigationOverlayKey =
+    NavigationOverlayKey::unique::<HelixJumpNavigationOverlay>();
 
 /// Number is used to manage vim's count. Pushing a digit
 /// multiplies the current value by 10 and adds the digit.
@@ -530,8 +534,6 @@ pub(crate) struct Vim {
     selected_register: Option<char>,
     pub search: SearchState,
 
-    helix_jump_ui: Option<HashSet<CustomBlockId>>,
-
     editor: WeakEntity<Editor>,
 
     last_command: Option<String>,
@@ -595,8 +597,6 @@ impl Vim {
 
             last_command: None,
             running_command: None,
-
-            helix_jump_ui: None,
 
             editor: editor.downgrade(),
             _subscriptions: vec![
@@ -1751,45 +1751,22 @@ impl Vim {
     }
 
     fn clear_helix_jump_ui(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let block_ids = self.helix_jump_ui.take();
         self.update_editor(cx, move |_, editor, cx| {
-            editor.clear_highlights(HighlightKey::VimHelixJump, cx);
-            if let Some(block_ids) = block_ids {
-                editor.remove_blocks(block_ids, None, cx);
-            }
+            editor.clear_navigation_overlays(HELIX_JUMP_OVERLAY_KEY, cx);
         });
     }
 
     fn apply_helix_jump_ui(
         &mut self,
-        highlight_ranges: Vec<Range<Anchor>>,
-        blocks: Vec<BlockProperties<Anchor>>,
+        overlays: Vec<NavigationTargetOverlay>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         self.clear_helix_jump_ui(window, cx);
-        let Some(block_ids) = self.update_editor(cx, |_, editor, cx| {
-            if !highlight_ranges.is_empty() {
-                editor.highlight_text(
-                    HighlightKey::VimHelixJump,
-                    highlight_ranges,
-                    HighlightStyle {
-                        fade_out: Some(1.0),
-                        ..Default::default()
-                    },
-                    cx,
-                );
-            }
-            if blocks.is_empty() {
-                Vec::new()
-            } else {
-                editor.insert_blocks(blocks, None, cx)
-            }
-        }) else {
-            return false;
-        };
-        self.helix_jump_ui = (!block_ids.is_empty()).then(|| block_ids.into_iter().collect());
-        true
+        self.update_editor(cx, |_, editor, cx| {
+            editor.set_navigation_overlays(HELIX_JUMP_OVERLAY_KEY, overlays, cx);
+        })
+        .is_some()
     }
 
     fn handle_helix_jump_input(
