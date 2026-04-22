@@ -276,6 +276,18 @@ pub struct SemanticTokenRule {
     pub font_style: Option<SemanticTokenFontStyle>,
 }
 
+impl SemanticTokenRule {
+    pub fn no_style_defined(&self) -> bool {
+        self.style.is_empty()
+            && self.foreground_color.is_none()
+            && self.background_color.is_none()
+            && self.underline.is_none()
+            && self.strikethrough.is_none()
+            && self.font_weight.is_none()
+            && self.font_style.is_none()
+    }
+}
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 #[serde(untagged)]
 pub enum SemanticTokenColorOverride {

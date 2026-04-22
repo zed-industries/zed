@@ -174,6 +174,7 @@ message ShareProject {
   reserved 3;
   bool is_ssh_project = 4;
   optional bool windows_paths = 5;
+  repeated string features = 6;
 }
 
 message ShareProjectResponse {
@@ -193,6 +194,7 @@ message JoinProject {
   uint64 project_id = 1;
   optional string committer_email = 2;
   optional string committer_name = 3;
+  repeated string features = 4;
 }
 
 message JoinProjectResponse {
@@ -204,6 +206,7 @@ message JoinProjectResponse {
   repeated string language_server_capabilities = 8;
   ChannelRole role = 6;
   bool windows_paths = 9;
+  repeated string features = 10;
   reserved 7;
 }
 
@@ -222,6 +225,7 @@ message UpdateWorktree {
   uint64 scan_id = 8;
   bool is_last_update = 9;
   string abs_path = 10;
+  optional string root_repo_common_dir = 11;
 }
 
 // deprecated
@@ -359,6 +363,8 @@ message UpdateView {
     reserved 7;
     double scroll_x = 8;
     double scroll_y = 9;
+    repeated PathExcerpts updated_paths = 10;
+    repeated uint64 deleted_buffers = 11;
   }
 }
 
@@ -385,6 +391,7 @@ message View {
     reserved 8;
     double scroll_x = 9;
     double scroll_y = 10;
+    repeated PathExcerpts path_excerpts = 11;
   }
 
   message ChannelView {
@@ -405,6 +412,19 @@ message Excerpt {
   Anchor context_end = 4;
   Anchor primary_start = 5;
   Anchor primary_end = 6;
+}
+
+message ExcerptRange {
+  Anchor context_start = 1;
+  Anchor context_end = 2;
+  Anchor primary_start = 3;
+  Anchor primary_end = 4;
+}
+
+message PathExcerpts {
+  PathKey path_key = 1;
+  uint64 buffer_id = 2;
+  repeated ExcerptRange ranges = 3;
 }
 
 message Contact {

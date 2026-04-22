@@ -1226,10 +1226,8 @@ where
                     let mut display = format!("{err:#}");
                     if !display.ends_with('\n') {
                         display.push('.');
-                        display.push(' ')
                     }
-                    let detail =
-                        f(err, window, cx).unwrap_or_else(|| format!("{display}Please try again."));
+                    let detail = f(err, window, cx).unwrap_or(display);
                     window.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"], cx)
                 }) {
                     prompt.await.ok();

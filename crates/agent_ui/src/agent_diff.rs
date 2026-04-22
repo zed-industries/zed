@@ -98,6 +98,7 @@ impl AgentDiffPane {
             editor
                 .set_render_diff_hunk_controls(diff_hunk_controls(&thread, workspace.clone()), cx);
             editor.register_addon(AgentDiffAddon);
+            editor.disable_mouse_wheel_zoom();
             editor
         });
 
@@ -138,11 +139,12 @@ impl AgentDiffPane {
             path_a.cmp(&path_b)
         });
 
-        let mut paths_to_delete = self
+        let mut buffers_to_delete = self
             .multibuffer
             .read(cx)
-            .paths()
-            .cloned()
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
             .collect::<HashSet<_>>();
 
         for (buffer, diff_handle) in sorted_buffers {
@@ -151,7 +153,7 @@ impl AgentDiffPane {
             }
 
             let path_key = PathKey::for_buffer(&buffer, cx);
-            paths_to_delete.remove(&path_key);
+            buffers_to_delete.remove(&buffer.read(cx).remote_id());
 
             let snapshot = buffer.read(cx).snapshot();
 
@@ -168,7 +170,7 @@ impl AgentDiffPane {
             let (was_empty, is_excerpt_newly_added) =
                 self.multibuffer.update(cx, |multibuffer, cx| {
                     let was_empty = multibuffer.is_empty();
-                    let (_, is_excerpt_newly_added) = multibuffer.set_excerpts_for_path(
+                    let is_excerpt_newly_added = multibuffer.update_excerpts_for_path(
                         path_key.clone(),
                         buffer.clone(),
                         diff_hunk_ranges,
@@ -183,13 +185,13 @@ impl AgentDiffPane {
                 if was_empty {
                     let first_hunk = editor
                         .diff_hunks_in_ranges(
-                            &[editor::Anchor::min()..editor::Anchor::max()],
+                            &[editor::Anchor::Min..editor::Anchor::Max],
                             &self.multibuffer.read(cx).read(cx),
                         )
                         .next();
 
                     if let Some(first_hunk) = first_hunk {
-                        let first_hunk_start = first_hunk.multi_buffer_range().start;
+                        let first_hunk_start = first_hunk.multi_buffer_range.start;
                         editor.change_selections(Default::default(), window, cx, |selections| {
                             selections.select_anchor_ranges([first_hunk_start..first_hunk_start]);
                         })
@@ -208,8 +210,8 @@ impl AgentDiffPane {
         }
 
         self.multibuffer.update(cx, |multibuffer, cx| {
-            for path in paths_to_delete {
-                multibuffer.remove_excerpts_for_path(path, cx);
+            for buffer_id in buffers_to_delete {
+                multibuffer.remove_excerpts_for_buffer(buffer_id, cx);
             }
         });
 
@@ -239,13 +241,13 @@ impl AgentDiffPane {
             self.editor.update(cx, |editor, cx| {
                 let first_hunk = editor
                     .diff_hunks_in_ranges(
-                        &[position..editor::Anchor::max()],
+                        &[position..editor::Anchor::Max],
                         &self.multibuffer.read(cx).read(cx),
                     )
                     .next();
 
                 if let Some(first_hunk) = first_hunk {
-                    let first_hunk_start = first_hunk.multi_buffer_range().start;
+                    let first_hunk_start = first_hunk.multi_buffer_range.start;
                     editor.change_selections(Default::default(), window, cx, |selections| {
                         selections.select_anchor_ranges([first_hunk_start..first_hunk_start]);
                     })
@@ -282,7 +284,7 @@ impl AgentDiffPane {
                 editor,
                 &snapshot,
                 &self.thread,
-                vec![editor::Anchor::min()..editor::Anchor::max()],
+                vec![editor::Anchor::Min..editor::Anchor::Max],
                 self.workspace.clone(),
                 window,
                 cx,
@@ -451,20 +453,20 @@ fn update_editor_selection(
         diff_hunks
             .last()
             .and_then(|last_kept_hunk| {
-                let last_kept_hunk_end = last_kept_hunk.multi_buffer_range().end;
+                let last_kept_hunk_end = last_kept_hunk.multi_buffer_range.end;
                 editor
                     .diff_hunks_in_ranges(
-                        &[last_kept_hunk_end..editor::Anchor::max()],
+                        &[last_kept_hunk_end..editor::Anchor::Max],
                         buffer_snapshot,
                     )
                     .nth(1)
             })
             .or_else(|| {
                 let first_kept_hunk = diff_hunks.first()?;
-                let first_kept_hunk_start = first_kept_hunk.multi_buffer_range().start;
+                let first_kept_hunk_start = first_kept_hunk.multi_buffer_range.start;
                 editor
                     .diff_hunks_in_ranges(
-                        &[editor::Anchor::min()..first_kept_hunk_start],
+                        &[editor::Anchor::Min..first_kept_hunk_start],
                         buffer_snapshot,
                     )
                     .next()
@@ -473,7 +475,7 @@ fn update_editor_selection(
 
     if let Some(target_hunk) = target_hunk {
         editor.change_selections(Default::default(), window, cx, |selections| {
-            let next_hunk_start = target_hunk.multi_buffer_range().start;
+            let next_hunk_start = target_hunk.multi_buffer_range.start;
             selections.select_anchor_ranges([next_hunk_start..next_hunk_start]);
         })
     }
@@ -1416,7 +1418,8 @@ impl AgentDiff {
             | AcpThreadEvent::Retry(_)
             | AcpThreadEvent::ModeUpdated(_)
             | AcpThreadEvent::ConfigOptionsUpdated(_)
-            | AcpThreadEvent::WorkingDirectoriesUpdated => {}
+            | AcpThreadEvent::WorkingDirectoriesUpdated
+            | AcpThreadEvent::PromptUpdated => {}
         }
     }
 
@@ -1567,7 +1570,7 @@ impl AgentDiff {
                     editor.update(cx, |editor, cx| {
                         let snapshot = multibuffer.read(cx).snapshot(cx);
                         if let Some(first_hunk) = snapshot.diff_hunks().next() {
-                            let first_hunk_start = first_hunk.multi_buffer_range().start;
+                            let first_hunk_start = first_hunk.multi_buffer_range.start;
 
                             editor.change_selections(
                                 SelectionEffects::scroll(Autoscroll::center()),
@@ -1648,7 +1651,7 @@ impl AgentDiff {
                 editor,
                 &snapshot,
                 thread,
-                vec![editor::Anchor::min()..editor::Anchor::max()],
+                vec![editor::Anchor::Min..editor::Anchor::Max],
                 window,
                 cx,
             );
@@ -1669,7 +1672,7 @@ impl AgentDiff {
                 editor,
                 &snapshot,
                 thread,
-                vec![editor::Anchor::min()..editor::Anchor::max()],
+                vec![editor::Anchor::Min..editor::Anchor::Max],
                 workspace.clone(),
                 window,
                 cx,
@@ -1808,7 +1811,7 @@ mod tests {
             cx.set_global(settings_store);
             prompt_store::init(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
-            language_model::init_settings(cx);
+            language_model::init(cx);
         });
 
         let fs = FakeFs::new(cx.executor());
@@ -1965,7 +1968,7 @@ mod tests {
             cx.set_global(settings_store);
             prompt_store::init(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
-            language_model::init_settings(cx);
+            language_model::init(cx);
             workspace::register_project_item::<Editor>(cx);
         });
 
