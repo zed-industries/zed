@@ -1022,7 +1022,7 @@ impl AgentConnection for AcpConnection {
         let pending_ref_count = {
             let mut pending_sessions = self.pending_sessions.borrow_mut();
             pending_sessions.get_mut(session_id).map(|pending| {
-                pending.ref_count -= 1;
+                pending.ref_count = pending.ref_count.saturating_sub(1);
                 pending.ref_count
             })
         };
@@ -1048,7 +1048,7 @@ impl AgentConnection for AcpConnection {
             return Task::ready(Ok(()));
         };
 
-        session.ref_count -= 1;
+        session.ref_count = session.ref_count.saturating_sub(1);
         if session.ref_count > 0 {
             return Task::ready(Ok(()));
         }
