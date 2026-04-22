@@ -11143,9 +11143,7 @@ impl Element for EditorElement {
                             bounds: Bounds {
                                 origin: point(
                                     bounds.origin.x,
-                                    bounds.origin.y
-                                        + last.offset
-                                        + layout.position_map.line_height,
+                                    bounds.origin.y + last.offset + layout.position_map.line_height,
                                 ),
                                 size: size(
                                     bounds.size.width,
