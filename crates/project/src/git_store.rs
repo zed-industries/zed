@@ -8213,20 +8213,30 @@ mod tests {
                 .expect("should have a repository")
         });
 
+        cx.update(|cx| {
+            cx.observe(&repository, |repo, cx| {
+                verify_invariants(repo.read(cx))
+                    .context("Invariant weren't held after a cx.notify")
+                    .unwrap();
+            })
+        })
+        .detach();
+
         for (step, commit_index) in commit_indexes.into_iter().enumerate() {
             let sha = commit_shas[commit_index % commit_shas.len()];
             let await_result = await_results[step % await_results.len()];
 
             repository.update(cx, |repository, cx| {
                 repository.fetch_commit_data(sha, await_result, cx);
-                let result = verify_invariants(repository);
-                if let Err(error) = result {
-                    panic!(
-                        "commit data invariant violation after step {} for sha {}: {error:#}",
-                        step + 1,
-                        sha,
-                    );
-                }
+                verify_invariants(repository)
+                    .with_context(|| {
+                        format!(
+                            "commit data invariant violation after step {} for sha {}",
+                            step + 1,
+                            sha,
+                        )
+                    })
+                    .unwrap();
             });
 
             // todo! wait until park, and the repository should have random shas we want to fetcg
