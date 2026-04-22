@@ -12,7 +12,7 @@ use futures::{
     stream::{self, BoxStream},
 };
 use google_ai::GoogleModelMode;
-use gpui::{AsyncApp, Context, Task};
+use gpui::{AppContext, AsyncApp, Context, Task};
 use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{
     AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
