@@ -2598,7 +2598,10 @@ async fn test_handle_start_debugging_request_does_not_steal_editor_focus(
 
     let buffer = project
         .update(cx, |project, cx| {
-            let worktree = project.find_worktree(Path::new(path!("/project")), cx).unwrap().0;
+            let worktree = project
+                .find_worktree(Path::new(path!("/project")), cx)
+                .unwrap()
+                .0;
             project.open_buffer((worktree.read(cx).id(), rel_path("main.rs")), cx)
         })
         .await
@@ -2614,7 +2617,6 @@ async fn test_handle_start_debugging_request_does_not_steal_editor_focus(
         )
     });
 
-    
     editor.update_in(cx, |editor, window, cx| {
         window.focus(&editor.focus_handle(cx), cx);
         assert!(editor.is_focused(window));
