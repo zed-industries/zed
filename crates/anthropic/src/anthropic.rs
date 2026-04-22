@@ -768,10 +768,6 @@ pub enum Thinking {
         budget_tokens: Option<u32>,
     },
     Adaptive {
-        /// Controls visibility of thinking content in the response.
-        /// Starting with Claude Opus 4.7, thinking content is omitted by
-        /// default; setting this to `Summarized` restores visible summaries
-        /// that downstream UI can stream to users.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         display: Option<AdaptiveThinkingDisplay>,
     },

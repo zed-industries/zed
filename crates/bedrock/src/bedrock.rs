@@ -58,8 +58,6 @@ pub async fn stream_completion(
             additional_fields.insert("thinking".to_string(), Document::from(thinking_config));
         }
         Some(Thinking::Adaptive { effort: _ }) => {
-            // Claude Opus 4.7 omits thinking content by default; request
-            // summarized thinking so progress still streams to users.
             let thinking_config = HashMap::from([
                 ("type".to_string(), Document::String("adaptive".to_string())),
                 (
