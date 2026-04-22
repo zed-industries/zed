@@ -26,7 +26,7 @@ use futures::{
         oneshot::{self, Canceled},
     },
     future::{self, BoxFuture, Shared},
-    stream::FuturesOrdered,
+    stream::{FuturesOrdered, FuturesUnordered},
 };
 use git::{
     BuildPermalinkParams, GitHostingProviderRegistry, Oid, RunHook,
@@ -321,6 +321,12 @@ enum GraphCommitHandlerState {
     Open(GraphCommitDataHandler),
     /// The handler closed because it didn't receive any requests in the last 10s
     /// or hasn't been open before
+    Closed,
+}
+
+enum NextGraphCommitDataRequest {
+    Request(BoxFuture<'static, Result<proto::GetGraphCommitDataResponse>>),
+    Idle,
     Closed,
 }
 
@@ -5243,63 +5249,144 @@ impl Repository {
         result_tx: smol::channel::Sender<(Oid, GraphCommitData)>,
         background_executor: BackgroundExecutor,
     ) {
+        let mut response_futures = FuturesUnordered::<
+            BoxFuture<'static, Result<proto::GetGraphCommitDataResponse>>,
+        >::new();
+        let mut accept_requests = true;
+        let mut next_request = Self::get_next_request(
+            project_id,
+            client.clone(),
+            repository_id,
+            &request_rx,
+            &background_executor,
+        )
+        .boxed()
+        .fuse();
+
         loop {
-            let mut queued_shas = Vec::with_capacity(64);
-
-            loop {
-                if queued_shas.len() >= 64 {
-                    break;
-                }
-
-                let timeout = background_executor.timer(std::time::Duration::from_millis(5));
-
-                futures::select_biased! {
-                    sha = futures::FutureExt::fuse(request_rx.recv()) => {
-                        let Ok(sha) = sha else {
-                            break;
-                        };
-
-                        queued_shas.push(sha);
-
-                    }
-                    _ = futures::FutureExt::fuse(timeout) => {
-                        break;
-                    }
-                }
-            }
-
-            if queued_shas.is_empty() {
+            if !accept_requests && response_futures.is_empty() {
                 break;
             }
 
-            let result = client
-                .request(proto::GetGraphCommitData {
-                    project_id: project_id.to_proto(),
-                    repository_id: repository_id.to_proto(),
-                    shas: queued_shas.into_iter().map(|oid| oid.to_string()).collect(),
-                })
-                .await;
-
-            if let Ok(commit_data) = result {
-                for commit in commit_data.commits {
-                    let Ok(commit_data) = graph_commit_data_from_proto(commit) else {
-                        continue;
-                    };
-
-                    if result_tx
-                        .send((commit_data.sha, commit_data))
-                        .await
-                        .is_err()
-                    {
-                        return;
+            if response_futures.is_empty() {
+                match (&mut next_request).await {
+                    NextGraphCommitDataRequest::Request(request) => {
+                        response_futures.push(request);
+                        next_request = Self::get_next_request(
+                            project_id,
+                            client.clone(),
+                            repository_id,
+                            &request_rx,
+                            &background_executor,
+                        )
+                        .boxed()
+                        .fuse();
                     }
+                    NextGraphCommitDataRequest::Idle => {}
+                    NextGraphCommitDataRequest::Closed => break,
                 }
             }
 
-            background_executor.timer(Duration::from_millis(2)).await;
+            let next_response = response_futures.next().fuse();
+            futures::pin_mut!(next_response);
+
+            futures::select_biased! {
+                request = next_request => {
+                    match request {
+                        NextGraphCommitDataRequest::Request(request) => {
+                            response_futures.push(request);
+                        }
+                        NextGraphCommitDataRequest::Idle => {}
+                        NextGraphCommitDataRequest::Closed => {
+                            accept_requests = false;
+                        }
+                    }
+
+                    if accept_requests {
+                        next_request = Self::get_next_request(
+                            project_id,
+                            client.clone(),
+                            repository_id,
+                            &request_rx,
+                            &background_executor,
+                        )
+                        .boxed()
+                        .fuse();
+                    }
+                }
+                result = next_response => {
+                    let Some(result) = result else {
+                        continue;
+                    };
+
+                    if let Ok(commit_data) = result {
+                        for commit in commit_data.commits {
+                            let Ok(commit_data) = graph_commit_data_from_proto(commit) else {
+                                continue;
+                            };
+
+                            if result_tx
+                                .send((commit_data.sha, commit_data))
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         drop(result_tx);
+    }
+
+    async fn get_next_request(
+        project_id: ProjectId,
+        client: AnyProtoClient,
+        repository_id: RepositoryId,
+        request_rx: &smol::channel::Receiver<Oid>,
+        background_executor: &BackgroundExecutor,
+    ) -> NextGraphCommitDataRequest {
+        let mut queued_shas = Vec::with_capacity(64);
+
+        loop {
+            if queued_shas.len() >= 64 {
+                break;
+            }
+
+            let timeout = background_executor.timer(Duration::from_millis(5));
+
+            futures::select_biased! {
+                sha = futures::FutureExt::fuse(request_rx.recv()) => {
+                    let Ok(sha) = sha else {
+                        break;
+                    };
+
+                    queued_shas.push(sha);
+
+                }
+                _ = futures::FutureExt::fuse(timeout) => {
+                    break;
+                }
+            }
+        }
+
+        if queued_shas.is_empty() && request_rx.is_closed() {
+            NextGraphCommitDataRequest::Closed
+        } else if queued_shas.is_empty() {
+            NextGraphCommitDataRequest::Idle
+        } else {
+            NextGraphCommitDataRequest::Request(
+                client
+                    .request(proto::GetGraphCommitData {
+                        project_id: project_id.to_proto(),
+                        repository_id: repository_id.to_proto(),
+                        shas: queued_shas.into_iter().map(|oid| oid.to_string()).collect(),
+                    })
+                    .boxed(),
+            )
+        }
     }
 
     fn buffer_store(&self, cx: &App) -> Option<Entity<BufferStore>> {
