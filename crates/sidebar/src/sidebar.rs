@@ -45,8 +45,8 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, GradientFade, HighlightedLabel,
-    KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, ThreadItemWorktreeInfo, TintColor,
-    Tooltip, WithScrollbar, prelude::*, render_modifiers,
+    KeyBinding, PopoverMenu, PopoverMenuHandle, ScrollAxes, Scrollbars, Tab, ThreadItem,
+    ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar, prelude::*, render_modifiers,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -4124,7 +4124,7 @@ impl Sidebar {
         let draft_id = workspace.update(cx, |workspace, cx| {
             let panel = workspace.panel::<AgentPanel>(cx)?;
             let draft_id = panel.update(cx, |panel, cx| {
-                panel.activate_draft(true, window, cx);
+                panel.activate_draft(true, "sidebar", window, cx);
                 panel.active_thread_id(cx)
             });
             workspace.focus_panel::<AgentPanel>(window, cx);
@@ -5008,7 +5008,13 @@ impl Render for Sidebar {
                                         this.child(self.render_no_results(cx))
                                     })
                                     .when_some(sticky_header, |this, header| this.child(header))
-                                    .vertical_scrollbar_for(&self.list_state, window, cx),
+                                    .custom_scrollbars(
+                                        Scrollbars::new(ScrollAxes::Vertical)
+                                            .tracked_scroll_handle(&self.list_state)
+                                            .width_sm(),
+                                        window,
+                                        cx,
+                                    ),
                             )
                         }
                     }),
