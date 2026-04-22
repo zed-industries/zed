@@ -28396,6 +28396,9 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
 #[gpui::test(iterations = 10)]
 async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.code_lens = Some(settings::CodeLens::Menu);
+    });
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -28484,15 +28487,6 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
                     command: Some(lsp::Command {
                         title: "Code lens command".to_owned(),
                         command: "_the/command".to_owned(),
-                        arguments: None,
-                    }),
-                    data: None,
-                },
-                lsp::CodeLens {
-                    range: lsp::Range::default(),
-                    command: Some(lsp::Command {
-                        title: "Command not in capabilities".to_owned(),
-                        command: "not in capabilities".to_owned(),
                         arguments: None,
                     }),
                     data: None,

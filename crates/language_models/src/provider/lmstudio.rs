@@ -505,22 +505,6 @@ impl LanguageModel for LmStudioLanguageModel {
         self.model.max_token_count()
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        _cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        // Endpoint for this is coming soon. In the meantime, hacky estimation
-        let token_count = request
-            .messages
-            .iter()
-            .map(|msg| msg.string_contents().split_whitespace().count())
-            .sum::<usize>();
-
-        let estimated_tokens = (token_count as f64 * 0.75) as u64;
-        async move { Ok(estimated_tokens) }.boxed()
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,

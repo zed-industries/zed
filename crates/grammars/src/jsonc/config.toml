@@ -1,6 +1,6 @@
 name = "JSONC"
 grammar = "jsonc"
-path_suffixes = ["jsonc", "bun.lock", "devcontainer.json", "pyrightconfig.json", "tsconfig.json", "luaurc", "swcrc", "babelrc", "eslintrc", "stylelintrc", "jshintrc"]
+path_suffixes = ["jsonc", "bun.lock", "devcontainer.json", "pyrightconfig.json", "tsconfig.json", "renovate.json", "luaurc", "swcrc", "babelrc", "eslintrc", "stylelintrc", "jshintrc"]
 line_comments = ["// "]
 block_comment = { start = "/*", prefix = "", end = "*/", tab_size = 1 }
 autoclose_before = ",]}"

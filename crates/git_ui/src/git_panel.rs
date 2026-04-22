@@ -3109,6 +3109,14 @@ impl GitPanel {
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
                 Ok(None) => {
+                    this.update(cx, |this, cx| {
+                        this.show_error_toast(
+                            "push",
+                            anyhow::anyhow!("No remote available to push to. Add a remote to be able to publish changes."),
+                            cx,
+                        )
+                    })
+                    .ok();
                     return Ok(());
                 }
                 Err(e) => {
@@ -4961,6 +4969,7 @@ impl GitPanel {
     ) -> AnyElement {
         let id: ElementId = ElementId::Name(format!("header_{}", ix).into());
         let checkbox_id: ElementId = ElementId::Name(format!("header_{}_checkbox", ix).into());
+        let group_name: SharedString = format!("header_{}", ix).into();
         let toggle_state = self.header_state(header.header);
         let section = header.header;
         let weak = cx.weak_entity();
@@ -4968,6 +4977,7 @@ impl GitPanel {
 
         h_flex()
             .id(id)
+            .group(group_name.clone())
             .h(self.list_item_height())
             .w_full()
             .items_center()
@@ -5011,7 +5021,7 @@ impl GitPanel {
                             }),
                     )
                     .when(!show_checkbox_persistently, |this| {
-                        this.visible_on_hover("entries")
+                        this.visible_on_hover(group_name)
                     }),
             )
             .into_any_element()

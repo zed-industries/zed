@@ -134,7 +134,7 @@ use std::{
 
 use task_store::TaskStore;
 use terminals::Terminals;
-use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
+use text::{Anchor, BufferId, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
@@ -761,7 +761,7 @@ impl LspAction {
         }
     }
 
-    fn edit(&self) -> Option<&lsp::WorkspaceEdit> {
+    pub fn edit(&self) -> Option<&lsp::WorkspaceEdit> {
         match self {
             Self::Action(action) => action.edit.as_ref(),
             Self::Command(_) => None,
@@ -769,7 +769,7 @@ impl LspAction {
         }
     }
 
-    fn command(&self) -> Option<&lsp::Command> {
+    pub fn command(&self) -> Option<&lsp::Command> {
         match self {
             Self::Action(action) => action.command.as_ref(),
             Self::Command(command) => Some(command),
@@ -4382,45 +4382,6 @@ impl Project {
         let range = buffer.anchor_before(range.start)..buffer.anchor_before(range.end);
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.code_actions(buffer_handle, range, kinds, cx)
-        })
-    }
-
-    pub fn code_lens_actions<T: Clone + ToOffset>(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        range: Range<T>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<CodeAction>>>> {
-        let snapshot = buffer.read(cx).snapshot();
-        let range = range.to_point(&snapshot);
-        let range_start = snapshot.anchor_before(range.start);
-        let range_end = if range.start == range.end {
-            range_start
-        } else {
-            snapshot.anchor_after(range.end)
-        };
-        let range = range_start..range_end;
-        let code_lens_actions = self
-            .lsp_store
-            .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(buffer, cx));
-
-        cx.background_spawn(async move {
-            let mut code_lens_actions = code_lens_actions
-                .await
-                .map_err(|e| anyhow!("code lens fetch failed: {e:#}"))?;
-            if let Some(code_lens_actions) = &mut code_lens_actions {
-                code_lens_actions.retain(|code_lens_action| {
-                    range
-                        .start
-                        .cmp(&code_lens_action.range.start, &snapshot)
-                        .is_ge()
-                        && range
-                            .end
-                            .cmp(&code_lens_action.range.end, &snapshot)
-                            .is_le()
-                });
-            }
-            Ok(code_lens_actions)
         })
     }
 

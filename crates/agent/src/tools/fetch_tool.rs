@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::{borrow::Cow, cell::RefCell};
 
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, bail};
 use futures::{AsyncReadExt as _, FutureExt as _};
