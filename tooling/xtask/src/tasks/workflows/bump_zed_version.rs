@@ -94,11 +94,13 @@ fn resolve_versions(bump_type: &WorkflowInput) -> (steps::NamedJob, ResolvedOutp
                 fi
             done
 
-            echo "next_version=$next_version" >> "$GITHUB_OUTPUT"
-            echo "pr_branch=$pr_branch" >> "$GITHUB_OUTPUT"
-            echo "preview_branch=$preview_branch" >> "$GITHUB_OUTPUT"
-            echo "preview_tag=$preview_tag" >> "$GITHUB_OUTPUT"
-            echo "stable_branch=$stable_branch" >> "$GITHUB_OUTPUT"
+            {
+                echo "next_version=$next_version"
+                echo "pr_branch=$pr_branch"
+                echo "preview_branch=$preview_branch"
+                echo "preview_tag=$preview_tag"
+                echo "stable_branch=$stable_branch"
+            } >> "$GITHUB_OUTPUT"
 
             echo "Resolved: next=$next_version preview=$preview_branch($preview_tag) stable=$stable_branch pr=$pr_branch"
         "#})
