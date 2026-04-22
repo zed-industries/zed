@@ -6432,54 +6432,54 @@ async fn test_line_ending_user_settings_on_format(cx: &mut gpui::TestAppContext)
             "default",
             None,
             [
-                ("/dir/crlf_file.rs", LineEnding::Windows),
-                ("/dir/lf_file.rs", LineEnding::Unix),
-                ("/dir/no_newline.rs", LineEnding::default()),
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::default()),
             ],
         ),
         (
             "detect",
             Some(LineEndingSetting::Detect),
             [
-                ("/dir/crlf_file.rs", LineEnding::Windows),
-                ("/dir/lf_file.rs", LineEnding::Unix),
-                ("/dir/no_newline.rs", LineEnding::default()),
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::default()),
             ],
         ),
         (
             "prefer_lf",
             Some(LineEndingSetting::PreferLf),
             [
-                ("/dir/crlf_file.rs", LineEnding::Windows),
-                ("/dir/lf_file.rs", LineEnding::Unix),
-                ("/dir/no_newline.rs", LineEnding::Unix),
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::Unix),
             ],
         ),
         (
             "prefer_crlf",
             Some(LineEndingSetting::PreferCrlf),
             [
-                ("/dir/crlf_file.rs", LineEnding::Windows),
-                ("/dir/lf_file.rs", LineEnding::Unix),
-                ("/dir/no_newline.rs", LineEnding::Windows),
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::Windows),
             ],
         ),
         (
             "enforce_lf",
             Some(LineEndingSetting::EnforceLf),
             [
-                ("/dir/crlf_file.rs", LineEnding::Unix),
-                ("/dir/lf_file.rs", LineEnding::Unix),
-                ("/dir/no_newline.rs", LineEnding::Unix),
+                ("crlf_file.rs", LineEnding::Unix),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::Unix),
             ],
         ),
         (
             "enforce_crlf",
             Some(LineEndingSetting::EnforceCrlf),
             [
-                ("/dir/crlf_file.rs", LineEnding::Windows),
-                ("/dir/lf_file.rs", LineEnding::Windows),
-                ("/dir/no_newline.rs", LineEnding::Windows),
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Windows),
+                ("no_newline.rs", LineEnding::Windows),
             ],
         ),
     ];
@@ -6499,6 +6499,9 @@ async fn test_line_ending_user_settings_on_format(cx: &mut gpui::TestAppContext)
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
 
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -6509,7 +6512,14 @@ async fn test_line_ending_user_settings_on_format(cx: &mut gpui::TestAppContext)
         });
         cx.executor().run_until_parked();
 
-        assert_line_endings_after_format(cx, &project, case_name, &expected_line_endings).await;
+        assert_line_endings_after_format(
+            cx,
+            &project,
+            worktree_id,
+            case_name,
+            &expected_line_endings,
+        )
+        .await;
     }
 }
 
@@ -6521,24 +6531,24 @@ async fn test_line_ending_editorconfig_on_format_and_save(cx: &mut gpui::TestApp
         (
             "editorconfig lf",
             "lf",
-            "/dir/crlf_file.rs",
+            "crlf_file.rs",
             LineEnding::Windows,
             [
-                ("/dir/crlf_file.rs", LineEnding::Unix),
-                ("/dir/lf_file.rs", LineEnding::Unix),
-                ("/dir/no_newline.rs", LineEnding::Unix),
+                ("crlf_file.rs", LineEnding::Unix),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::Unix),
             ],
             "one\ntwo\nthree\n",
         ),
         (
             "editorconfig crlf",
             "crlf",
-            "/dir/lf_file.rs",
+            "lf_file.rs",
             LineEnding::Unix,
             [
-                ("/dir/crlf_file.rs", LineEnding::Windows),
-                ("/dir/lf_file.rs", LineEnding::Windows),
-                ("/dir/no_newline.rs", LineEnding::Windows),
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Windows),
+                ("no_newline.rs", LineEnding::Windows),
             ],
             "one\r\ntwo\r\nthree\r\n",
         ),
@@ -6570,23 +6580,36 @@ async fn test_line_ending_editorconfig_on_format_and_save(cx: &mut gpui::TestApp
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
         cx.executor().run_until_parked();
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
 
         let buffer = project
-            .update(cx, |project, cx| project.open_local_buffer(buffer_path, cx))
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path(buffer_path)), cx)
+            })
             .await
             .unwrap();
         buffer.update(cx, |buffer, _| {
             assert_eq!(buffer.line_ending(), initial_line_ending);
         });
 
-        assert_line_endings_after_format(cx, &project, case_name, &expected_line_endings).await;
+        assert_line_endings_after_format(
+            cx,
+            &project,
+            worktree_id,
+            case_name,
+            &expected_line_endings,
+        )
+        .await;
 
         project
             .update(cx, |project, cx| project.save_buffer(buffer, cx))
             .await
             .unwrap();
+        let saved_path = PathBuf::from(path!("/dir")).join(buffer_path);
         assert_eq!(
-            file_system.load(buffer_path.as_ref()).await.unwrap(),
+            file_system.load(&saved_path).await.unwrap(),
             expected_saved_contents,
         );
     }
@@ -6648,12 +6671,15 @@ async fn test_line_ending_initialization_for_new_buffers(cx: &mut gpui::TestAppC
 async fn assert_line_endings_after_format(
     cx: &mut gpui::TestAppContext,
     project: &Entity<Project>,
+    worktree_id: WorktreeId,
     case_name: &str,
     expected_line_endings: &[(&str, LineEnding)],
 ) {
     for (path, expected_line_ending) in expected_line_endings {
         let buffer = project
-            .update(cx, |p, cx| p.open_local_buffer(path, cx))
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path(path)), cx)
+            })
             .await
             .unwrap();
         let mut buffers = HashSet::default();
