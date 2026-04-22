@@ -157,6 +157,23 @@ impl Vim {
                     }
 
                     let (new_head, goal) = match motion {
+                        // EndOfLine positions after the last character, but in
+                        // helix visual mode we want the selection to end ON the
+                        // last character. Adjust left here so the subsequent
+                        // right-expansion (below) includes the last char without
+                        // spilling into the newline.
+                        Motion::EndOfLine { .. } => {
+                            let (point, goal) = motion
+                                .move_point(
+                                    map,
+                                    current_head,
+                                    selection.goal,
+                                    times,
+                                    &text_layout_details,
+                                )
+                                .unwrap_or((current_head, selection.goal));
+                            (movement::saturating_left(map, point), goal)
+                        }
                         // Going to next word start is special cased
                         // since Vim differs from Helix in that motion
                         // Vim: `w` goes to the first character of a word
@@ -1989,6 +2006,23 @@ mod test {
         cx.set_state("ˇhello", Mode::HelixNormal);
         cx.simulate_keystrokes("l v l l");
         cx.assert_state("h«ellˇ»o", Mode::HelixSelect);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // v g l d should delete to end of line without consuming the newline
+        cx.set_state("ˇThe quick brown\nfox jumps over", Mode::HelixNormal);
+        cx.simulate_keystrokes("v g l d");
+        cx.assert_state("ˇ\nfox jumps over", Mode::HelixNormal);
+
+        // same from the middle of a line — cursor lands on the last
+        // remaining character (the space) after delete
+        cx.set_state("The ˇquick brown\nfox jumps over", Mode::HelixNormal);
+        cx.simulate_keystrokes("v g l d");
+        cx.assert_state("Theˇ \nfox jumps over", Mode::HelixNormal);
     }
 
     #[gpui::test]

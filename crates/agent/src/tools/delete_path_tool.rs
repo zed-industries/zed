@@ -6,7 +6,7 @@ use crate::{
     AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_path,
 };
 use action_log::ActionLog;
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use futures::{FutureExt as _, SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, Entity, SharedString, Task};
@@ -55,8 +55,8 @@ impl AgentTool for DeletePathTool {
 
     const NAME: &'static str = "delete_path";
 
-    fn kind() -> ToolKind {
-        ToolKind::Delete
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Delete
     }
 
     fn initial_title(
@@ -228,7 +228,6 @@ impl AgentTool for DeletePathTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::TestAppContext;
     use project::{FakeFs, Project};

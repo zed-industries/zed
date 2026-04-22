@@ -81,6 +81,7 @@ pub enum ZetaFormat {
     V0131GitMergeMarkersPrefix,
     V0211Prefill,
     V0211SeedCoder,
+    V0331SeedCoderModelPy,
     v0226Hashline,
     V0304VariableEdit,
     V0304SeedNoEdits,
@@ -243,6 +244,7 @@ pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> Option
         | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0316SeedMultiRegions
         | ZetaFormat::V0317SeedMultiRegions
+        | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::V0318SeedMultiRegions => 4096,
         ZetaFormat::V0327SingleFile => 16384,
     };
@@ -258,7 +260,9 @@ pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] 
         ZetaFormat::V0120GitMergeMarkers => v0120_git_merge_markers::special_tokens(),
         ZetaFormat::V0131GitMergeMarkersPrefix => v0131_git_merge_markers_prefix::special_tokens(),
         ZetaFormat::V0211Prefill => v0211_prefill::special_tokens(),
-        ZetaFormat::V0211SeedCoder => seed_coder::special_tokens(),
+        ZetaFormat::V0211SeedCoder | ZetaFormat::V0331SeedCoderModelPy => {
+            seed_coder::special_tokens()
+        }
         ZetaFormat::v0226Hashline => hashline::special_tokens(),
         ZetaFormat::V0304VariableEdit => v0304_variable_edit::special_tokens(),
         ZetaFormat::V0304SeedNoEdits => seed_coder::special_tokens(),
@@ -336,6 +340,7 @@ pub fn token_limits_for_format(format: ZetaFormat) -> (usize, usize) {
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211Prefill
         | ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::v0226Hashline
         | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0316SeedMultiRegions
@@ -358,6 +363,7 @@ pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211Prefill
         | ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::V0304VariableEdit
         | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0304SeedNoEdits => &[],
@@ -386,6 +392,7 @@ pub fn excerpt_ranges_for_format(
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211Prefill
         | ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::v0226Hashline
         | ZetaFormat::V0304SeedNoEdits
         | ZetaFormat::V0306SeedMultiRegions
@@ -455,15 +462,15 @@ pub fn write_cursor_excerpt_section_for_format(
                 cursor_offset,
             )
         }
-        ZetaFormat::V0211SeedCoder | ZetaFormat::V0304SeedNoEdits => {
-            seed_coder::write_cursor_excerpt_section(
-                prompt,
-                path,
-                context,
-                editable_range,
-                cursor_offset,
-            )
-        }
+        ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0331SeedCoderModelPy
+        | ZetaFormat::V0304SeedNoEdits => seed_coder::write_cursor_excerpt_section(
+            prompt,
+            path,
+            context,
+            editable_range,
+            cursor_offset,
+        ),
         ZetaFormat::v0226Hashline => hashline::write_cursor_excerpt_section(
             prompt,
             path,
@@ -697,6 +704,7 @@ pub fn format_prompt_with_budget_for_format(
 
     let prompt = match format {
         ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::V0304SeedNoEdits
         | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0316SeedMultiRegions
@@ -813,6 +821,7 @@ pub fn max_edit_event_count_for_format(format: &ZetaFormat) -> usize {
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211Prefill
         | ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::v0226Hashline
         | ZetaFormat::V0304SeedNoEdits
         | ZetaFormat::V0304VariableEdit
@@ -837,6 +846,7 @@ pub fn get_prefill_for_format(
         | ZetaFormat::V0120GitMergeMarkers
         | ZetaFormat::V0131GitMergeMarkersPrefix
         | ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::v0226Hashline
         | ZetaFormat::V0304VariableEdit => String::new(),
         ZetaFormat::V0304SeedNoEdits
@@ -854,6 +864,7 @@ pub fn output_end_marker_for_format(format: ZetaFormat) -> Option<&'static str> 
         ZetaFormat::V0131GitMergeMarkersPrefix => Some(v0131_git_merge_markers_prefix::END_MARKER),
         ZetaFormat::V0211Prefill => Some(v0131_git_merge_markers_prefix::END_MARKER),
         ZetaFormat::V0211SeedCoder
+        | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::V0304SeedNoEdits
         | ZetaFormat::V0306SeedMultiRegions => Some(seed_coder::END_MARKER),
         ZetaFormat::V0316SeedMultiRegions => Some(multi_region::V0316_END_MARKER),
@@ -1026,6 +1037,7 @@ pub fn format_expected_output(
         | ZetaFormat::v0226Hashline
         | ZetaFormat::V0304VariableEdit
         | ZetaFormat::V0304SeedNoEdits
+        | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::V0306SeedMultiRegions => {
             let (mut result, first_hunk_offset) = if empty_patch {
                 (old_editable.clone(), None)
@@ -5091,6 +5103,26 @@ mod tests {
     fn format_seed_coder_with_budget(input: &ZetaPromptInput, max_tokens: usize) -> String {
         format_prompt_with_budget_for_format(input, ZetaFormat::V0211SeedCoder, max_tokens)
             .expect("seed coder prompt formatting should succeed")
+    }
+
+    #[test]
+    fn test_seed_coder_alias_matches_v0211_seed_coder() {
+        let input = make_input(
+            "prefix\neditable\nsuffix",
+            7..15,
+            10,
+            vec![make_event("a.rs", "-old\n+new\n")],
+            vec![make_related_file("related.rs", "fn helper() {}\n")],
+        );
+
+        assert_eq!(
+            format_prompt_with_budget_for_format(&input, ZetaFormat::V0211SeedCoder, 10000),
+            format_prompt_with_budget_for_format(&input, ZetaFormat::V0331SeedCoderModelPy, 10000)
+        );
+        assert_eq!(
+            ZetaFormat::parse("V0331SeedCoderModelPy").unwrap(),
+            ZetaFormat::V0331SeedCoderModelPy
+        );
     }
 
     #[test]

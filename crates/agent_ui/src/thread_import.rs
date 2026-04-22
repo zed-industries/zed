@@ -1,6 +1,6 @@
 use acp_thread::AgentSessionListRequest;
 use agent::ThreadStore;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use chrono::Utc;
 use collections::HashSet;
 use db::kvp::Dismissable;
