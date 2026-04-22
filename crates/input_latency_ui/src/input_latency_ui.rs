@@ -74,14 +74,16 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
 
     let (delta_latency, delta_coalesce, report_window_seconds) =
         if let Some((prev_instant, prev_snapshot)) = state.previous.get(&window_id) {
-            let mut delta_lat = current.latency_histogram.clone();
-            delta_lat.subtract(&prev_snapshot.latency_histogram).ok();
-            let mut delta_coal = current.events_per_frame_histogram.clone();
-            delta_coal
+            let mut delta_latency = current.latency_histogram.clone();
+            delta_latency
+                .subtract(&prev_snapshot.latency_histogram)
+                .ok();
+            let mut delta_coalesce = current.events_per_frame_histogram.clone();
+            delta_coalesce
                 .subtract(&prev_snapshot.events_per_frame_histogram)
                 .ok();
             let elapsed = now.duration_since(*prev_instant).as_secs();
-            (delta_lat, delta_coal, elapsed)
+            (delta_latency, delta_coalesce, elapsed)
         } else {
             // First report for this window: the full cumulative histogram is the
             // delta from the empty starting state. We don't know how long the

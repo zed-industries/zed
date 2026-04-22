@@ -410,7 +410,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             .detach();
         }
 
-        #[cfg(feature = "input-latency-histogram")]
         cx.spawn_in(window, async move |_this, cx| {
             const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
             loop {
