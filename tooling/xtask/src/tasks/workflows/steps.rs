@@ -177,10 +177,10 @@ pub fn cargo_fmt() -> Step<Run> {
 }
 
 pub fn install_cargo_edit() -> Step<Use> {
-    cargo_install("cargo-edit")
+    taiki_install_action("cargo-edit")
 }
 
-pub fn cargo_install(tool: &str) -> Step<Use> {
+pub fn taiki_install_action(tool: &str) -> Step<Use> {
     Step::new(named::function_name(1))
         .uses(
             "taiki-e",

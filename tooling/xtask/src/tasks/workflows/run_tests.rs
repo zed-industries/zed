@@ -430,7 +430,7 @@ fn check_style() -> NamedJob {
 
 fn check_dependencies() -> NamedJob {
     fn install_cargo_machete() -> Step<Use> {
-        steps::cargo_install("cargo-machete@0.7.0")
+        steps::taiki_install_action("cargo-machete@0.7.0")
     }
 
     fn run_cargo_machete() -> Step<Run> {
