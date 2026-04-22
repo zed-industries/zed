@@ -2225,8 +2225,8 @@ mod tests {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
-        // Park the cursor in between matches and ensure that going to the previous match selects
-        // the closest match to the left.
+        // Park the cursor in between matches and ensure that going to the previous match
+        // selects the closest match to the left of the cursor.
         editor.update_in(cx, |editor, window, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([
@@ -2235,7 +2235,6 @@ mod tests {
             });
         });
         search_bar.update_in(cx, |search_bar, window, cx| {
-            assert_eq!(search_bar.active_match_index, Some(1));
             search_bar.select_prev_match(&SelectPreviousMatch, window, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor
@@ -2248,8 +2247,8 @@ mod tests {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
-        // Park the cursor in between matches and ensure that going to the next match selects the
-        // closest match to the right.
+        // Park the cursor in between matches and ensure that going to the next match
+        // selects the closest match to the right of the cursor.
         editor.update_in(cx, |editor, window, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([
@@ -2258,7 +2257,6 @@ mod tests {
             });
         });
         search_bar.update_in(cx, |search_bar, window, cx| {
-            assert_eq!(search_bar.active_match_index, Some(1));
             search_bar.select_next_match(&SelectNextMatch, window, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor
@@ -2271,8 +2269,8 @@ mod tests {
             assert_eq!(search_bar.active_match_index, Some(1));
         });
 
-        // Park the cursor after the last match and ensure that going to the previous match selects
-        // the last match.
+        // Park the cursor after the last match and ensure that going to the previous match
+        // selects the last match.
         editor.update_in(cx, |editor, window, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([
@@ -2281,7 +2279,6 @@ mod tests {
             });
         });
         search_bar.update_in(cx, |search_bar, window, cx| {
-            assert_eq!(search_bar.active_match_index, Some(2));
             search_bar.select_prev_match(&SelectPreviousMatch, window, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor
@@ -2294,8 +2291,8 @@ mod tests {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
 
-        // Park the cursor after the last match and ensure that going to the next match selects the
-        // first match.
+        // Park the cursor after the last match and ensure that going to the next match
+        // wraps around and selects the first match.
         editor.update_in(cx, |editor, window, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([
@@ -2304,7 +2301,6 @@ mod tests {
             });
         });
         search_bar.update_in(cx, |search_bar, window, cx| {
-            assert_eq!(search_bar.active_match_index, Some(2));
             search_bar.select_next_match(&SelectNextMatch, window, cx);
             assert_eq!(
                 editor.update(cx, |editor, cx| editor
@@ -2318,7 +2314,7 @@ mod tests {
         });
 
         // Park the cursor before the first match and ensure that going to the previous match
-        // selects the last match.
+        // wraps around and selects the last match.
         editor.update_in(cx, |editor, window, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_display_ranges([

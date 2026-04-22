@@ -1797,16 +1797,21 @@ impl SearchableItem for Editor {
     fn match_index_for_direction(
         &mut self,
         matches: &[Range<Anchor>],
-        _current_index: usize,
+        current_index: usize,
         direction: Direction,
         count: usize,
         _token: SearchToken,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> usize {
-        let cursor = self.selections.newest_anchor().head();
+        let cursor = if self.selections.disjoint_anchors_arc().len() == 1 {
+            self.selections.newest_anchor().head()
+        } else {
+            matches[current_index].start
+        };
+
         let buffer = self.buffer().read(cx).snapshot(cx);
-        let next_idx = match direction {
+        let new_idx = match direction {
             Direction::Next => matches
                 .iter()
                 .position(|m| m.start.cmp(&cursor, &buffer).is_gt())
@@ -1826,14 +1831,17 @@ impl SearchableItem for Editor {
             Direction::Next => count as isize,
         };
 
-        let next_idx = (next_idx + count) % matches.len() as isize;
-        // We need a `matches.len() - 1` here in case `next_idx` has now been
-        // set to `0`, otherwise we'd end up returning `matches.len()`, which
-        // would be out of bounds.
-        (match direction {
-            Direction::Prev => next_idx + (matches.len() - 1) as isize,
-            Direction::Next => next_idx,
-        }) as usize
+        let new_idx = (new_idx + count) % matches.len() as isize;
+        let new_idx = if new_idx.is_negative() {
+            // We need a `matches.len() - 1` here in case `next_idx` has now been
+            // set to `0`, otherwise we'd end up returning `matches.len()`, which
+            // would be out of bounds.
+            new_idx + (matches.len() - 1) as isize
+        } else {
+            new_idx
+        };
+        assert!(new_idx < matches.len() as isize);
+        new_idx as usize
     }
 
     fn find_matches(
