@@ -1,4 +1,4 @@
-use gh_workflow::*;
+use gh_workflow::{ctx::Context, *};
 use serde_json::Value;
 
 use crate::tasks::workflows::{
@@ -792,54 +792,83 @@ impl From<CreateBranchStep> for Step<Use> {
     }
 }
 
+const ZED_ZIPPY_COMMITTER: &str =
+    "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>";
+
 pub(crate) struct CreatePrStep {
     title: String,
     body: String,
-    head: String,
+    branch: String,
     base: String,
     token: String,
+    assignees: Option<String>,
+    labels: Option<String>,
+    path: Option<String>,
 }
 
 impl CreatePrStep {
-    pub fn new(title: impl ToString, head: impl ToString, token: &StepOutput) -> Self {
+    pub fn new(title: impl ToString, branch: impl ToString, token: &StepOutput) -> Self {
         Self {
             title: title.to_string(),
-            body: r"Release Notes:\n\n- N/A".to_string(),
-            head: head.to_string(),
+            body: "Release Notes:\n\n- N/A".to_string(),
+            branch: branch.to_string(),
             base: "main".to_string(),
             token: token.to_string(),
+            assignees: Some(Context::github().actor().to_string()),
+            labels: None,
+            path: None,
+        }
+    }
+
+    pub fn with_body(self, body: impl ToString) -> Self {
+        Self {
+            body: body.to_string(),
+            ..self
+        }
+    }
+
+    pub fn with_assignee(self, assignee: impl ToString) -> Self {
+        Self {
+            assignees: Some(assignee.to_string()),
+            ..self
+        }
+    }
+
+    pub fn with_labels(self, labels: impl ToString) -> Self {
+        Self {
+            labels: Some(labels.to_string()),
+            ..self
+        }
+    }
+
+    pub fn with_path(self, path: impl ToString) -> Self {
+        Self {
+            path: Some(path.to_string()),
+            ..self
         }
     }
 }
 
 impl From<CreatePrStep> for Step<Use> {
     fn from(step: CreatePrStep) -> Self {
-        let title = &step.title;
-        let body = &step.body;
-        let head = &step.head;
-        let base = &step.base;
         Step::new("steps::create_pull_request")
             .uses(
-                "actions",
-                "github-script",
-                "f28e40c7f34bde8b3046d885e986cb6290c5673b", // v7
+                "peter-evans",
+                "create-pull-request",
+                "98357b18bf14b5342f975ff684046ec3b2a07725", // v7
             )
-            .with(
-                Input::default()
-                    .add(
-                        "script",
-                        indoc::formatdoc! {r#"
-                            await github.rest.pulls.create({{
-                                owner: context.repo.owner,
-                                repo: context.repo.repo,
-                                title: '{title}',
-                                body: '{body}',
-                                head: '{head}',
-                                base: '{base}'
-                            }})
-                        "#},
-                    )
-                    .add("github-token", step.token),
-            )
+            .add_with(("title", step.title.clone()))
+            .add_with(("body", step.body))
+            .add_with(("commit-message", step.title))
+            .add_with(("branch", step.branch))
+            .add_with(("committer", ZED_ZIPPY_COMMITTER))
+            .add_with(("author", ZED_ZIPPY_COMMITTER))
+            .add_with(("base", step.base))
+            .add_with(("delete-branch", true))
+            .add_with(("token", step.token))
+            .add_with(("sign-commits", true))
+            .when_some(step.assignees, |s, v| s.add_with(("assignees", v)))
+            .when_some(step.labels, |s, v| s.add_with(("labels", v)))
+            .when_some(step.path, |s, v| s.add_with(("path", v)))
     }
 }

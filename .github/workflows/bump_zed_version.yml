@@ -152,18 +152,22 @@ jobs:
         files: '**'
         token: ${{ steps.generate-token.outputs.token }}
     - name: steps::create_pull_request
-      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+      uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
-        script: |
-          await github.rest.pulls.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: 'Bump Zed to v${{ needs.resolve_versions.outputs.next_version }}',
-              body: 'Release Notes:\n\n- N/A',
-              head: '${{ needs.resolve_versions.outputs.pr_branch }}',
-              base: 'main'
-          })
-        github-token: ${{ steps.generate-token.outputs.token }}
+        title: Bump Zed to v${{ needs.resolve_versions.outputs.next_version }}
+        body: |-
+          Release Notes:
+
+          - N/A
+        commit-message: Bump Zed to v${{ needs.resolve_versions.outputs.next_version }}
+        branch: ${{ needs.resolve_versions.outputs.pr_branch }}
+        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        base: main
+        delete-branch: true
+        token: ${{ steps.generate-token.outputs.token }}
+        sign-commits: true
+        assignees: ${{ github.actor }}
   create_preview_branch:
     needs:
     - resolve_versions
