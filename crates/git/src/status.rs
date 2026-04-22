@@ -3,14 +3,14 @@ use crate::{Oid, repository::RepoPath};
 use anyhow::{Context, Result, anyhow};
 use collections::{HashMap, HashSet};
 use futures::stream::FuturesUnordered;
-use futures::{FutureExt, Stream};
+use futures::{FutureExt, Stream, pin_mut};
 use gpui::SharedString;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use smol::io::{AsyncReadExt, BufReader};
 use smol::stream::StreamExt;
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::{str::FromStr, sync::Arc};
 use util::{ResultExt, rel_path::RelPath};
 
@@ -654,7 +654,6 @@ pub(crate) async fn count_untracked_lines(
     git_binary: &GitBinary,
     mut path_prefixes: Vec<OsString>,
     paths_with_stats: &Mutex<HashSet<RepoPath>>,
-    repo_path: PathBuf,
 ) -> Result<impl Stream<Item = Option<(RepoPath, DiffStat)>>> {
     let mut args: Vec<OsString> = vec![
         "ls-files".into(),
@@ -667,20 +666,24 @@ pub(crate) async fn count_untracked_lines(
         args.append(&mut path_prefixes);
     }
     let output = git_binary.run_raw(&args).await?;
-    let repo_path: Arc<Path> = repo_path.into();
+    let repo_path: Arc<Path> = git_binary.working_directory.clone().into();
 
     let stream = output // TODO!(Yara) check if this is not regressing pref (use chromium)
         .split_terminator('\0')
         .filter_map(|path_str| {
+            dbg!(&path_str);
             let Ok(path) = RepoPath::new(path_str) else {
                 return None;
             };
             if paths_with_stats.lock().contains(&path) {
                 return None;
             }
+            dbg!(&path_str);
 
-            let full_path: Arc<Path> = git_binary.working_directory.join(path.as_std_path()).into();
-            untracked_path_diff_stat(Arc::clone(&full_path), Arc::clone(&repo_path))
+            let absolute_path: Arc<Path> =
+                git_binary.working_directory.join(path.as_std_path()).into();
+            dbg!(&absolute_path);
+            untracked_path_diff_stat(Arc::clone(&absolute_path), Arc::clone(&repo_path))
                 .map(move |res| match res {
                     Ok(Some(diff_stat)) => {
                         paths_with_stats.lock().insert(path.clone());
@@ -688,7 +691,7 @@ pub(crate) async fn count_untracked_lines(
                     }
                     Ok(None) => None,
                     Err(err) => {
-                        log::debug!("failed to stat untracked file {full_path:?}: {err}");
+                        log::debug!("failed to stat untracked file {absolute_path:?}: {err}");
                         None
                     }
                 })
@@ -699,31 +702,37 @@ pub(crate) async fn count_untracked_lines(
 }
 
 async fn untracked_path_diff_stat(
-    full_path: Arc<Path>,
+    absolute_path: Arc<Path>,
     repo_path: Arc<Path>,
 ) -> Result<Option<crate::status::DiffStat>> {
     const ONE_MEGABYTE: u64 = 1024 * 1024;
 
-    let file = smol::fs::symlink_metadata(&full_path).await?;
+    dbg!();
+    let file = smol::fs::symlink_metadata(&absolute_path).await?;
+    dbg!();
     if file.len() > ONE_MEGABYTE {
         return Ok(None);
     }
 
-    let path = if file.is_symlink() {
-        smol::fs::read_link(&full_path).await?.into()
+    let absolute_path = if file.is_symlink() {
+        smol::fs::read_link(&absolute_path).await?.into()
     } else {
-        full_path
+        absolute_path
     };
 
-    if file.is_symlink() && path.strip_prefix(repo_path).is_err() {
+    dbg!(&absolute_path, &repo_path);
+    if file.is_symlink() && absolute_path.strip_prefix(repo_path).is_err() {
         return Ok(None); // symlink to file outside repository
     }
+    dbg!();
 
-    if !file.is_file() {
+    if smol::fs::metadata(&absolute_path).await?.is_dir() {
         return Ok(None);
     }
 
-    match utf8_line_count_for_file(&path).await {
+    let file = smol::fs::File::open(&absolute_path).await?;
+    let bytes = BufReader::new(file).bytes();
+    match dbg!(utf8_line_count_for_stream(bytes).await) {
         Ok(count) => Ok(Some(DiffStat {
             added: count,
             deleted: 0,
@@ -731,26 +740,38 @@ async fn untracked_path_diff_stat(
         Err(LineCountErr::NotUtf8) => Ok(None),
         Err(LineCountErr::ReadError(e)) => Err(e)
             .context("Count not count lines for untracked diff file")
-            .with_context(|| format!("path: {}", path.display())),
+            .with_context(|| format!("path: {}", absolute_path.display())),
     }
 }
 
+#[derive(Debug)]
 enum LineCountErr {
     NotUtf8,
     ReadError(std::io::Error),
 }
 
-async fn utf8_line_count_for_file(path: &Path) -> Result<u32, LineCountErr> {
-    fn is_validate_utf8(bytes: &[u8]) -> bool {
+async fn utf8_line_count_for_stream(
+    bytes: impl Stream<Item = Result<u8, std::io::Error>>,
+) -> Result<u32, LineCountErr> {
+    fn is_utf8(bytes: &[u8]) -> bool {
         fn are_cnt_bytes<const N: usize>(bytes: [u8; N]) -> bool {
-            bytes.iter().all(|b| b & 0b1000_0000 != 0)
+            bytes.iter().all(|b| b & 0b1100_0000 == 0b1000_0000)
         }
 
         match bytes {
-            [b1] => b1 & 0b1000_0000 != 0,
-            [b1, b2] => b1 & 0b1100_0000 != 0 && are_cnt_bytes([*b2]),
-            [b1, b2, b3] => b1 & 0b1110_0000 != 0 && are_cnt_bytes([*b2, *b3]),
-            [b1, b2, b3, b4] => b1 & 0b1111_0000 != 0 && are_cnt_bytes([*b2, *b3, *b4]),
+            [b1] => b1 & 0b1000_0000 == 0b0000_0000,
+            [b1, b2] => {
+                std::hint::cold_path();
+                b1 & 0b1110_0000 == 0b1100_0000 && are_cnt_bytes([*b2])
+            }
+            [b1, b2, b3] => {
+                std::hint::cold_path();
+                b1 & 0b1111_0000 == 0b1110_0000 && are_cnt_bytes([*b2, *b3])
+            }
+            [b1, b2, b3, b4] => {
+                std::hint::cold_path();
+                b1 & 0b1111_1000 == 0b1111_0000 && are_cnt_bytes([*b2, *b3, *b4])
+            }
             _ => unreachable!("only slices of length 1 to 4 are passed in"),
         }
     }
@@ -758,26 +779,30 @@ async fn utf8_line_count_for_file(path: &Path) -> Result<u32, LineCountErr> {
         matches!(bytes, [b'\r', b'\n', ..] | [b'\n', ..])
     }
 
-    let file = smol::fs::File::open(path)
-        .await
-        .map_err(LineCountErr::ReadError)?;
-    let mut bytes = BufReader::new(file).bytes();
-
     let mut count = 0;
+    let mut has_trailing_characters = false;
     let mut maybe_utf8 = heapless::Vec::<u8, 4>::new();
+
+    pin_mut!(bytes);
     while let Some(byte) = bytes.next().await {
         let byte = byte.map_err(LineCountErr::ReadError)?;
         maybe_utf8.push(byte).expect("cleared before out of space");
-        if is_validate_utf8(&maybe_utf8) {
-            count += is_linefeed(&maybe_utf8) as u32;
+        if is_utf8(&maybe_utf8) {
+            if is_linefeed(&maybe_utf8) {
+                count += 1;
+                has_trailing_characters = false;
+            } else {
+                has_trailing_characters = true;
+            }
             maybe_utf8.clear();
         }
+        dbg!(&maybe_utf8);
         if maybe_utf8.is_full() {
             return Err(LineCountErr::NotUtf8);
         }
     }
 
-    Ok(count)
+    Ok(count + has_trailing_characters as u32)
 }
 
 #[cfg(test)]
@@ -923,5 +948,76 @@ mod tests {
                 .collect()
             }
         )
+    }
+
+    #[test]
+    fn test_utf8_line_count_for_stream() {
+        use super::utf8_line_count_for_stream;
+        use futures::stream;
+
+        #[track_caller]
+        fn assert_utf8_line_count(input: &str, expected: u32) {
+            let byte_stream = stream::iter(input.bytes().map(Ok::<u8, std::io::Error>));
+            let count = smol::block_on(utf8_line_count_for_stream(byte_stream)).unwrap();
+            assert_eq!(count, expected, "input: {input:?}");
+        }
+
+        // Verify UTF-8 widths: 1, 2, 3, and 4-byte characters
+        assert_eq!('A'.len_utf8(), 1);
+        assert_eq!('¢'.len_utf8(), 2);
+        assert_eq!('ñ'.len_utf8(), 2);
+        assert_eq!('❤'.len_utf8(), 3);
+        assert_eq!('☃'.len_utf8(), 3);
+        assert_eq!('😀'.len_utf8(), 4);
+        assert_eq!('🦀'.len_utf8(), 4);
+        assert_eq!('🌈'.len_utf8(), 4);
+
+        assert_utf8_line_count("A\n¢\r\n❤😀\n🦀☃\n", 4);
+        assert_utf8_line_count("A\n¢\r\n❤😀\n🦀☃\nñ🌈", 5);
+        assert_utf8_line_count("", 0);
+        assert_utf8_line_count("❤🦀😀☃¢ñ🌈", 1);
+        assert_utf8_line_count("🦀\n\n\n😀", 4);
+        assert_utf8_line_count("🌈\r\n☃", 2);
+    }
+
+    mod perf {
+        use super::super::utf8_line_count_for_stream;
+        use futures::stream;
+        use util_macros::perf;
+
+        fn make_test_input(line_count: usize) -> String {
+            let line = "The quick brown 🦀 jumps over the lazy ☃ — ñoño! ❤🌈\n";
+            line.repeat(line_count)
+        }
+
+        #[perf]
+        fn bench_utf8_line_count_for_stream_small() {
+            let input = make_test_input(100);
+            let byte_stream = stream::iter(input.bytes().map(Ok::<u8, std::io::Error>));
+            let count = smol::block_on(utf8_line_count_for_stream(byte_stream)).unwrap();
+            assert_eq!(count, 100);
+        }
+
+        #[perf]
+        fn bench_utf8_line_count_for_stream_large() {
+            let input = make_test_input(10_000);
+            let byte_stream = stream::iter(input.bytes().map(Ok::<u8, std::io::Error>));
+            let count = smol::block_on(utf8_line_count_for_stream(byte_stream)).unwrap();
+            assert_eq!(count, 10_000);
+        }
+
+        #[perf]
+        fn bench_lines_count_small() {
+            let input = make_test_input(100);
+            let count = input.lines().count();
+            assert_eq!(count, 100);
+        }
+
+        #[perf]
+        fn bench_lines_count_large() {
+            let input = make_test_input(10_000);
+            let count = input.lines().count();
+            assert_eq!(count, 10_000);
+        }
     }
 }

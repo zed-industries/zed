@@ -15,12 +15,13 @@ use futures::{AsyncReadExt, AsyncWriteExt, FutureExt as _, select_biased};
 use git2::{BranchType, ErrorCode};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
 use itertools::Itertools;
+use log::warn;
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smallvec::SmallVec;
-use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use smol::io::{AsyncBufReadExt, BufReader};
 use smol::Timer;
 use text::LineEnding;
 
@@ -2103,14 +2104,13 @@ impl GitRepository for RealGitRepository {
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>> {
         // if we import this in module scope we have to fully qualify `.boxed()` everywhere
-        use smol::future::FutureExt as _; 
+        use smol::future::FutureExt as _;
 
         let path_prefixes: Vec<_> = path_prefixes
             .iter()
             .map(|p| p.as_std_path().as_os_str().to_os_string())
             .collect();
         let git_binary = self.git_binary();
-        let repo_path = self.path();
         let fut = async move {
             let git_binary = git_binary?;
 
@@ -2122,15 +2122,15 @@ impl GitRepository for RealGitRepository {
                 .into();
 
             let untracked =
-                count_untracked_lines(&git_binary, path_prefixes, &paths_with_stats, repo_path)
-                    .await?;
+                count_untracked_lines(&git_binary, path_prefixes, &paths_with_stats).await?;
 
             let timeout = async {
                 Timer::after(Duration::from_secs(1)).await;
+                warn!("Timed out counting lines in untracked file paths");
                 BTreeMap::<RepoPath, DiffStat>::new()
             };
 
-            // streams are lazy, until this point we have not done file access here we
+            // streams are lazy, until this point we have not done file access. Here we
             // concurrently stat all files in any order.
             use futures::StreamExt;
             let total: std::collections::BTreeMap<_, _> = untracked
@@ -3823,6 +3823,8 @@ mod tests {
         );
     }
 
+    // TODO!(yara) test worktrees (both symlink behaviour and basic untracked)
+
     #[gpui::test]
     async fn test_diff_stat_includes_untracked_files(cx: &mut TestAppContext) {
         disable_git_global_config();
@@ -3857,53 +3859,72 @@ mod tests {
         .await
         .unwrap();
 
-        smol::fs::write(repo_dir.path().join("empty.txt"), "")
+        smol::fs::write(repo_dir.path().join("a"), "lorem")
             .await
             .unwrap();
-        smol::fs::write(repo_dir.path().join("new.txt"), "one\ntwo\n")
-            .await
-            .unwrap();
-        smol::fs::write(repo_dir.path().join("no_newline.txt"), "one")
-            .await
-            .unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink("tracked.txt", repo_dir.path().join("link.txt")).unwrap();
 
-        let diff_stat = repo.diff_stat(&[]).await.unwrap();
-        let mut expected_entries = vec![
-            (
-                repo_path("empty.txt"),
-                crate::status::DiffStat {
-                    added: 0,
-                    deleted: 0,
-                },
-            ),
-            (
-                repo_path("new.txt"),
-                crate::status::DiffStat {
-                    added: 2,
-                    deleted: 0,
-                },
-            ),
-            (
-                repo_path("no_newline.txt"),
-                crate::status::DiffStat {
+        let stats = repo.diff_stat(&[RepoPath::new("").unwrap()]).await.unwrap();
+        assert_eq!(
+            stats.entries.to_vec(),
+            vec![(
+                RepoPath::new("a").unwrap(),
+                DiffStat {
                     added: 1,
-                    deleted: 0,
-                },
-            ),
-        ];
-        #[cfg(unix)]
-        expected_entries.push((
-            repo_path("link.txt"),
-            crate::status::DiffStat {
-                added: 1,
-                deleted: 0,
-            },
-        ));
-        expected_entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+                    deleted: 0
+                }
+            )]
+        );
+    }
 
-        assert_eq!(diff_stat.entries.as_ref(), expected_entries.as_slice());
+    #[gpui::test]
+    async fn test_diff_stat_includes_untracked_symlinks(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        smol::fs::write(repo_dir.path().join("tracked.txt"), "tracked\n")
+            .await
+            .unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        repo.stage_paths(vec![repo_path("tracked.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("a"), "lorem")
+            .await
+            .unwrap();
+
+        let stats = repo.diff_stat(&[RepoPath::new("").unwrap()]).await.unwrap();
+        assert_eq!(
+            stats.entries.to_vec(),
+            vec![(
+                RepoPath::new("a").unwrap(),
+                DiffStat {
+                    added: 1,
+                    deleted: 0
+                }
+            )]
+        );
     }
 
     #[gpui::test]

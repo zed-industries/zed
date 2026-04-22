@@ -1,4 +1,8 @@
 use fs::{FakeFs, Fs};
+use git::{
+    repository::RepoPath,
+    status::DiffStat,
+};
 use gpui::{BackgroundExecutor, TestAppContext};
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -193,4 +197,38 @@ async fn test_checkpoints(executor: BackgroundExecutor) {
         .unwrap();
     assert!(diff.contains("b"), "diff should mention changed file 'b'");
     assert!(diff.contains("c"), "diff should mention added file 'c'");
+}
+
+#[gpui::test]
+async fn test_untracked_files(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/"),
+        json!({
+            "foo": {
+                ".git": {},
+                "a": "lorem",
+            },
+        }),
+    )
+    .await;
+
+    let repository = fs
+        .open_repo(Path::new("/foo/.git"), Some("git".as_ref()))
+        .unwrap();
+
+    let stats = repository
+        .diff_stat(&[RepoPath::new("").unwrap()])
+        .await
+        .unwrap();
+    assert_eq!(
+        stats.entries.to_vec(),
+        vec![(
+            RepoPath::new("a").unwrap(),
+            DiffStat {
+                added: 1,
+                deleted: 0
+            }
+        )]
+    );
 }
