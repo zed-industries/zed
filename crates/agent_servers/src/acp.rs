@@ -2,7 +2,7 @@ use acp_thread::{
     AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
     AgentSessionListResponse,
 };
-use acp_tools::{AcpConnectionRegistry, RawStreamLine, StreamMessageDirection};
+use acp_tools::AcpConnectionRegistry;
 use action_log::ActionLog;
 use agent_client_protocol::schema::{self as acp, ErrorCode};
 use agent_client_protocol::{
@@ -41,14 +41,21 @@ use crate::GEMINI_ID;
 
 pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
 
-/// Converts a [`SentRequest`] into a `Future` that can be safely awaited from
-/// the GPUI foreground thread.
+/// Awaits the response to an ACP request from a GPUI foreground task.
 ///
-/// Unlike [`SentRequest::block_task`], which is only safe inside
-/// [`ConnectionTo::spawn`] tasks, this uses [`SentRequest::on_receiving_result`]
-/// to bridge the response through a oneshot channel. The SDK callback is trivial
-/// (just a channel send), so it doesn't meaningfully block the dispatch loop.
-fn into_foreground_future<T: JsonRpcResponse + Send + 'static>(
+/// The ACP SDK offers two ways to consume a [`SentRequest`]:
+///   - [`SentRequest::block_task`]: linear `.await` inside a spawned task.
+///   - [`SentRequest::on_receiving_result`]: a callback invoked when the
+///     response arrives, with the guarantee that no other inbound messages
+///     are processed while the callback runs. This is the recommended form
+///     inside SDK handler callbacks, where [`block_task`] would deadlock.
+///
+/// We use `on_receiving_result` with a oneshot bridge here (rather than
+/// [`block_task`]) so that our handler-side code paths can share a single
+/// request-awaiting helper. The SDK callback itself is trivial (one channel
+/// send) so the extra ordering guarantee it imposes on the dispatch loop is
+/// negligible.
+fn into_foreground_future<T: JsonRpcResponse>(
     sent: SentRequest<T>,
 ) -> impl Future<Output = Result<T, acp::Error>> {
     let (tx, rx) = futures::channel::oneshot::channel();
@@ -68,6 +75,37 @@ fn into_foreground_future<T: JsonRpcResponse + Send + 'static>(
 #[derive(Debug, Error)]
 #[error("Unsupported version")]
 pub struct UnsupportedVersion;
+
+/// Helper for flattening the nested `Result` shapes that come out of
+/// `entity.update(cx, |_, cx| fallible_op(cx))` into a single `Result<T,
+/// acp::Error>`.
+///
+/// `anyhow::Error` values get converted via `acp::Error::from`, which
+/// downcasts an `acp::Error` back out of `anyhow` when present, so typed
+/// errors like auth-required survive the trip.
+trait FlattenAcpResult<T> {
+    fn flatten_acp(self) -> Result<T, acp::Error>;
+}
+
+impl<T> FlattenAcpResult<T> for Result<Result<T, anyhow::Error>, anyhow::Error> {
+    fn flatten_acp(self) -> Result<T, acp::Error> {
+        match self {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(err)) => Err(err.into()),
+            Err(err) => Err(err.into()),
+        }
+    }
+}
+
+impl<T> FlattenAcpResult<T> for Result<Result<T, acp::Error>, anyhow::Error> {
+    fn flatten_acp(self) -> Result<T, acp::Error> {
+        match self {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(err)) => Err(err),
+            Err(err) => Err(err.into()),
+        }
+    }
+}
 
 /// Holds state needed by foreground work dispatched from background handler closures.
 struct ClientContext {
@@ -354,24 +392,95 @@ pub async fn connect(
 
 const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1;
 
-macro_rules! dispatch_request_handler {
-    ($dispatch_tx:expr, $handler:expr) => {{
-        let dispatch_tx = $dispatch_tx.clone();
-        async move |args, responder, _connection| {
-            enqueue_request(&dispatch_tx, args, responder, $handler);
-            Ok(())
-        }
-    }};
-}
+/// Build a `Client` connection over `transport` with Zed's full
+/// agent→client handler set wired up.
+///
+/// All incoming requests and notifications are forwarded to the foreground
+/// dispatch queue via `dispatch_tx`, where they are handled by the
+/// `handle_*` functions on a GPUI context. The returned future drives the
+/// connection and completes when the transport closes; callers are expected
+/// to spawn it on a background executor and hold the task for the lifetime
+/// of the connection. The `connection_tx` oneshot receives the
+/// `ConnectionTo<Agent>` handle as soon as the builder runs its `main_fn`.
+fn connect_client_future(
+    name: &'static str,
+    transport: impl agent_client_protocol::ConnectTo<Client> + 'static,
+    dispatch_tx: mpsc::UnboundedSender<ForegroundWork>,
+    connection_tx: futures::channel::oneshot::Sender<ConnectionTo<Agent>>,
+) -> impl Future<Output = Result<(), acp::Error>> {
+    // Each handler forwards its inputs onto the foreground dispatch queue.
+    // The SDK requires the closure to be `Send`, so we move a clone of
+    // `dispatch_tx` into each one.
+    macro_rules! on_request {
+        ($handler:ident) => {{
+            let dispatch_tx = dispatch_tx.clone();
+            async move |req, responder, _connection| {
+                enqueue_request(&dispatch_tx, req, responder, $handler);
+                Ok(())
+            }
+        }};
+    }
+    macro_rules! on_notification {
+        ($handler:ident) => {{
+            let dispatch_tx = dispatch_tx.clone();
+            async move |notif, connection| {
+                enqueue_notification(&dispatch_tx, notif, connection, $handler);
+                Ok(())
+            }
+        }};
+    }
 
-macro_rules! dispatch_notification_handler {
-    ($dispatch_tx:expr, $handler:expr) => {{
-        let dispatch_tx = $dispatch_tx.clone();
-        async move |notification, connection| {
-            enqueue_notification(&dispatch_tx, notification, connection, $handler);
-            Ok(())
-        }
-    }};
+    Client
+        .builder()
+        .name(name)
+        // --- Request handlers (agent→client) ---
+        .on_receive_request(
+            on_request!(handle_request_permission),
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            on_request!(handle_write_text_file),
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            on_request!(handle_read_text_file),
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            on_request!(handle_create_terminal),
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            on_request!(handle_kill_terminal),
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            on_request!(handle_release_terminal),
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            on_request!(handle_terminal_output),
+            agent_client_protocol::on_receive_request!(),
+        )
+        .on_receive_request(
+            on_request!(handle_wait_for_terminal_exit),
+            agent_client_protocol::on_receive_request!(),
+        )
+        // --- Notification handlers (agent→client) ---
+        .on_receive_notification(
+            on_notification!(handle_session_notification),
+            agent_client_protocol::on_receive_notification!(),
+        )
+        .connect_with(
+            transport,
+            move |connection: ConnectionTo<Agent>| async move {
+                if connection_tx.send(connection).is_err() {
+                    log::error!("failed to send ACP connection handle — receiver was dropped");
+                }
+                // Keep the connection alive until the transport closes.
+                futures::future::pending::<Result<(), acp::Error>>().await
+            },
+        )
 }
 
 impl AcpConnection {
@@ -455,22 +564,20 @@ impl AcpConnection {
         // closures to the !Send foreground thread.
         let (dispatch_tx, dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
 
-        // Build a tapped transport that intercepts raw JSON-RPC lines, plus
-        // stderr lines, for the ACP logs panel.
-        let (stream_tap_tx, stream_tap_rx) = smol::channel::unbounded::<RawStreamLine>();
+        // Register this connection with the logs panel registry. The
+        // returned tap is opt-in: until someone subscribes to the ACP logs
+        // panel, `emit_*` calls below are ~free (atomic load + return).
+        let log_tap = cx.update(|cx| {
+            AcpConnectionRegistry::default_global(cx).update(cx, |registry, cx| {
+                registry.set_active_connection(agent_id.clone(), cx)
+            })
+        });
 
         let incoming_lines = futures::io::BufReader::new(stdout).lines();
         let tapped_incoming = incoming_lines.inspect({
-            let tap_tx = stream_tap_tx.clone();
+            let log_tap = log_tap.clone();
             move |result| match result {
-                Ok(line) => {
-                    tap_tx
-                        .try_send(RawStreamLine {
-                            direction: StreamMessageDirection::Incoming,
-                            line: Arc::from(line.as_str()),
-                        })
-                        .log_err();
-                }
+                Ok(line) => log_tap.emit_incoming(line),
                 Err(err) => {
                     // I/O errors on the transport are fatal for the SDK, but
                     // without logging them the ACP logs panel shows no trace
@@ -481,95 +588,32 @@ impl AcpConnection {
         });
 
         let tapped_outgoing = futures::sink::unfold(
-            (Box::pin(stdin), stream_tap_tx.clone()),
-            async move |(mut writer, tap_tx), line: String| {
+            (Box::pin(stdin), log_tap.clone()),
+            async move |(mut writer, log_tap), line: String| {
                 use futures::AsyncWriteExt;
-                tap_tx
-                    .try_send(RawStreamLine {
-                        direction: StreamMessageDirection::Outgoing,
-                        line: Arc::from(line.as_str()),
-                    })
-                    .log_err();
+                log_tap.emit_outgoing(&line);
                 let mut bytes = line.into_bytes();
                 bytes.push(b'\n');
                 writer.write_all(&bytes).await?;
-                Ok::<_, std::io::Error>((writer, tap_tx))
+                Ok::<_, std::io::Error>((writer, log_tap))
             },
         );
 
         let transport = Lines::new(tapped_outgoing, tapped_incoming);
 
-        // Use a oneshot channel to extract the ConnectionTo<Agent> from the
-        // connect_with closure.
+        // `connect_client_future` installs the production handler set and
+        // hands us back both the connection-future (to run on a background
+        // executor) and a oneshot receiver that produces the
+        // `ConnectionTo<Agent>` once the transport handshake is ready.
         let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
-
-        // Build the connection with handler closures.
-        // All handlers forward work to the foreground dispatch channel.
-        let connection_future = {
-            let dispatch_tx = dispatch_tx.clone();
-            Client
-                .builder()
-                .name("zed")
-                // --- Request handlers (agent→client) ---
-                .on_receive_request(
-                    dispatch_request_handler!(dispatch_tx, handle_request_permission),
-                    agent_client_protocol::on_receive_request!(),
-                )
-                .on_receive_request(
-                    dispatch_request_handler!(dispatch_tx, handle_write_text_file),
-                    agent_client_protocol::on_receive_request!(),
-                )
-                .on_receive_request(
-                    dispatch_request_handler!(dispatch_tx, handle_read_text_file),
-                    agent_client_protocol::on_receive_request!(),
-                )
-                .on_receive_request(
-                    dispatch_request_handler!(dispatch_tx, handle_create_terminal),
-                    agent_client_protocol::on_receive_request!(),
-                )
-                .on_receive_request(
-                    dispatch_request_handler!(dispatch_tx, handle_kill_terminal),
-                    agent_client_protocol::on_receive_request!(),
-                )
-                .on_receive_request(
-                    dispatch_request_handler!(dispatch_tx, handle_release_terminal),
-                    agent_client_protocol::on_receive_request!(),
-                )
-                .on_receive_request(
-                    dispatch_request_handler!(dispatch_tx, handle_terminal_output),
-                    agent_client_protocol::on_receive_request!(),
-                )
-                .on_receive_request(
-                    dispatch_request_handler!(dispatch_tx, handle_wait_for_terminal_exit),
-                    agent_client_protocol::on_receive_request!(),
-                )
-                // --- Notification handlers (agent→client) ---
-                .on_receive_notification(
-                    dispatch_notification_handler!(dispatch_tx, handle_session_notification),
-                    agent_client_protocol::on_receive_notification!(),
-                )
-                .connect_with(
-                    transport,
-                    move |connection: ConnectionTo<Agent>| async move {
-                        if connection_tx.send(connection.clone()).is_err() {
-                            log::error!(
-                                "failed to send ACP connection handle — receiver was dropped"
-                            );
-                        }
-                        // Keep the connection alive until the transport closes.
-                        futures::future::pending::<Result<(), acp::Error>>().await
-                    },
-                )
-        };
-
-        // Spawn the connection loop on a background thread.
+        let connection_future =
+            connect_client_future("zed", transport, dispatch_tx.clone(), connection_tx);
         let io_task = cx.background_spawn(async move {
             if let Err(err) = connection_future.await {
                 log::error!("ACP connection error: {err}");
             }
         });
 
-        // Wait for the ConnectionTo<Agent> handle.
         let connection: ConnectionTo<Agent> = connection_rx
             .await
             .context("Failed to receive ACP connection handle")?;
@@ -589,7 +633,7 @@ impl AcpConnection {
         });
 
         let stderr_task = cx.background_spawn({
-            let tap_tx = stream_tap_tx.clone();
+            let log_tap = log_tap.clone();
             async move {
                 let mut stderr = BufReader::new(stderr);
                 let mut line = String::new();
@@ -598,12 +642,7 @@ impl AcpConnection {
                 {
                     let trimmed = line.trim_end_matches(['\n', '\r']);
                     log::warn!("agent stderr: {trimmed}");
-                    tap_tx
-                        .try_send(RawStreamLine {
-                            direction: StreamMessageDirection::Stderr,
-                            line: Arc::from(trimmed),
-                        })
-                        .log_err();
+                    log_tap.emit_stderr(trimmed);
                     line.clear();
                 }
                 Ok(())
@@ -618,12 +657,6 @@ impl AcpConnection {
                 emit_load_error_to_all_sessions(&sessions, LoadError::Exited { status }, cx);
                 anyhow::Ok(())
             }
-        });
-
-        cx.update(|cx| {
-            AcpConnectionRegistry::default_global(cx).update(cx, |registry, cx| {
-                registry.set_active_connection(agent_id.clone(), stream_tap_rx, cx)
-            });
         });
 
         let response = into_foreground_future(
@@ -724,6 +757,7 @@ impl AcpConnection {
         agent_capabilities: acp::AgentCapabilities,
         agent_server_store: WeakEntity<AgentServerStore>,
         io_task: Task<()>,
+        dispatch_task: Task<()>,
         _cx: &mut App,
     ) -> Self {
         Self {
@@ -741,7 +775,7 @@ impl AcpConnection {
             child: None,
             session_list: None,
             _io_task: io_task,
-            _dispatch_task: Task::ready(()),
+            _dispatch_task: dispatch_task,
             _wait_task: Task::ready(Ok(())),
             _stderr_task: Task::ready(Ok(())),
         }
@@ -1886,6 +1920,8 @@ pub mod test_support {
 
         let sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>> =
             Rc::new(RefCell::new(HashMap::default()));
+        let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
+            Rc::new(RefCell::new(None));
 
         let agent_future = Agent
             .builder()
@@ -1958,17 +1994,18 @@ pub mod test_support {
 
         let agent_io_task = cx.background_spawn(agent_future);
 
-        let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
-        let client_future = Client.builder().name("zed-test").connect_with(
-            client_transport,
-            move |connection: ConnectionTo<Agent>| async move {
-                if connection_tx.send(connection).is_err() {
-                    log::error!("failed to send fake ACP connection handle");
-                }
-                futures::future::pending::<Result<(), acp::Error>>().await
-            },
-        );
+        // Wire the production handler set into the fake client so inbound
+        // requests/notifications from the fake agent are dispatched the
+        // same way the real `stdio` path does.
+        let (dispatch_tx, dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
 
+        let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
+        let client_future = connect_client_future(
+            "zed-test",
+            client_transport,
+            dispatch_tx.clone(),
+            connection_tx,
+        );
         let client_io_task = cx.background_spawn(async move {
             client_future.await.ok();
         });
@@ -1984,6 +2021,19 @@ pub mod test_support {
 
         let agent_capabilities = response.agent_capabilities;
 
+        let dispatch_context = ClientContext {
+            sessions: sessions.clone(),
+            session_list: client_session_list.clone(),
+        };
+        let dispatch_task = cx.spawn({
+            let mut dispatch_rx = dispatch_rx;
+            async move |cx| {
+                while let Some(work) = dispatch_rx.next().await {
+                    work.run(cx, &dispatch_context);
+                }
+            }
+        });
+
         let agent_server_store =
             project.read_with(cx, |project, _| project.agent_server_store().downgrade());
 
@@ -1994,6 +2044,7 @@ pub mod test_support {
                 agent_capabilities,
                 agent_server_store,
                 client_io_task,
+                dispatch_task,
                 cx,
             )
         });
@@ -2196,6 +2247,8 @@ mod tests {
 
         let sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>> =
             Rc::new(RefCell::new(HashMap::default()));
+        let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
+            Rc::new(RefCell::new(None));
 
         // Build the fake agent side. It handles the requests issued by
         // `AcpConnection` during the test and tracks load/close counts.
@@ -2292,16 +2345,18 @@ mod tests {
 
         let agent_io_task = cx.background_spawn(agent_future);
 
-        // Build the client side and capture the `ConnectionTo<Agent>` handle.
-        let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
-        let client_future = Client.builder().name("zed-test").connect_with(
-            client_transport,
-            move |connection: ConnectionTo<Agent>| async move {
-                connection_tx.send(connection).ok();
-                futures::future::pending::<Result<(), acp::Error>>().await
-            },
-        );
+        // Wire the production handler set into the fake client so inbound
+        // requests/notifications from the fake agent reach the same
+        // dispatcher that the real `stdio` path uses.
+        let (dispatch_tx, dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
 
+        let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
+        let client_future = connect_client_future(
+            "zed-test",
+            client_transport,
+            dispatch_tx.clone(),
+            connection_tx,
+        );
         let client_io_task = cx.background_spawn(async move {
             client_future.await.ok();
         });
@@ -2318,6 +2373,24 @@ mod tests {
 
         let agent_capabilities = response.agent_capabilities;
 
+        let dispatch_context = ClientContext {
+            sessions: sessions.clone(),
+            session_list: client_session_list.clone(),
+        };
+        // `TestAppContext::spawn` hands out an `AsyncApp` by value, whereas the
+        // production path uses `Context::spawn` which hands out `&mut AsyncApp`.
+        // Bind the value-form to a local and take `&mut` of it to reuse the
+        // same dispatch loop shape.
+        let dispatch_task = cx.spawn({
+            let mut dispatch_rx = dispatch_rx;
+            move |cx| async move {
+                let mut cx = cx;
+                while let Some(work) = dispatch_rx.next().await {
+                    work.run(&mut cx, &dispatch_context);
+                }
+            }
+        });
+
         let agent_server_store =
             project.read_with(cx, |project, _| project.agent_server_store().downgrade());
 
@@ -2328,6 +2401,7 @@ mod tests {
                 agent_capabilities,
                 agent_server_store,
                 client_io_task,
+                dispatch_task,
                 cx,
             )
         });
@@ -2944,7 +3018,14 @@ fn session_thread(
         .ok_or_else(|| acp::Error::internal_error().data(format!("unknown session: {session_id}")))
 }
 
-fn respond_err<T: JsonRpcResponse + Send + 'static>(responder: Responder<T>, err: acp::Error) {
+fn respond_err<T: JsonRpcResponse>(responder: Responder<T>, err: acp::Error) {
+    // Log the actual error we're returning — otherwise agents that hit an
+    // error path (e.g. unknown session) would see only the generic internal
+    // error returned over the wire with no trace of why on the client side.
+    log::warn!(
+        "Responding to ACP request `{method}` with error: {err:?}",
+        method = responder.method()
+    );
     responder.respond_with_error(err).log_err();
 }
 
@@ -2969,8 +3050,7 @@ fn handle_request_permission(
                         cx,
                     )
                 })
-                .map_err(acp::Error::from)?
-                .map_err(acp::Error::from)?;
+                .flatten_acp()?;
             Ok(task.await)
         }
         .await;
@@ -3005,8 +3085,7 @@ fn handle_write_text_file(
                     thread.write_text_file(args.path, args.content, cx)
                 })
                 .map_err(acp::Error::from)?
-                .await
-                .map_err(acp::Error::from)?;
+                .await?;
             Ok(())
         }
         .await;
@@ -3153,7 +3232,7 @@ fn handle_session_notification(
         .update(cx, |thread, cx| {
             thread.handle_session_update(notification.update.clone(), cx)
         })
-        .and_then(|inner| inner.map_err(anyhow::Error::from))
+        .flatten_acp()
     {
         log::error!(
             "Failed to handle session update for {:?}: {err:?}",
@@ -3245,21 +3324,18 @@ fn handle_create_terminal(
                 &project,
                 cx,
             )
-            .await
-            .map_err(acp::Error::from)?;
+            .await?;
 
-            let terminal_entity = thread
-                .update(cx, |thread, cx| {
-                    thread.register_terminal_created(
-                        acp::TerminalId::new(uuid::Uuid::new_v4().to_string()),
-                        format!("{} {}", args.command, args.args.join(" ")),
-                        args.cwd.clone(),
-                        args.output_byte_limit,
-                        terminal_entity,
-                        cx,
-                    )
-                })
-                .map_err(acp::Error::from)?;
+            let terminal_entity = thread.update(cx, |thread, cx| {
+                thread.register_terminal_created(
+                    acp::TerminalId::new(uuid::Uuid::new_v4().to_string()),
+                    format!("{} {}", args.command, args.args.join(" ")),
+                    args.cwd.clone(),
+                    args.output_byte_limit,
+                    terminal_entity,
+                    cx,
+                )
+            })?;
             let terminal_id = terminal_entity.read_with(cx, |terminal, _| terminal.id().clone());
             Ok(terminal_id)
         }
@@ -3290,8 +3366,7 @@ fn handle_kill_terminal(
 
     match thread
         .update(cx, |thread, cx| thread.kill_terminal(args.terminal_id, cx))
-        .map_err(acp::Error::from)
-        .and_then(|r| r.map_err(acp::Error::from))
+        .flatten_acp()
     {
         Ok(()) => {
             responder
@@ -3317,8 +3392,7 @@ fn handle_release_terminal(
         .update(cx, |thread, cx| {
             thread.release_terminal(args.terminal_id, cx)
         })
-        .map_err(acp::Error::from)
-        .and_then(|r| r.map_err(acp::Error::from))
+        .flatten_acp()
     {
         Ok(()) => {
             responder
@@ -3341,15 +3415,14 @@ fn handle_terminal_output(
     };
 
     match thread
-        .read_with(cx, |thread, cx| -> Result<_, anyhow::Error> {
+        .read_with(cx, |thread, cx| -> anyhow::Result<_> {
             let out = thread
                 .terminal(args.terminal_id)?
                 .read(cx)
                 .current_output(cx);
             Ok(out)
         })
-        .map_err(acp::Error::from)
-        .and_then(|r| r.map_err(acp::Error::from))
+        .flatten_acp()
     {
         Ok(output) => {
             responder.respond(output).log_err();
@@ -3375,8 +3448,7 @@ fn handle_wait_for_terminal_exit(
                 .update(cx, |thread, cx| {
                     anyhow::Ok(thread.terminal(args.terminal_id)?.read(cx).wait_for_exit())
                 })
-                .map_err(acp::Error::from)?
-                .map_err(acp::Error::from)?
+                .flatten_acp()?
                 .await;
             Ok(exit_status)
         }
