@@ -190,7 +190,7 @@ impl CsvPreviewView {
                 performance_metrics: PerformanceMetrics::default(),
                 list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
                     .with_uniform_item_height(px(24.)),
-                row_height: px(24.),
+                row_height: px(20.),
                 settings: CsvPreviewSettings::default(),
                 last_parse_end_time: None,
                 engine: TableDataEngine::default(),

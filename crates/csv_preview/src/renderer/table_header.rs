@@ -1,6 +1,11 @@
-use gpui::ElementId;
+use editor::Editor;
+use gpui::{
+    DismissEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable, ListSizingBehavior,
+    Subscription, UniformListScrollHandle, uniform_list,
+};
 use ui::{
-    ContextMenu, GradientFade, IconButton, IconName, IconSize, PopoverMenu, Tooltip, prelude::*,
+    Color, GradientFade, HighlightedLabel, Icon, IconButton, IconName, IconSize, Label, LabelSize,
+    PopoverMenu, Tooltip, WithScrollbar, prelude::*,
 };
 
 use crate::{
@@ -12,6 +17,358 @@ use crate::{
     },
     types::AnyColumn,
 };
+
+struct CsvFilterMenu {
+    col: AnyColumn,
+    view: Entity<CsvPreviewView>,
+    editor: Entity<Editor>,
+    /// Entry order frozen at open time: applied-first then sort_order.
+    /// Kept stable so selections don't jump around while the menu is open.
+    stable_order: Vec<Option<SharedString>>,
+    /// Filtered entries for the current search query, recomputed each render.
+    /// Stored on self so the uniform_list processor closure can index into it.
+    entries: Vec<(FilterEntry, bool, Vec<usize>)>,
+    scroll_handle: UniformListScrollHandle,
+    _editor_subscription: Subscription,
+}
+
+impl CsvFilterMenu {
+    fn new(
+        col: AnyColumn,
+        view: Entity<CsvPreviewView>,
+        sort_order: FilterSortOrder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let stable_order = {
+            let column_filters = view
+                .read(cx)
+                .engine
+                .get_filters_for_column(col)
+                .unwrap_or_default();
+
+            let mut available: Vec<(&FilterEntry, bool)> = column_filters
+                .iter()
+                .filter_map(|(entry, state)| match state {
+                    FilterEntryState::Available { is_applied } => Some((entry, *is_applied)),
+                    _ => None,
+                })
+                .collect();
+
+            match sort_order {
+                FilterSortOrder::AlphaThenCount => available.sort_by(|(a, a_app), (b, b_app)| {
+                    b_app
+                        .cmp(a_app)
+                        .then_with(|| a.content.cmp(&b.content))
+                        .then_with(|| b.occurred_times().cmp(&a.occurred_times()))
+                }),
+                FilterSortOrder::CountThenAlpha => available.sort_by(|(a, a_app), (b, b_app)| {
+                    b_app
+                        .cmp(a_app)
+                        .then_with(|| b.occurred_times().cmp(&a.occurred_times()))
+                        .then_with(|| a.content.cmp(&b.content))
+                }),
+            }
+
+            available
+                .into_iter()
+                .map(|(e, _)| e.content.clone())
+                .collect::<Vec<_>>()
+        };
+
+        let unique_count = stable_order.len();
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text(
+                &format!("Search {unique_count} unique values…"),
+                window,
+                cx,
+            );
+            editor
+        });
+        let subscription = cx.observe(&editor, |_, _, cx| cx.notify());
+
+        Self {
+            col,
+            view,
+            editor,
+            stable_order,
+            entries: Vec::new(),
+            scroll_handle: UniformListScrollHandle::new(),
+            _editor_subscription: subscription,
+        }
+    }
+}
+
+impl EventEmitter<DismissEvent> for CsvFilterMenu {}
+
+impl Focusable for CsvFilterMenu {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for CsvFilterMenu {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let col = self.col;
+        let query = self.editor.read(cx).text(cx).to_lowercase();
+
+        let column_filters = self
+            .view
+            .read(cx)
+            .engine
+            .get_filters_for_column(col)
+            .unwrap_or_default();
+
+        // Build a lookup: content key → (FilterEntry, is_applied).
+        // Used to resolve live applied state while respecting stable_order.
+        let lookup: Vec<(Option<SharedString>, FilterEntry, bool)> = column_filters
+            .iter()
+            .filter_map(|(entry, state)| match state {
+                FilterEntryState::Available { is_applied } => {
+                    Some((entry.content.clone(), entry.clone(), *is_applied))
+                }
+                _ => None,
+            })
+            .collect();
+
+        let selected_rows: usize = lookup
+            .iter()
+            .filter(|(_, _, is_applied)| *is_applied)
+            .map(|(_, e, _)| e.occurred_times())
+            .sum();
+        let total_rows: usize = lookup.iter().map(|(_, e, _)| e.occurred_times()).sum();
+        let has_active_filters = selected_rows > 0;
+
+        // Follow stable_order; look up live applied state from lookup.
+        // Stored on self so the uniform_list processor closure can index into it.
+        self.entries = self
+            .stable_order
+            .iter()
+            .filter_map(|key| {
+                lookup
+                    .iter()
+                    .find(|(k, _, _)| k == key)
+                    .map(|(_, entry, is_applied)| (entry.clone(), *is_applied))
+            })
+            .filter_map(|(entry, is_applied)| {
+                let display_text = match &entry.content {
+                    Some(s) => s.as_ref().to_owned(),
+                    None => "<null>".to_owned(),
+                };
+                if query.is_empty() {
+                    return Some((entry, is_applied, vec![]));
+                }
+                let display_text_lower = display_text.to_lowercase();
+                if let Some(byte_start) = display_text_lower.find(query.as_str()) {
+                    let char_start = display_text_lower[..byte_start].chars().count();
+                    let positions = (char_start..char_start + query.chars().count()).collect();
+                    Some((entry, is_applied, positions))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let entry_count = self.entries.len();
+        // Measure the actual text line height and add py_1 padding (4px × 2) to get
+        // the true row height. This avoids the last item being clipped when there are
+        // fewer entries than the 300px cap.
+        let row_height = window.text_style().line_height_in_pixels(window.rem_size()) + px(8.);
+        let list_height = (row_height * entry_count as f32).min(px(300.)) - px(8.);
+        let border_color = cx.theme().colors().border_variant;
+
+        v_flex()
+            .key_context("CsvFilterMenu")
+            .bg(cx.theme().colors().elevated_surface_background)
+            .border_1()
+            .border_color(border_color)
+            .rounded_md()
+            .overflow_hidden()
+            .w(px(300.))
+            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
+                cx.emit(DismissEvent);
+            }))
+            .on_mouse_down_out(cx.listener(|_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }))
+            // Search editor
+            .child(
+                h_flex()
+                    .h_8()
+                    .px_2()
+                    .gap_1()
+                    .border_b_1()
+                    .border_color(border_color)
+                    .items_center()
+                    .child(
+                        Icon::new(IconName::MagnifyingGlass)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(self.editor.clone()),
+            )
+            // Entry list
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .h(list_height)
+                    .child(
+                        uniform_list(
+                            ElementId::Name(format!("csv-filter-list-{}", col.get()).into()),
+                            entry_count,
+                            cx.processor(
+                                move |this, range: std::ops::Range<usize>, _window, cx| {
+                                    let hover_bg = cx.theme().colors().element_hover;
+                                    range
+                                        .map(|ix| {
+                                            let (entry, is_applied, positions) = &this.entries[ix];
+                                            let entry_value = entry.content.clone();
+                                            let value_text: SharedString = match &entry.content {
+                                                Some(s) => s.clone(),
+                                                None => "<null>".into(),
+                                            };
+                                            let count_text = SharedString::from(
+                                                entry.occurred_times().to_string(),
+                                            );
+                                            let is_applied = *is_applied;
+                                            let positions = positions.clone();
+                                            let view = this.view.clone();
+
+                                            h_flex()
+                                                .id(ElementId::NamedInteger(
+                                                    format!("csv-filter-entry-{}", col.get())
+                                                        .into(),
+                                                    ix as u64,
+                                                ))
+                                                .w_full()
+                                                .px_2()
+                                                .py_1()
+                                                .gap_2()
+                                                .items_center()
+                                                .justify_between()
+                                                .cursor_pointer()
+                                                .hover(|s| s.bg(hover_bg))
+                                                // Left: check icon + value text
+                                                .child(
+                                                    h_flex()
+                                                        .gap_2()
+                                                        .items_center()
+                                                        .min_w_0()
+                                                        .flex_1()
+                                                        .child(
+                                                            h_flex()
+                                                                .flex_none()
+                                                                .when(!is_applied, |el| {
+                                                                    el.invisible()
+                                                                })
+                                                                .child(
+                                                                    Icon::new(IconName::Check)
+                                                                        .size(IconSize::Small)
+                                                                        .color(Color::Accent),
+                                                                ),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .id(ElementId::NamedInteger(
+                                                                    format!(
+                                                                        "csv-filter-value-{}",
+                                                                        col.get()
+                                                                    )
+                                                                    .into(),
+                                                                    ix as u64,
+                                                                ))
+                                                                .min_w_0()
+                                                                .overflow_hidden()
+                                                                .tooltip(Tooltip::element({
+                                                                    let value_text =
+                                                                        value_text.clone();
+                                                                    move |_window, cx| {
+                                                                        div()
+                                                                            .font_buffer(cx)
+                                                                            .child(
+                                                                                value_text.clone(),
+                                                                            )
+                                                                            .into_any_element()
+                                                                    }
+                                                                }))
+                                                                .child(
+                                                                    HighlightedLabel::new(
+                                                                        value_text, positions,
+                                                                    )
+                                                                    .size(LabelSize::Small)
+                                                                    .single_line()
+                                                                    .truncate(),
+                                                                ),
+                                                        ),
+                                                )
+                                                // Right: occurrence count
+                                                .child(
+                                                    Label::new(count_text)
+                                                        .size(LabelSize::Small)
+                                                        .mr_2()
+                                                        .color(Color::Muted),
+                                                )
+                                                .on_click(move |_, _window, cx| {
+                                                    view.update(
+                                                        cx,
+                                                        |this: &mut CsvPreviewView, cx| {
+                                                            this.toggle_filter(
+                                                                col,
+                                                                entry_value.clone(),
+                                                                cx,
+                                                            );
+                                                        },
+                                                    );
+                                                })
+                                        })
+                                        .collect()
+                                },
+                            ),
+                        )
+                        .w_full()
+                        .h_full()
+                        .track_scroll(&self.scroll_handle)
+                        .with_sizing_behavior(ListSizingBehavior::Auto),
+                    )
+                    .vertical_scrollbar_for(&self.scroll_handle, window, cx),
+            )
+            // Footer: row count + clear all — shown as soon as any filter is selected
+            .when(has_active_filters, |this| {
+                this.child(
+                    h_flex()
+                        .px_2()
+                        .py_1()
+                        .border_t_1()
+                        .border_color(border_color)
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            Label::new(format!("{selected_rows} / {total_rows} rows selected"))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            div()
+                                .id("csv-filter-clear-all")
+                                .cursor_pointer()
+                                .child(
+                                    Label::new("Clear all")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Accent),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.view.update(cx, |view: &mut CsvPreviewView, cx| {
+                                        view.clear_filters(col, cx);
+                                    });
+                                    cx.emit(DismissEvent);
+                                })),
+                        ),
+                )
+            })
+    }
+}
 
 impl CsvPreviewView {
     /// Create header for data, which is orderable with text on the left and sort button on the right
@@ -43,11 +400,7 @@ impl CsvPreviewView {
             .overflow_hidden()
             .w_full()
             .items_center()
-            .map(|div| match self.settings.font_type {
-                FontType::Ui => div.font_ui(cx),
-                FontType::Monospace => div.font_buffer(cx),
-            })
-            // Label: flex_1 so it truly fills the full header width.
+            .font_buffer(cx)
             .child(
                 div()
                     .flex_1()
@@ -56,8 +409,6 @@ impl CsvPreviewView {
                     .whitespace_nowrap()
                     .child(header_text),
             )
-            // Gradient: always present so text gracefully fades before the button area.
-            // GradientFade is absolutely positioned and grows on group hover.
             .child(
                 GradientFade::new(base_bg, base_bg, base_bg)
                     .width(grad_width)
@@ -66,7 +417,6 @@ impl CsvPreviewView {
                     .gradient_stop(0.8)
                     .group_name(group_name.clone()),
             )
-            // Buttons: absolutely positioned so they never shrink the label.
             .child(
                 h_flex()
                     .absolute()
@@ -89,14 +439,14 @@ impl CsvPreviewView {
         cx: &mut Context<'_, CsvPreviewView>,
         col_idx: AnyColumn,
     ) -> Button {
-        let sort_btn = Button::new(
+        Button::new(
             ElementId::NamedInteger("sort-button".into(), col_idx.get() as u64),
             match self.engine.applied_sorting {
                 Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
                     SortDirection::Asc => "↓",
                     SortDirection::Desc => "↑",
                 },
-                _ => "↕", // Unsorted/available for sorting
+                _ => "↕",
             },
         )
         .size(ButtonSize::Compact)
@@ -120,38 +470,31 @@ impl CsvPreviewView {
         }))
         .on_click(cx.listener(move |this, _event, _window, cx| {
             let new_sorting = match this.engine.applied_sorting {
-                Some(ordering) if ordering.col_idx == col_idx => {
-                    // Same column clicked - cycle through states
-                    match ordering.direction {
-                        SortDirection::Asc => Some(AppliedSorting {
-                            col_idx,
-                            direction: SortDirection::Desc,
-                        }),
-                        SortDirection::Desc => None, // Clear sorting
-                    }
-                }
-                _ => {
-                    // Different column or no sorting - start with ascending
-                    Some(AppliedSorting {
+                Some(ordering) if ordering.col_idx == col_idx => match ordering.direction {
+                    SortDirection::Asc => Some(AppliedSorting {
                         col_idx,
-                        direction: SortDirection::Asc,
-                    })
-                }
+                        direction: SortDirection::Desc,
+                    }),
+                    SortDirection::Desc => None,
+                },
+                _ => Some(AppliedSorting {
+                    col_idx,
+                    direction: SortDirection::Asc,
+                }),
             };
-
             this.engine.applied_sorting = new_sorting;
             this.apply_sort(cx);
             cx.notify();
-        }));
-        sort_btn
+        }))
     }
 
     fn create_filter_button(
         &self,
         cx: &mut Context<'_, CsvPreviewView>,
         col: AnyColumn,
-    ) -> PopoverMenu<ContextMenu> {
+    ) -> PopoverMenu<CsvFilterMenu> {
         let has_active_filters = self.engine.has_active_filters(col);
+        let sort_order = self.settings.filter_sort_order;
 
         PopoverMenu::new(ElementId::NamedInteger(
             "filter-menu".into(),
@@ -178,173 +521,11 @@ impl CsvPreviewView {
         .menu({
             let view_entity = cx.entity();
             move |window, cx| {
-                let view = view_entity.read(cx);
-                let column_filters = match view.engine.get_filters_for_column(col) {
-                    Ok(filters) => filters,
-                    Err(err) => {
-                        log::error!("Failed to get filters for column: {err}");
-                        return None;
-                    }
-                };
-                let filter_sort_order = view.settings.filter_sort_order;
-                let filter_menu = Self::create_filter_menu(
-                    window,
-                    cx,
-                    view_entity.clone(),
-                    col,
-                    &column_filters,
-                    has_active_filters,
-                    filter_sort_order,
-                );
-                Some(filter_menu)
+                let menu = cx
+                    .new(|cx| CsvFilterMenu::new(col, view_entity.clone(), sort_order, window, cx));
+                menu.focus_handle(cx).focus(window, cx);
+                Some(menu)
             }
         })
-    }
-
-    fn create_filter_menu(
-        window: &mut ui::Window,
-        cx: &mut ui::App,
-        view_entity: gpui::Entity<CsvPreviewView>,
-        col: AnyColumn,
-        column_filters: &[(FilterEntry, FilterEntryState)],
-        has_active_filters: bool,
-        sort_order: FilterSortOrder,
-    ) -> gpui::Entity<ContextMenu> {
-        let mut available: Vec<&FilterEntry> = column_filters
-            .iter()
-            .filter_map(|(entry, state)| {
-                matches!(state, FilterEntryState::Available { .. }).then_some(entry)
-            })
-            .collect();
-
-        match sort_order {
-            FilterSortOrder::AlphaThenCount => available.sort_by(|a, b| {
-                a.content
-                    .cmp(&b.content)
-                    .then_with(|| b.occurred_times().cmp(&a.occurred_times()))
-            }),
-            FilterSortOrder::CountThenAlpha => available.sort_by(|a, b| {
-                b.occurred_times()
-                    .cmp(&a.occurred_times())
-                    .then_with(|| a.content.cmp(&b.content))
-            }),
-        }
-
-        let unavailable: Vec<(&FilterEntry, AnyColumn)> = column_filters
-            .iter()
-            .filter_map(|(entry, state)| {
-                if let FilterEntryState::Unavailable { blocked_by } = state {
-                    Some((entry, *blocked_by))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Pre-build applied-state lookup before moving into the closure
-        let applied_states: Vec<(FilterEntry, bool)> = column_filters
-            .iter()
-            .filter_map(|(entry, state)| {
-                if let FilterEntryState::Available { is_applied } = state {
-                    Some((entry.clone(), *is_applied))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let available_value_count = available.len();
-        let unavailable_value_count = unavailable.len();
-        let selected_row_count: usize = column_filters
-            .iter()
-            .filter_map(|(entry, state)| {
-                matches!(state, FilterEntryState::Available { is_applied: true })
-                    .then(|| entry.occurred_times())
-            })
-            .sum();
-
-        let available_cloned: Vec<FilterEntry> = available.iter().map(|e| (*e).clone()).collect();
-        let unavailable_cloned: Vec<(FilterEntry, AnyColumn)> = unavailable
-            .into_iter()
-            .map(|(e, col)| (e.clone(), col))
-            .collect();
-
-        let summary_header: SharedString = if selected_row_count > 0 {
-            format!("{available_value_count} values · {selected_row_count} rows selected").into()
-        } else {
-            format!("{available_value_count} values").into()
-        };
-
-        let unavailable_header: SharedString =
-            format!("Hidden by other filters ({unavailable_value_count} values)").into();
-
-        ContextMenu::build(window, cx, move |mut menu, _, _| {
-            if has_active_filters {
-                menu = menu
-                    .toggleable_entry("Clear all", false, ui::IconPosition::Start, None, {
-                        let view_entity = view_entity.clone();
-                        move |_window, cx| {
-                            view_entity.update(cx, |view, cx| {
-                                view.clear_filters(col, cx);
-                                cx.notify();
-                            });
-                        }
-                    })
-                    .separator();
-            }
-
-            let mut menu = menu.header(summary_header.clone());
-
-            for entry in &available_cloned {
-                let is_applied = applied_states
-                    .iter()
-                    .find(|(e, _)| e.content == entry.content)
-                    .map_or(false, |(_, applied)| *applied);
-
-                let label: SharedString =
-                    format_filter_label(entry.content.as_ref(), entry.occurred_times()).into();
-                let entry_value = entry.content.clone();
-
-                menu = menu.toggleable_entry(&label, is_applied, ui::IconPosition::Start, None, {
-                    let view_entity = view_entity.clone();
-                    move |_window, cx| {
-                        view_entity.update(cx, |view, cx| {
-                            view.toggle_filter(col, entry_value.clone(), cx);
-                            cx.notify();
-                        });
-                    }
-                });
-            }
-
-            if !unavailable_cloned.is_empty() {
-                menu = menu.separator().header(unavailable_header.clone());
-                for (entry, _blocked_by) in &unavailable_cloned {
-                    let label: SharedString =
-                        format_filter_label(entry.content.as_ref(), entry.occurred_times()).into();
-                    menu = menu.custom_entry(
-                        {
-                            let label = label.clone();
-                            move |_window, cx| {
-                                div()
-                                    .px_2()
-                                    .text_color(cx.theme().colors().text_muted)
-                                    .child(label.clone())
-                                    .into_any_element()
-                            }
-                        },
-                        |_, _| {},
-                    );
-                }
-            }
-
-            menu
-        })
-    }
-}
-
-fn format_filter_label(content: Option<&SharedString>, count: usize) -> String {
-    match content {
-        Some(s) => format!("{s} ({count})"),
-        None => format!("<null> ({count})"),
     }
 }

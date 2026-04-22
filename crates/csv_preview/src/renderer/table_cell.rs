@@ -31,7 +31,6 @@ fn create_table_cell(
             format!("csv-display-cell-{}", *display_cell_id.row).into(),
             *display_cell_id.col as u64,
         ))
-        .cursor_pointer()
         .flex()
         .h_full()
         .px_1()
@@ -40,10 +39,15 @@ fn create_table_cell(
             VerticalAlignment::Top => div.items_start(),
             VerticalAlignment::Center => div.items_center(),
         })
-        .map(|div| match font_type {
-            FontType::Ui => div.font_ui(cx),
-            FontType::Monospace => div.font_buffer(cx),
-        })
-        .tooltip(Tooltip::text(cell_content.clone()))
+        .font_buffer(cx)
+        .tooltip(Tooltip::element({
+            let text = cell_content.clone();
+            move |_window, cx| {
+                div()
+                    .font_buffer(cx)
+                    .child(text.clone())
+                    .into_any_element()
+            }
+        }))
         .child(div().child(cell_content))
 }

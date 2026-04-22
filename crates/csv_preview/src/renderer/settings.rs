@@ -1,7 +1,7 @@
 use ui::{
-    ActiveTheme as _, AnyElement, Button, ButtonCommon as _, ButtonSize, ButtonStyle, Clickable as _,
-    Context, ContextMenu, DropdownMenu, ElementId, IntoElement as _, ParentElement as _, Styled as _,
-    Toggleable as _, Tooltip, Window, div, h_flex,
+    ActiveTheme as _, AnyElement, ButtonSize, Checkbox, Context, ContextMenu, DropdownMenu,
+    ElementId, IntoElement as _, ParentElement as _, Styled as _, ToggleState, Tooltip, Window,
+    div, h_flex,
 };
 
 use crate::{
@@ -123,37 +123,28 @@ impl CsvPreviewView {
             );
 
         let multiline_enabled = self.settings.multiline_cells_enabled;
-        let panel = panel.child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().colors().text_muted)
-                        .child("Wrap Text:"),
-                )
-                .child({
-                    let view = view.clone();
-                    Button::new(
-                        ElementId::Name("wrap-text-toggle".into()),
-                        if multiline_enabled { "On" } else { "Off" },
-                    )
-                    .style(ButtonStyle::Subtle)
-                    .size(ButtonSize::Compact)
-                    .toggle_state(multiline_enabled)
-                    .tooltip(Tooltip::text(
-                        "Toggle cell text wrapping (multiline rows)",
-                    ))
-                    .on_click(move |_event, _window, cx| {
-                        view.update(cx, |this, cx| {
-                            this.settings.multiline_cells_enabled =
-                                !this.settings.multiline_cells_enabled;
-                            cx.notify();
-                        });
-                    })
-                }),
-        );
+        let panel = panel.child({
+            let view = view.clone();
+            Checkbox::new(
+                ElementId::Name("multiline-rows-checkbox".into()),
+                if multiline_enabled {
+                    ToggleState::Selected
+                } else {
+                    ToggleState::Unselected
+                },
+            )
+            .label("Display multiline rows")
+            .tooltip(Tooltip::text(
+                "When enabled, row height grows to show all content. \
+                 When disabled, only the first line is visible — hover a cell to see the rest.",
+            ))
+            .on_click(move |_state, _window, cx| {
+                view.update(cx, |this, cx| {
+                    this.settings.multiline_cells_enabled = !this.settings.multiline_cells_enabled;
+                    cx.notify();
+                });
+            })
+        });
 
         #[cfg(feature = "dev-tools")]
         let panel = panel.child(

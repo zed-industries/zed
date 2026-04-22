@@ -4576,6 +4576,7 @@ dependencies = [
  "feature_flags",
  "gpui",
  "log",
+ "menu",
  "text",
  "ui",
  "workspace",
