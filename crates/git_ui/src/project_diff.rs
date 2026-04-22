@@ -817,9 +817,8 @@ impl ProjectDiff {
 
                     this.buffer_diff_subscriptions.remove(&path.path);
                     let _span = ztracing::info_span!("remove_excerpts_for_path");
-                    let _enter = _span.enter();
+                    _span.enter();
                     editor.remove_excerpts_for_path(path, cx);
-                    drop(_span);
                 }
             });
             buffers_to_load
