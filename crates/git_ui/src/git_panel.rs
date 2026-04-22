@@ -3109,6 +3109,14 @@ impl GitPanel {
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
                 Ok(None) => {
+                    this.update(cx, |this, cx| {
+                        this.show_error_toast(
+                            "push",
+                            anyhow::anyhow!("No remote available to push to. Add a remote to be able to publish changes."),
+                            cx,
+                        )
+                    })
+                    .ok();
                     return Ok(());
                 }
                 Err(e) => {
