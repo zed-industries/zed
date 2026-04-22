@@ -2567,6 +2567,7 @@ impl GitStore {
                         receivers.push(shared.clone());
                     }
                     CommitDataState::Loading(None) => {
+                        // todo! this could happen if the request fails
                         debug_panic!(
                             "This should never happen since we passed true into fetch commit data"
                         );
@@ -8061,6 +8062,112 @@ fn proto_to_commit_details(proto: &proto::GitCommitDetails) -> CommitDetails {
         commit_timestamp: proto.commit_timestamp,
         author_email: proto.author_email.clone().into(),
         author_name: proto.author_name.clone().into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Project;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use gpui::proptest::prelude::*;
+    use rand::{SeedableRng, rngs::StdRng};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::Path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    fn verify_invariants(repository: &Repository) -> anyhow::Result<()> {
+        let GraphCommitHandlerState::Open(handler) = &repository.graph_commit_data_handler else {
+            return Ok(());
+        };
+
+        for (sha, state) in &repository.commit_data {
+            if matches!(state, CommitDataState::Loading(_)) {
+                anyhow::ensure!(
+                    handler.pending_requests.contains(sha),
+                    "loading commit data for {sha} must be tracked in pending_requests"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[gpui::property_test(config = ProptestConfig {
+        cases: 20,
+        ..Default::default()
+    })]
+    async fn test_commit_data_random_invariants(
+        #[strategy = any::<u64>()] seed: u64,
+        #[strategy = gpui::proptest::collection::vec(0usize..2000, 1..200)] commit_indexes: Vec<
+            usize,
+        >,
+        #[strategy = gpui::proptest::collection::vec(any::<bool>(), 1..200)] needs_waiters: Vec<
+            bool,
+        >,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let mut rng = StdRng::seed_from_u64(seed);
+
+        let commit_shas = (0..2000).map(|_| Oid::random(&mut rng)).collect::<Vec<_>>();
+        let commits = commit_shas
+            .iter()
+            .map(|sha| {
+                Arc::new(InitialGraphCommitData {
+                    sha: *sha,
+                    parents: SmallVec::new(),
+                    ref_names: Vec::new(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        for (step, commit_index) in commit_indexes.into_iter().enumerate() {
+            let sha = commit_shas[commit_index % commit_shas.len()];
+            let needs_waiter = needs_waiters[step % needs_waiters.len()];
+
+            repository.update(cx, |repository, cx| {
+                repository.fetch_commit_data(sha, needs_waiter, cx);
+                let result = verify_invariants(repository);
+                if let Err(error) = result {
+                    panic!(
+                        "commit data invariant violation after step {} for sha {}: {error:#}",
+                        step + 1,
+                        sha,
+                    );
+                }
+            });
+        }
     }
 }
 

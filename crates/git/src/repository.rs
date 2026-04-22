@@ -107,6 +107,7 @@ pub struct GraphCommitData {
     pub author_email: SharedString,
     pub commit_timestamp: i64,
     pub subject: SharedString,
+    // todo! we should add message as a field here
 }
 
 #[derive(Debug)]
@@ -136,6 +137,27 @@ impl CommitDataReader {
         response_rx
             .await
             .map_err(|_| anyhow!("commit data reader task dropped response"))?
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_test(
+        executor: BackgroundExecutor,
+        resolve: impl 'static + Send + Sync + Fn(Oid) -> Result<GraphCommitData>,
+    ) -> Self {
+        let (request_tx, request_rx) = smol::channel::bounded::<CommitDataRequest>(64);
+        let resolve = Arc::new(resolve);
+        let delay_executor = executor.clone();
+        let task = executor.spawn(async move {
+            while let Ok(CommitDataRequest { sha, response_tx }) = request_rx.recv().await {
+                delay_executor.simulate_random_delay().await;
+                response_tx.send(resolve(sha)).ok();
+            }
+        });
+
+        Self {
+            request_tx,
+            _task: task,
+        }
     }
 }
 

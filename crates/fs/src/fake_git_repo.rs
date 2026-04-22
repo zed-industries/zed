@@ -11,8 +11,8 @@ use git::{
     repository::{
         AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
-        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
-        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder, LogSource,
+        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -1452,7 +1452,28 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {
-        anyhow::bail!("commit_data_reader not supported for FakeGitRepository")
+        let fs = self.fs.clone();
+        let dot_git_path = self.dot_git_path.clone();
+        let executor = self.executor.clone();
+        Ok(CommitDataReader::for_test(executor, move |sha| {
+            fs.with_git_state(&dot_git_path, false, |state| {
+                let commit = state
+                    .graph_commits
+                    .iter()
+                    .find(|commit| commit.sha == sha)
+                    .context(format!("graph commit data not found for {sha}"))?;
+
+                // todo! we should have a random name and email so we can assert that this is equal properly
+                Ok(GraphCommitData {
+                    sha: commit.sha,
+                    parents: commit.parents.clone(),
+                    author_name: SharedString::from("Test User"),
+                    author_email: SharedString::from("test@example.com"),
+                    commit_timestamp: 0,
+                    subject: SharedString::from(commit.sha.to_string()),
+                })
+            })?
+        }))
     }
 
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
