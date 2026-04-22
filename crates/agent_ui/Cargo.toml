@@ -90,6 +90,7 @@ remote_connection.workspace = true
 rope.workspace = true
 rules_library.workspace = true
 schemars.workspace = true
+search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true

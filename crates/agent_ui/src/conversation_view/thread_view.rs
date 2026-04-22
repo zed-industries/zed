@@ -329,6 +329,13 @@ pub struct ThreadView {
     pub show_codex_windows_warning: bool,
     pub multi_root_callout_dismissed: bool,
     pub generating_indicator_in_list: bool,
+    pub search_matches: Vec<crate::conversation_view::ThreadSearchMatch>,
+    pub active_search_match_index: Option<usize>,
+    /// (entry_index, byte_start) — tracked independently of `active_search_match_index`
+    /// so that when the match set changes, we can re-anchor to the nearest remaining match.
+    pub active_search_position: Option<(usize, usize)>,
+    pub search_bar: Option<Entity<search::BufferSearchBar>>,
+    pub search_bar_subscription: Option<Subscription>,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -553,6 +560,11 @@ impl ThreadView {
             show_codex_windows_warning,
             multi_root_callout_dismissed: false,
             generating_indicator_in_list: false,
+            search_matches: Vec::new(),
+            active_search_match_index: None,
+            active_search_position: None,
+            search_bar: None,
+            search_bar_subscription: None,
         };
 
         this.sync_generating_indicator(cx);

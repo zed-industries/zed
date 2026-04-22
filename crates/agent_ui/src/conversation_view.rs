@@ -101,7 +101,9 @@ use crate::{
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
 const TOKEN_THRESHOLD: u64 = 250;
 
+mod thread_search;
 mod thread_view;
+pub use thread_search::*;
 pub use thread_view::*;
 
 pub struct QueuedMessage {
