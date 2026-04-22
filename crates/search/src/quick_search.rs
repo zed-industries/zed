@@ -2344,8 +2344,7 @@ impl PickerDelegate for QuickSearchDelegate {
             }
         }
 
-        let effective_index = self.selected_index;
-        let Some(selected_match) = self.matches.get(effective_index) else {
+        let Some(selected_match) = self.matches.get(self.selected_index) else {
             return;
         };
 
@@ -2406,7 +2405,7 @@ impl PickerDelegate for QuickSearchDelegate {
         let trim_offset = original_line.len() - line_text.len();
         let line_text_string = line_text.to_string();
 
-        // Build search match range (takes precedence over syntax highlighting)
+        // Build search match range (merged with syntax highlighting, adding background + bold)
         let search_match_style = HighlightStyle {
             background_color: Some(cx.theme().colors().search_match_background),
             font_weight: Some(gpui::FontWeight::BOLD),
