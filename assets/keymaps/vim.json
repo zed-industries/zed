@@ -418,7 +418,7 @@
     },
   },
   {
-    "context": "VimControl && vim_mode == helix_normal && !menu",
+    "context": "VimControl && vim_mode == helix_normal && !menu && !BufferSearchBar",
     "bindings": {
       "j": ["vim::Down", { "display_lines": true }],
       "down": ["vim::Down", { "display_lines": true }],
@@ -436,7 +436,7 @@
     },
   },
   {
-    "context": "vim_mode == helix_select && !menu",
+    "context": "vim_mode == helix_select && !menu && !BufferSearchBar",
     "bindings": {
       "escape": "vim::SwitchToHelixNormalMode",
     },
