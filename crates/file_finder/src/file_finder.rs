@@ -1759,6 +1759,7 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
+        let has_search_query = self.latest_search_query.is_some();
         let is_project_scan_running = {
             let worktree_store = self.project.read(cx).worktree_store();
             !worktree_store.read(cx).initial_scan_completed()
@@ -1831,7 +1832,7 @@ impl PickerDelegate for FileFinderDelegate {
                                     }
                                 }),
                         )
-                        .when(is_project_scan_running, |this| {
+                        .when(is_project_scan_running && has_search_query, |this| {
                             this.child(
                                 h_flex()
                                     .id("project-scan-indicator")
