@@ -692,12 +692,14 @@ impl MarkdownPreviewView {
 
     fn refresh_preview(view_handle: WeakEntity<Self>, window: &mut Window, cx: &mut App) {
         if let Some(view) = view_handle.upgrade() {
-            let preview_is_focused = view.read(cx).focus_handle(cx).contains_focused(window, cx);
-            if preview_is_focused {
-                cx.update_entity(&view, |this, cx| {
-                    this.update_markdown_from_active_editor(false, false, window, cx);
-                });
+            let preview_is_focused = view.read(cx).focus_handle.contains_focused(window, cx);
+            if !preview_is_focused {
+                return;
             }
+
+            cx.update_entity(&view, |this, cx| {
+                this.update_markdown_from_active_editor(false, false, window, cx);
+            });
         }
     }
 }
@@ -833,9 +835,9 @@ fn resolve_preview_image(
         .map(|decoded| decoded.into_owned())
         .unwrap_or_else(|_| dest_url.to_string());
 
-    if let Some(stripped) = decoded
-        .strip_prefix('/')
-        .or_else(|| decoded.strip_prefix('\\'))
+    if let Some(stripped) = ['/', '\\']
+        .iter()
+        .find_map(|prefix| decoded.strip_prefix(*prefix))
     {
         if let Some(root) = workspace_directory {
             let absolute_path = root.join(stripped);
