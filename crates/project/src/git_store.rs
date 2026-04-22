@@ -2547,27 +2547,35 @@ impl GitStore {
             .filter_map(|s| Oid::from_str(s).ok())
             .collect();
 
-        let receivers = repository_handle.update(&mut cx, |repository, cx| {
-            shas.iter()
-                .filter_map(|&sha| match repository.fetch_commit_data(sha, true, cx) {
-                    CommitDataState::Loading(Some(shared)) => Some(shared.clone()),
+        let mut commits = Vec::with_capacity(shas.len());
+        let mut receivers = Vec::new();
+
+        repository_handle.update(&mut cx, |repository, cx| {
+            for &sha in &shas {
+                match repository.fetch_commit_data(sha, true, cx) {
                     CommitDataState::Loaded(data) => {
-                        let (tx, rx) = oneshot::channel();
-                        tx.send(data.clone()).ok();
-                        Some(rx.shared())
+                        commits.push(graph_commit_data_to_proto(data));
                     }
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
+                    CommitDataState::Loading(Some(shared)) => {
+                        receivers.push(shared.clone());
+                    }
+                    CommitDataState::Loading(None) => {
+                        debug_panic!(
+                            "This should never happen since we passed true into fetch commit data"
+                        );
+                    }
+                }
+            }
         });
 
         let results = future::join_all(receivers).await;
 
-        let commits = results
-            .into_iter()
-            .filter_map(|result| result.ok())
-            .map(|data| graph_commit_data_to_proto(&data))
-            .collect();
+        commits.extend(
+            results
+                .into_iter()
+                .filter_map(|result| result.ok())
+                .map(|data| graph_commit_data_to_proto(&data)),
+        );
 
         Ok(proto::GetGraphCommitDataResponse { commits })
     }
