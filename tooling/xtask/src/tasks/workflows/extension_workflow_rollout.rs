@@ -34,6 +34,7 @@ pub(crate) fn extension_workflow_rollout() -> Workflow {
         removed_ci,
         removed_shared,
         &extra_context_input,
+        &filter_repos_input,
     );
     let create_tag = create_rollout_tag(&rollout_workflows, &filter_repos_input);
 
@@ -192,6 +193,7 @@ fn rollout_workflows_to_extension(
     removed_ci: JobOutput,
     removed_shared: JobOutput,
     extra_context_input: &WorkflowInput,
+    filter_repos_input: &WorkflowInput,
 ) -> NamedJob {
     fn checkout_extension_repo(token: &StepOutput) -> CheckoutStep {
         steps::checkout_repo()
@@ -259,6 +261,7 @@ fn rollout_workflows_to_extension(
         token: &StepOutput,
         short_sha: &StepOutput,
         context_input: &WorkflowInput,
+        filter_repos_input: &WorkflowInput,
     ) -> Step<Use> {
         let title = format!("Update CI workflows to `{short_sha}`");
 
@@ -273,7 +276,11 @@ fn rollout_workflows_to_extension(
         let pr_step: Step<Use> = steps::CreatePrStep::new(title, "update-workflows", token)
             .with_body(body)
             .with_path("extension")
-            .with_assignee("")
+            // Save my inbox from exploding on rollout
+            .with_assignee(format!(
+                "${{{{ {repos_expr} != '' && github.actor || '' }}}}",
+                repos_expr = filter_repos_input.expr()
+            ))
             .into();
         pr_step.id("create-pr")
     }
@@ -328,7 +335,7 @@ fn rollout_workflows_to_extension(
         .add_step(download_workflow_files())
         .add_step(sync_workflow_files(removed_ci, removed_shared))
         .add_step(calculate_short_sha)
-        .add_step(create_pull_request(&token, &short_sha, extra_context_input))
+        .add_step(create_pull_request(&token, &short_sha, extra_context_input, filter_repos_input))
         .add_step(enable_auto_merge(&token));
 
     named::job(job)

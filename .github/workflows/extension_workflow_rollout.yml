@@ -189,7 +189,7 @@ jobs:
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
         sign-commits: true
-        assignees: ''
+        assignees: ${{ inputs.filter-repos != '' && github.actor || '' }}
         path: extension
     - name: extension_workflow_rollout::rollout_workflows_to_extension::enable_auto_merge
       run: |
