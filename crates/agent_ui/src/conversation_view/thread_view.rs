@@ -337,6 +337,9 @@ pub struct ThreadView {
     /// (entry_index, byte_start) — tracked independently of `active_search_match_index`
     /// so that when the match set changes, we can re-anchor to the nearest remaining match.
     pub active_search_position: Option<(usize, usize)>,
+    /// Markdown entities that currently hold search highlights, so we can clear
+    /// them when the match set shrinks or the search is dismissed.
+    pub highlighted_markdowns: Vec<Entity<Markdown>>,
     pub search_bar: Option<Entity<search::BufferSearchBar>>,
     pub search_bar_subscription: Option<Subscription>,
 }
@@ -566,6 +569,7 @@ impl ThreadView {
             search_matches: Vec::new(),
             active_search_match_index: None,
             active_search_position: None,
+            highlighted_markdowns: Vec::new(),
             search_bar: None,
             search_bar_subscription: None,
         };
