@@ -1,15 +1,20 @@
-use std::{cmp, ops::Range};
+use std::ops::Range;
 
 use collections::HashMap;
 use futures::FutureExt;
 use futures::future::join_all;
 use gpui::{App, Context, HighlightStyle, Task};
 use itertools::Itertools as _;
-use language::language_settings::language_settings;
-use language::{Buffer, BufferSnapshot, OutlineItem};
-use multi_buffer::{Anchor, MultiBufferSnapshot};
-use text::{Bias, BufferId, OffsetRangeExt as _, ToOffset as _};
+use language::language_settings::LanguageSettings;
+use language::{Buffer, OutlineItem};
+use multi_buffer::{
+    Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
+    ToOffset as _,
+};
+use text::BufferId;
 use theme::{ActiveTheme as _, SyntaxTheme};
+use unicode_segmentation::UnicodeSegmentation as _;
+use util::maybe;
 
 use crate::display_map::DisplaySnapshot;
 use crate::{Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT};
@@ -57,10 +62,10 @@ impl Editor {
         multi_buffer_snapshot: &MultiBufferSnapshot,
         cx: &Context<Self>,
     ) -> bool {
-        let Some(excerpt) = multi_buffer_snapshot.excerpt_containing(cursor..cursor) else {
+        let Some((anchor, _)) = multi_buffer_snapshot.anchor_to_buffer_anchor(cursor) else {
             return false;
         };
-        let Some(buffer) = self.buffer.read(cx).buffer(excerpt.buffer_id()) else {
+        let Some(buffer) = self.buffer.read(cx).buffer(anchor.buffer_id) else {
             return false;
         };
         lsp_symbols_enabled(buffer.read(cx), cx)
@@ -72,16 +77,12 @@ impl Editor {
         &self,
         cursor: Anchor,
         multi_buffer_snapshot: &MultiBufferSnapshot,
-        cx: &Context<Self>,
+        _cx: &Context<Self>,
     ) -> Option<(BufferId, Vec<OutlineItem<Anchor>>)> {
-        let excerpt = multi_buffer_snapshot.excerpt_containing(cursor..cursor)?;
-        let excerpt_id = excerpt.id();
-        let buffer_id = excerpt.buffer_id();
-        let buffer = self.buffer.read(cx).buffer(buffer_id)?;
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let cursor_text_anchor = cursor.text_anchor;
-
-        let all_items = self.lsp_document_symbols.get(&buffer_id)?;
+        let (cursor_text_anchor, buffer) = multi_buffer_snapshot.anchor_to_buffer_anchor(cursor)?;
+        let all_items = self
+            .lsp_document_symbols
+            .get(&cursor_text_anchor.buffer_id)?;
         if all_items.is_empty() {
             return None;
         }
@@ -89,34 +90,36 @@ impl Editor {
         let mut symbols = all_items
             .iter()
             .filter(|item| {
-                item.range
-                    .start
-                    .cmp(&cursor_text_anchor, &buffer_snapshot)
-                    .is_le()
-                    && item
-                        .range
-                        .end
-                        .cmp(&cursor_text_anchor, &buffer_snapshot)
-                        .is_ge()
+                item.range.start.cmp(&cursor_text_anchor, buffer).is_le()
+                    && item.range.end.cmp(&cursor_text_anchor, buffer).is_ge()
             })
-            .map(|item| OutlineItem {
-                depth: item.depth,
-                range: Anchor::range_in_buffer(excerpt_id, item.range.clone()),
-                source_range_for_text: Anchor::range_in_buffer(
-                    excerpt_id,
-                    item.source_range_for_text.clone(),
-                ),
-                text: item.text.clone(),
-                highlight_ranges: item.highlight_ranges.clone(),
-                name_ranges: item.name_ranges.clone(),
-                body_range: item
-                    .body_range
-                    .as_ref()
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r.clone())),
-                annotation_range: item
-                    .annotation_range
-                    .as_ref()
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r.clone())),
+            .filter_map(|item| {
+                let range_start = multi_buffer_snapshot.anchor_in_buffer(item.range.start)?;
+                let range_end = multi_buffer_snapshot.anchor_in_buffer(item.range.end)?;
+                let source_range_for_text_start =
+                    multi_buffer_snapshot.anchor_in_buffer(item.source_range_for_text.start)?;
+                let source_range_for_text_end =
+                    multi_buffer_snapshot.anchor_in_buffer(item.source_range_for_text.end)?;
+                Some(OutlineItem {
+                    depth: item.depth,
+                    range: range_start..range_end,
+                    source_range_for_text: source_range_for_text_start..source_range_for_text_end,
+                    text: item.text.clone(),
+                    highlight_ranges: item.highlight_ranges.clone(),
+                    name_ranges: item.name_ranges.clone(),
+                    body_range: item.body_range.as_ref().and_then(|r| {
+                        Some(
+                            multi_buffer_snapshot.anchor_in_buffer(r.start)?
+                                ..multi_buffer_snapshot.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                    annotation_range: item.annotation_range.as_ref().and_then(|r| {
+                        Some(
+                            multi_buffer_snapshot.anchor_in_buffer(r.start)?
+                                ..multi_buffer_snapshot.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                })
             })
             .collect::<Vec<_>>();
 
@@ -127,7 +130,7 @@ impl Editor {
             retain
         });
 
-        Some((buffer_id, symbols))
+        Some((buffer.remote_id(), symbols))
     }
 
     /// Fetches document symbols from the LSP for buffers that have the setting
@@ -139,7 +142,7 @@ impl Editor {
         for_buffer: Option<BufferId>,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() {
+        if !self.lsp_data_enabled() {
             return;
         }
         let Some(project) = self.project.clone() else {
@@ -147,9 +150,10 @@ impl Editor {
         };
 
         let buffers_to_query = self
-            .visible_excerpts(true, cx)
+            .visible_buffers(cx)
             .into_iter()
-            .filter_map(|(_, (buffer, _, _))| {
+            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
+            .filter_map(|buffer| {
                 let id = buffer.read(cx).remote_id();
                 if for_buffer.is_none_or(|target| target == id)
                     && lsp_symbols_enabled(buffer.read(cx), cx)
@@ -212,16 +216,13 @@ impl Editor {
                         let display_snapshot =
                             editor.display_map.update(cx, |map, cx| map.snapshot(cx));
                         let mut highlighted_results = results;
-                        for (buffer_id, items) in &mut highlighted_results {
-                            if let Some(buffer) = editor.buffer.read(cx).buffer(*buffer_id) {
-                                let snapshot = buffer.read(cx).snapshot();
-                                apply_highlights(
-                                    items,
-                                    *buffer_id,
-                                    &snapshot,
-                                    &display_snapshot,
-                                    &syntax,
-                                );
+                        for items in highlighted_results.values_mut() {
+                            for item in items {
+                                if let Some(highlights) =
+                                    highlights_from_buffer(&display_snapshot, &item, &syntax)
+                                {
+                                    item.highlight_ranges = highlights;
+                                }
                             }
                         }
                         editor.lsp_document_symbols.extend(highlighted_results);
@@ -234,37 +235,9 @@ impl Editor {
 }
 
 fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
-    language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+    LanguageSettings::for_buffer(buffer, cx)
         .document_symbols
         .lsp_enabled()
-}
-
-/// Applies combined syntax + semantic token highlights to LSP document symbol
-/// outline items that were built without highlights by the project layer.
-fn apply_highlights(
-    items: &mut [OutlineItem<text::Anchor>],
-    buffer_id: BufferId,
-    buffer_snapshot: &BufferSnapshot,
-    display_snapshot: &DisplaySnapshot,
-    syntax_theme: &SyntaxTheme,
-) {
-    for item in items {
-        let symbol_range = item.range.to_offset(buffer_snapshot);
-        let selection_start = item.source_range_for_text.start.to_offset(buffer_snapshot);
-
-        if let Some(highlights) = highlights_from_buffer(
-            &item.text,
-            0,
-            buffer_id,
-            buffer_snapshot,
-            display_snapshot,
-            symbol_range,
-            selection_start,
-            syntax_theme,
-        ) {
-            item.highlight_ranges = highlights;
-        }
-    }
 }
 
 /// Finds where the symbol name appears in the buffer and returns combined
@@ -275,117 +248,78 @@ fn apply_highlights(
 /// to word-by-word matching for cases like `impl<T> Trait<T> for Type`
 /// where the LSP name doesn't appear verbatim in the buffer.
 fn highlights_from_buffer(
-    name: &str,
-    name_offset_in_text: usize,
-    buffer_id: BufferId,
-    buffer_snapshot: &BufferSnapshot,
     display_snapshot: &DisplaySnapshot,
-    symbol_range: Range<usize>,
-    selection_start_offset: usize,
+    item: &OutlineItem<text::Anchor>,
     syntax_theme: &SyntaxTheme,
 ) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
-    if name.is_empty() {
+    let outline_text = &item.text;
+    if outline_text.is_empty() {
         return None;
     }
 
-    let range_start_offset = symbol_range.start;
-    let range_end_offset = symbol_range.end;
+    let multi_buffer_snapshot = display_snapshot.buffer();
+    let multi_buffer_source_range_anchors =
+        multi_buffer_snapshot.text_anchors_to_visible_anchors([
+            item.source_range_for_text.start,
+            item.source_range_for_text.end,
+        ]);
+    let Some(anchor_range) = maybe!({
+        Some(
+            (*multi_buffer_source_range_anchors.get(0)?)?
+                ..(*multi_buffer_source_range_anchors.get(1)?)?,
+        )
+    }) else {
+        return None;
+    };
 
-    // Try to find the name verbatim in the buffer near the selection range.
-    let search_start = buffer_snapshot.clip_offset(
-        selection_start_offset
-            .saturating_sub(name.len())
-            .max(range_start_offset),
-        Bias::Right,
-    );
-    let search_end = buffer_snapshot.clip_offset(
-        cmp::min(selection_start_offset + name.len() * 2, range_end_offset),
-        Bias::Left,
-    );
+    let selection_point_range = anchor_range.to_point(multi_buffer_snapshot);
+    let mut search_start = selection_point_range.start;
+    search_start.column = 0;
+    let search_start_offset = search_start.to_offset(&multi_buffer_snapshot);
+    let mut search_end = selection_point_range.end;
+    search_end.column = multi_buffer_snapshot.line_len(MultiBufferRow(search_end.row));
 
-    if search_start < search_end {
-        let buffer_text: String = buffer_snapshot
-            .text_for_range(search_start..search_end)
-            .collect();
-        if let Some(found_at) = buffer_text.find(name) {
-            let name_start_offset = search_start + found_at;
-            let name_end_offset = name_start_offset + name.len();
-            let result = highlights_for_buffer_range(
-                name_offset_in_text,
-                name_start_offset..name_end_offset,
-                buffer_id,
-                display_snapshot,
-                syntax_theme,
+    let search_text = multi_buffer_snapshot
+        .text_for_range(search_start..search_end)
+        .collect::<String>();
+
+    let mut outline_text_highlights = Vec::new();
+    match search_text.find(outline_text) {
+        Some(start_index) => {
+            let multibuffer_start = search_start_offset + MultiBufferOffset(start_index);
+            let multibuffer_end = multibuffer_start + MultiBufferOffset(outline_text.len());
+            outline_text_highlights.extend(
+                display_snapshot
+                    .combined_highlights(multibuffer_start..multibuffer_end, syntax_theme),
             );
-            if result.is_some() {
-                return result;
+        }
+        None => {
+            for (outline_text_word_start, outline_word) in outline_text.split_word_bound_indices() {
+                if let Some(start_index) = search_text.find(outline_word) {
+                    let multibuffer_start = search_start_offset + MultiBufferOffset(start_index);
+                    let multibuffer_end = multibuffer_start + MultiBufferOffset(outline_word.len());
+                    outline_text_highlights.extend(
+                        display_snapshot
+                            .combined_highlights(multibuffer_start..multibuffer_end, syntax_theme)
+                            .into_iter()
+                            .map(|(range_in_word, style)| {
+                                (
+                                    outline_text_word_start + range_in_word.start
+                                        ..outline_text_word_start + range_in_word.end,
+                                    style,
+                                )
+                            }),
+                    );
+                }
             }
         }
     }
 
-    // Fallback: match word-by-word. Split the name on whitespace and find
-    // each word sequentially in the buffer's symbol range.
-    let range_start_offset = buffer_snapshot.clip_offset(range_start_offset, Bias::Right);
-    let range_end_offset = buffer_snapshot.clip_offset(range_end_offset, Bias::Left);
-
-    let mut highlights = Vec::new();
-    let mut got_any = false;
-    let buffer_text: String = buffer_snapshot
-        .text_for_range(range_start_offset..range_end_offset)
-        .collect();
-    let mut buf_search_from = 0usize;
-    let mut name_search_from = 0usize;
-    for word in name.split_whitespace() {
-        let name_word_start = name[name_search_from..]
-            .find(word)
-            .map(|pos| name_search_from + pos)
-            .unwrap_or(name_search_from);
-        if let Some(found_in_buf) = buffer_text[buf_search_from..].find(word) {
-            let buf_word_start = range_start_offset + buf_search_from + found_in_buf;
-            let buf_word_end = buf_word_start + word.len();
-            let text_cursor = name_offset_in_text + name_word_start;
-            if let Some(mut word_highlights) = highlights_for_buffer_range(
-                text_cursor,
-                buf_word_start..buf_word_end,
-                buffer_id,
-                display_snapshot,
-                syntax_theme,
-            ) {
-                got_any = true;
-                highlights.append(&mut word_highlights);
-            }
-            buf_search_from = buf_search_from + found_in_buf + word.len();
-        }
-        name_search_from = name_word_start + word.len();
+    if outline_text_highlights.is_empty() {
+        None
+    } else {
+        Some(outline_text_highlights)
     }
-
-    got_any.then_some(highlights)
-}
-
-/// Gets combined (tree-sitter + semantic token) highlights for a buffer byte
-/// range via the editor's display snapshot, then shifts the returned ranges
-/// so they start at `text_cursor_start` (the position in the outline item text).
-fn highlights_for_buffer_range(
-    text_cursor_start: usize,
-    buffer_range: Range<usize>,
-    buffer_id: BufferId,
-    display_snapshot: &DisplaySnapshot,
-    syntax_theme: &SyntaxTheme,
-) -> Option<Vec<(Range<usize>, HighlightStyle)>> {
-    let raw = display_snapshot.combined_highlights(buffer_id, buffer_range, syntax_theme);
-    if raw.is_empty() {
-        return None;
-    }
-    Some(
-        raw.into_iter()
-            .map(|(range, style)| {
-                (
-                    range.start + text_cursor_start..range.end + text_cursor_start,
-                    style,
-                )
-            })
-            .collect(),
-    )
 }
 
 #[cfg(test)]
@@ -397,7 +331,7 @@ mod tests {
 
     use futures::StreamExt as _;
     use gpui::TestAppContext;
-    use settings::DocumentSymbols;
+    use settings::{DocumentSymbols, SettingsStore};
     use util::path;
     use zed_actions::editor::{MoveDown, MoveUp};
 
@@ -453,7 +387,7 @@ mod tests {
     async fn test_lsp_document_symbols_fetches_when_enabled(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 
@@ -493,7 +427,7 @@ mod tests {
     async fn test_lsp_document_symbols_nested(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 
@@ -589,7 +523,7 @@ mod tests {
         });
 
         // Step 2: Switch to LSP
-        update_test_language_settings(&mut cx.cx.cx, |settings| {
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
         assert!(symbol_request.next().await.is_some());
@@ -604,7 +538,7 @@ mod tests {
         });
 
         // Step 3: Switch back to tree-sitter
-        update_test_language_settings(&mut cx.cx.cx, |settings| {
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::Off);
         });
         cx.run_until_parked();
@@ -628,7 +562,7 @@ mod tests {
     async fn test_lsp_document_symbols_caches_results(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 
@@ -686,7 +620,7 @@ mod tests {
     async fn test_lsp_document_symbols_flat_response(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 
@@ -731,7 +665,7 @@ mod tests {
     async fn test_breadcrumbs_use_lsp_symbols(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 
@@ -780,7 +714,7 @@ mod tests {
     async fn test_lsp_document_symbols_multibyte_highlights(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 
@@ -860,7 +794,7 @@ mod tests {
     async fn test_lsp_document_symbols_empty_response(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::On);
         });
 
@@ -940,5 +874,135 @@ mod tests {
             0,
             "Should not have made any LSP document symbol requests when setting is off"
         );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_highlights_update_on_theme_change(cx: &mut TestAppContext) {
+        use collections::IndexMap;
+        use gpui::{Hsla, Rgba, UpdateGlobal as _};
+        use theme_settings::{HighlightStyleContent, ThemeStyleContent};
+        use ui::ActiveTheme as _;
+
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+        // Set the initial theme with a red keyword color and sync it to the
+        // language registry so tree-sitter highlight maps are up to date.
+        let red_color: Hsla = Rgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }
+        .into();
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
+                        syntax: IndexMap::from_iter([(
+                            "keyword".to_string(),
+                            HighlightStyleContent {
+                                color: Some("#ff0000".to_string()),
+                                background_color: None,
+                                font_style: None,
+                                font_weight: None,
+                            },
+                        )]),
+                        ..ThemeStyleContent::default()
+                    });
+                });
+            });
+        });
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        cx.set_state("fn maˇin() {}");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let breadcrumbs = editor
+                .breadcrumbs_inner(cx)
+                .expect("Should have breadcrumbs");
+            let symbol_segment = breadcrumbs
+                .iter()
+                .find(|b| b.text.as_ref() == "fn main")
+                .expect("Should have 'fn main' breadcrumb");
+            let keyword_highlight = symbol_segment
+                .highlights
+                .iter()
+                .find(|(range, _)| &symbol_segment.text[range.clone()] == "fn")
+                .expect("Should have a highlight for the 'fn' keyword");
+            assert_eq!(
+                keyword_highlight.1.color,
+                Some(red_color),
+                "The 'fn' keyword should have red color"
+            );
+        });
+
+        // Change the theme to use a blue keyword color. This simulates a user
+        // switching themes. The language registry set_theme call mirrors what
+        // the application does in main.rs on theme change.
+        let blue_color: Hsla = Rgba {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+            a: 1.0,
+        }
+        .into();
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
+                        syntax: IndexMap::from_iter([(
+                            "keyword".to_string(),
+                            HighlightStyleContent {
+                                color: Some("#0000ff".to_string()),
+                                background_color: None,
+                                font_style: None,
+                                font_weight: None,
+                            },
+                        )]),
+                        ..ThemeStyleContent::default()
+                    });
+                });
+            });
+        });
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let breadcrumbs = editor
+                .breadcrumbs_inner(cx)
+                .expect("Should have breadcrumbs after theme change");
+            let symbol_segment = breadcrumbs
+                .iter()
+                .find(|b| b.text.as_ref() == "fn main")
+                .expect("Should have 'fn main' breadcrumb after theme change");
+            let keyword_highlight = symbol_segment
+                .highlights
+                .iter()
+                .find(|(range, _)| &symbol_segment.text[range.clone()] == "fn")
+                .expect("Should have a highlight for the 'fn' keyword after theme change");
+            assert_eq!(
+                keyword_highlight.1.color,
+                Some(blue_color),
+                "The 'fn' keyword should have blue color after theme change"
+            );
+        });
     }
 }

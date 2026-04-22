@@ -52,6 +52,8 @@ use table::TableView;
 mod json;
 use json::JsonView;
 
+mod html;
+
 pub mod plain;
 use plain::TerminalOutput;
 
@@ -65,7 +67,8 @@ use settings::Settings;
 /// When deciding what to render from a collection of mediatypes, we need to rank them in order of importance
 fn rank_mime_type(mimetype: &MimeType) -> usize {
     match mimetype {
-        MimeType::DataTable(_) => 6,
+        MimeType::DataTable(_) => 7,
+        MimeType::Html(_) => 6,
         MimeType::Json(_) => 5,
         MimeType::Png(_) => 4,
         MimeType::Jpeg(_) => 3,
@@ -250,18 +253,8 @@ impl Output {
         )
     }
 
-    pub fn render(
-        &self,
-        workspace: WeakEntity<Workspace>,
-        window: &mut Window,
-        cx: &mut Context<ExecutionView>,
-    ) -> impl IntoElement + use<> {
-        let max_width = plain::max_width_for_columns(
-            ReplSettings::get_global(cx).output_max_width_columns,
-            window,
-            cx,
-        );
-        let content = match self {
+    pub fn content(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        match self {
             Self::Plain { content, .. } => Some(content.clone().into_any_element()),
             Self::Markdown { content, .. } => Some(content.clone().into_any_element()),
             Self::Stream { content, .. } => Some(content.clone().into_any_element()),
@@ -271,21 +264,36 @@ impl Output {
             Self::Json { content, .. } => Some(content.clone().into_any_element()),
             Self::ErrorOutput(error_view) => error_view.render(window, cx),
             Self::ClearOutputWaitMarker => None,
-        };
+        }
+    }
 
-        let needs_horizontal_scroll = matches!(self, Self::Table { .. } | Self::Image { .. });
+    pub fn render(
+        &self,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<ExecutionView>,
+    ) -> impl IntoElement + use<> {
+        let max_width =
+            plain::max_width_for_columns(ReplSettings::get_global(cx).max_columns, window, cx);
+        let content = self.content(window, cx);
+
+        let needs_horizontal_scroll = matches!(self, Self::Table { .. });
 
         h_flex()
             .id("output-content")
             .w_full()
-            .when_some(max_width, |this, max_w| this.max_w(max_w))
-            .overflow_x_scroll()
+            .when_else(
+                needs_horizontal_scroll,
+                |this| this.overflow_x_scroll(),
+                |this| this.overflow_x_hidden(),
+            )
             .items_start()
             .child(
                 div()
                     .when(!needs_horizontal_scroll, |el| {
                         el.flex_1().w_full().overflow_x_hidden()
                     })
+                    .when_some(max_width, |el, max_width| el.max_w(max_width))
                     .children(content),
             )
             .children(match self {
@@ -418,6 +426,19 @@ impl Output {
             Some(MimeType::DataTable(data)) => Output::Table {
                 content: cx.new(|cx| TableView::new(data, window, cx)),
                 display_id,
+            },
+            Some(MimeType::Html(html_content)) => match html::html_to_markdown(html_content) {
+                Ok(markdown_text) => {
+                    let content = cx.new(|cx| MarkdownView::from(markdown_text, cx));
+                    Output::Markdown {
+                        content,
+                        display_id,
+                    }
+                }
+                Err(_) => Output::Plain {
+                    content: cx.new(|cx| TerminalOutput::from(html_content, window, cx)),
+                    display_id,
+                },
             },
             // Any other media types are not supported
             _ => Output::Message("Unsupported media type".to_string()),
@@ -836,20 +857,23 @@ mod tests {
     #[test]
     fn test_rank_mime_type_ordering() {
         let data_table = MimeType::DataTable(Box::default());
+        let html = MimeType::Html(String::new());
         let json = MimeType::Json(serde_json::json!({}));
         let png = MimeType::Png(String::new());
         let jpeg = MimeType::Jpeg(String::new());
         let markdown = MimeType::Markdown(String::new());
         let plain = MimeType::Plain(String::new());
 
-        assert_eq!(rank_mime_type(&data_table), 6);
+        assert_eq!(rank_mime_type(&data_table), 7);
+        assert_eq!(rank_mime_type(&html), 6);
         assert_eq!(rank_mime_type(&json), 5);
         assert_eq!(rank_mime_type(&png), 4);
         assert_eq!(rank_mime_type(&jpeg), 3);
         assert_eq!(rank_mime_type(&markdown), 2);
         assert_eq!(rank_mime_type(&plain), 1);
 
-        assert!(rank_mime_type(&data_table) > rank_mime_type(&json));
+        assert!(rank_mime_type(&data_table) > rank_mime_type(&html));
+        assert!(rank_mime_type(&html) > rank_mime_type(&json));
         assert!(rank_mime_type(&json) > rank_mime_type(&png));
         assert!(rank_mime_type(&png) > rank_mime_type(&jpeg));
         assert!(rank_mime_type(&jpeg) > rank_mime_type(&markdown));
@@ -858,11 +882,9 @@ mod tests {
 
     #[test]
     fn test_rank_mime_type_unsupported_returns_zero() {
-        let html = MimeType::Html(String::new());
         let svg = MimeType::Svg(String::new());
         let latex = MimeType::Latex(String::new());
 
-        assert_eq!(rank_mime_type(&html), 0);
         assert_eq!(rank_mime_type(&svg), 0);
         assert_eq!(rank_mime_type(&latex), 0);
     }
@@ -873,7 +895,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
         let fs = project::FakeFs::new(cx.background_executor.clone());
         let project = project::Project::test(fs, [] as [&Path; 0], cx).await;

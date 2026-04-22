@@ -143,7 +143,7 @@ impl KeyContextView {
 impl Item for KeyContextView {
     type Event = ();
 
-    fn to_item_events(_: &Self::Event, _: impl FnMut(workspace::item::ItemEvent)) {}
+    fn to_item_events(_: &Self::Event, _: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Keyboard Context".into()

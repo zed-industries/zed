@@ -5,6 +5,8 @@ description: Manage Zed AI billing, payment methods, invoices, threshold billing
 
 # Billing
 
+This page covers billing for Zed's [subscription plans](./subscription.md). For details on what's included in each plan and how token usage works, see [Plans and Usage](./plans-and-usage.md).
+
 We use Stripe as our payments provider, and Orb for invoicing and metering. All Pro plans require payment via credit card or other supported payment method.
 For invoice-based billing, a Business plan is required. Contact [sales@zed.dev](mailto:sales@zed.dev) for more information.
 

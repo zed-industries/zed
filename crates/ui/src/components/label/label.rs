@@ -1,5 +1,7 @@
+use std::ops::Range;
+
 use crate::{LabelLike, prelude::*};
-use gpui::StyleRefinement;
+use gpui::{HighlightStyle, StyleRefinement, StyledText};
 
 /// A struct representing a label element in the UI.
 ///
@@ -33,6 +35,7 @@ use gpui::StyleRefinement;
 pub struct Label {
     base: LabelLike,
     label: SharedString,
+    render_code_spans: bool,
 }
 
 impl Label {
@@ -49,7 +52,15 @@ impl Label {
         Self {
             base: LabelLike::new(),
             label: label.into(),
+            render_code_spans: false,
         }
+    }
+
+    /// When enabled, text wrapped in backticks (e.g. `` `code` ``) will be
+    /// rendered in the buffer (monospace) font.
+    pub fn render_code_spans(mut self) -> Self {
+        self.render_code_spans = true;
+        self
     }
 
     /// Sets the text of the [`Label`].
@@ -73,6 +84,34 @@ impl Label {
     gpui::margin_style_methods!({
         visibility: pub
     });
+
+    pub fn flex_1(mut self) -> Self {
+        self.style().flex_grow = Some(1.);
+        self.style().flex_shrink = Some(1.);
+        self.style().flex_basis = Some(gpui::relative(0.).into());
+        self
+    }
+
+    pub fn flex_none(mut self) -> Self {
+        self.style().flex_grow = Some(0.);
+        self.style().flex_shrink = Some(0.);
+        self
+    }
+
+    pub fn flex_grow(mut self) -> Self {
+        self.style().flex_grow = Some(1.);
+        self
+    }
+
+    pub fn flex_shrink(mut self) -> Self {
+        self.style().flex_shrink = Some(1.);
+        self
+    }
+
+    pub fn flex_shrink_0(mut self) -> Self {
+        self.style().flex_shrink = Some(0.);
+        self
+    }
 }
 
 impl LabelCommon for Label {
@@ -205,8 +244,106 @@ impl LabelCommon for Label {
 }
 
 impl RenderOnce for Label {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if self.render_code_spans {
+            if let Some((stripped, code_ranges)) = parse_backtick_spans(&self.label) {
+                let buffer_font_family = theme::theme_settings(cx).buffer_font(cx).family.clone();
+                let background_color = cx.theme().colors().element_background;
+
+                let highlights = code_ranges.iter().map(|range| {
+                    (
+                        range.clone(),
+                        HighlightStyle {
+                            background_color: Some(background_color),
+                            ..Default::default()
+                        },
+                    )
+                });
+
+                let font_overrides = code_ranges
+                    .iter()
+                    .map(|range| (range.clone(), buffer_font_family.clone()));
+
+                return self.base.child(
+                    StyledText::new(stripped)
+                        .with_highlights(highlights)
+                        .with_font_family_overrides(font_overrides),
+                );
+            }
+        }
         self.base.child(self.label)
+    }
+}
+
+/// Parses backtick-delimited code spans from a string.
+///
+/// Returns `None` if there are no matched backtick pairs.
+/// Otherwise returns the text with backticks stripped and the byte ranges
+/// of the code spans in the stripped string.
+fn parse_backtick_spans(text: &str) -> Option<(SharedString, Vec<Range<usize>>)> {
+    if !text.contains('`') {
+        return None;
+    }
+
+    let mut stripped = String::with_capacity(text.len());
+    let mut code_ranges = Vec::new();
+    let mut in_code = false;
+    let mut code_start = 0;
+
+    for ch in text.chars() {
+        if ch == '`' {
+            if in_code {
+                code_ranges.push(code_start..stripped.len());
+            } else {
+                code_start = stripped.len();
+            }
+            in_code = !in_code;
+        } else {
+            stripped.push(ch);
+        }
+    }
+
+    if code_ranges.is_empty() {
+        return None;
+    }
+
+    Some((SharedString::from(stripped), code_ranges))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_backtick_spans_no_backticks() {
+        assert_eq!(parse_backtick_spans("plain text"), None);
+    }
+
+    #[test]
+    fn test_parse_backtick_spans_single_span() {
+        let (text, ranges) = parse_backtick_spans("use `zed` to open").unwrap();
+        assert_eq!(text.as_ref(), "use zed to open");
+        assert_eq!(ranges, vec![4..7]);
+    }
+
+    #[test]
+    fn test_parse_backtick_spans_multiple_spans() {
+        let (text, ranges) = parse_backtick_spans("flags `-e` or `-n`").unwrap();
+        assert_eq!(text.as_ref(), "flags -e or -n");
+        assert_eq!(ranges, vec![6..8, 12..14]);
+    }
+
+    #[test]
+    fn test_parse_backtick_spans_unmatched_backtick() {
+        // A trailing unmatched backtick should not produce a code range
+        assert_eq!(parse_backtick_spans("trailing `backtick"), None);
+    }
+
+    #[test]
+    fn test_parse_backtick_spans_empty_span() {
+        let (text, ranges) = parse_backtick_spans("empty `` span").unwrap();
+        assert_eq!(text.as_ref(), "empty  span");
+        assert_eq!(ranges, vec![6..6]);
     }
 }
 

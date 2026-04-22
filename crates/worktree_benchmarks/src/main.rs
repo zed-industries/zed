@@ -4,7 +4,6 @@ use std::{
 };
 
 use fs::RealFs;
-use gpui::Application;
 use settings::WorktreeId;
 use worktree::Worktree;
 
@@ -15,7 +14,7 @@ fn main() {
         );
         return;
     };
-    let app = Application::headless();
+    let app = gpui_platform::headless();
 
     app.run(|cx| {
         settings::init(cx);

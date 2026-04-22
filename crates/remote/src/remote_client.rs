@@ -377,6 +377,20 @@ pub async fn connect(
     .map_err(|e| e.cloned())
 }
 
+/// Returns `true` if the global [`ConnectionPool`] already has a live
+/// connection for the given options. Callers can use this to decide
+/// whether to show interactive UI (e.g., a password modal) before
+/// connecting.
+pub fn has_active_connection(opts: &RemoteConnectionOptions, cx: &App) -> bool {
+    cx.try_global::<ConnectionPool>().is_some_and(|pool| {
+        matches!(
+            pool.connections.get(opts),
+            Some(ConnectionPoolEntry::Connected(remote))
+                if remote.upgrade().is_some_and(|r| !r.has_been_killed())
+        )
+    })
+}
+
 impl RemoteClient {
     pub fn new(
         unique_identifier: ConnectionIdentifier,
@@ -1056,6 +1070,11 @@ impl RemoteClient {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn force_server_not_running(&mut self, cx: &mut Context<Self>) {
+        self.set_state(State::ServerNotRunning, cx);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_disconnect(&self, client_cx: &mut App) -> Task<()> {
         let opts = self.connection_options();
         client_cx.spawn(async move |cx| {
@@ -1100,6 +1119,24 @@ impl RemoteClient {
         (opts.into(), server_client, connect_guard)
     }
 
+    /// Registers a new mock server for existing connection options.
+    ///
+    /// Use this to simulate reconnection: after forcing a disconnect, register
+    /// a new server so the next `connect()` call succeeds.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake_server_with_opts(
+        opts: &RemoteConnectionOptions,
+        client_cx: &mut gpui::TestAppContext,
+        server_cx: &mut gpui::TestAppContext,
+    ) -> (AnyProtoClient, ConnectGuard) {
+        use crate::transport::mock::MockConnection;
+        let mock_opts = match opts {
+            RemoteConnectionOptions::Mock(mock_opts) => mock_opts.clone(),
+            _ => panic!("fake_server_with_opts requires Mock connection options"),
+        };
+        MockConnection::new_with_opts(mock_opts, client_cx, server_cx)
+    }
+
     /// Creates a `RemoteClient` connected to a mock server.
     ///
     /// Call `fake_server` first to get the connection options, set up the
@@ -1132,7 +1169,7 @@ impl RemoteClient {
             .unwrap()
     }
 
-    fn remote_connection(&self) -> Option<Arc<dyn RemoteConnection>> {
+    pub fn remote_connection(&self) -> Option<Arc<dyn RemoteConnection>> {
         self.state
             .as_ref()
             .and_then(|state| state.remote_connection())
@@ -1250,7 +1287,7 @@ impl ConnectionPool {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum RemoteConnectionOptions {
     Ssh(SshConnectionOptions),
     Wsl(WslConnectionOptions),
@@ -1262,7 +1299,10 @@ pub enum RemoteConnectionOptions {
 impl RemoteConnectionOptions {
     pub fn display_name(&self) -> String {
         match self {
-            RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
+            RemoteConnectionOptions::Ssh(opts) => opts
+                .nickname
+                .clone()
+                .unwrap_or_else(|| opts.host.to_string()),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
             RemoteConnectionOptions::Docker(opts) => {
                 if opts.use_podman {
@@ -1274,6 +1314,32 @@ impl RemoteConnectionOptions {
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ssh_display_name_prefers_nickname() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            nickname: Some("My Cool Project".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(options.display_name(), "My Cool Project");
+    }
+
+    #[test]
+    fn test_ssh_display_name_falls_back_to_host() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            ..Default::default()
+        });
+
+        assert_eq!(options.display_name(), "1.2.3.4");
     }
 }
 

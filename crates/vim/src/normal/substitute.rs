@@ -1,11 +1,12 @@
-use editor::{Editor, SelectionEffects, movement};
-use gpui::{Context, Window, actions};
-use language::Point;
+use std::sync::Arc;
 
 use crate::{
     Mode, Vim,
     motion::{Motion, MotionKind},
 };
+use editor::{Editor, SelectionEffects, movement};
+use gpui::{Context, Window, actions};
+use language::Point;
 
 actions!(
     vim,
@@ -50,7 +51,7 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 let text_layout_details = editor.text_layout_details(window, cx);
                 editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         if selection.start == selection.end {
                             Motion::Right.expand_selection(
                                 map,
@@ -94,12 +95,14 @@ impl Vim {
                     MotionKind::Exclusive
                 };
                 vim.copy_selections_content(editor, kind, window, cx);
+                let linked_edits = editor.linked_edits_for_selections(Arc::from(""), cx);
                 let selections = editor
                     .selections
                     .all::<Point>(&editor.display_snapshot(cx))
                     .into_iter();
                 let edits = selections.map(|selection| (selection.start..selection.end, ""));
                 editor.edit(edits, cx);
+                linked_edits.apply(cx);
             });
         });
         self.switch_mode(Mode::Insert, true, window, cx);

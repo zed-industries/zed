@@ -1,5 +1,5 @@
 use crate::{OffsetUtf16, Point, PointUtf16, TextSummary, Unclipped};
-use arrayvec::ArrayString;
+use heapless::String as ArrayString;
 use std::{cmp, ops::Range};
 use sum_tree::Bias;
 use unicode_segmentation::GraphemeCursor;
@@ -29,7 +29,7 @@ pub struct Chunk {
     newlines: Bitmap,
     /// If bit[i] is set, then the character at index i is an ascii tab.
     tabs: Bitmap,
-    pub text: ArrayString<MAX_BASE>,
+    pub text: ArrayString<MAX_BASE, u8>,
 }
 
 #[inline(always)]
@@ -47,7 +47,11 @@ impl Chunk {
 
     #[inline(always)]
     pub fn new(text: &str) -> Self {
-        let text = ArrayString::from(text).unwrap();
+        let text = {
+            let mut buf = ArrayString::new();
+            buf.push_str(text).unwrap();
+            buf
+        };
 
         const CHUNK_SIZE: usize = 8;
 
@@ -103,6 +107,11 @@ impl Chunk {
     }
 
     #[inline(always)]
+    pub fn prepend_str(&mut self, text: &str) {
+        self.prepend(Chunk::new(text).as_slice());
+    }
+
+    #[inline(always)]
     pub fn append(&mut self, slice: ChunkSlice) {
         if slice.is_empty() {
             return;
@@ -113,7 +122,29 @@ impl Chunk {
         self.chars_utf16 |= slice.chars_utf16 << base_ix;
         self.newlines |= slice.newlines << base_ix;
         self.tabs |= slice.tabs << base_ix;
-        self.text.push_str(slice.text);
+        self.text.push_str(slice.text).unwrap();
+    }
+
+    #[inline(always)]
+    pub fn prepend(&mut self, slice: ChunkSlice) {
+        if slice.is_empty() {
+            return;
+        }
+        if self.text.is_empty() {
+            *self = Chunk::new(slice.text);
+            return;
+        }
+
+        let shift = slice.text.len();
+        self.chars = slice.chars | (self.chars << shift);
+        self.chars_utf16 = slice.chars_utf16 | (self.chars_utf16 << shift);
+        self.newlines = slice.newlines | (self.newlines << shift);
+        self.tabs = slice.tabs | (self.tabs << shift);
+
+        let mut new_text = ArrayString::<MAX_BASE, u8>::new();
+        new_text.push_str(slice.text).unwrap();
+        new_text.push_str(&self.text).unwrap();
+        self.text = new_text;
     }
 
     #[inline(always)]
@@ -137,8 +168,14 @@ impl Chunk {
         self.chars
     }
 
+    #[inline(always)]
     pub fn tabs(&self) -> Bitmap {
         self.tabs
+    }
+
+    #[inline(always)]
+    pub fn newlines(&self) -> Bitmap {
+        self.newlines
     }
 
     #[inline(always)]
@@ -882,6 +919,24 @@ mod tests {
         let end_offset = char_offsets[rng.random_range(start_index..char_offsets.len())];
         chunk1.append(chunk2.slice(start_offset..end_offset));
         verify_chunk(chunk1.as_slice(), &(str1 + &str2[start_offset..end_offset]));
+    }
+
+    #[gpui::test(iterations = 1000)]
+    fn test_prepend_random_strings(mut rng: StdRng) {
+        let len1 = rng.random_range(0..=MAX_BASE);
+        let len2 = rng.random_range(0..=MAX_BASE).saturating_sub(len1);
+        let str1 = random_string_with_utf8_len(&mut rng, len1);
+        let str2 = random_string_with_utf8_len(&mut rng, len2);
+        let mut chunk1 = Chunk::new(&str1);
+        let chunk2 = Chunk::new(&str2);
+        let char_offsets = char_offsets_with_end(&str2);
+        let start_index = rng.random_range(0..char_offsets.len());
+        let start_offset = char_offsets[start_index];
+        let end_offset = char_offsets[rng.random_range(start_index..char_offsets.len())];
+        let slice = chunk2.slice(start_offset..end_offset);
+        let prefix_text = &str2[start_offset..end_offset];
+        chunk1.prepend(slice);
+        verify_chunk(chunk1.as_slice(), &(prefix_text.to_owned() + &str1));
     }
 
     /// Return the byte offsets for each character in a string.

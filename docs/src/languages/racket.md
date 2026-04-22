@@ -1,3 +1,8 @@
+---
+title: Racket
+description: "Configure Racket language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Racket
 
 Racket support is available through the [Racket extension](https://github.com/zed-extensions/racket).

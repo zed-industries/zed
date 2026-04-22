@@ -1,9 +1,11 @@
 use crate::components::KernelListItem;
-use crate::kernels::RemoteRunningKernel;
 use crate::setup_editor_session_actions;
 use crate::{
     KernelStatus,
-    kernels::{Kernel, KernelSession, KernelSpecification, NativeRunningKernel},
+    kernels::{
+        Kernel, KernelSession, KernelSpecification, NativeRunningKernel, RemoteRunningKernel,
+        SshRunningKernel, WslRunningKernel,
+    },
     outputs::{
         ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall,
         InputReplyEvent,
@@ -34,7 +36,7 @@ use language::Point;
 use project::Fs;
 use runtimelib::{
     ExecuteRequest, ExecutionState, InputReply, InterruptRequest, JupyterMessage,
-    JupyterMessageContent, ReplyStatus, ShutdownRequest,
+    JupyterMessageContent, KernelInfoRequest, ReplyStatus, ShutdownRequest,
 };
 use settings::Settings as _;
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
@@ -266,11 +268,34 @@ impl Session {
     fn start_kernel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let kernel_language = self.kernel_specification.language();
         let entity_id = self.editor.entity_id();
-        let working_directory = self
-            .editor
-            .upgrade()
-            .and_then(|editor| editor.read(cx).working_directory(cx))
-            .unwrap_or_else(temp_dir);
+
+        // For WSL Remote kernels, use project root instead of potentially temporary working directory
+        // which causes .venv/bin/python checks to fail
+        let is_remote_execution = matches!(
+            self.kernel_specification,
+            crate::KernelSpecification::WslRemote(_) | crate::KernelSpecification::SshRemote(_)
+        );
+
+        let working_directory = if is_remote_execution {
+            // For WSL Remote kernels, use project root instead of potentially temporary working directory
+            // which causes .venv/bin/python checks to fail
+            self.editor
+                .upgrade()
+                .and_then(|editor| editor.read(cx).project().cloned())
+                .and_then(|project| {
+                    project
+                        .read(cx)
+                        .worktrees(cx)
+                        .next()
+                        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                })
+                .unwrap_or_else(temp_dir)
+        } else {
+            self.editor
+                .upgrade()
+                .and_then(|editor| editor.read(cx).working_directory(cx))
+                .unwrap_or_else(temp_dir)
+        };
 
         telemetry::event!(
             "Kernel Status Changed",
@@ -300,9 +325,38 @@ impl Session {
                 window,
                 cx,
             ),
-            KernelSpecification::Remote(remote_kernel_specification) => RemoteRunningKernel::new(
-                remote_kernel_specification,
+            KernelSpecification::JupyterServer(remote_kernel_specification) => {
+                RemoteRunningKernel::new(
+                    remote_kernel_specification,
+                    working_directory,
+                    session_view,
+                    window,
+                    cx,
+                )
+            }
+            KernelSpecification::SshRemote(spec) => {
+                let project = self
+                    .editor
+                    .upgrade()
+                    .and_then(|editor| editor.read(cx).project().cloned());
+                if let Some(project) = project {
+                    SshRunningKernel::new(
+                        spec,
+                        working_directory,
+                        project,
+                        session_view,
+                        window,
+                        cx,
+                    )
+                } else {
+                    Task::ready(Err(anyhow::anyhow!("No project associated with editor")))
+                }
+            }
+            KernelSpecification::WslRemote(spec) => WslRunningKernel::new(
+                spec,
+                entity_id,
                 working_directory,
+                self.fs.clone(),
                 session_view,
                 window,
                 cx,
@@ -311,12 +365,15 @@ impl Session {
 
         let pending_kernel = cx
             .spawn(async move |this, cx| {
-                let kernel = kernel.await;
+                let kernel: anyhow::Result<Box<dyn crate::kernels::RunningKernel>> = kernel.await;
 
                 match kernel {
                     Ok(kernel) => {
                         this.update(cx, |session, cx| {
                             session.kernel(Kernel::RunningKernel(kernel), cx);
+                            let request =
+                                JupyterMessageContent::KernelInfoRequest(KernelInfoRequest {});
+                            session.send(request.into(), cx).log_err();
                         })
                         .ok();
                     }
@@ -512,6 +569,51 @@ impl Session {
 
         self.blocks.clear();
         self.result_inlays.clear();
+    }
+
+    pub fn clear_output_at_position(&mut self, position: Anchor, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor.upgrade() else {
+            return;
+        };
+
+        let (block_id, code_range, msg_id) = {
+            let snapshot = editor.read(cx).buffer().read(cx).read(cx);
+            let pos_range = position..position;
+
+            let block_to_remove = self
+                .blocks
+                .iter()
+                .find(|(_, block)| block.code_range.includes(&pos_range, &snapshot));
+
+            let Some((msg_id, block)) = block_to_remove else {
+                return;
+            };
+
+            (block.block_id, block.code_range.clone(), msg_id.clone())
+        };
+
+        let inlay_to_remove = self.result_inlays.get(&msg_id).map(|(id, _, _)| *id);
+
+        self.blocks.remove(&msg_id);
+        if inlay_to_remove.is_some() {
+            self.result_inlays.remove(&msg_id);
+        }
+
+        self.editor
+            .update(cx, |editor, cx| {
+                let mut block_ids = HashSet::default();
+                block_ids.insert(block_id);
+                editor.remove_blocks(block_ids, None, cx);
+
+                if let Some(inlay_id) = inlay_to_remove {
+                    editor.splice_inlays(&[inlay_id], vec![], cx);
+                }
+
+                editor.remove_gutter_highlights::<ReplExecutedRange>(vec![code_range], cx);
+            })
+            .ok();
+
+        cx.notify();
     }
 
     pub fn execute(

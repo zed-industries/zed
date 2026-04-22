@@ -1,10 +1,13 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use futures::FutureExt;
 use gpui::{
-    App, AppContext, Application, Asset as _, AssetLogger, Bounds, ClickEvent, Context, ElementId,
-    Entity, ImageAssetLoader, ImageCache, ImageCacheProvider, KeyBinding, Menu, MenuItem,
+    App, AppContext, Asset as _, AssetLogger, Bounds, ClickEvent, Context, ElementId, Entity,
+    ImageAssetLoader, ImageCache, ImageCacheProvider, KeyBinding, Menu, MenuItem,
     RetainAllImageCache, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
     actions, div, hash, image_cache, img, prelude::*, px, rgb, size,
 };
+#[cfg(not(target_family = "wasm"))]
 use reqwest_client::ReqwestClient;
 use std::{collections::HashMap, sync::Arc};
 
@@ -244,20 +247,33 @@ impl ImageCache for SimpleLruCache {
 
 actions!(image, [Quit]);
 
-fn main() {
-    env_logger::init();
+fn run_example() {
+    #[cfg(not(target_family = "wasm"))]
+    let app = gpui_platform::application();
+    #[cfg(target_family = "wasm")]
+    let app = gpui_platform::single_threaded_web();
 
-    Application::new().run(move |cx: &mut App| {
-        let http_client = ReqwestClient::user_agent("gpui example").unwrap();
-        cx.set_http_client(Arc::new(http_client));
+    app.run(move |cx: &mut App| {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let http_client = ReqwestClient::user_agent("gpui example").unwrap();
+            cx.set_http_client(Arc::new(http_client));
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            // Safety: the web examples run single-threaded; the client is
+            // created and used exclusively on the main thread.
+            let http_client = unsafe {
+                gpui_web::FetchHttpClient::with_user_agent("gpui example")
+                    .expect("failed to create FetchHttpClient")
+            };
+            cx.set_http_client(Arc::new(http_client));
+        }
 
         cx.activate(true);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-        cx.set_menus(vec![Menu {
-            name: "Image Gallery".into(),
-            items: vec![MenuItem::action("Quit", Quit)],
-        }]);
+        cx.set_menus([Menu::new("Image Gallery").items([MenuItem::action("Quit", Quit)])]);
 
         let window_options = WindowOptions {
             titlebar: Some(TitlebarOptions {
@@ -285,4 +301,17 @@ fn main() {
         })
         .unwrap();
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    env_logger::init();
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

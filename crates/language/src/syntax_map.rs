@@ -13,18 +13,25 @@ use std::{
     collections::BinaryHeap,
     fmt, iter,
     ops::{ControlFlow, Deref, DerefMut, Range},
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 use streaming_iterator::StreamingIterator;
 use sum_tree::{Bias, Dimensions, SeekTarget, SumTree};
-use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
+use text::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{
     Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatch, QueryMatches,
     QueryPredicateArg,
 };
 
-pub const MAX_BYTES_TO_QUERY: usize = 16 * 1024;
+/// Default amount of byte context to allow on each side of the query range
+/// when restricting a `QueryCursor` via `set_containing_byte_range`.
+///
+/// Tree-sitter walks the subtree of the root node that's intersected by the
+/// containing range, so keeping this bounded matters when a file contains a
+/// large malformed region (e.g. an ERROR node that covers thousands of
+/// lines).
+pub const MAX_CONTEXT_BYTES: usize = 8 * 1024;
 
 pub struct SyntaxMap {
     snapshot: SyntaxSnapshot,
@@ -38,6 +45,35 @@ pub struct SyntaxSnapshot {
     interpolated_version: clock::Global,
     language_registry_version: usize,
     update_count: usize,
+}
+
+// Dropping deep treesitter Trees can be quite slow due to deallocating lots of memory.
+// To avoid blocking the main thread, we offload the drop operation to a background thread.
+impl Drop for SyntaxSnapshot {
+    fn drop(&mut self) {
+        static DROP_TX: LazyLock<std::sync::mpsc::Sender<SumTree<SyntaxLayerEntry>>> =
+            LazyLock::new(|| {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::Builder::new()
+                    .name("SyntaxSnapshot::drop".into())
+                    .spawn(move || while let Ok(_) = rx.recv() {})
+                    .expect("failed to spawn drop thread");
+                tx
+            });
+        // This does allocate a new Arc, but it's cheap and avoids blocking the main thread without needing to use an `Option` or `MaybeUninit`.
+        let _ = DROP_TX.send(std::mem::replace(
+            &mut self.layers,
+            SumTree::from_summary(SyntaxLayerSummary {
+                min_depth: Default::default(),
+                max_depth: Default::default(),
+                // Deliberately bogus anchors, doesn't matter in this context
+                range: Anchor::min_min_range_for_buffer(BufferId::new(1).unwrap()),
+                last_layer_range: Anchor::min_min_range_for_buffer(BufferId::new(1).unwrap()),
+                last_layer_language: Default::default(),
+                contains_unknown_injections: Default::default(),
+            }),
+        ));
+    }
 }
 
 #[derive(Default)]
@@ -567,7 +603,7 @@ impl SyntaxSnapshot {
 
                 let bounded_position = SyntaxLayerPositionBeforeChange {
                     position: position.clone(),
-                    change: changed_regions.start_position(),
+                    change: changed_regions.start_position(text.remote_id()),
                 };
                 if bounded_position.cmp(cursor.start(), text).is_gt() {
                     let slice = cursor.slice(&bounded_position, Bias::Left);
@@ -925,6 +961,7 @@ impl SyntaxSnapshot {
             }]
             .into_iter(),
             query,
+            TreeSitterOptions::default(),
         )
     }
 
@@ -939,6 +976,23 @@ impl SyntaxSnapshot {
             buffer.as_rope(),
             self.layers_for_range(range, buffer, true),
             query,
+            TreeSitterOptions::default(),
+        )
+    }
+
+    pub fn captures_with_options<'a>(
+        &'a self,
+        range: Range<usize>,
+        buffer: &'a BufferSnapshot,
+        options: TreeSitterOptions,
+        query: fn(&Grammar) -> Option<&Query>,
+    ) -> SyntaxMapCaptures<'a> {
+        SyntaxMapCaptures::new(
+            range.clone(),
+            buffer.as_rope(),
+            self.layers_for_range(range, buffer, true),
+            query,
+            options,
         )
     }
 
@@ -1070,6 +1124,7 @@ impl<'a> SyntaxMapCaptures<'a> {
         text: &'a Rope,
         layers: impl Iterator<Item = SyntaxLayer<'a>>,
         query: fn(&Grammar) -> Option<&Query>,
+        options: TreeSitterOptions,
     ) -> Self {
         let mut result = Self {
             layers: Vec::new(),
@@ -1095,12 +1150,18 @@ impl<'a> SyntaxMapCaptures<'a> {
                 )
             };
 
+            // Force the query cursor to skip over nodes outside of a certain context
+            // range, to limit the worst-case performance of queries.
+            if let Some(max_context_bytes) = options.max_context_bytes {
+                cursor.set_containing_byte_range(containing_range(&range, max_context_bytes));
+            }
+
             cursor.set_byte_range(range.clone());
             let captures = cursor.captures(query, layer.node(), TextProvider(text));
             let grammar_index = result
                 .grammars
                 .iter()
-                .position(|g| g.id == grammar.id())
+                .position(|g| g.id() == grammar.id())
                 .unwrap_or_else(|| {
                     result.grammars.push(grammar);
                     result.grammars.len() - 1
@@ -1190,16 +1251,24 @@ impl<'a> SyntaxMapCaptures<'a> {
 #[derive(Default)]
 pub struct TreeSitterOptions {
     pub max_start_depth: Option<u32>,
-    pub max_bytes_to_query: Option<usize>,
+    /// When `Some(n)`, restricts the query cursor's containing byte range to
+    /// the query range extended by `n` bytes on each side. Matches whose nodes
+    /// don't all fall within that extended range are skipped, allowing
+    /// tree-sitter to avoid walking large subtrees that lie outside it.
+    pub max_context_bytes: Option<usize>,
 }
 
 impl TreeSitterOptions {
     pub fn max_start_depth(max_start_depth: u32) -> Self {
         Self {
             max_start_depth: Some(max_start_depth),
-            max_bytes_to_query: None,
+            max_context_bytes: None,
         }
     }
+}
+
+fn containing_range(range: &Range<usize>, max_context_bytes: usize) -> Range<usize> {
+    range.start.saturating_sub(max_context_bytes)..range.end.saturating_add(max_context_bytes)
 }
 
 impl<'a> SyntaxMapMatches<'a> {
@@ -1231,12 +1300,8 @@ impl<'a> SyntaxMapMatches<'a> {
             };
             cursor.set_max_start_depth(options.max_start_depth);
 
-            if let Some(max_bytes_to_query) = options.max_bytes_to_query {
-                let midpoint = (range.start + range.end) / 2;
-                let containing_range_start = midpoint.saturating_sub(max_bytes_to_query / 2);
-                let containing_range_end =
-                    containing_range_start.saturating_add(max_bytes_to_query);
-                cursor.set_containing_byte_range(containing_range_start..containing_range_end);
+            if let Some(max_context_bytes) = options.max_context_bytes {
+                cursor.set_containing_byte_range(containing_range(&range, max_context_bytes));
             }
 
             cursor.set_byte_range(range.clone());
@@ -1244,7 +1309,7 @@ impl<'a> SyntaxMapMatches<'a> {
             let grammar_index = result
                 .grammars
                 .iter()
-                .position(|g| g.id == grammar.id())
+                .position(|g| g.id() == grammar.id())
                 .unwrap_or_else(|| {
                     result.grammars.push(grammar);
                     result.grammars.len() - 1
@@ -1828,11 +1893,9 @@ impl<'a> SyntaxLayer<'a> {
         let config = self.language.grammar.as_ref()?.override_config.as_ref()?;
 
         let mut query_cursor = QueryCursorHandle::new();
-        query_cursor.set_byte_range(offset.saturating_sub(1)..offset.saturating_add(1));
-        query_cursor.set_containing_byte_range(
-            offset.saturating_sub(MAX_BYTES_TO_QUERY / 2)
-                ..offset.saturating_add(MAX_BYTES_TO_QUERY / 2),
-        );
+        let range = offset.saturating_sub(1)..offset.saturating_add(1);
+        query_cursor.set_byte_range(range.clone());
+        query_cursor.set_containing_byte_range(containing_range(&range, MAX_CONTEXT_BYTES));
 
         let mut smallest_match: Option<(u32, Range<usize>)> = None;
         let mut matches = query_cursor.matches(&config.query, self.node(), text);
@@ -1925,11 +1988,11 @@ impl ChangedRegion {
 }
 
 impl ChangeRegionSet {
-    fn start_position(&self) -> ChangeStartPosition {
+    fn start_position(&self, buffer_id: BufferId) -> ChangeStartPosition {
         self.0.first().map_or(
             ChangeStartPosition {
                 depth: usize::MAX,
-                position: Anchor::MAX,
+                position: Anchor::max_for_buffer(buffer_id),
             },
             |region| ChangeStartPosition {
                 depth: region.depth,
@@ -1978,24 +2041,20 @@ impl ChangeRegionSet {
     }
 }
 
-impl Default for SyntaxLayerSummary {
-    fn default() -> Self {
-        Self {
-            max_depth: 0,
-            min_depth: 0,
-            range: Anchor::MAX..Anchor::MIN,
-            last_layer_range: Anchor::MIN..Anchor::MAX,
-            last_layer_language: None,
-            contains_unknown_injections: false,
-        }
-    }
-}
-
 impl sum_tree::Summary for SyntaxLayerSummary {
     type Context<'a> = &'a BufferSnapshot;
 
-    fn zero(_cx: &BufferSnapshot) -> Self {
-        Default::default()
+    fn zero(buffer: &BufferSnapshot) -> Self {
+        Self {
+            max_depth: 0,
+            min_depth: 0,
+            range: Anchor::max_for_buffer(buffer.remote_id())
+                ..Anchor::min_for_buffer(buffer.remote_id()),
+            last_layer_range: Anchor::min_for_buffer(buffer.remote_id())
+                ..Anchor::max_for_buffer(buffer.remote_id()),
+            last_layer_language: None,
+            contains_unknown_injections: false,
+        }
     }
 
     fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
@@ -2003,7 +2062,7 @@ impl sum_tree::Summary for SyntaxLayerSummary {
             self.max_depth = other.max_depth;
             self.range = other.range.clone();
         } else {
-            if self.range == (Anchor::MAX..Anchor::MAX) {
+            if self.range.start.is_max() && self.range.end.is_max() {
                 self.range.start = other.range.start;
             }
             if other.range.end.cmp(&self.range.end, buffer).is_gt() {

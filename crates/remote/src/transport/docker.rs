@@ -6,13 +6,14 @@ use collections::HashMap;
 use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use semver::Version as SemanticVersion;
+use std::collections::BTreeMap;
 use std::time::Instant;
 use std::{
     path::{Path, PathBuf},
-    process::Stdio,
     sync::Arc,
 };
 use util::ResultExt;
+use util::command::Stdio;
 use util::shell::ShellKind;
 use util::{
     paths::{PathStyle, RemotePathBuf},
@@ -29,13 +30,25 @@ use crate::{
     transport::parse_platform,
 };
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
     pub remote_user: String,
     pub upload_binary_over_docker_exec: bool,
     pub use_podman: bool,
+    pub remote_env: BTreeMap<String, String>,
 }
 
 pub(crate) struct DockerExecConnection {
@@ -400,7 +413,7 @@ impl DockerExecConnection {
         src_path: String,
         dst_path: String,
     ) -> Result<()> {
-        let mut command = util::command::new_smol_command(&docker_cli);
+        let mut command = util::command::new_command(&docker_cli);
         command.arg("cp");
         command.arg("-a");
         command.arg(&src_path);
@@ -419,7 +432,7 @@ impl DockerExecConnection {
             );
         }
 
-        let mut chown_command = util::command::new_smol_command(&docker_cli);
+        let mut chown_command = util::command::new_command(&docker_cli);
         chown_command.arg("exec");
         chown_command.arg(connection_options.container_id);
         chown_command.arg("chown");
@@ -469,7 +482,7 @@ impl DockerExecConnection {
         subcommand: &str,
         args: &[impl AsRef<str>],
     ) -> Result<String> {
-        let mut command = util::command::new_smol_command(self.docker_cli());
+        let mut command = util::command::new_command(self.docker_cli());
         command.arg(subcommand);
         for arg in args {
             command.arg(arg.as_ref());
@@ -499,10 +512,14 @@ impl DockerExecConnection {
         args.push("-u".to_string());
         args.push(self.connection_options.remote_user.clone());
 
+        for (k, v) in self.connection_options.remote_env.iter() {
+            args.push("-e".to_string());
+            args.push(format!("{k}={v}"));
+        }
+
         for (k, v) in env.iter() {
             args.push("-e".to_string());
-            let env_declaration = format!("{}={}", k, v);
-            args.push(env_declaration);
+            args.push(format!("{k}={v}"));
         }
 
         args.push(self.connection_options.container_id.clone());
@@ -589,7 +606,7 @@ impl DockerExecConnection {
 
     fn kill_inner(&self) -> Result<()> {
         if let Some(pid) = self.proxy_process.lock().take() {
-            if let Ok(_) = util::command::new_smol_command("kill")
+            if let Ok(_) = util::command::new_command("kill")
                 .arg(pid.to_string())
                 .spawn()
             {
@@ -632,10 +649,15 @@ impl RemoteConnection for DockerExecConnection {
         };
 
         let mut docker_args = vec!["exec".to_string()];
+
+        for (k, v) in self.connection_options.remote_env.iter() {
+            docker_args.push("-e".to_string());
+            docker_args.push(format!("{k}={v}"));
+        }
         for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
             if let Some(value) = std::env::var(env_var).ok() {
                 docker_args.push("-e".to_string());
-                docker_args.push(format!("{}='{}'", env_var, value));
+                docker_args.push(format!("{env_var}={value}"));
             }
         }
 
@@ -658,7 +680,7 @@ impl RemoteConnection for DockerExecConnection {
         if reconnect {
             docker_args.push("--reconnect".to_string());
         }
-        let mut command = util::command::new_smol_command(self.docker_cli());
+        let mut command = util::command::new_command(self.docker_cli());
         command
             .kill_on_drop(true)
             .stdin(Stdio::piped())
@@ -739,7 +761,8 @@ impl RemoteConnection for DockerExecConnection {
             const TILDE_PREFIX: &'static str = "~/";
             if working_dir.starts_with(TILDE_PREFIX) {
                 let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-                parsed_working_dir = Some(format!("$HOME/{working_dir}"));
+                parsed_working_dir =
+                    Some(format!("{}/{}", self.remote_dir_for_server, working_dir));
             } else {
                 parsed_working_dir = Some(working_dir);
             }
@@ -768,9 +791,14 @@ impl RemoteConnection for DockerExecConnection {
             docker_args.push(parsed_working_dir);
         }
 
+        for (k, v) in self.connection_options.remote_env.iter() {
+            docker_args.push("-e".to_string());
+            docker_args.push(format!("{k}={v}"));
+        }
+
         for (k, v) in env.iter() {
             docker_args.push("-e".to_string());
-            docker_args.push(format!("{}={}", k, v));
+            docker_args.push(format!("{k}={v}"));
         }
 
         match interactive {

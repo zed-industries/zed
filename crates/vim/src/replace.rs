@@ -263,7 +263,7 @@ impl Vim {
 
             if let Some(position) = final_cursor_position {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|_map, selection| {
+                    s.move_with(&mut |_map, selection| {
                         selection.collapse_to(position, SelectionGoal::None);
                     });
                 })
@@ -282,12 +282,12 @@ impl Vim {
     /// Pastes the clipboard contents, replacing the same number of characters
     /// as the clipboard's contents.
     pub fn paste_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let clipboard_text =
-            cx.read_from_clipboard()
-                .and_then(|item| match item.entries().first() {
-                    Some(ClipboardEntry::String(text)) => Some(text.text().to_string()),
-                    _ => None,
-                });
+        let clipboard_text = cx.read_from_clipboard().and_then(|item| {
+            item.entries().iter().find_map(|entry| match entry {
+                ClipboardEntry::String(text) => Some(text.text().to_string()),
+                _ => None,
+            })
+        });
 
         if let Some(text) = clipboard_text {
             self.push_operator(Operator::Replace, window, cx);
