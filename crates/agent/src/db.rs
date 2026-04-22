@@ -1,6 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::UserMessageId;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
