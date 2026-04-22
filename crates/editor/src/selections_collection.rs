@@ -838,10 +838,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
     {
         let ranges = ranges
             .into_iter()
-            .map(|range| range.start.to_offset(self.snapshot)..range.end.to_offset(self.snapshot))
-            .inspect(|range| {
-                dbg!(range);
-            });
+            .map(|range| range.start.to_offset(self.snapshot)..range.end.to_offset(self.snapshot));
         self.select_offset_ranges(ranges);
     }
 

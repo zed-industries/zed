@@ -4046,7 +4046,6 @@ impl Editor {
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_, '_>) -> R,
     ) -> R {
-        dbg!("changing selection");
         let snapshot = self.display_snapshot(cx);
         if let Some(state) = &mut self.deferred_selection_effects_state {
             state.effects.scroll = effects.scroll.or(state.effects.scroll);

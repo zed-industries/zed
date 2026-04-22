@@ -1128,13 +1128,13 @@ impl BufferSearchBar {
     }
 
     pub fn activate_current_match(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(match_ix) = dbg!(self.active_match_index)
+        if let Some(match_ix) = self.active_match_index
             && let Some(active_searchable_item) = self.active_searchable_item.as_ref()
             && let Some((matches, token)) = self
                 .searchable_items_with_matches
                 .get(&active_searchable_item.downgrade())
         {
-            active_searchable_item.activate_match(match_ix, dbg!(matches), *token, window, cx)
+            active_searchable_item.activate_match(match_ix, matches, *token, window, cx)
         }
     }
 
@@ -1296,7 +1296,6 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        dbg!("BufferSearchBar::select_next_match");
         self.select_match(Direction::Next, 1, window, cx);
     }
 
@@ -1676,7 +1675,6 @@ impl BufferSearchBar {
                 searchable_item.active_match_index(direction, matches, *token, window, cx)
             });
         if new_index != self.active_match_index {
-            dbg!("BufferSearchBar::update_match_index – Index Updated");
             self.active_match_index = new_index;
             if !self.dismissed {
                 if let Some(searchable_item) = self.active_searchable_item.as_ref() {
