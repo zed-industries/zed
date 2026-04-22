@@ -6,7 +6,8 @@ edition.workspace = true
 
 [dependencies]
 fs.workspace = true
-gpui = {workspace = true, features = ["windows-manifest"]}
+gpui.workspace = true
+gpui_platform.workspace = true
 
 [lints]
 workspace = true

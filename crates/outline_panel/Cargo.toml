@@ -33,6 +33,7 @@ settings.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
@@ -40,6 +41,7 @@ worktree.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+lsp.workspace = true
 search = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 

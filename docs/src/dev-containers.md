@@ -1,3 +1,8 @@
+---
+title: Dev Containers - Zed
+description: Open projects in dev containers with Zed. Reproducible development environments using devcontainer.json configuration.
+---
+
 # Dev Containers
 
 Dev Containers provide a consistent, reproducible development environment by defining your project's dependencies, tools, and settings in a container configuration.

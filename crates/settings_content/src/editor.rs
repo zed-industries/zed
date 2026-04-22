@@ -57,6 +57,17 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 300
     pub hover_popover_delay: Option<DelayMs>,
+    /// Whether the hover popover sticks when the mouse moves toward it,
+    /// allowing interaction with its contents before it disappears.
+    ///
+    /// Default: true
+    pub hover_popover_sticky: Option<bool>,
+    /// Time to wait in milliseconds before hiding the hover popover
+    /// after the mouse moves away from the hover target.
+    /// Only applies when `hover_popover_sticky` is enabled.
+    ///
+    /// Default: 300
+    pub hover_popover_hiding_delay: Option<DelayMs>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings
@@ -89,6 +100,11 @@ pub struct EditorSettingsContent {
     /// Default: 1.0
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub scroll_sensitivity: Option<f32>,
+    /// Whether to zoom the editor font size with the mouse wheel
+    /// while holding the primary modifier key (Cmd on macOS, Ctrl on other platforms).
+    ///
+    /// Default: false
+    pub mouse_wheel_zoom: Option<bool>,
     /// Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
     /// to both the horizontal and vertical delta values while scrolling. Fast scrolling
     /// happens when a user holds the alt or option key while scrolling.
@@ -224,8 +240,16 @@ pub struct EditorSettingsContent {
 
     /// How to display diffs in the editor.
     ///
-    /// Default: stacked
+    /// Default: split
     pub diff_view_style: Option<DiffViewStyle>,
+
+    /// The minimum width (in em-widths) at which the split diff view is used.
+    /// When the editor is narrower than this, the diff view automatically
+    /// switches to unified mode and switches back when the editor is wide
+    /// enough. Set to 0 to disable automatic switching.
+    ///
+    /// Default: 100
+    pub minimum_split_diff_width: Option<f32>,
 }
 
 #[derive(
@@ -427,6 +451,10 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub breakpoints: Option<bool>,
+    /// Whether to show bookmarks in the gutter.
+    ///
+    /// Default: true
+    pub bookmarks: Option<bool>,
     /// Whether to show fold buttons in the gutter.
     ///
     /// Default: true
@@ -786,7 +814,7 @@ pub enum SnippetSortOrder {
 
 /// How to display diffs in the editor.
 ///
-/// Default: stacked
+/// Default: unified
 #[derive(
     Copy,
     Clone,
@@ -805,11 +833,11 @@ pub enum SnippetSortOrder {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DiffViewStyle {
-    /// Show diffs in a single stacked view.
+    /// Show diffs in a single unified view.
+    Unified,
+    /// Show diffs in a split view.
     #[default]
-    Stacked,
-    /// Show diffs in a side-by-side split view.
-    SideBySide,
+    Split,
 }
 
 /// Default options for buffer and project search items.

@@ -3,7 +3,7 @@ use mdbook::BookItem;
 use mdbook::book::{Book, Chapter};
 use mdbook::preprocess::CmdPreprocessor;
 use regex::Regex;
-use settings::KeymapFile;
+use settings::{KeymapFile, SettingsStore};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read};
@@ -22,7 +22,44 @@ static KEYMAP_WINDOWS: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-windows.json").expect("Failed to load Windows keymap")
 });
 
-static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(load_all_actions);
+static KEYMAP_JETBRAINS_MACOS: LazyLock<KeymapFile> = LazyLock::new(|| {
+    load_keymap("keymaps/macos/jetbrains.json").expect("Failed to load JetBrains macOS keymap")
+});
+
+static KEYMAP_JETBRAINS_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
+    load_keymap("keymaps/linux/jetbrains.json").expect("Failed to load JetBrains Linux keymap")
+});
+
+static ALL_ACTIONS: LazyLock<ActionManifest> = LazyLock::new(load_all_actions);
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+enum Os {
+    MacOs,
+    Linux,
+    Windows,
+}
+
+#[derive(Clone, Copy)]
+enum KeymapOverlay {
+    JetBrains,
+}
+
+impl KeymapOverlay {
+    fn parse(name: &str) -> Option<Self> {
+        match name {
+            "jetbrains" => Some(Self::JetBrains),
+            _ => None,
+        }
+    }
+
+    fn keymap(self, os: Os) -> &'static KeymapFile {
+        match (self, os) {
+            (Self::JetBrains, Os::MacOs) => &KEYMAP_JETBRAINS_MACOS,
+            (Self::JetBrains, Os::Linux | Os::Windows) => &KEYMAP_JETBRAINS_LINUX,
+        }
+    }
+}
 
 const FRONT_MATTER_COMMENT: &str = "<!-- ZED_META {} -->";
 
@@ -64,11 +101,14 @@ enum PreprocessorError {
         snippet: String,
         error: String,
     },
+    UnknownKeymapOverlay {
+        overlay_name: String,
+    },
 }
 
 impl PreprocessorError {
     fn new_for_not_found_action(action_name: String) -> Self {
-        for action in &*ALL_ACTIONS {
+        for action in &ALL_ACTIONS.actions {
             for alias in &action.deprecated_aliases {
                 if alias == action_name.as_str() {
                     return PreprocessorError::DeprecatedActionUsed {
@@ -123,6 +163,13 @@ impl std::fmt::Display for PreprocessorError {
                     line,
                     error,
                     snippet
+                )
+            }
+            PreprocessorError::UnknownKeymapOverlay { overlay_name } => {
+                write!(
+                    f,
+                    "Unknown keymap overlay: '{}'. Supported overlays: jetbrains",
+                    overlay_name
                 )
             }
         }
@@ -205,20 +252,39 @@ fn format_binding(binding: String) -> String {
 }
 
 fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
-    let regex = Regex::new(r"\{#kb (.*?)\}").unwrap();
+    let regex = Regex::new(r"\{#kb(?::(\w+))?\s+(.*?)\}").unwrap();
 
     for_each_chapter_mut(book, |chapter| {
         chapter.content = regex
             .replace_all(&chapter.content, |caps: &regex::Captures| {
-                let action = caps[1].trim();
+                let overlay_name = caps.get(1).map(|m| m.as_str());
+                let action = caps[2].trim();
+
                 if is_missing_action(action) {
                     errors.insert(PreprocessorError::new_for_not_found_action(
                         action.to_string(),
                     ));
                     return String::new();
                 }
-                let macos_binding = find_binding("macos", action).unwrap_or_default();
-                let linux_binding = find_binding("linux", action).unwrap_or_default();
+
+                let overlay = if let Some(name) = overlay_name {
+                    let Some(overlay) = KeymapOverlay::parse(name) else {
+                        errors.insert(PreprocessorError::UnknownKeymapOverlay {
+                            overlay_name: name.to_string(),
+                        });
+                        return String::new();
+                    };
+                    Some(overlay)
+                } else {
+                    None
+                };
+
+                let macos_binding =
+                    find_binding_with_overlay(Os::MacOs, action, overlay)
+                        .unwrap_or_default();
+                let linux_binding =
+                    find_binding_with_overlay(Os::Linux, action, overlay)
+                        .unwrap_or_default();
 
                 if macos_binding.is_empty() && linux_binding.is_empty() {
                     return "<div>No default binding</div>".to_string();
@@ -227,7 +293,7 @@ fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Prepr
                 let formatted_macos_binding = format_binding(macos_binding);
                 let formatted_linux_binding = format_binding(linux_binding);
 
-                format!("<kbd class=\"keybinding\">{formatted_macos_binding}|{formatted_linux_binding}</kbd>")
+                format!("<kbd class=\"keybinding\">{formatted_macos_binding}&#124;{formatted_linux_binding}</kbd>")
             })
             .into_owned()
     });
@@ -256,28 +322,22 @@ fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<Preproces
 
 fn find_action_by_name(name: &str) -> Option<&ActionDef> {
     ALL_ACTIONS
+        .actions
         .binary_search_by(|action| action.name.as_str().cmp(name))
         .ok()
-        .map(|index| &ALL_ACTIONS[index])
+        .map(|index| &ALL_ACTIONS.actions[index])
 }
 
 fn actions_available() -> bool {
-    !ALL_ACTIONS.is_empty()
+    !ALL_ACTIONS.actions.is_empty()
 }
 
 fn is_missing_action(name: &str) -> bool {
     actions_available() && find_action_by_name(name).is_none()
 }
 
-fn find_binding(os: &str, action: &str) -> Option<String> {
-    let keymap = match os {
-        "macos" => &KEYMAP_MACOS,
-        "linux" | "freebsd" => &KEYMAP_LINUX,
-        "windows" => &KEYMAP_WINDOWS,
-        _ => unreachable!("Not a valid OS: {}", os),
-    };
-
-    // Find the binding in reverse order, as the last binding takes precedence.
+// Find the binding in reverse order, as the last binding takes precedence.
+fn find_binding_in_keymap(keymap: &KeymapFile, action: &str) -> Option<String> {
     keymap.sections().rev().find_map(|section| {
         section.bindings().rev().find_map(|(keystroke, a)| {
             if name_for_action(a.to_string()) == action {
@@ -289,11 +349,39 @@ fn find_binding(os: &str, action: &str) -> Option<String> {
     })
 }
 
+fn find_binding(os: Os, action: &str) -> Option<String> {
+    let keymap = match os {
+        Os::MacOs => &KEYMAP_MACOS,
+        Os::Linux => &KEYMAP_LINUX,
+        Os::Windows => &KEYMAP_WINDOWS,
+    };
+    find_binding_in_keymap(keymap, action)
+}
+
+fn find_binding_with_overlay(
+    os: Os,
+    action: &str,
+    overlay: Option<KeymapOverlay>,
+) -> Option<String> {
+    overlay
+        .and_then(|overlay| find_binding_in_keymap(overlay.keymap(os), action))
+        .or_else(|| find_binding(os, action))
+}
+
 fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
+    let settings_schema = SettingsStore::json_schema(&Default::default());
+    let settings_validator = jsonschema::validator_for(&settings_schema)
+        .expect("failed to compile settings JSON schema");
+
+    let keymap_schema =
+        keymap_schema_for_actions(&ALL_ACTIONS.actions, &ALL_ACTIONS.schema_definitions);
+    let keymap_validator =
+        jsonschema::validator_for(&keymap_schema).expect("failed to compile keymap JSON schema");
+
     fn for_each_labeled_code_block_mut(
         book: &mut Book,
         errors: &mut HashSet<PreprocessorError>,
-        f: impl Fn(&str, &str) -> anyhow::Result<()>,
+        f: &dyn Fn(&str, &str) -> anyhow::Result<()>,
     ) {
         const TAGGED_JSON_BLOCK_START: &'static str = "```json [";
         const JSON_BLOCK_END: &'static str = "```";
@@ -360,7 +448,7 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
         });
     }
 
-    for_each_labeled_code_block_mut(book, errors, |label, snippet_json| {
+    for_each_labeled_code_block_mut(book, errors, &|label, snippet_json| {
         let mut snippet_json_fixed = snippet_json
             .to_string()
             .replace("\n>", "\n")
@@ -378,9 +466,15 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                     snippet_json_fixed.insert(0, '{');
                     snippet_json_fixed.push_str("\n}");
                 }
-                settings::parse_json_with_comments::<settings::SettingsContent>(
-                    &snippet_json_fixed,
-                )?;
+                let value =
+                    settings::parse_json_with_comments::<serde_json::Value>(&snippet_json_fixed)?;
+                let validation_errors: Vec<String> = settings_validator
+                    .iter_errors(&value)
+                    .map(|err| err.to_string())
+                    .collect();
+                if !validation_errors.is_empty() {
+                    anyhow::bail!("{}", validation_errors.join("\n"));
+                }
             }
             "keymap" => {
                 if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
@@ -388,21 +482,14 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                     snippet_json_fixed.push_str("\n]");
                 }
 
-                let keymap = settings::KeymapFile::parse(&snippet_json_fixed)
-                    .context("Failed to parse keymap JSON")?;
-                for section in keymap.sections() {
-                    for (_keystrokes, action) in section.bindings() {
-                        if let Some((action_name, _)) = settings::KeymapFile::parse_action(action)
-                            .map_err(|err| anyhow::format_err!(err))
-                            .context("Failed to parse action")?
-                        {
-                            anyhow::ensure!(
-                                !is_missing_action(action_name),
-                                "Action not found: {}",
-                                action_name
-                            );
-                        }
-                    }
+                let value =
+                    settings::parse_json_with_comments::<serde_json::Value>(&snippet_json_fixed)?;
+                let validation_errors: Vec<String> = keymap_validator
+                    .iter_errors(&value)
+                    .map(|err| err.to_string())
+                    .collect();
+                if !validation_errors.is_empty() {
+                    anyhow::bail!("{}", validation_errors.join("\n"));
                 }
             }
             "debug" => {
@@ -456,9 +543,9 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
 /// This will return the action name unmodified.
 ///
 /// ```
-/// let action_as_str = "assistant::Assist";
+/// let action_as_str = "workspace::Save";
 /// let action_name = name_for_action(action_as_str);
-/// assert_eq!(action_name, "assistant::Assist");
+/// assert_eq!(action_name, "workspace::Save");
 /// ```
 ///
 /// This will return the action name with any trailing options removed.
@@ -505,19 +592,30 @@ where
 struct ActionDef {
     name: String,
     human_name: String,
+    #[serde(default)]
+    schema: Option<serde_json::Value>,
     deprecated_aliases: Vec<String>,
+    #[serde(default)]
+    deprecation_message: Option<String>,
     #[serde(rename = "documentation")]
     docs: Option<String>,
 }
 
-fn load_all_actions() -> Vec<ActionDef> {
+#[derive(Debug, serde::Deserialize)]
+struct ActionManifest {
+    actions: Vec<ActionDef>,
+    #[serde(default)]
+    schema_definitions: serde_json::Map<String, serde_json::Value>,
+}
+
+fn load_all_actions() -> ActionManifest {
     let asset_path = concat!(env!("CARGO_MANIFEST_DIR"), "/actions.json");
     match std::fs::read_to_string(asset_path) {
         Ok(content) => {
-            let mut actions: Vec<ActionDef> =
+            let mut manifest: ActionManifest =
                 serde_json::from_str(&content).expect("Failed to parse actions.json");
-            actions.sort_by(|a, b| a.name.cmp(&b.name));
-            actions
+            manifest.actions.sort_by(|a, b| a.name.cmp(&b.name));
+            manifest
         }
         Err(err) => {
             if std::env::var("CI").is_ok() {
@@ -527,7 +625,10 @@ fn load_all_actions() -> Vec<ActionDef> {
                 "Warning: actions.json not found, action validation will be skipped: {}",
                 err
             );
-            Vec::new()
+            ActionManifest {
+                actions: Vec::new(),
+                schema_definitions: serde_json::Map::new(),
+            }
         }
     }
 }
@@ -555,6 +656,7 @@ fn handle_postprocessing() -> Result<()> {
         .expect("Default title not a string")
         .to_string();
     let amplitude_key = std::env::var("DOCS_AMPLITUDE_API_KEY").unwrap_or_default();
+    let consent_io_instance = std::env::var("DOCS_CONSENT_IO_INSTANCE").unwrap_or_default();
 
     output.insert("html".to_string(), zed_html);
     mdbook::Renderer::render(&mdbook::renderer::HtmlHandlebars::new(), &ctx)?;
@@ -624,6 +726,7 @@ fn handle_postprocessing() -> Result<()> {
         zlog::trace!(logger => "Updating {:?}", pretty_path(&file, &root_dir));
         let contents = contents.replace("#description#", meta_description);
         let contents = contents.replace("#amplitude_key#", &amplitude_key);
+        let contents = contents.replace("#consent_io_instance#", &consent_io_instance);
         let contents = title_regex()
             .replace(&contents, |_: &regex::Captures| {
                 format!("<title>{}</title>", meta_title)
@@ -661,7 +764,7 @@ fn title_regex() -> &'static Regex {
 }
 
 fn generate_big_table_of_actions() -> String {
-    let actions = &*ALL_ACTIONS;
+    let actions = &ALL_ACTIONS.actions;
     let mut output = String::new();
 
     let mut actions_sorted = actions.iter().collect::<Vec<_>>();
@@ -709,4 +812,52 @@ fn generate_big_table_of_actions() -> String {
     output.push_str("</dl>\n");
 
     output
+}
+
+fn keymap_schema_for_actions(
+    actions: &[ActionDef],
+    schema_definitions: &serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Value {
+    let mut generator = KeymapFile::action_schema_generator();
+
+    for (name, definition) in schema_definitions {
+        generator
+            .definitions_mut()
+            .insert(name.clone(), definition.clone());
+    }
+
+    let mut action_schemas = Vec::new();
+    let mut documentation = collections::HashMap::<&str, &str>::default();
+    let mut deprecations = collections::HashMap::<&str, &str>::default();
+    let mut deprecation_messages = collections::HashMap::<&str, &str>::default();
+
+    for action in actions {
+        let schema = action
+            .schema
+            .as_ref()
+            .and_then(|v| serde_json::from_value::<schemars::Schema>(v.clone()).ok());
+        action_schemas.push((action.name.as_str(), schema));
+        if let Some(doc) = &action.docs {
+            documentation.insert(action.name.as_str(), doc.as_str());
+        }
+        if let Some(msg) = &action.deprecation_message {
+            deprecation_messages.insert(action.name.as_str(), msg.as_str());
+        }
+        for alias in &action.deprecated_aliases {
+            deprecations.insert(alias.as_str(), action.name.as_str());
+            let alias_schema = action
+                .schema
+                .as_ref()
+                .and_then(|v| serde_json::from_value::<schemars::Schema>(v.clone()).ok());
+            action_schemas.push((alias.as_str(), alias_schema));
+        }
+    }
+
+    KeymapFile::generate_json_schema(
+        generator,
+        action_schemas,
+        &documentation,
+        &deprecations,
+        &deprecation_messages,
+    )
 }

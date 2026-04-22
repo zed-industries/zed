@@ -1,7 +1,7 @@
 use anyhow::Result;
 use collections::IndexMap;
 use strum::IntoEnumIterator;
-use theme::{
+use theme_settings::{
     FontStyleContent, FontWeightContent, HighlightStyleContent, StatusColorsContent,
     ThemeColorsContent, ThemeContent, ThemeStyleContent, WindowBackgroundContent,
 };
@@ -207,6 +207,7 @@ impl VsCodeThemeConverter {
             terminal_ansi_white: vscode_colors.terminal.ansi_white.clone(),
             terminal_ansi_bright_white: vscode_colors.terminal.ansi_bright_white.clone(),
             link_text_hover: vscode_colors.text_link.active_foreground.clone(),
+            vim_yank_background: vscode_colors.editor.range_highlight_background.clone(),
             ..Default::default()
         })
     }

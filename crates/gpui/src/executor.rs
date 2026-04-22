@@ -1,20 +1,15 @@
 use crate::{App, PlatformDispatcher, PlatformScheduler};
 use futures::channel::mpsc;
+use futures::prelude::*;
+use gpui_util::TryFutureExt;
+use scheduler::Instant;
 use scheduler::Scheduler;
-use smol::prelude::*;
 use std::{
-    fmt::Debug,
-    future::Future,
-    marker::PhantomData,
-    mem,
-    pin::Pin,
-    rc::Rc,
-    sync::Arc,
-    time::{Duration, Instant},
+    fmt::Debug, future::Future, marker::PhantomData, mem, pin::Pin, rc::Rc, sync::Arc,
+    time::Duration,
 };
-use util::TryFutureExt;
 
-pub use scheduler::{FallibleTask, Priority};
+pub use scheduler::{FallibleTask, ForegroundExecutor as SchedulerForegroundExecutor, Priority};
 
 /// A pointer to the executor that is currently running,
 /// for spawning background tasks.
@@ -134,9 +129,11 @@ impl BackgroundExecutor {
         }
     }
 
-    /// Close this executor. Tasks will not run after this is called.
-    pub fn close(&self) {
-        self.inner.close();
+    /// Returns the underlying scheduler::BackgroundExecutor.
+    ///
+    /// This is used by Ex to pass the executor to thread/worktree code.
+    pub fn scheduler_executor(&self) -> scheduler::BackgroundExecutor {
+        self.inner.clone()
     }
 
     /// Enqueues the given future to be run to completion on a background thread.
@@ -178,7 +175,6 @@ impl BackgroundExecutor {
     {
         use crate::RunnableMeta;
         use parking_lot::{Condvar, Mutex};
-        use std::sync::{Arc, atomic::AtomicBool};
 
         struct NotifyOnDrop<'a>(&'a (Condvar, Mutex<bool>));
 
@@ -202,14 +198,13 @@ impl BackgroundExecutor {
 
         let dispatcher = self.dispatcher.clone();
         let location = core::panic::Location::caller();
-        let closed = Arc::new(AtomicBool::new(false));
 
         let pair = &(Condvar::new(), Mutex::new(false));
         let _wait_guard = WaitOnDrop(pair);
 
         let (runnable, task) = unsafe {
             async_task::Builder::new()
-                .metadata(RunnableMeta { location, closed })
+                .metadata(RunnableMeta { location })
                 .spawn_unchecked(
                     move |_| async {
                         let _notify_guard = NotifyOnDrop(pair);
@@ -269,6 +264,7 @@ impl BackgroundExecutor {
     /// Returns a task that will complete after the given duration.
     /// Depending on other concurrent tasks the elapsed duration may be longer
     /// than requested.
+    #[track_caller]
     pub fn timer(&self, duration: Duration) -> Task<()> {
         if duration.is_zero() {
             return Task::ready(());
@@ -349,10 +345,20 @@ impl BackgroundExecutor {
     /// How many CPUs are available to the dispatcher.
     pub fn num_cpus(&self) -> usize {
         #[cfg(any(test, feature = "test-support"))]
-        if self.dispatcher.as_test().is_some() {
-            return 4;
+        if let Some(test) = self.dispatcher.as_test() {
+            return test.num_cpus_override().unwrap_or(4);
         }
         num_cpus::get()
+    }
+
+    /// Override the number of CPUs reported by this executor in tests.
+    /// Panics if not called on a test executor.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_num_cpus(&self, count: usize) {
+        self.dispatcher
+            .as_test()
+            .expect("set_num_cpus can only be called on a test executor")
+            .set_num_cpus(count);
     }
 
     /// Whether we're on the main thread.
@@ -396,11 +402,6 @@ impl ForegroundExecutor {
             dispatcher,
             not_send: PhantomData,
         }
-    }
-
-    /// Close this executor. Tasks will not run after this is called.
-    pub fn close(&self) {
-        self.inner.close();
     }
 
     /// Enqueues the given Task to run on the main thread.
@@ -466,6 +467,11 @@ impl ForegroundExecutor {
     #[doc(hidden)]
     pub fn dispatcher(&self) -> &Arc<dyn PlatformDispatcher> {
         &self.dispatcher
+    }
+
+    #[doc(hidden)]
+    pub fn scheduler_executor(&self) -> SchedulerForegroundExecutor {
+        self.inner.clone()
     }
 }
 
@@ -583,145 +589,5 @@ mod test {
             *task_ran.borrow(),
             "Task should run normally when app is alive"
         );
-    }
-
-    #[test]
-    fn test_task_cancelled_when_app_dropped() {
-        let (dispatcher, _background_executor, app) = create_test_app();
-        let foreground_executor = app.borrow().foreground_executor.clone();
-        let app_weak = Rc::downgrade(&app);
-
-        let task_ran = Rc::new(RefCell::new(false));
-        let task_ran_clone = Rc::clone(&task_ran);
-
-        foreground_executor
-            .spawn(async move {
-                *task_ran_clone.borrow_mut() = true;
-            })
-            .detach();
-
-        drop(app);
-
-        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
-
-        dispatcher.run_until_parked();
-
-        // The task should have been cancelled, not run
-        assert!(
-            !*task_ran.borrow(),
-            "Task should have been cancelled when app was dropped, but it ran!"
-        );
-    }
-
-    #[test]
-    fn test_nested_tasks_both_cancel() {
-        let (dispatcher, _background_executor, app) = create_test_app();
-        let foreground_executor = app.borrow().foreground_executor.clone();
-        let app_weak = Rc::downgrade(&app);
-
-        let outer_completed = Rc::new(RefCell::new(false));
-        let inner_completed = Rc::new(RefCell::new(false));
-        let reached_await = Rc::new(RefCell::new(false));
-
-        let outer_flag = Rc::clone(&outer_completed);
-        let inner_flag = Rc::clone(&inner_completed);
-        let await_flag = Rc::clone(&reached_await);
-
-        // Channel to block the inner task until we're ready
-        let (tx, rx) = futures::channel::oneshot::channel::<()>();
-
-        let inner_executor = foreground_executor.clone();
-
-        foreground_executor
-            .spawn(async move {
-                let inner_task = inner_executor.spawn({
-                    let inner_flag = Rc::clone(&inner_flag);
-                    async move {
-                        rx.await.ok();
-                        *inner_flag.borrow_mut() = true;
-                    }
-                });
-
-                *await_flag.borrow_mut() = true;
-
-                inner_task.await;
-
-                *outer_flag.borrow_mut() = true;
-            })
-            .detach();
-
-        // Run dispatcher until outer task reaches the await point
-        // The inner task will be blocked on the channel
-        dispatcher.run_until_parked();
-
-        // Verify we actually reached the await point before dropping the app
-        assert!(
-            *reached_await.borrow(),
-            "Outer task should have reached the await point"
-        );
-
-        // Neither task should have completed yet
-        assert!(
-            !*outer_completed.borrow(),
-            "Outer task should not have completed yet"
-        );
-        assert!(
-            !*inner_completed.borrow(),
-            "Inner task should not have completed yet"
-        );
-
-        // Drop the channel sender and app while outer is awaiting inner
-        drop(tx);
-        drop(app);
-        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
-
-        // Run dispatcher - both tasks should be cancelled
-        dispatcher.run_until_parked();
-
-        // Neither task should have completed (both were cancelled)
-        assert!(
-            !*outer_completed.borrow(),
-            "Outer task should have been cancelled, not completed"
-        );
-        assert!(
-            !*inner_completed.borrow(),
-            "Inner task should have been cancelled, not completed"
-        );
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_polling_cancelled_task_panics() {
-        let (dispatcher, _background_executor, app) = create_test_app();
-        let foreground_executor = app.borrow().foreground_executor.clone();
-        let app_weak = Rc::downgrade(&app);
-
-        let task = foreground_executor.spawn(async move { 42 });
-
-        drop(app);
-
-        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
-
-        dispatcher.run_until_parked();
-
-        foreground_executor.block_on(task);
-    }
-
-    #[test]
-    fn test_polling_cancelled_task_returns_none_with_fallible() {
-        let (dispatcher, _background_executor, app) = create_test_app();
-        let foreground_executor = app.borrow().foreground_executor.clone();
-        let app_weak = Rc::downgrade(&app);
-
-        let task = foreground_executor.spawn(async move { 42 }).fallible();
-
-        drop(app);
-
-        assert!(app_weak.upgrade().is_none(), "App should have been dropped");
-
-        dispatcher.run_until_parked();
-
-        let result = foreground_executor.block_on(task);
-        assert_eq!(result, None, "Cancelled task should return None");
     }
 }

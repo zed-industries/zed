@@ -44,10 +44,6 @@ impl StreamingFuzzyMatcher {
     /// Returns `Some(range)` if a match has been found with the accumulated
     /// query so far, or `None` if no suitable match exists yet.
     pub fn push(&mut self, chunk: &str, line_hint: Option<u32>) -> Option<Range<usize>> {
-        if line_hint.is_some() {
-            self.line_hint = line_hint;
-        }
-
         // Add the chunk to our incomplete line buffer
         self.incomplete_line.push_str(chunk);
         self.line_hint = line_hint;
@@ -76,6 +72,18 @@ impl StreamingFuzzyMatcher {
     pub fn finish(&mut self) -> Vec<Range<usize>> {
         // Process any remaining incomplete line
         if !self.incomplete_line.is_empty() {
+            if self.matches.len() == 1 {
+                let range = &mut self.matches[0];
+                if range.end < self.snapshot.len()
+                    && self
+                        .snapshot
+                        .contains_str_at(range.end + 1, &self.incomplete_line)
+                {
+                    range.end += 1 + self.incomplete_line.len();
+                    return self.matches.clone();
+                }
+            }
+
             self.query_lines.push(self.incomplete_line.clone());
             self.incomplete_line.clear();
             self.matches = self.resolve_location_fuzzy();
@@ -723,6 +731,54 @@ mod tests {
         assert!(
             best_match.is_none(),
             "Best match should be None when query cannot be uniquely resolved"
+        );
+    }
+
+    #[gpui::test]
+    fn test_prefix_of_last_line_resolves_to_correct_range() {
+        let text = indoc! {r#"
+            fn on_query_change(&mut self, cx: &mut Context<Self>) {
+                self.filter(cx);
+            }
+
+
+
+            fn render_search(&self, cx: &mut Context<Self>) -> Div {
+                div()
+            }
+        "#};
+
+        let buffer = TextBuffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            text.to_string(),
+        );
+        let snapshot = buffer.snapshot();
+
+        // Query with a partial last line.
+        let query = "}\n\n\n\nfn render_search";
+
+        let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
+        matcher.push(query, None);
+        let matches = matcher.finish();
+
+        // The match should include the line containing "fn render_search".
+        let matched_text = matches
+            .first()
+            .map(|range| snapshot.text_for_range(range.clone()).collect::<String>());
+
+        assert!(
+            matches.len() == 1,
+            "Expected exactly one match, got {}: {:?}",
+            matches.len(),
+            matched_text,
+        );
+
+        let matched_text = matched_text.unwrap();
+        pretty_assertions::assert_eq!(
+            matched_text,
+            "}\n\n\n\nfn render_search",
+            "Match should include the render_search line",
         );
     }
 

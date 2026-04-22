@@ -1,4 +1,3 @@
-mod component_preview_example;
 mod persistence;
 
 use client::UserStore;
@@ -9,8 +8,8 @@ use gpui::{
 };
 use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
 use language::LanguageRegistry;
-use notifications::status_toast::{StatusToast, ToastIcon};
-use persistence::COMPONENT_PREVIEW_DB;
+use notifications::status_toast::StatusToast;
+use persistence::ComponentPreviewDb;
 use project::Project;
 use std::{iter::Iterator, ops::Range, sync::Arc};
 use ui::{ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip, prelude::*};
@@ -19,9 +18,6 @@ use workspace::AppState;
 use workspace::{
     Item, ItemId, SerializableItem, Workspace, WorkspaceId, delete_unloaded_items, item::ItemEvent,
 };
-
-#[allow(unused_imports)]
-pub use component_preview_example::*;
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     workspace::register_serializable_item::<ComponentPreview>(cx);
@@ -85,13 +81,13 @@ impl From<SharedString> for PreviewEntry {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
-enum PreviewPage {
+pub enum PreviewPage {
     #[default]
     AllComponents,
     Component(ComponentId),
 }
 
-struct ComponentPreview {
+pub struct ComponentPreview {
     active_page: PreviewPage,
     reset_key: usize,
     component_list: ListState,
@@ -565,10 +561,14 @@ impl ComponentPreview {
             workspace.update(cx, |workspace, cx| {
                 let status_toast =
                     StatusToast::new("`zed/new-notification-system` created!", cx, |this, _cx| {
-                        this.icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
-                            .action("Open Pull Request", |_, cx| {
-                                cx.open_url("https://github.com/")
-                            })
+                        this.icon(
+                            Icon::new(IconName::GitBranch)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .action("Open Pull Request", |_, cx| {
+                            cx.open_url("https://github.com/")
+                        })
                     });
                 workspace.toggle_status_toast(status_toast, cx)
             });
@@ -757,7 +757,7 @@ impl Item for ComponentPreview {
         })
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
 
@@ -788,7 +788,7 @@ impl SerializableItem for ComponentPreview {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         let deserialized_active_page =
-            match COMPONENT_PREVIEW_DB.get_active_page(item_id, workspace_id) {
+            match ComponentPreviewDb::global(cx).get_active_page(item_id, workspace_id) {
                 Ok(page) => {
                     if let Some(page) = page {
                         ActivePageId(page)
@@ -849,7 +849,7 @@ impl SerializableItem for ComponentPreview {
             alive_items,
             workspace_id,
             "component_previews",
-            &COMPONENT_PREVIEW_DB,
+            &ComponentPreviewDb::global(cx),
             cx,
         )
     }
@@ -864,9 +864,9 @@ impl SerializableItem for ComponentPreview {
     ) -> Option<Task<anyhow::Result<()>>> {
         let active_page = self.active_page_id(cx);
         let workspace_id = self.workspace_id?;
+        let db = ComponentPreviewDb::global(cx);
         Some(cx.background_spawn(async move {
-            COMPONENT_PREVIEW_DB
-                .save_active_page(item_id, workspace_id, active_page.0)
+            db.save_active_page(item_id, workspace_id, active_page.0)
                 .await
         }))
     }

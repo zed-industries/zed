@@ -8,8 +8,8 @@ use gpui::{
     Subscription, Task,
 };
 use language_model::{
-    AuthenticateError, ConfiguredModel, IconOrSvg, LanguageModel, LanguageModelId,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
+    ConfiguredModel, IconOrSvg, LanguageModel, LanguageModelId, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelRegistry,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
@@ -124,7 +124,6 @@ pub struct LanguageModelPickerDelegate {
     all_models: Arc<GroupedModels>,
     filtered_entries: Vec<LanguageModelPickerEntry>,
     selected_index: usize,
-    _authenticate_all_providers_task: Task<()>,
     _subscriptions: Vec<Subscription>,
     popover_styles: bool,
     focus_handle: FocusHandle,
@@ -151,7 +150,6 @@ impl LanguageModelPickerDelegate {
             filtered_entries: entries,
             get_active_model: Arc::new(get_active_model),
             on_toggle_favorite: Arc::new(on_toggle_favorite),
-            _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
             _subscriptions: vec![cx.subscribe_in(
                 &LanguageModelRegistry::global(cx),
                 window,
@@ -195,56 +193,6 @@ impl LanguageModelPickerDelegate {
                 }
             })
             .unwrap_or(0)
-    }
-
-    /// Authenticates all providers in the [`LanguageModelRegistry`].
-    ///
-    /// We do this so that we can populate the language selector with all of the
-    /// models from the configured providers.
-    fn authenticate_all_providers(cx: &mut App) -> Task<()> {
-        let authenticate_all_providers = LanguageModelRegistry::global(cx)
-            .read(cx)
-            .visible_providers()
-            .iter()
-            .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
-            .collect::<Vec<_>>();
-
-        cx.spawn(async move |_cx| {
-            for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
-                if let Err(err) = authenticate_task.await {
-                    if matches!(err, AuthenticateError::CredentialsNotFound) {
-                        // Since we're authenticating these providers in the
-                        // background for the purposes of populating the
-                        // language selector, we don't care about providers
-                        // where the credentials are not found.
-                    } else {
-                        // Some providers have noisy failure states that we
-                        // don't want to spam the logs with every time the
-                        // language model selector is initialized.
-                        //
-                        // Ideally these should have more clear failure modes
-                        // that we know are safe to ignore here, like what we do
-                        // with `CredentialsNotFound` above.
-                        match provider_id.0.as_ref() {
-                            "lmstudio" | "ollama" => {
-                                // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
-                                //
-                                // These fail noisily, so we don't log them.
-                            }
-                            "copilot_chat" => {
-                                // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
-                            }
-                            _ => {
-                                log::error!(
-                                    "Failed to authenticate provider: {}: {err:#}",
-                                    provider_name.0
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        })
     }
 
     pub fn active_model(&self, cx: &App) -> Option<ConfiguredModel> {
@@ -455,12 +403,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         cx.notify();
     }
 
-    fn can_select(
-        &mut self,
-        ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> bool {
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
             Some(LanguageModelPickerEntry::Model(_)) => true,
             Some(LanguageModelPickerEntry::Separator(_)) | None => false,
@@ -571,6 +514,11 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 let is_selected = Some(model_info.model.provider_id()) == active_provider_id
                     && Some(model_info.model.id()) == active_model_id;
 
+                let model_cost = model_info
+                    .model
+                    .model_cost_info()
+                    .map(|cost| cost.to_shared_string());
+
                 let is_favorite = model_info.is_favorite;
                 let handle_action_click = {
                     let model = model_info.model.clone();
@@ -591,6 +539,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .is_focused(selected)
                         .is_latest(model_info.model.is_latest())
                         .is_favorite(is_favorite)
+                        .cost_info(model_cost)
                         .on_toggle_favorite(handle_action_click)
                         .into_any_element(),
                 )
@@ -723,7 +672,7 @@ mod tests {
                     .any(|(fav_provider, fav_name)| *fav_provider == provider && *fav_name == name);
                 ModelInfo {
                     model: Arc::new(TestLanguageModel::new(name, provider)),
-                    icon: IconOrSvg::Icon(IconName::Ai),
+                    icon: IconOrSvg::Icon(IconName::ZedAgent),
                     is_favorite,
                 }
             })
@@ -752,11 +701,11 @@ mod tests {
         let models = create_models(vec![
             ("zed", "Claude 3.7 Sonnet"),
             ("zed", "Claude 3.7 Sonnet Thinking"),
-            ("zed", "gpt-4.1"),
-            ("zed", "gpt-4.1-nano"),
+            ("zed", "gpt-5"),
+            ("zed", "gpt-5-mini"),
             ("openai", "gpt-3.5-turbo"),
-            ("openai", "gpt-4.1"),
-            ("openai", "gpt-4.1-nano"),
+            ("openai", "gpt-5"),
+            ("openai", "gpt-5-mini"),
             ("ollama", "mistral"),
             ("ollama", "deepseek"),
         ]);
@@ -767,14 +716,14 @@ mod tests {
         );
 
         // The order of models should be maintained, case doesn't matter
-        let results = matcher.exact_search("GPT-4.1");
+        let results = matcher.exact_search("GPT-5");
         assert_models_eq(
             results,
             vec![
-                "zed/gpt-4.1",
-                "zed/gpt-4.1-nano",
-                "openai/gpt-4.1",
-                "openai/gpt-4.1-nano",
+                "zed/gpt-5",
+                "zed/gpt-5-mini",
+                "openai/gpt-5",
+                "openai/gpt-5-mini",
             ],
         );
     }
@@ -784,11 +733,11 @@ mod tests {
         let models = create_models(vec![
             ("zed", "Claude 3.7 Sonnet"),
             ("zed", "Claude 3.7 Sonnet Thinking"),
-            ("zed", "gpt-4.1"),
-            ("zed", "gpt-4.1-nano"),
+            ("zed", "gpt-5"),
+            ("zed", "gpt-5-mini"),
             ("openai", "gpt-3.5-turbo"),
-            ("openai", "gpt-4.1"),
-            ("openai", "gpt-4.1-nano"),
+            ("openai", "gpt-5"),
+            ("openai", "gpt-5-mini"),
             ("ollama", "mistral"),
             ("ollama", "deepseek"),
         ]);
@@ -799,27 +748,19 @@ mod tests {
         );
 
         // Results should preserve models order whenever possible.
-        // In the case below, `zed/gpt-4.1` and `openai/gpt-4.1` have identical
-        // similarity scores, but `zed/gpt-4.1` was higher in the models list,
+        // In the case below, `zed/gpt-5-mini` and `openai/gpt-5-mini` have identical
+        // similarity scores, but `zed/gpt-5-mini` was higher in the models list,
         // so it should appear first in the results.
-        let results = matcher.fuzzy_search("41");
-        assert_models_eq(
-            results,
-            vec![
-                "zed/gpt-4.1",
-                "openai/gpt-4.1",
-                "zed/gpt-4.1-nano",
-                "openai/gpt-4.1-nano",
-            ],
-        );
+        let results = matcher.fuzzy_search("mini");
+        assert_models_eq(results, vec!["zed/gpt-5-mini", "openai/gpt-5-mini"]);
 
         // Model provider should be searchable as well
         let results = matcher.fuzzy_search("ol"); // meaning "ollama"
         assert_models_eq(results, vec!["ollama/mistral", "ollama/deepseek"]);
 
-        // Fuzzy search
-        let results = matcher.fuzzy_search("z4n");
-        assert_models_eq(results, vec!["zed/gpt-4.1-nano"]);
+        // Fuzzy search - search for Claude to get the Thinking variant
+        let results = matcher.fuzzy_search("thinking");
+        assert_models_eq(results, vec!["zed/Claude 3.7 Sonnet Thinking"]);
     }
 
     #[gpui::test]

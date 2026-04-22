@@ -1,9 +1,9 @@
 use crate::{
-    self as gpui, AbsoluteLength, AlignContent, AlignItems, BorderStyle, CursorStyle,
+    self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
-    FontWeight, GridPlacement, Hsla, JustifyContent, Length, SharedString, StrikethroughStyle,
-    StyleRefinement, TextAlign, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px,
-    relative, rems,
+    FontWeight, GridPlacement, GridTemplate, Hsla, JustifyContent, Length, SharedString,
+    StrikethroughStyle, StyleRefinement, TemplateColumnMinSize, TextAlign, TextOverflow,
+    TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
 };
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
@@ -208,6 +208,13 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the element to prevent a flex item from growing.
+    /// [Docs](https://tailwindcss.com/docs/flex-grow#dont-grow)
+    fn flex_grow_0(mut self) -> Self {
+        self.style().flex_grow = Some(0.);
+        self
+    }
+
     /// Sets the element to allow a flex item to shrink if needed.
     /// [Docs](https://tailwindcss.com/docs/flex-shrink)
     fn flex_shrink(mut self) -> Self {
@@ -275,6 +282,55 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/align-items#stretch)
     fn items_stretch(mut self) -> Self {
         self.style().align_items = Some(AlignItems::Stretch);
+        self
+    }
+
+    /// Sets how this specific element is aligned along the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#start)
+    fn self_start(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::Start);
+        self
+    }
+
+    /// Sets this element to align against the end of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#end)
+    fn self_end(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::End);
+        self
+    }
+
+    /// Sets this element to align against the start of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#start)
+    fn self_flex_start(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::FlexStart);
+        self
+    }
+
+    /// Sets this element to align against the end of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#end)
+    fn self_flex_end(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::FlexEnd);
+        self
+    }
+
+    /// Sets this element to align along the center of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#center)
+    fn self_center(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::Center);
+        self
+    }
+
+    /// Sets this element to align along the baseline of the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#baseline)
+    fn self_baseline(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::Baseline);
+        self
+    }
+
+    /// Sets this element to stretch to fill the available space along the container's cross axis.
+    /// [Docs](https://tailwindcss.com/docs/align-self#stretch)
+    fn self_stretch(mut self) -> Self {
+        self.style().align_self = Some(AlignSelf::Stretch);
         self
     }
 
@@ -381,6 +437,20 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/align-content#stretch)
     fn content_stretch(mut self) -> Self {
         self.style().align_content = Some(AlignContent::Stretch);
+        self
+    }
+
+    /// Sets the aspect ratio of the element.
+    /// [Docs](https://tailwindcss.com/docs/aspect-ratio)
+    fn aspect_ratio(mut self, ratio: f32) -> Self {
+        self.style().aspect_ratio = Some(ratio);
+        self
+    }
+
+    /// Sets the aspect ratio of the element to 1/1 – equal width and height.
+    /// [Docs](https://tailwindcss.com/docs/aspect-ratio)
+    fn aspect_square(mut self) -> Self {
+        self.style().aspect_ratio = Some(1.0);
         self
     }
 
@@ -648,20 +718,38 @@ pub trait Styled: Sized {
 
     /// Sets the grid columns of this element.
     fn grid_cols(mut self, cols: u16) -> Self {
-        self.style().grid_cols = Some(cols);
+        self.style().grid_cols = Some(GridTemplate {
+            repeat: cols,
+            min_size: TemplateColumnMinSize::Zero,
+        });
         self
     }
 
     /// Sets the grid columns with min-content minimum sizing.
     /// Unlike grid_cols, it won't shrink to width 0 in AvailableSpace::MinContent constraints.
     fn grid_cols_min_content(mut self, cols: u16) -> Self {
-        self.style().grid_cols_min_content = Some(cols);
+        self.style().grid_cols = Some(GridTemplate {
+            repeat: cols,
+            min_size: TemplateColumnMinSize::MinContent,
+        });
+        self
+    }
+
+    /// Sets the grid columns with max-content maximum sizing for content-based column widths.
+    fn grid_cols_max_content(mut self, cols: u16) -> Self {
+        self.style().grid_cols = Some(GridTemplate {
+            repeat: cols,
+            min_size: TemplateColumnMinSize::MaxContent,
+        });
         self
     }
 
     /// Sets the grid rows of this element.
     fn grid_rows(mut self, rows: u16) -> Self {
-        self.style().grid_rows = Some(rows);
+        self.style().grid_rows = Some(GridTemplate {
+            repeat: rows,
+            min_size: TemplateColumnMinSize::Zero,
+        });
         self
     }
 

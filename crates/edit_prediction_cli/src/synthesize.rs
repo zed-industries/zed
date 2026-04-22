@@ -284,7 +284,7 @@ fn should_skip_commit(commit: &CommitInfo) -> bool {
         .lines()
         .filter(|l| l.starts_with('+') || l.starts_with('-'))
         .count();
-    lines_changed < 10
+    lines_changed < 30
         || lines_changed > 1000
         || is_non_code_commit(commit)
         || is_rename_commit(commit)
@@ -377,10 +377,13 @@ fn build_prompt(repo_url: &str, commit: &CommitInfo) -> String {
         indoc! {r#"
             You are analyzing a git commit to construct a realistic edit prediction example.
 
-            Your goal is to tell the story of a programmer's editing session: what sequence of changes did they make, and what change logically comes next? We use these examples to train a model to predict edits, so the quality of the EDIT HISTORY is what matters most.
+            Your goal is to tell the story of a programmer's editing session: what sequence
+            of changes did they make, and what change logically comes next? We use these examples
+            to train a model to predict edits, so the quality of the EDIT HISTORY is what matters most.
 
             An edit prediction example consists of:
-            1. **Edit History**: 3-6 hunks showing what the programmer did BEFORE making the expected patch. This is the most important part - it must tell a coherent story of the changes leading up to the prediction.
+            1. **Edit History**: 2-6 hunks showing what the programmer did BEFORE making the expected patch.
+               This is the most important part - it must tell a coherent story of the changes leading up to the prediction.
             2. **Expected Patch**: One small hunk that logically follows from the edit history.
 
             Both single-file and multi-file patterns are acceptable.
@@ -417,7 +420,7 @@ fn build_prompt(repo_url: &str, commit: &CommitInfo) -> String {
             First, THINK through whether this commit can support a good example:
 
             1. What is the high-level pattern in this commit?
-            2. Can you identify at least 4 related hunks (3 for edit history + 1 for expected patch)?
+            2. Can you identify at least 3 related hunks (2 or more for edit history + 1 for expected patch)?
             3. What would be the narrative? (First... then... then... finally predict...)
             4. Which specific hunk should be the expected patch (the "punchline")?
 
@@ -792,7 +795,7 @@ async fn build_example(
         edit_history,
         expected_patches: vec![expected_patch_with_header],
         rejected_patch: None,
-        captured_prompt_input: None,
+
         telemetry: None,
         human_feedback: Vec::new(),
         rating: None,
