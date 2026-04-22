@@ -83,6 +83,33 @@ More concretely:
 
 If we want to strengthen this later, we can also assert that the loaded payload fields match exactly, not just that both sides are loaded for the same `sha`.
 
+## Duplicate SHA / waiter upgrade invariants
+
+When `fetch_commit_data` is called multiple times for the same SHA, possibly with different `needs_waiter` values:
+
+### Same SHA, `needs_waiter = false` then `needs_waiter = false`
+
+- Second call is a no-op; state remains unchanged.
+- `commit_data[sha]` is still `Loading(None)` (or `Loaded` if the result arrived between calls).
+
+### Same SHA, `needs_waiter = false` then `needs_waiter = true`
+
+- The state must upgrade from `Loading(None)` to `Loading(Some(_))`.
+- A completer must be inserted into `handler.completers` for that SHA.
+- The shared future in `Loading(Some(_))` must be resolvable by that completer.
+- If the result has already arrived (`Loaded`), the second call should return the loaded state directly.
+
+### Same SHA, `needs_waiter = true` then `needs_waiter = true`
+
+- Second call should return the existing `Loading(Some(shared))` — the same shared future.
+- No additional completer should be created.
+- Both callers awaiting the shared future should resolve to the same data.
+
+### Same SHA, `needs_waiter = true` then `needs_waiter = false`
+
+- Second call is a no-op; the existing `Loading(Some(_))` state is preserved.
+- The completer and shared future remain intact.
+
 ## Possible future property
 
 Once enqueue-failure semantics are finalized, add a property around waiter-backed requests:

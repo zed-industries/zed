@@ -311,7 +311,7 @@ pub struct JobInfo {
 struct GraphCommitDataHandler {
     _task: Task<()>,
     commit_data_request: smol::channel::Sender<Oid>,
-    completers: HashMap<Oid, oneshot::Sender<Arc<GraphCommitData>>>,
+    completion_senders: HashMap<Oid, oneshot::Sender<Arc<GraphCommitData>>>,
     pending_requests: HashSet<Oid>,
 }
 
@@ -5064,27 +5064,27 @@ impl Repository {
     pub fn fetch_commit_data(
         &mut self,
         sha: Oid,
-        needs_waiter: bool,
+        await_result: bool,
         cx: &mut Context<Self>,
     ) -> &CommitDataState {
         if self.commit_data.contains_key(&sha) {
             let data = &self.commit_data[&sha];
 
             if let CommitDataState::Loading(None) = data
-                && needs_waiter
+                && await_result
             {
                 let (tx, rx) = oneshot::channel();
                 self.commit_data
                     .insert(sha, CommitDataState::Loading(Some(rx.shared())));
 
                 let handler = self.get_handler(cx);
-                handler.completers.insert(sha, tx);
+                handler.completion_senders.insert(sha, tx);
             }
 
             return &self.commit_data[&sha];
         }
 
-        let (state, completer) = if needs_waiter {
+        let (state, completer) = if await_result {
             let (tx, rx) = oneshot::channel();
             (CommitDataState::Loading(Some(rx.shared())), Some(tx))
         } else {
@@ -5095,14 +5095,14 @@ impl Repository {
 
         let handler = self.get_handler(cx);
         if let Some(tx) = completer {
-            handler.completers.insert(sha, tx);
+            handler.completion_senders.insert(sha, tx);
         }
         let mut has_failed = false;
         if handler.commit_data_request.try_send(sha).is_ok() {
             handler.pending_requests.insert(sha);
         } else {
             has_failed = true;
-            handler.completers.remove(&sha);
+            handler.completion_senders.remove(&sha);
             debug_assert!(
                 matches!(
                     self.commit_data.remove(&sha),
@@ -5147,8 +5147,8 @@ impl Repository {
                         &mut this.graph_commit_data_handler
                     {
                         handler.pending_requests.remove(&sha);
-                        if let Some(completer) = handler.completers.remove(&sha) {
-                            completer.send(data.clone()).ok();
+                        if let Some(completion_sender) = handler.completion_senders.remove(&sha) {
+                            completion_sender.send(data.clone()).ok();
                         }
                     } else {
                         debug_panic!("The handler state has to be open for this task to exist");
@@ -5220,7 +5220,7 @@ impl Repository {
         GraphCommitDataHandler {
             _task: foreground_task,
             commit_data_request: request_tx_for_handler,
-            completers: HashMap::default(),
+            completion_senders: HashMap::default(),
             pending_requests: HashSet::default(),
         }
     }
@@ -8085,6 +8085,13 @@ mod tests {
     }
 
     fn verify_invariants(repository: &Repository) -> anyhow::Result<()> {
+        verify_loading_entries_are_pending(repository)?;
+        verify_await_result_loading_entries_have_completion_senders(repository)?;
+        verify_closed_handler_has_no_loading_entries(repository)?;
+        Ok(())
+    }
+
+    fn verify_loading_entries_are_pending(repository: &Repository) -> anyhow::Result<()> {
         let GraphCommitHandlerState::Open(handler) = &repository.graph_commit_data_handler else {
             return Ok(());
         };
@@ -8101,6 +8108,43 @@ mod tests {
         Ok(())
     }
 
+    fn verify_await_result_loading_entries_have_completion_senders(
+        repository: &Repository,
+    ) -> anyhow::Result<()> {
+        let GraphCommitHandlerState::Open(handler) = &repository.graph_commit_data_handler else {
+            return Ok(());
+        };
+
+        for (sha, state) in &repository.commit_data {
+            if matches!(state, CommitDataState::Loading(Some(_))) {
+                anyhow::ensure!(
+                    handler.completion_senders.contains_key(sha),
+                    "await-result loading commit data for {sha} must have a completion sender"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn verify_closed_handler_has_no_loading_entries(repository: &Repository) -> anyhow::Result<()> {
+        if !matches!(
+            repository.graph_commit_data_handler,
+            GraphCommitHandlerState::Closed
+        ) {
+            return Ok(());
+        }
+
+        for (sha, state) in &repository.commit_data {
+            anyhow::ensure!(
+                !matches!(state, CommitDataState::Loading(_)),
+                "closed handler must not keep loading commit data for {sha}"
+            );
+        }
+
+        Ok(())
+    }
+
     #[gpui::property_test(config = ProptestConfig {
         cases: 20,
         ..Default::default()
@@ -8110,7 +8154,7 @@ mod tests {
         #[strategy = gpui::proptest::collection::vec(0usize..2000, 1..200)] commit_indexes: Vec<
             usize,
         >,
-        #[strategy = gpui::proptest::collection::vec(any::<bool>(), 1..200)] needs_waiters: Vec<
+        #[strategy = gpui::proptest::collection::vec(any::<bool>(), 1..200)] await_results: Vec<
             bool,
         >,
         cx: &mut TestAppContext,
@@ -8154,10 +8198,10 @@ mod tests {
 
         for (step, commit_index) in commit_indexes.into_iter().enumerate() {
             let sha = commit_shas[commit_index % commit_shas.len()];
-            let needs_waiter = needs_waiters[step % needs_waiters.len()];
+            let await_result = await_results[step % await_results.len()];
 
             repository.update(cx, |repository, cx| {
-                repository.fetch_commit_data(sha, needs_waiter, cx);
+                repository.fetch_commit_data(sha, await_result, cx);
                 let result = verify_invariants(repository);
                 if let Err(error) = result {
                     panic!(
@@ -8167,6 +8211,8 @@ mod tests {
                     );
                 }
             });
+
+            // todo! wait until park, and the repository should have random shas we want to fetcg
         }
     }
 }
