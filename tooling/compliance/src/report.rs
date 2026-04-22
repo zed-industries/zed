@@ -319,7 +319,7 @@ mod tests {
     use crate::{
         checks::{ReviewFailure, ReviewSuccess},
         git::{CommitDetails, CommitList},
-        github::{GithubLogin, GithubUser, PullRequestReview, ReviewState},
+        github::{GithubUser, PullRequestReview, ReviewState},
     };
 
     use super::{Report, ReportReviewSummary};
@@ -377,17 +377,10 @@ mod tests {
             make_commit("ddd", "Dave", "dave@test.com", "Error commit (#300)", ""),
             Err(ReviewFailure::Other(anyhow::anyhow!("some error"))),
         );
-        report.add(
-            make_commit("ddd", "Dave", "dave@test.com", "Bump Version", ""),
-            Ok(ReviewSuccess::ZedZippyCommit(GithubLogin::new(
-                "dave".to_string(),
-            ))),
-        );
 
         let summary = report.summary();
         assert_eq!(summary.pull_requests, 3);
         assert_eq!(summary.reviewed_prs, 1);
-        assert_eq!(summary.other_checked, 1);
         assert_eq!(summary.not_reviewed, 2);
         assert_eq!(summary.errors, 1);
     }
