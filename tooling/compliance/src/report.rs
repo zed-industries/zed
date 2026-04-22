@@ -21,6 +21,12 @@ pub struct ReportEntry<R> {
     reason: R,
 }
 
+impl<R> ReportEntry<R> {
+    pub fn new(commit: CommitDetails, reason: R) -> Self {
+        Self { commit, reason }
+    }
+}
+
 impl<R: ToString> ReportEntry<R> {
     fn commit_cell(&self) -> String {
         let title = escape_markdown_link_text(self.commit.title());
@@ -147,6 +153,12 @@ pub struct Report {
 impl Report {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn from_entries(entries: impl IntoIterator<Item = ReportEntry<ReviewResult>>) -> Self {
+        Self {
+            entries: entries.into_iter().collect(),
+        }
     }
 
     pub fn add(&mut self, commit: CommitDetails, result: ReviewResult) {
