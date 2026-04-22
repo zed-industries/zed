@@ -17,7 +17,10 @@ use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::{SidebarSide, update_settings_file};
 use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
-use workspace::SERIALIZATION_THROTTLE_TIME;
+use search::BufferSearchBar;
+use search::buffer_search::DivRegistrar;
+use workspace::{SERIALIZATION_THROTTLE_TIME, ToolbarItemView};
+use zed_actions::buffer_search::Deploy;
 
 use super::*;
 
@@ -8952,6 +8955,39 @@ impl ThreadView {
             menu_handle.toggle(window, cx);
         });
     }
+
+    fn deploy_search(&mut self, action: &Deploy, window: &mut Window, cx: &mut Context<Self>) {
+        let needs_init = self.search_bar.is_none();
+        if needs_init {
+            let languages = self
+                .project
+                .upgrade()
+                .map(|project| project.read(cx).languages().clone());
+            let bar = cx.new(|cx| BufferSearchBar::new(languages, window, cx));
+            self.search_bar_subscription = Some(cx.subscribe(
+                &bar,
+                |_this, _bar, _event: &search::buffer_search::Event, cx| {
+                    cx.notify();
+                },
+            ));
+            self.search_bar = Some(bar);
+        }
+        let Some(bar) = self.search_bar.clone() else {
+            return;
+        };
+        let this = cx.entity();
+        let action = action.clone();
+        // `set_active_pane_item` and `toggle` can re-enter this view (via
+        // SearchableItem callbacks), so run them outside of the current update.
+        window.defer(cx, move |window, cx| {
+            bar.update(cx, |bar, cx| {
+                if needs_init {
+                    bar.set_active_pane_item(Some(&this), window, cx);
+                }
+                bar.toggle(&action, window, cx);
+            });
+        });
+    }
 }
 
 impl Render for ThreadView {
@@ -8975,9 +9011,24 @@ impl Render for ThreadView {
                 }
             });
 
+        let mut search_registrar = DivRegistrar::new(
+            |this: &ThreadView, _window, _cx| this.search_bar.clone(),
+            cx,
+        );
+        BufferSearchBar::register(&mut search_registrar);
+        let search_actions = search_registrar.into_div();
+
+        let visible_search_bar = self
+            .search_bar
+            .as_ref()
+            .filter(|bar| !bar.read(cx).is_dismissed())
+            .cloned();
+
+        search_actions.size_full().child(
         v_flex()
             .key_context("AcpThread")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::deploy_search))
             .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
                 if this.parent_session_id.is_none() {
                     this.cancel_generation(cx);
@@ -9151,6 +9202,7 @@ impl Render for ThreadView {
             }))
             .size_full()
             .children(self.render_subagent_titlebar(cx))
+            .when_some(visible_search_bar, |this, bar| this.child(bar))
             .child(conversation)
             .children(self.render_multi_root_callout(cx))
             .children(self.render_activity_bar(window, cx))
@@ -9170,7 +9222,8 @@ impl Render for ThreadView {
                 |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )
             .children(self.render_token_limit_callout(cx))
-            .child(self.render_message_editor(window, cx))
+            .child(self.render_message_editor(window, cx)),
+        )
     }
 }
 
