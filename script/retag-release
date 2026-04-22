@@ -5,7 +5,9 @@ set -eu
 usage() {
   echo "Usage: $0 <branch>"
   echo ""
-  echo "Triggers the bump_patch_version workflow."
+  echo "Re-tags the HEAD of a release branch by force-updating the tag."
+  echo "This is useful when commits were added to a release branch after"
+  echo "tagging but before the release was published."
   echo ""
   echo "Arguments:"
   echo "  branch    Release branch name (e.g. v0.180.x)"
@@ -24,13 +26,13 @@ which gh > /dev/null 2>&1 || {
   exit 1
 }
 
-echo "Triggering bump_patch_version workflow:"
+echo "Triggering retag_release workflow:"
 echo "  branch: $branch"
 echo ""
 
-gh workflow run bump_patch_version.yml \
+gh workflow run retag_release.yml \
   -f branch="$branch"
 
 echo ""
 echo "Workflow triggered. Monitor progress at:"
-echo "  https://github.com/zed-industries/zed/actions/workflows/bump_patch_version.yml"
+echo "  https://github.com/zed-industries/zed/actions/workflows/retag_release.yml"

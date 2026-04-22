@@ -760,7 +760,7 @@ impl From<RefOp> for Step<Use> {
             RefOperation::Update { force } => (
                 "updateRef",
                 op.git_ref.update_ref_path(),
-                format!(",\nforce: {force}"),
+                format!(",\n    force: {force}"),
             ),
         };
         let step_name = match &op.operation {
