@@ -8293,6 +8293,11 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
+        let expected_loaded_shas = commit_indexes
+            .iter()
+            .map(|index| commit_shas[index % commit_shas.len()])
+            .filter(|sha| !failing_shas.contains(sha) && !missing_shas.contains(sha))
+            .collect::<HashSet<_>>();
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -8369,6 +8374,29 @@ mod tests {
             verify_invariants(repository)
                 .with_context(|| "commit data invariant violation after final drain".to_string())
                 .unwrap();
+
+            let loaded_shas = repository
+                .commit_data
+                .iter()
+                .filter_map(|(sha, state)| match state {
+                    CommitDataState::Loaded(_) => Some(*sha),
+                    CommitDataState::Loading(_) => None,
+                })
+                .collect::<HashSet<_>>();
+            let missing_loaded_shas = expected_loaded_shas
+                .difference(&loaded_shas)
+                .copied()
+                .collect::<Vec<_>>();
+            let unexpected_loaded_shas = loaded_shas
+                .difference(&expected_loaded_shas)
+                .copied()
+                .collect::<Vec<_>>();
+            assert!(
+                missing_loaded_shas.is_empty() && unexpected_loaded_shas.is_empty(),
+                "loaded commit data SHAs after final drain did not match expectation. missing: {:?}, unexpected: {:?}",
+                missing_loaded_shas,
+                unexpected_loaded_shas,
+            );
         });
     }
 }
