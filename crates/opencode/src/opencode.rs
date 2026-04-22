@@ -88,6 +88,8 @@ pub enum Model {
     Glm5,
     #[serde(rename = "kimi-k2.5")]
     KimiK2_5,
+    #[serde(rename = "kimi-k2.6")]
+    KimiK2_6,
     #[serde(rename = "mimo-v2-pro-free")]
     MimoV2ProFree,
     #[serde(rename = "mimo-v2-omni-free")]
@@ -152,6 +154,7 @@ impl Model {
             Self::MiniMaxM2_5Free => "minimax-m2.5-free",
             Self::Glm5 => "glm-5",
             Self::KimiK2_5 => "kimi-k2.5",
+            Self::KimiK2_6 => "kimi-k2.6",
             Self::MimoV2ProFree => "mimo-v2-pro-free",
             Self::MimoV2OmniFree => "mimo-v2-omni-free",
             Self::MimoV2FlashFree => "mimo-v2-flash-free",
@@ -198,6 +201,7 @@ impl Model {
             Self::MiniMaxM2_5Free => "MiniMax M2.5 Free",
             Self::Glm5 => "GLM 5",
             Self::KimiK2_5 => "Kimi K2.5",
+            Self::KimiK2_6 => "Kimi K2.6",
             Self::MimoV2ProFree => "MiMo V2 Pro Free",
             Self::MimoV2OmniFree => "MiMo V2 Omni Free",
             Self::MimoV2FlashFree => "MiMo V2 Flash Free",
@@ -245,6 +249,7 @@ impl Model {
             | Self::MiniMaxM2_5Free
             | Self::Glm5
             | Self::KimiK2_5
+            | Self::KimiK2_6
             | Self::MimoV2ProFree
             | Self::MimoV2OmniFree
             | Self::MimoV2FlashFree
@@ -283,7 +288,7 @@ impl Model {
             // OpenAI-compatible models
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 196_608,
             Self::Glm5 => 200_000,
-            Self::KimiK2_5 => 262_144,
+            Self::KimiK2_5 | Self::KimiK2_6 => 262_144,
             Self::MimoV2ProFree => 1_048_576,
             Self::MimoV2OmniFree | Self::MimoV2FlashFree => 262_144,
             Self::TrinityLargePreviewFree => 131_072,
@@ -329,7 +334,7 @@ impl Model {
             // OpenAI-compatible models
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(65_536),
             Self::Glm5 | Self::BigPickle => Some(128_000),
-            Self::KimiK2_5 => Some(65_536),
+            Self::KimiK2_5 | Self::KimiK2_6 => Some(65_536),
             Self::MimoV2ProFree => Some(131_072),
             Self::MimoV2OmniFree | Self::MimoV2FlashFree => Some(65_536),
             Self::TrinityLargePreviewFree | Self::Nemotron3SuperFree => Some(16_384),
@@ -382,6 +387,7 @@ impl Model {
             | Self::MiniMaxM2_5Free
             | Self::Glm5
             | Self::KimiK2_5
+            | Self::KimiK2_6
             | Self::MimoV2ProFree
             | Self::MimoV2OmniFree
             | Self::MimoV2FlashFree
