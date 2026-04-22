@@ -287,9 +287,8 @@ impl QuickSearch {
             let project = workspace.project().clone();
             let weak_workspace = cx.entity().downgrade();
             let initial_query = if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
-                let query = editor.update(cx, |editor, cx| {
-                    editor.query_suggestion(false, window, cx)
-                });
+                let query =
+                    editor.update(cx, |editor, cx| editor.query_suggestion(false, window, cx));
                 if !query.is_empty() { Some(query) } else { None }
             } else {
                 None
@@ -826,13 +825,9 @@ impl QuickSearch {
 
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let delegate = &self.picker.read(cx).delegate;
-        let match_count = delegate.match_count;
+        let match_count = delegate.matches.len();
         let file_count = delegate.file_count;
         let search_in_progress = delegate.search_in_progress;
-        let replace_enabled = delegate.replace_enabled;
-        let filters_enabled = delegate.filters_enabled;
-        let selected_index = delegate.selected_index;
-        let has_matches = match_count > 0;
 
         h_flex()
             .id("quick-search-header")
@@ -860,45 +855,35 @@ impl QuickSearch {
                     .gap_2()
                     .items_center()
                     .child(Label::new("Quick Search").size(LabelSize::Default))
-                    .when(search_in_progress, |this| {
+                    .when(search_in_progress || match_count > 0, |this| {
+                        let prefix = if search_in_progress {
+                            "Searching... "
+                        } else {
+                            ""
+                        };
                         this.child(
                             Label::new(format!(
-                                "Searching... {} matches in {} files",
-                                match_count, file_count
+                                "{prefix}{match_count} matches in {file_count} files"
                             ))
                             .color(Color::Muted)
                             .size(LabelSize::Small),
                         )
-                    })
-                    .when(!search_in_progress && has_matches, |this| {
-                        this.child(
-                            Label::new(format!("{} matches in {} files", match_count, file_count))
-                                .color(Color::Muted)
-                                .size(LabelSize::Small),
-                        )
                     }),
             )
-            .child(self.render_header_controls(
-                replace_enabled,
-                filters_enabled,
-                selected_index,
-                match_count,
-                self.layout_mode,
-                window,
-                cx,
-            ))
+            .child(self.render_header_controls(window, cx))
     }
 
     fn render_header_controls(
         &self,
-        replace_enabled: bool,
-        filters_enabled: bool,
-        selected_index: usize,
-        match_count: usize,
-        layout_mode: LayoutMode,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let delegate = &self.picker.read(cx).delegate;
+        let replace_enabled = delegate.replace_enabled;
+        let filters_enabled = delegate.filters_enabled;
+        let selected_index = delegate.selected_index;
+        let match_count = delegate.matches.len();
+
         h_flex()
             .gap_1()
             .items_center()
@@ -910,18 +895,9 @@ impl QuickSearch {
                     .tooltip(move |_window, cx| {
                         Tooltip::for_action_in("Toggle Replace", &ToggleReplace, &focus_handle, cx)
                     })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.picker.update(cx, |picker, cx| {
-                            picker.delegate.replace_enabled = !picker.delegate.replace_enabled;
-                            let focus_handle = if picker.delegate.replace_enabled {
-                                picker.delegate.replacement_editor.focus_handle(cx)
-                            } else {
-                                picker.focus_handle(cx)
-                            };
-                            window.focus(&focus_handle, cx);
-                        });
-                        cx.notify();
-                    }))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(ToggleReplace.boxed_clone(), cx);
+                    })
             })
             .child({
                 let focus_handle = self.picker.focus_handle(cx);
@@ -937,7 +913,7 @@ impl QuickSearch {
             })
             .child({
                 let focus_handle = self.picker.focus_handle(cx);
-                let (icon, tooltip_text) = match layout_mode {
+                let (icon, tooltip_text) = match self.layout_mode {
                     LayoutMode::Stacked => (IconName::Split, "Switch to Telescope Layout"),
                     LayoutMode::Telescope => (IconName::ListTree, "Switch to Stacked Layout"),
                 };
@@ -1538,7 +1514,6 @@ pub struct QuickSearchDelegate {
     split_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
     history_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
     search_history_cursor: SearchHistoryCursor,
-    match_count: usize,
     file_count: usize,
     unique_files: HashSet<ProjectPath>,
 }
@@ -1577,7 +1552,6 @@ impl QuickSearchDelegate {
             split_popover_menu_handle: PopoverMenuHandle::default(),
             history_popover_menu_handle: PopoverMenuHandle::default(),
             search_history_cursor: SearchHistoryCursor::default(),
-            match_count: 0,
             file_count: 0,
             unique_files: HashSet::default(),
         }
@@ -1851,9 +1825,9 @@ impl QuickSearchDelegate {
                 } else {
                     for query in history_entries {
                         let editor = editor.clone();
-                        let query_for_click: String = query.clone();
-                        menu = menu.entry(query, None, move |window, cx| {
-                            editor.set_text(&query_for_click, window, cx);
+                        let label = query.clone();
+                        menu = menu.entry(label, None, move |window, cx| {
+                            editor.set_text(&query, window, cx);
                         });
                     }
                     menu
@@ -2234,7 +2208,6 @@ impl PickerDelegate for QuickSearchDelegate {
         let Some(search_query) = self.build_search_query(&query, open_buffers, cx) else {
             self.matches.clear();
             self.selected_index = 0;
-            self.match_count = 0;
             self.file_count = 0;
             self.search_in_progress = false;
             self.update_preview(window, cx);
@@ -2289,7 +2262,6 @@ impl PickerDelegate for QuickSearchDelegate {
 
                         if first_batch {
                             delegate.matches.clear();
-                            delegate.match_count = 0;
                             delegate.file_count = 0;
                             delegate.unique_files.clear();
                             delegate.selected_index = 0;
@@ -2302,10 +2274,9 @@ impl PickerDelegate for QuickSearchDelegate {
                             }
                         }
                         delegate.matches.extend(batch_matches);
-                        delegate.match_count = delegate.matches.len();
 
-                        if delegate.selected_index >= delegate.match_count
-                            && delegate.match_count > 0
+                        if delegate.selected_index >= delegate.matches.len()
+                            && !delegate.matches.is_empty()
                         {
                             delegate.selected_index = 0;
                         }

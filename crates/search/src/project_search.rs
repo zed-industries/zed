@@ -1,8 +1,13 @@
 use crate::{
-    BufferSearchBar, REPLACE_PLACEHOLDER, INCLUDE_PLACEHOLDER, EXCLUDE_PLACEHOLDER, FocusSearch, HighlightKey, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord, buffer_search::Deploy, search_bar::{
+    BufferSearchBar, EXCLUDE_PLACEHOLDER, FocusSearch, HighlightKey, INCLUDE_PLACEHOLDER,
+    NextHistoryQuery, PreviousHistoryQuery, REPLACE_PLACEHOLDER, ReplaceAll, ReplaceNext,
+    SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
+    ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
+    buffer_search::Deploy,
+    search_bar::{
         ActionButtonState, HistoryNavigationDirection, alignment_element, input_base_styles,
         render_action_button, render_text_input, should_navigate_history,
-    }
+    },
 };
 use anyhow::Context as _;
 use collections::HashMap;
