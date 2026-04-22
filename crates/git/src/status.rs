@@ -1,8 +1,15 @@
+use crate::repository::GitBinary;
 use crate::{Oid, repository::RepoPath};
 use anyhow::{Result, anyhow};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
+use futures::stream::FuturesUnordered;
+use futures::{FutureExt, Stream};
 use gpui::SharedString;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use smol::io::{AsyncBufReadExt, BufReader};
+use std::ffi::OsString;
+use std::path::Path;
 use std::{str::FromStr, sync::Arc};
 use util::{ResultExt, rel_path::RelPath};
 
@@ -596,36 +603,142 @@ pub struct GitDiffStat {
 /// ```text
 /// 24   12   dir/file.txt
 /// ```
-pub fn parse_numstat(output: &str) -> GitDiffStat {
-    let mut entries = Vec::new();
-    for line in output.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let mut parts = line.splitn(3, '\t');
-        let (Some(added_str), Some(deleted_str), Some(path_str)) =
-            (parts.next(), parts.next(), parts.next())
-        else {
-            continue;
-        };
-        let Ok(added) = added_str.parse::<u32>() else {
-            continue;
-        };
-        let Ok(deleted) = deleted_str.parse::<u32>() else {
-            continue;
-        };
-        let Ok(path) = RepoPath::new(path_str) else {
-            continue;
-        };
-        entries.push((path, DiffStat { added, deleted }));
-    }
-    entries.sort_by(|(a, _), (b, _)| a.cmp(b));
-    entries.dedup_by(|(a, _), (b, _)| a == b);
+pub fn parse_numstat(output: &str) -> Vec<(RepoPath, DiffStat)> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() {
+                return None;
+            }
+            let mut parts = line.splitn(3, '\t');
+            let (Some(added_str), Some(deleted_str), Some(path_str)) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                return None;
+            };
+            let Ok(added) = added_str.parse::<u32>() else {
+                return None;
+            };
+            let Ok(deleted) = deleted_str.parse::<u32>() else {
+                return None;
+            };
+            let Ok(path) = RepoPath::new(path_str) else {
+                return None;
+            };
+            Some((path, DiffStat { added, deleted }))
+        })
+        .collect()
+}
 
-    GitDiffStat {
-        entries: entries.into(),
+pub(crate) async fn tracked_lines(
+    git_binary: &GitBinary,
+    path_prefixes: &[OsString],
+) -> Result<Vec<(RepoPath, crate::status::DiffStat)>> {
+    let mut args: Vec<OsString> = vec![
+        "diff".into(),
+        "--numstat".into(),
+        "--no-renames".into(),
+        "HEAD".into(),
+    ];
+    if !path_prefixes.is_empty() {
+        args.push("--".into());
+        args.extend(path_prefixes.iter().cloned());
     }
+    let output = git_binary.run(&args).await?;
+    Ok(crate::status::parse_numstat(&output))
+}
+
+pub(crate) async fn count_untracked_lines(
+    git_binary: &GitBinary,
+    mut path_prefixes: Vec<OsString>,
+    paths_with_stats: &Mutex<HashSet<RepoPath>>,
+) -> Result<impl Stream<Item = Option<(RepoPath, DiffStat)>>> {
+    let mut args: Vec<OsString> = vec![
+        "ls-files".into(),
+        "--others".into(),
+        "--exclude-standard".into(),
+        "-z".into(),
+    ];
+    if !path_prefixes.is_empty() {
+        args.push("--".into());
+        args.append(&mut path_prefixes);
+    }
+    let output = git_binary.run_raw(&args).await?;
+
+    let stream = output
+        .split_terminator('\0')
+        .filter_map(|path_str| {
+            let Ok(path) = RepoPath::new(path_str) else {
+                return None;
+            };
+            if paths_with_stats.lock().contains(&path) {
+                return None;
+            }
+
+            let full_path: Arc<Path> = git_binary.working_directory.join(path.as_std_path()).into();
+            untracked_path_diff_stat(Arc::clone(&full_path))
+                .map(move |res| match res {
+                    Ok(Some(diff_stat)) => {
+                        paths_with_stats.lock().insert(path.clone());
+                        Some((path, diff_stat))
+                    }
+                    Ok(None) => None,
+                    Err(err) => {
+                        log::debug!("failed to stat untracked file {full_path:?}: {err}");
+                        None
+                    }
+                })
+                .into() // Some
+        })
+        .collect::<FuturesUnordered<_>>();
+    Ok(stream)
+}
+
+async fn untracked_path_diff_stat(full_path: Arc<Path>) -> Result<Option<crate::status::DiffStat>> {
+    let metadata = smol::fs::symlink_metadata(&full_path).await?;
+    let file_type = metadata.file_type();
+    let added = if file_type.is_file() {
+        line_count_for_diff_stat_file(&full_path).await?
+    } else if file_type.is_symlink() {
+        let target = smol::fs::read_link(&full_path).await?;
+        line_count_for_diff_stat(target.to_string_lossy().as_bytes())
+    } else {
+        return Ok(None);
+    };
+
+    Ok(Some(crate::status::DiffStat { added, deleted: 0 }))
+}
+
+async fn line_count_for_diff_stat_file(path: &Path) -> Result<u32> {
+    let file = smol::fs::File::open(path).await?;
+    let mut reader = BufReader::new(file);
+    let mut line_count = 0u32;
+    let mut line = Vec::new();
+
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line).await? == 0 {
+            break;
+        }
+        line_count = line_count.saturating_add(1);
+    }
+
+    Ok(line_count)
+}
+
+fn line_count_for_diff_stat(contents: &[u8]) -> u32 {
+    if contents.is_empty() {
+        return 0;
+    }
+
+    let trailing_line = if contents.last() == Some(&b'\n') {
+        0
+    } else {
+        1
+    };
+    let line_count = contents.iter().filter(|byte| **byte == b'\n').count() + trailing_line;
+    u32::try_from(line_count).unwrap_or(u32::MAX)
 }
 
 #[cfg(test)]
@@ -647,16 +760,16 @@ mod tests {
     fn test_parse_numstat_normal() {
         let input = "10\t5\tsrc/main.rs\n3\t1\tREADME.md\n";
         let result = parse_numstat(input);
-        assert_eq!(result.entries.len(), 2);
+        assert_eq!(result.len(), 2);
         assert_eq!(
-            lookup(&result.entries, "src/main.rs"),
+            lookup(&result, "src/main.rs"),
             Some(&DiffStat {
                 added: 10,
                 deleted: 5
             })
         );
         assert_eq!(
-            lookup(&result.entries, "README.md"),
+            lookup(&result, "README.md"),
             Some(&DiffStat {
                 added: 3,
                 deleted: 1
@@ -669,10 +782,10 @@ mod tests {
         // git diff --numstat outputs "-\t-\tpath" for binary files
         let input = "-\t-\timage.png\n5\t2\tsrc/lib.rs\n";
         let result = parse_numstat(input);
-        assert_eq!(result.entries.len(), 1);
-        assert!(lookup(&result.entries, "image.png").is_none());
+        assert_eq!(result.len(), 1);
+        assert!(lookup(&result, "image.png").is_none());
         assert_eq!(
-            lookup(&result.entries, "src/lib.rs"),
+            lookup(&result, "src/lib.rs"),
             Some(&DiffStat {
                 added: 5,
                 deleted: 2
@@ -682,18 +795,18 @@ mod tests {
 
     #[test]
     fn test_parse_numstat_empty_input() {
-        assert!(parse_numstat("").entries.is_empty());
-        assert!(parse_numstat("\n\n").entries.is_empty());
-        assert!(parse_numstat("   \n  \n").entries.is_empty());
+        assert!(parse_numstat("").is_empty());
+        assert!(parse_numstat("\n\n").is_empty());
+        assert!(parse_numstat("   \n  \n").is_empty());
     }
 
     #[test]
     fn test_parse_numstat_malformed_lines_skipped() {
         let input = "not_a_number\t5\tfile.rs\n10\t5\tvalid.rs\n";
         let result = parse_numstat(input);
-        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.len(), 1);
         assert_eq!(
-            lookup(&result.entries, "valid.rs"),
+            lookup(&result, "valid.rs"),
             Some(&DiffStat {
                 added: 10,
                 deleted: 5
@@ -706,9 +819,9 @@ mod tests {
         // Lines with fewer than 3 tab-separated fields are skipped
         let input = "10\t5\n7\t3\tok.rs\n";
         let result = parse_numstat(input);
-        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.len(), 1);
         assert_eq!(
-            lookup(&result.entries, "ok.rs"),
+            lookup(&result, "ok.rs"),
             Some(&DiffStat {
                 added: 7,
                 deleted: 3
@@ -721,7 +834,7 @@ mod tests {
         let input = "0\t0\tunchanged_but_present.rs\n";
         let result = parse_numstat(input);
         assert_eq!(
-            lookup(&result.entries, "unchanged_but_present.rs"),
+            lookup(&result, "unchanged_but_present.rs"),
             Some(&DiffStat {
                 added: 0,
                 deleted: 0

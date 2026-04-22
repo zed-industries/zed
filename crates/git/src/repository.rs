@@ -1,6 +1,9 @@
 use crate::commit::parse_git_diff_name_status;
 use crate::stash::GitStash;
-use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
+use crate::status::{
+    DiffTreeType, GitDiffStat, GitStatus, StatusCode, TreeDiff, count_untracked_lines,
+    tracked_lines,
+};
 use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
@@ -8,9 +11,10 @@ use collections::HashMap;
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use futures::io::BufWriter;
-use futures::{AsyncWriteExt, FutureExt as _, select_biased};
+use futures::{AsyncReadExt, AsyncWriteExt, FutureExt as _, select_biased};
 use git2::{BranchType, ErrorCode};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
+use itertools::Itertools;
 use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
@@ -42,98 +46,6 @@ use uuid::Uuid;
 pub use askpass::{AskPassDelegate, AskPassResult, AskPassSession};
 
 pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
-
-fn line_count_for_diff_stat(contents: &[u8]) -> u32 {
-    if contents.is_empty() {
-        return 0;
-    }
-
-    let trailing_line = if contents.last() == Some(&b'\n') {
-        0
-    } else {
-        1
-    };
-    let line_count = contents.iter().filter(|byte| **byte == b'\n').count() + trailing_line;
-    u32::try_from(line_count).unwrap_or(u32::MAX)
-}
-
-async fn line_count_for_diff_stat_file(path: &Path) -> Result<u32> {
-    let file = smol::fs::File::open(path).await?;
-    let mut reader = BufReader::new(file);
-    let mut line_count = 0u32;
-    let mut line = Vec::new();
-
-    loop {
-        line.clear();
-        if reader.read_until(b'\n', &mut line).await? == 0 {
-            break;
-        }
-        line_count = line_count.saturating_add(1);
-    }
-
-    Ok(line_count)
-}
-
-async fn untracked_path_diff_stat(full_path: &Path) -> Result<Option<crate::status::DiffStat>> {
-    let metadata = smol::fs::symlink_metadata(full_path).await?;
-    let file_type = metadata.file_type();
-    let added = if file_type.is_file() {
-        line_count_for_diff_stat_file(full_path).await?
-    } else if file_type.is_symlink() {
-        let target = smol::fs::read_link(full_path).await?;
-        line_count_for_diff_stat(target.to_string_lossy().as_bytes())
-    } else {
-        return Ok(None);
-    };
-
-    Ok(Some(crate::status::DiffStat { added, deleted: 0 }))
-}
-
-async fn untracked_diff_stat_entries(
-    git_binary: &GitBinary,
-    path_prefixes: &[RepoPath],
-    paths_with_stats: &mut HashSet<RepoPath>,
-) -> Result<Vec<(RepoPath, crate::status::DiffStat)>> {
-    let mut args: Vec<OsString> = vec![
-        "ls-files".into(),
-        "--others".into(),
-        "--exclude-standard".into(),
-        "-z".into(),
-    ];
-    if !path_prefixes.is_empty() {
-        args.push("--".into());
-        args.extend(
-            path_prefixes
-                .iter()
-                .map(|p| p.as_std_path().as_os_str().to_os_string()),
-        );
-    }
-    let output = git_binary.run_raw(&args).await?;
-    let mut entries = Vec::new();
-
-    for path_str in output.split_terminator('\0') {
-        let Ok(path) = RepoPath::new(path_str) else {
-            continue;
-        };
-        if paths_with_stats.contains(&path) {
-            continue;
-        }
-
-        let full_path = git_binary.working_directory.join(path.as_std_path());
-        match untracked_path_diff_stat(&full_path).await {
-            Ok(Some(diff_stat)) => {
-                entries.push((path.clone(), diff_stat));
-                paths_with_stats.insert(path);
-            }
-            Ok(None) => {}
-            Err(err) => {
-                log::debug!("failed to stat untracked file {full_path:?}: {err}");
-            }
-        }
-    }
-
-    Ok(entries)
-}
 
 /// Format string used in graph log to get initial data for the git graph
 /// %H - Full commit hash
@@ -2188,44 +2100,37 @@ impl GitRepository for RealGitRepository {
         &self,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>> {
-        let path_prefixes = path_prefixes.to_vec();
+        let path_prefixes: Vec<_> = path_prefixes
+            .iter()
+            .map(|p| p.as_std_path().as_os_str().to_os_string())
+            .collect();
         let git_binary = self.git_binary();
 
         self.executor
             .spawn(async move {
                 let git_binary = git_binary?;
-                let mut args: Vec<String> = vec![
-                    "diff".into(),
-                    "--numstat".into(),
-                    "--no-renames".into(),
-                    "HEAD".into(),
-                ];
-                if !path_prefixes.is_empty() {
-                    args.push("--".into());
-                    args.extend(
-                        path_prefixes
-                            .iter()
-                            .map(|p| p.as_std_path().to_string_lossy().into_owned()),
-                    );
-                }
-                let output = git_binary.run(&args).await?;
-                let mut diff_stat = crate::status::parse_numstat(&output);
-                let mut entries = diff_stat.entries.to_vec();
-                let mut paths_with_stats = entries
+
+                let tracked = tracked_lines(&git_binary, &path_prefixes).await?;
+                let paths_with_stats: Mutex<_> = tracked
                     .iter()
                     .map(|(path, _)| path.clone())
-                    .collect::<HashSet<_>>();
+                    .collect::<collections::HashSet<_>>()
+                    .into();
 
-                entries.extend(
-                    untracked_diff_stat_entries(&git_binary, &path_prefixes, &mut paths_with_stats)
-                        .await?,
-                );
+                let untracked =
+                    count_untracked_lines(&git_binary, path_prefixes, &paths_with_stats).await?;
+                // streams are lazy, until this point we have not done file access here we
+                // concurrently stat all files in any order.
+                use futures::StreamExt;
+                let total: std::collections::BTreeMap<_, _> = untracked
+                    .filter_map(|s| std::future::ready(s)) // this is flatten
+                    .chain(futures::stream::iter(tracked))
+                    .collect() // StreamExt::collect
+                    .await;
 
-                entries.sort_by(|(a, _), (b, _)| a.cmp(b));
-                entries.dedup_by(|(a, _), (b, _)| a == b);
-                diff_stat.entries = entries.into();
-
-                Ok(diff_stat)
+                Ok(GitDiffStat {
+                    entries: total.into_iter().collect_vec().into(),
+                })
             })
             .boxed()
     }
@@ -3376,7 +3281,7 @@ async fn exclude_files(git: &GitBinary) -> Result<GitExcludeOverride> {
 
 pub(crate) struct GitBinary {
     git_binary_path: PathBuf,
-    working_directory: PathBuf,
+    pub working_directory: PathBuf,
     git_directory: PathBuf,
     executor: BackgroundExecutor,
     index_file_path: Option<PathBuf>,
