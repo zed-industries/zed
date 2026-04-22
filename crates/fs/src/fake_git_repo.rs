@@ -48,6 +48,12 @@ pub struct FakeCommitSnapshot {
 }
 
 #[derive(Debug, Clone)]
+pub enum FakeGraphCommitDataEntry {
+    Success(GraphCommitData),
+    Fail(GraphCommitData),
+}
+
+#[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
     pub commit_history: Vec<FakeCommitSnapshot>,
     pub event_emitter: smol::channel::Sender<PathBuf>,
@@ -67,6 +73,7 @@ pub struct FakeGitRepositoryState {
     pub simulated_graph_error: Option<String>,
     pub refs: HashMap<String, String>,
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
+    pub commit_data: HashMap<Oid, FakeGraphCommitDataEntry>,
     pub stash_entries: GitStash,
 }
 
@@ -88,6 +95,7 @@ impl FakeGitRepositoryState {
             oids: Default::default(),
             remotes: HashMap::default(),
             graph_commits: Vec::new(),
+            commit_data: Default::default(),
             commit_history: Vec::new(),
             stash_entries: Default::default(),
         }
@@ -1458,20 +1466,16 @@ impl GitRepository for FakeGitRepository {
         Ok(CommitDataReader::for_test(executor, move |sha| {
             fs.with_git_state(&dot_git_path, false, |state| {
                 let commit = state
-                    .graph_commits
-                    .iter()
-                    .find(|commit| commit.sha == sha)
+                    .commit_data
+                    .get(&sha)
                     .context(format!("graph commit data not found for {sha}"))?;
 
-                // todo! we should have a random name and email so we can assert that this is equal properly
-                Ok(GraphCommitData {
-                    sha: commit.sha,
-                    parents: commit.parents.clone(),
-                    author_name: SharedString::from("Test User"),
-                    author_email: SharedString::from("test@example.com"),
-                    commit_timestamp: 0,
-                    subject: SharedString::from(commit.sha.to_string()),
-                })
+                match commit {
+                    FakeGraphCommitDataEntry::Success(data) => Ok(data.clone()),
+                    FakeGraphCommitDataEntry::Fail(_) => {
+                        bail!("simulated commit data read failure for {sha}")
+                    }
+                }
             })?
         }))
     }

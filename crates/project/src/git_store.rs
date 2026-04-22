@@ -8157,6 +8157,12 @@ mod tests {
         #[strategy = gpui::proptest::collection::vec(any::<bool>(), 1..200)] await_results: Vec<
             bool,
         >,
+        #[strategy = gpui::proptest::collection::vec(0usize..2000, 0..200)] failing_commit_indexes: Vec<
+            usize,
+        >,
+        #[strategy = gpui::proptest::collection::vec(0usize..2000, 0..200)] missing_commit_indexes: Vec<
+            usize,
+        >,
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -8173,6 +8179,31 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
+        let failing_shas = failing_commit_indexes
+            .into_iter()
+            .map(|index| commit_shas[index % commit_shas.len()])
+            .collect::<HashSet<_>>();
+        let missing_shas = missing_commit_indexes
+            .into_iter()
+            .map(|index| commit_shas[index % commit_shas.len()])
+            .collect::<HashSet<_>>();
+        let commit_data = commit_shas
+            .iter()
+            .filter(|sha| !missing_shas.contains(sha))
+            .map(|sha| {
+                (
+                    GraphCommitData {
+                        sha: *sha,
+                        parents: SmallVec::new(),
+                        author_name: SharedString::from(format!("Author {sha}")),
+                        author_email: SharedString::from(format!("{sha}@example.com")),
+                        commit_timestamp: rng.random_range(0..10_000),
+                        subject: SharedString::from(format!("Subject {sha}")),
+                    },
+                    failing_shas.contains(sha),
+                )
+            })
+            .collect::<Vec<_>>();
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -8184,6 +8215,7 @@ mod tests {
         )
         .await;
         fs.set_graph_commits(Path::new("/project/.git"), commits);
+        fs.set_commit_data(Path::new("/project/.git"), commit_data);
 
         let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
         project
