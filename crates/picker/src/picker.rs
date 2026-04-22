@@ -121,7 +121,6 @@ pub trait PickerDelegate: Sized + 'static {
     ) -> bool {
         true
     }
-    /// Whether hovering over items should change the selection.
     fn select_on_hover(&self) -> bool {
         true
     }
