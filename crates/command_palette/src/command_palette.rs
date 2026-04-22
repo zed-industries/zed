@@ -442,7 +442,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     ) -> gpui::Task<()> {
         let settings = WorkspaceSettings::get_global(cx);
         if let Some(alias) = settings.command_aliases.get(&query) {
-            query = alias.to_string();
+            query = alias.as_ref().to_owned();
         }
 
         let workspace = self.workspace.clone();
