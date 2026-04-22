@@ -9,10 +9,10 @@ use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions,
+        AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
-        GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder, LogSource,
-        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
+        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -48,9 +48,9 @@ pub struct FakeCommitSnapshot {
 }
 
 #[derive(Debug, Clone)]
-pub enum FakeGraphCommitDataEntry {
-    Success(GraphCommitData),
-    Fail(GraphCommitData),
+pub enum FakeCommitDataEntry {
+    Success(CommitData),
+    Fail(CommitData),
 }
 
 #[derive(Debug, Clone)]
@@ -73,7 +73,7 @@ pub struct FakeGitRepositoryState {
     pub simulated_graph_error: Option<String>,
     pub refs: HashMap<String, String>,
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
-    pub commit_data: HashMap<Oid, FakeGraphCommitDataEntry>,
+    pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
     pub stash_entries: GitStash,
 }
 
@@ -1471,8 +1471,8 @@ impl GitRepository for FakeGitRepository {
                     .context(format!("graph commit data not found for {sha}"))?;
 
                 match commit {
-                    FakeGraphCommitDataEntry::Success(data) => Ok(data.clone()),
-                    FakeGraphCommitDataEntry::Fail(_) => {
+                    FakeCommitDataEntry::Success(data) => Ok(data.clone()),
+                    FakeCommitDataEntry::Fail(_) => {
                         bail!("simulated commit data read failure for {sha}")
                     }
                 }

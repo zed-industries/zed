@@ -482,8 +482,8 @@ message Envelope {
     GitCreateArchiveCheckpoint git_create_archive_checkpoint = 444;
     GitCreateArchiveCheckpointResponse git_create_archive_checkpoint_response = 445;
     GitRestoreArchiveCheckpoint git_restore_archive_checkpoint = 446;
-    GetGraphCommitData get_graph_commit_data = 447;
-    GetGraphCommitDataResponse get_graph_commit_data_response = 448; // current max
+    GetCommitData get_commit_data = 447;
+    GetCommitDataResponse get_commit_data_response = 448; // current max
   }
 
   reserved 87 to 88;

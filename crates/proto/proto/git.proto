@@ -693,13 +693,13 @@ message RunGitHook {
   GitHook hook = 3;
 }
 
-message GetGraphCommitData {
+message GetCommitData {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   repeated string shas = 3;
 }
 
-message GraphCommitData {
+message CommitData {
   string sha = 1;
   repeated string parents = 2;
   string author_name = 3;
@@ -709,6 +709,6 @@ message GraphCommitData {
   string message = 7;
 }
 
-message GetGraphCommitDataResponse {
-  repeated GraphCommitData commits = 1;
+message GetCommitDataResponse {
+  repeated CommitData commits = 1;
 }

@@ -99,7 +99,7 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
 
 /// Commit data needed for the git graph visualization.
 #[derive(Debug, Clone)]
-pub struct GraphCommitData {
+pub struct CommitData {
     pub sha: Oid,
     /// Most commits have a single parent, so we use a SmallVec to avoid allocations.
     pub parents: SmallVec<[Oid; 1]>,
@@ -119,7 +119,7 @@ pub struct InitialGraphCommitData {
 
 struct CommitDataRequest {
     sha: Oid,
-    response_tx: oneshot::Sender<Result<GraphCommitData>>,
+    response_tx: oneshot::Sender<Result<CommitData>>,
 }
 
 pub struct CommitDataReader {
@@ -128,7 +128,7 @@ pub struct CommitDataReader {
 }
 
 impl CommitDataReader {
-    pub async fn read(&self, sha: Oid) -> Result<GraphCommitData> {
+    pub async fn read(&self, sha: Oid) -> Result<CommitData> {
         let (response_tx, response_rx) = oneshot::channel();
         self.request_tx
             .send(CommitDataRequest { sha, response_tx })
@@ -142,7 +142,7 @@ impl CommitDataReader {
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_test(
         executor: BackgroundExecutor,
-        resolve: impl 'static + Send + Sync + Fn(Oid) -> Result<GraphCommitData>,
+        resolve: impl 'static + Send + Sync + Fn(Oid) -> Result<CommitData>,
     ) -> Self {
         let (request_tx, request_rx) = smol::channel::bounded::<CommitDataRequest>(64);
         let resolve = Arc::new(resolve);
@@ -161,7 +161,7 @@ impl CommitDataReader {
     }
 }
 
-fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<GraphCommitData> {
+fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<CommitData> {
     let mut parents = SmallVec::new();
     let mut author_name = SharedString::default();
     let mut author_email = SharedString::default();
@@ -203,7 +203,7 @@ fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<GraphCommitData> {
         }
     }
 
-    Some(GraphCommitData {
+    Some(CommitData {
         sha,
         parents,
         author_name,
@@ -3237,7 +3237,7 @@ async fn run_commit_data_reader(
 async fn read_single_commit_response<R: smol::io::AsyncBufRead + Unpin>(
     stdout: &mut R,
     sha: &Oid,
-) -> Result<GraphCommitData> {
+) -> Result<CommitData> {
     let mut header_bytes = Vec::new();
     stdout.read_until(b'\n', &mut header_bytes).await?;
     let header_line = String::from_utf8_lossy(&header_bytes);

@@ -33,9 +33,9 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, CreateWorktreeTarget,
-        DiffType, FetchOptions, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
-        GraphCommitData, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
+        Branch, CommitData, CommitDetails, CommitDiff, CommitFile, CommitOptions,
+        CreateWorktreeTarget, DiffType, FetchOptions, GitCommitTemplate, GitRepository,
+        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
         RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
         Worktree as GitWorktree,
     },
@@ -274,8 +274,8 @@ pub struct MergeDetails {
 
 #[derive(Clone)]
 pub enum CommitDataState {
-    Loading(Option<Shared<oneshot::Receiver<Arc<GraphCommitData>>>>),
-    Loaded(Arc<GraphCommitData>),
+    Loading(Option<Shared<oneshot::Receiver<Arc<CommitData>>>>),
+    Loaded(Arc<CommitData>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -308,25 +308,25 @@ pub struct JobInfo {
     pub message: SharedString,
 }
 
-struct GraphCommitDataHandler {
+struct CommitDataHandler {
     _task: Task<()>,
     commit_data_request: smol::channel::Sender<Oid>,
-    completion_senders: HashMap<Oid, oneshot::Sender<Arc<GraphCommitData>>>,
+    completion_senders: HashMap<Oid, oneshot::Sender<Arc<CommitData>>>,
     pending_requests: HashSet<Oid>,
 }
 
 /// Represents the handler of a git cat-file --batch process within Zed
 /// It's used to lazily fetch commit data as needed (whatever a user is viewing)
-enum GraphCommitHandlerState {
+enum CommitDataHandlerState {
     /// The handler is open and processing requests
-    Open(GraphCommitDataHandler),
+    Open(CommitDataHandler),
     /// The handler closed because it didn't receive any requests in the last 10s
     /// or hasn't been open before
     Closed,
 }
 
-enum NextGraphCommitDataRequest {
-    Request(BoxFuture<'static, Result<proto::GetGraphCommitDataResponse>>),
+enum NextCommitDataRequest {
+    Request(BoxFuture<'static, Result<proto::GetCommitDataResponse>>),
     Idle,
     Closed,
 }
@@ -360,7 +360,7 @@ pub struct Repository {
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
-    graph_commit_data_handler: GraphCommitHandlerState,
+    commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
 }
 
@@ -2541,9 +2541,9 @@ impl GitStore {
 
     async fn handle_get_commit_data(
         this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GetGraphCommitData>,
+        envelope: TypedEnvelope<proto::GetCommitData>,
         mut cx: AsyncApp,
-    ) -> Result<proto::GetGraphCommitDataResponse> {
+    ) -> Result<proto::GetCommitDataResponse> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
@@ -2561,7 +2561,7 @@ impl GitStore {
             for &sha in &shas {
                 match repository.fetch_commit_data(sha, true, cx) {
                     CommitDataState::Loaded(data) => {
-                        commits.push(graph_commit_data_to_proto(data));
+                        commits.push(commit_data_to_proto(data));
                     }
                     CommitDataState::Loading(Some(shared)) => {
                         receivers.push(shared.clone());
@@ -2582,10 +2582,10 @@ impl GitStore {
             results
                 .into_iter()
                 .filter_map(|result| result.ok())
-                .map(|data| graph_commit_data_to_proto(&data)),
+                .map(|data| commit_data_to_proto(&data)),
         );
 
-        Ok(proto::GetGraphCommitDataResponse { commits })
+        Ok(proto::GetCommitDataResponse { commits })
     }
 
     async fn handle_edit_ref(
@@ -4299,7 +4299,7 @@ impl Repository {
             active_jobs: Default::default(),
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
-            graph_commit_data_handler: GraphCommitHandlerState::Closed,
+            commit_data_handler: CommitDataHandlerState::Closed,
         }
     }
 
@@ -4337,7 +4337,7 @@ impl Repository {
             job_id: 0,
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
-            graph_commit_data_handler: GraphCommitHandlerState::Closed,
+            commit_data_handler: CommitDataHandlerState::Closed,
         }
     }
 
@@ -5120,24 +5120,21 @@ impl Repository {
         })
     }
 
-    fn get_handler(&mut self, cx: &mut Context<Self>) -> &mut GraphCommitDataHandler {
-        if matches!(
-            self.graph_commit_data_handler,
-            GraphCommitHandlerState::Closed
-        ) {
-            self.graph_commit_data_handler =
-                GraphCommitHandlerState::Open(self.open_graph_commit_data_handler(cx));
+    fn get_handler(&mut self, cx: &mut Context<Self>) -> &mut CommitDataHandler {
+        if matches!(self.commit_data_handler, CommitDataHandlerState::Closed) {
+            self.commit_data_handler =
+                CommitDataHandlerState::Open(self.open_commit_data_handler(cx));
         }
 
-        match &mut self.graph_commit_data_handler {
-            GraphCommitHandlerState::Open(handler) => handler,
-            GraphCommitHandlerState::Closed => unreachable!(),
+        match &mut self.commit_data_handler {
+            CommitDataHandlerState::Open(handler) => handler,
+            CommitDataHandlerState::Closed => unreachable!(),
         }
     }
 
-    fn open_graph_commit_data_handler(&self, cx: &Context<Self>) -> GraphCommitDataHandler {
+    fn open_commit_data_handler(&self, cx: &Context<Self>) -> CommitDataHandler {
         let state = self.repository_state.clone();
-        let (result_tx, result_rx) = smol::channel::bounded::<(Oid, GraphCommitData)>(64);
+        let (result_tx, result_rx) = smol::channel::bounded::<(Oid, CommitData)>(64);
         let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
 
         let foreground_task = cx.spawn(async move |this, cx| {
@@ -5145,9 +5142,7 @@ impl Repository {
                 let result = this.update(cx, |this, cx| {
                     let data = Arc::new(commit_data);
 
-                    if let GraphCommitHandlerState::Open(handler) =
-                        &mut this.graph_commit_data_handler
-                    {
+                    if let CommitDataHandlerState::Open(handler) = &mut this.commit_data_handler {
                         handler.pending_requests.remove(&sha);
                         if let Some(completion_sender) = handler.completion_senders.remove(&sha) {
                             completion_sender.send(data.clone()).ok();
@@ -5170,9 +5165,9 @@ impl Repository {
             }
 
             this.update(cx, |this, _cx| {
-                let GraphCommitHandlerState::Open(handler) = std::mem::replace(
-                    &mut this.graph_commit_data_handler,
-                    GraphCommitHandlerState::Closed,
+                let CommitDataHandlerState::Open(handler) = std::mem::replace(
+                    &mut this.commit_data_handler,
+                    CommitDataHandlerState::Closed,
                 ) else {
                     debug_panic!("The handler state has to be open for this task to exist");
                     return;
@@ -5219,7 +5214,7 @@ impl Repository {
         })
         .detach();
 
-        GraphCommitDataHandler {
+        CommitDataHandler {
             _task: foreground_task,
             commit_data_request: request_tx_for_handler,
             completion_senders: HashMap::default(),
@@ -5230,7 +5225,7 @@ impl Repository {
     async fn local_commit_data_reader(
         backend: Arc<dyn GitRepository>,
         request_rx: smol::channel::Receiver<Oid>,
-        result_tx: smol::channel::Sender<(Oid, GraphCommitData)>,
+        result_tx: smol::channel::Sender<(Oid, CommitData)>,
         background_executor: BackgroundExecutor,
     ) {
         let reader = match backend.commit_data_reader() {
@@ -5275,12 +5270,11 @@ impl Repository {
         client: AnyProtoClient,
         repository_id: RepositoryId,
         request_rx: smol::channel::Receiver<Oid>,
-        result_tx: smol::channel::Sender<(Oid, GraphCommitData)>,
+        result_tx: smol::channel::Sender<(Oid, CommitData)>,
         background_executor: BackgroundExecutor,
     ) {
-        let mut response_futures = FuturesUnordered::<
-            BoxFuture<'static, Result<proto::GetGraphCommitDataResponse>>,
-        >::new();
+        let mut response_futures =
+            FuturesUnordered::<BoxFuture<'static, Result<proto::GetCommitDataResponse>>>::new();
         let mut accept_requests = true;
         let mut next_request = Self::get_next_request(
             project_id,
@@ -5299,7 +5293,7 @@ impl Repository {
 
             if response_futures.is_empty() {
                 match (&mut next_request).await {
-                    NextGraphCommitDataRequest::Request(request) => {
+                    NextCommitDataRequest::Request(request) => {
                         response_futures.push(request);
                         next_request = Self::get_next_request(
                             project_id,
@@ -5311,7 +5305,7 @@ impl Repository {
                         .boxed()
                         .fuse();
                     }
-                    NextGraphCommitDataRequest::Closed | NextGraphCommitDataRequest::Idle => break,
+                    NextCommitDataRequest::Closed | NextCommitDataRequest::Idle => break,
                 }
             }
 
@@ -5321,11 +5315,11 @@ impl Repository {
             futures::select_biased! {
                 request = next_request => {
                     match request {
-                        NextGraphCommitDataRequest::Request(request) => {
+                        NextCommitDataRequest::Request(request) => {
                             response_futures.push(request);
                         }
-                        NextGraphCommitDataRequest::Idle => {}
-                        NextGraphCommitDataRequest::Closed => {
+                        NextCommitDataRequest::Idle => {}
+                        NextCommitDataRequest::Closed => {
                             accept_requests = false;
                         }
                     }
@@ -5349,7 +5343,7 @@ impl Repository {
 
                     if let Ok(commit_data) = result {
                         for commit in commit_data.commits {
-                            let Ok(commit_data) = graph_commit_data_from_proto(commit) else {
+                            let Ok(commit_data) = commit_data_from_proto(commit) else {
                                 continue;
                             };
 
@@ -5375,7 +5369,7 @@ impl Repository {
         repository_id: RepositoryId,
         request_rx: &smol::channel::Receiver<Oid>,
         background_executor: &BackgroundExecutor,
-    ) -> NextGraphCommitDataRequest {
+    ) -> NextCommitDataRequest {
         let mut queued_shas = Vec::with_capacity(64);
 
         loop {
@@ -5401,13 +5395,13 @@ impl Repository {
         }
 
         if queued_shas.is_empty() && request_rx.is_closed() {
-            NextGraphCommitDataRequest::Closed
+            NextCommitDataRequest::Closed
         } else if queued_shas.is_empty() {
-            NextGraphCommitDataRequest::Idle
+            NextCommitDataRequest::Idle
         } else {
-            NextGraphCommitDataRequest::Request(
+            NextCommitDataRequest::Request(
                 client
-                    .request(proto::GetGraphCommitData {
+                    .request(proto::GetCommitData {
                         project_id: project_id.to_proto(),
                         repository_id: repository_id.to_proto(),
                         shas: queued_shas.into_iter().map(|oid| oid.to_string()).collect(),
@@ -7930,8 +7924,8 @@ fn deserialize_blame_buffer_response(
     Some(Blame { entries, messages })
 }
 
-fn graph_commit_data_to_proto(commit: &GraphCommitData) -> proto::GraphCommitData {
-    proto::GraphCommitData {
+fn commit_data_to_proto(commit: &CommitData) -> proto::CommitData {
+    proto::CommitData {
         sha: commit.sha.to_string(),
         parents: commit.parents.iter().map(|p| p.to_string()).collect(),
         author_name: commit.author_name.to_string(),
@@ -7942,13 +7936,13 @@ fn graph_commit_data_to_proto(commit: &GraphCommitData) -> proto::GraphCommitDat
     }
 }
 
-fn graph_commit_data_from_proto(commit: proto::GraphCommitData) -> Result<GraphCommitData> {
+fn commit_data_from_proto(commit: proto::CommitData) -> Result<CommitData> {
     let sha = Oid::from_str(&commit.sha)?;
     let mut parents = SmallVec::with_capacity(commit.parents.len());
     for parent in &commit.parents {
         parents.push(Oid::from_str(parent)?);
     }
-    Ok(GraphCommitData {
+    Ok(CommitData {
         sha,
         parents,
         author_name: SharedString::from(commit.author_name),
@@ -8089,8 +8083,8 @@ mod tests {
     }
 
     fn verify_invariants(repository: &Repository) -> anyhow::Result<()> {
-        match &repository.graph_commit_data_handler {
-            GraphCommitHandlerState::Open(handler) => {
+        match &repository.commit_data_handler {
+            CommitDataHandlerState::Open(handler) => {
                 verify_loading_entries_are_pending(repository, handler)?;
                 verify_await_result_loading_entries_have_completion_senders(repository, handler)?;
                 verify_pending_requests_are_loading(repository, handler)?;
@@ -8102,7 +8096,7 @@ mod tests {
                 verify_loaded_entries_are_not_pending(repository, handler)?;
                 verify_loaded_entries_have_no_completion_sender(repository, handler)?;
             }
-            GraphCommitHandlerState::Closed => {
+            CommitDataHandlerState::Closed => {
                 verify_closed_handler_invariants(repository)?;
             }
         }
@@ -8112,7 +8106,7 @@ mod tests {
 
     fn verify_loading_entries_are_pending(
         repository: &Repository,
-        handler: &GraphCommitDataHandler,
+        handler: &CommitDataHandler,
     ) -> anyhow::Result<()> {
         for (sha, state) in &repository.commit_data {
             if matches!(state, CommitDataState::Loading(_)) {
@@ -8128,7 +8122,7 @@ mod tests {
 
     fn verify_await_result_loading_entries_have_completion_senders(
         repository: &Repository,
-        handler: &GraphCommitDataHandler,
+        handler: &CommitDataHandler,
     ) -> anyhow::Result<()> {
         for (sha, state) in &repository.commit_data {
             if matches!(state, CommitDataState::Loading(Some(_))) {
@@ -8144,7 +8138,7 @@ mod tests {
 
     fn verify_pending_requests_are_loading(
         repository: &Repository,
-        handler: &GraphCommitDataHandler,
+        handler: &CommitDataHandler,
     ) -> anyhow::Result<()> {
         for sha in &handler.pending_requests {
             anyhow::ensure!(
@@ -8161,7 +8155,7 @@ mod tests {
 
     fn verify_completion_senders_are_await_result_loading(
         repository: &Repository,
-        handler: &GraphCommitDataHandler,
+        handler: &CommitDataHandler,
     ) -> anyhow::Result<()> {
         for sha in handler.completion_senders.keys() {
             anyhow::ensure!(
@@ -8176,9 +8170,7 @@ mod tests {
         Ok(())
     }
 
-    fn verify_completion_senders_are_pending(
-        handler: &GraphCommitDataHandler,
-    ) -> anyhow::Result<()> {
+    fn verify_completion_senders_are_pending(handler: &CommitDataHandler) -> anyhow::Result<()> {
         for sha in handler.completion_senders.keys() {
             anyhow::ensure!(
                 handler.pending_requests.contains(sha),
@@ -8191,7 +8183,7 @@ mod tests {
 
     fn verify_non_await_result_loading_entries_have_no_completion_sender(
         repository: &Repository,
-        handler: &GraphCommitDataHandler,
+        handler: &CommitDataHandler,
     ) -> anyhow::Result<()> {
         for (sha, state) in &repository.commit_data {
             if matches!(state, CommitDataState::Loading(None)) {
@@ -8207,7 +8199,7 @@ mod tests {
 
     fn verify_loaded_entries_are_not_pending(
         repository: &Repository,
-        handler: &GraphCommitDataHandler,
+        handler: &CommitDataHandler,
     ) -> anyhow::Result<()> {
         for (sha, state) in &repository.commit_data {
             if matches!(state, CommitDataState::Loaded(_)) {
@@ -8223,7 +8215,7 @@ mod tests {
 
     fn verify_loaded_entries_have_no_completion_sender(
         repository: &Repository,
-        handler: &GraphCommitDataHandler,
+        handler: &CommitDataHandler,
     ) -> anyhow::Result<()> {
         for (sha, state) in &repository.commit_data {
             if matches!(state, CommitDataState::Loaded(_)) {
@@ -8285,7 +8277,7 @@ mod tests {
             .filter(|sha| !missing_shas.contains(sha))
             .map(|sha| {
                 (
-                    GraphCommitData {
+                    CommitData {
                         sha: *sha,
                         parents: SmallVec::new(),
                         author_name: SharedString::from(format!("Author {sha}")),
