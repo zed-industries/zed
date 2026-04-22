@@ -5052,31 +5052,27 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> &CommitDataState {
         if !self.commit_data.contains_key(&sha) {
+            let (state, completer) = if get_waiter {
+                let (tx, rx) = oneshot::channel();
+                (CommitDataState::Loading(Some(rx.shared())), Some(tx))
+            } else {
+                (CommitDataState::Loading(None), None)
+            };
+
+            self.commit_data.insert(sha, state);
+
             match &mut self.graph_commit_data_handler {
                 GraphCommitHandlerState::Open(handler) => {
-                    if get_waiter {
-                        let (tx, rx) = oneshot::channel();
+                    if let Some(tx) = completer {
                         handler.completers.insert(sha, tx);
-                        self.commit_data
-                            .insert(sha, CommitDataState::Loading(Some(rx.shared())));
-                    } else {
-                        self.commit_data.insert(sha, CommitDataState::Loading(None));
                     }
-
                     handler.commit_data_request.try_send(sha).ok();
                 }
                 GraphCommitHandlerState::Closed => {
                     let mut handler = self.open_graph_commit_data_handler(cx);
-
-                    if get_waiter {
-                        let (tx, rx) = oneshot::channel();
+                    if let Some(tx) = completer {
                         handler.completers.insert(sha, tx);
-                        self.commit_data
-                            .insert(sha, CommitDataState::Loading(Some(rx.shared())));
-                    } else {
-                        self.commit_data.insert(sha, CommitDataState::Loading(None));
                     }
-
                     handler.commit_data_request.try_send(sha).ok();
                     self.graph_commit_data_handler = GraphCommitHandlerState::Open(handler);
                 }
