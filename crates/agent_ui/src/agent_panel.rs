@@ -1970,6 +1970,12 @@ impl AgentPanel {
         self.retained_threads.contains_key(id)
     }
 
+    pub fn drop_retained_thread(&mut self, id: &ThreadId, cx: &mut Context<Self>) {
+        if self.retained_threads.remove(id).is_some() {
+            cx.notify();
+        }
+    }
+
     pub fn cancel_thread(&self, thread_id: &ThreadId, cx: &mut Context<Self>) -> bool {
         let conversation_views = self
             .active_conversation_view()

@@ -3424,32 +3424,30 @@ impl Sidebar {
             self.active_entry = None;
         }
 
+        let owning_panel = thread_folder_paths.and_then(|folder_paths| {
+            self.multi_workspace
+                .upgrade()
+                .and_then(|mw| mw.read(cx).workspace_for_paths(folder_paths, None, cx))
+                .and_then(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
+        });
+
         if !is_active {
             // The user is looking at a different thread/draft. Clear the
             // archived thread from its workspace's panel so that switching
             // to that workspace later doesn't show a stale thread.
-            if let Some(folder_paths) = thread_folder_paths {
-                if let Some(workspace) = self
-                    .multi_workspace
-                    .upgrade()
-                    .and_then(|mw| mw.read(cx).workspace_for_paths(folder_paths, None, cx))
-                {
-                    if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
-                        let panel_shows_archived = panel
-                            .read(cx)
-                            .active_conversation_view()
-                            .map(|cv| cv.read(cx).parent_id())
-                            .is_some_and(|live_thread_id| {
-                                thread_id.is_some_and(|id| id == live_thread_id)
-                            });
-                        if panel_shows_archived {
-                            panel.update(cx, |panel, cx| {
-                                panel.clear_base_view(window, cx);
-                            });
-                        }
-                    }
+            if let Some(panel) = owning_panel.as_ref() {
+                let panel_shows_archived = panel
+                    .read(cx)
+                    .active_conversation_view()
+                    .map(|cv| cv.read(cx).parent_id())
+                    .is_some_and(|live_thread_id| thread_id.is_some_and(|id| id == live_thread_id));
+                if panel_shows_archived {
+                    panel.update(cx, |panel, cx| {
+                        panel.clear_base_view(window, cx);
+                    });
                 }
             }
+            Self::drop_archived_retained_thread(owning_panel.as_ref(), thread_id, cx);
             return;
         }
 
@@ -3470,25 +3468,32 @@ impl Sidebar {
                 });
                 self.activate_workspace(&workspace, window, cx);
                 Self::load_agent_thread_in_workspace(&workspace, metadata, true, window, cx);
+                Self::drop_archived_retained_thread(owning_panel.as_ref(), thread_id, cx);
                 return;
             }
         }
 
         // No neighbor or its workspace isn't open — just clear the
         // panel so the group is left empty.
-        if let Some(folder_paths) = thread_folder_paths {
-            let workspace = self
-                .multi_workspace
-                .upgrade()
-                .and_then(|mw| mw.read(cx).workspace_for_paths(folder_paths, None, cx));
-            if let Some(workspace) = workspace {
-                if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
-                    panel.update(cx, |panel, cx| {
-                        panel.clear_base_view(window, cx);
-                    });
-                }
-            }
+        if let Some(panel) = owning_panel.as_ref() {
+            panel.update(cx, |panel, cx| {
+                panel.clear_base_view(window, cx);
+            });
         }
+        Self::drop_archived_retained_thread(owning_panel.as_ref(), thread_id, cx);
+    }
+
+    fn drop_archived_retained_thread(
+        panel: Option<&Entity<AgentPanel>>,
+        thread_id: Option<ThreadId>,
+        cx: &mut App,
+    ) {
+        let (Some(panel), Some(thread_id)) = (panel, thread_id) else {
+            return;
+        };
+        panel.update(cx, |panel, cx| {
+            panel.drop_retained_thread(&thread_id, cx);
+        });
     }
 
     fn start_archive_worktree_task(
