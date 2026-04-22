@@ -265,18 +265,6 @@ pub struct WebSearchResult {
     pub text: String,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct CountTokensBody {
-    pub provider: LanguageModelProvider,
-    pub model: String,
-    pub provider_request: serde_json::Value,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct CountTokensResponse {
-    pub tokens: usize,
-}
-
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct LanguageModelId(pub Arc<str>);
 

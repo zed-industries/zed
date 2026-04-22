@@ -8,7 +8,7 @@ use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, RateLimiter, Role, env_var,
+    LanguageModelRequest, LanguageModelToolChoice, RateLimiter, env_var,
 };
 use open_ai::ResponseStreamEvent;
 pub use settings::VercelAvailableModel as AvailableModel;
@@ -18,7 +18,7 @@ use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use vercel::{Model, VERCEL_API_URL};
+use vercel::VERCEL_API_URL;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("vercel");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Vercel");
@@ -295,14 +295,6 @@ impl LanguageModel for VercelLanguageModel {
         self.model.max_output_tokens()
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        count_vercel_tokens(request, self.model.clone(), cx)
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -332,51 +324,6 @@ impl LanguageModel for VercelLanguageModel {
         }
         .boxed()
     }
-}
-
-pub fn count_vercel_tokens(
-    request: LanguageModelRequest,
-    model: Model,
-    cx: &App,
-) -> BoxFuture<'static, Result<u64>> {
-    cx.background_spawn(async move {
-        let messages = request
-            .messages
-            .into_iter()
-            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                role: match message.role {
-                    Role::User => "user".into(),
-                    Role::Assistant => "assistant".into(),
-                    Role::System => "system".into(),
-                },
-                content: Some(message.string_contents()),
-                name: None,
-                function_call: None,
-            })
-            .collect::<Vec<_>>();
-
-        match model {
-            Model::Custom { max_tokens, .. } => {
-                let model = if max_tokens >= 100_000 {
-                    // If the max tokens is 100k or more, it is likely the o200k_base tokenizer from gpt4o
-                    "gpt-4o"
-                } else {
-                    // Otherwise fallback to gpt-4, since only cl100k_base and o200k_base are
-                    // supported with this tiktoken method
-                    "gpt-4"
-                };
-                tiktoken_rs::num_tokens_from_messages(model, &messages)
-            }
-            // Map Vercel models to appropriate OpenAI models for token counting
-            // since Vercel uses OpenAI-compatible API
-            Model::VZeroOnePointFiveMedium => {
-                // Vercel v0 is similar to GPT-4o, so use gpt-4o for token counting
-                tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
-            }
-        }
-        .map(|tokens| tokens as u64)
-    })
-    .boxed()
 }
 
 struct ConfigurationView {
