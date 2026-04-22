@@ -648,3 +648,184 @@ fn generate_token_with_job_name<'a>(
         permissions: None,
     }
 }
+
+pub(crate) struct BotCommitStep {
+    message: String,
+    branch: String,
+    files: String,
+    token: String,
+}
+
+impl BotCommitStep {
+    pub fn new(message: impl ToString, branch: impl ToString, token: &StepOutput) -> Self {
+        Self {
+            message: message.to_string(),
+            branch: branch.to_string(),
+            files: "**".to_string(),
+            token: token.to_string(),
+        }
+    }
+
+    pub fn with_files(self, files: impl ToString) -> Self {
+        Self {
+            files: files.to_string(),
+            ..self
+        }
+    }
+}
+
+impl From<BotCommitStep> for Step<Use> {
+    fn from(step: BotCommitStep) -> Self {
+        Step::new("steps::bot_commit")
+            .uses(
+                "IAreKyleW00t",
+                "verified-bot-commit",
+                "126a6a11889ab05bcff72ec2403c326cd249b84c", // v2.3.0
+            )
+            .id("commit")
+            .add_with(("message", step.message))
+            .add_with(("ref", format!("refs/heads/{}", step.branch)))
+            .add_with(("files", step.files))
+            .add_with(("token", step.token))
+    }
+}
+
+pub(crate) struct CreateTagStep {
+    tag_name: String,
+    sha: String,
+    token: String,
+}
+
+impl CreateTagStep {
+    pub fn new(tag_name: impl ToString, sha: impl ToString, token: &StepOutput) -> Self {
+        Self {
+            tag_name: tag_name.to_string(),
+            sha: sha.to_string(),
+            token: token.to_string(),
+        }
+    }
+}
+
+impl From<CreateTagStep> for Step<Use> {
+    fn from(step: CreateTagStep) -> Self {
+        let tag_name = &step.tag_name;
+        let sha = &step.sha;
+        Step::new("steps::create_git_tag")
+            .uses(
+                "actions",
+                "github-script",
+                "f28e40c7f34bde8b3046d885e986cb6290c5673b", // v7
+            )
+            .with(
+                Input::default()
+                    .add(
+                        "script",
+                        indoc::formatdoc! {r#"
+                            github.rest.git.createRef({{
+                                owner: context.repo.owner,
+                                repo: context.repo.repo,
+                                ref: 'refs/tags/{tag_name}',
+                                sha: '{sha}'
+                            }})
+                        "#},
+                    )
+                    .add("github-token", step.token),
+            )
+    }
+}
+
+pub(crate) struct CreateBranchStep {
+    branch_name: String,
+    sha: String,
+    token: String,
+}
+
+impl CreateBranchStep {
+    pub fn new(branch_name: impl ToString, sha: impl ToString, token: &StepOutput) -> Self {
+        Self {
+            branch_name: branch_name.to_string(),
+            sha: sha.to_string(),
+            token: token.to_string(),
+        }
+    }
+}
+
+impl From<CreateBranchStep> for Step<Use> {
+    fn from(step: CreateBranchStep) -> Self {
+        let branch_name = &step.branch_name;
+        let sha = &step.sha;
+        Step::new("steps::create_git_branch")
+            .uses(
+                "actions",
+                "github-script",
+                "f28e40c7f34bde8b3046d885e986cb6290c5673b", // v7
+            )
+            .with(
+                Input::default()
+                    .add(
+                        "script",
+                        indoc::formatdoc! {r#"
+                            await github.rest.git.createRef({{
+                                owner: context.repo.owner,
+                                repo: context.repo.repo,
+                                ref: 'refs/heads/{branch_name}',
+                                sha: '{sha}'
+                            }})
+                        "#},
+                    )
+                    .add("github-token", step.token),
+            )
+    }
+}
+
+pub(crate) struct CreatePrStep {
+    title: String,
+    body: String,
+    head: String,
+    base: String,
+    token: String,
+}
+
+impl CreatePrStep {
+    pub fn new(title: impl ToString, head: impl ToString, token: &StepOutput) -> Self {
+        Self {
+            title: title.to_string(),
+            body: r"Release Notes:\n\n- N/A".to_string(),
+            head: head.to_string(),
+            base: "main".to_string(),
+            token: token.to_string(),
+        }
+    }
+}
+
+impl From<CreatePrStep> for Step<Use> {
+    fn from(step: CreatePrStep) -> Self {
+        let title = &step.title;
+        let body = &step.body;
+        let head = &step.head;
+        let base = &step.base;
+        Step::new("steps::create_pull_request")
+            .uses(
+                "actions",
+                "github-script",
+                "f28e40c7f34bde8b3046d885e986cb6290c5673b", // v7
+            )
+            .with(
+                Input::default()
+                    .add(
+                        "script",
+                        indoc::formatdoc! {r#"
+                            await github.rest.pulls.create({{
+                                owner: context.repo.owner,
+                                repo: context.repo.repo,
+                                title: '{title}',
+                                body: '{body}',
+                                head: '{head}',
+                                base: '{base}'
+                            }})
+                        "#},
+                    )
+                    .add("github-token", step.token),
+            )
+    }
+}
