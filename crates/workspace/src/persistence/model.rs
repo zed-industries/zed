@@ -240,6 +240,7 @@ impl Default for SerializedPaneGroup {
             children: vec![SerializedItem::default()],
             active: false,
             pinned_count: 0,
+            zoomed: false,
         })
     }
 }
@@ -333,14 +334,21 @@ pub struct SerializedPane {
     pub(crate) active: bool,
     pub(crate) children: Vec<SerializedItem>,
     pub(crate) pinned_count: usize,
+    pub(crate) zoomed: bool,
 }
 
 impl SerializedPane {
-    pub fn new(children: Vec<SerializedItem>, active: bool, pinned_count: usize) -> Self {
+    pub fn new(
+        children: Vec<SerializedItem>,
+        active: bool,
+        pinned_count: usize,
+        zoomed: bool,
+    ) -> Self {
         SerializedPane {
             children,
             active,
             pinned_count,
+            zoomed,
         }
     }
 
@@ -403,6 +411,10 @@ impl SerializedPane {
         }
         pane.update(cx, |pane, _| {
             pane.set_pinned_count(self.pinned_count.min(items.len()));
+        })?;
+
+        pane.update(cx, |pane, cx| {
+            pane.set_zoomed(self.zoomed, cx);
         })?;
 
         anyhow::Ok(items)

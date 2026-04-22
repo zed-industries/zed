@@ -1024,6 +1024,9 @@ impl Domain for WorkspaceDb {
                 ON UPDATE CASCADE
             );
         ),
+        sql!(
+            ALTER TABLE panes ADD COLUMN zoomed INTEGER DEFAULT 0;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -2080,6 +2083,7 @@ impl WorkspaceDb {
                     active: true,
                     children: vec![],
                     pinned_count: 0,
+                    zoomed: false,
                 })
             }))
     }
@@ -2096,16 +2100,18 @@ impl WorkspaceDb {
             Option<PaneId>,
             Option<bool>,
             Option<usize>,
+            Option<bool>,
             Option<String>,
         );
         self.select_bound::<GroupKey, GroupOrPane>(sql!(
-            SELECT group_id, axis, pane_id, active, pinned_count, flexes
+            SELECT group_id, axis, pane_id, active, pinned_count, zoomed, flexes
                 FROM (SELECT
                         group_id,
                         axis,
                         NULL as pane_id,
                         NULL as active,
                         NULL as pinned_count,
+                        NULL as zoomed,
                         position,
                         parent_group_id,
                         workspace_id,
@@ -2118,6 +2124,7 @@ impl WorkspaceDb {
                         center_panes.pane_id,
                         panes.active as active,
                         pinned_count,
+                        zoomed,
                         position,
                         parent_group_id,
                         panes.workspace_id as workspace_id,
@@ -2128,28 +2135,31 @@ impl WorkspaceDb {
                 ORDER BY position
         ))?((group_id, workspace_id))?
         .into_iter()
-        .map(|(group_id, axis, pane_id, active, pinned_count, flexes)| {
-            let maybe_pane = maybe!({ Some((pane_id?, active?, pinned_count?)) });
-            if let Some((group_id, axis)) = group_id.zip(axis) {
-                let flexes = flexes
-                    .map(|flexes: String| serde_json::from_str::<Vec<f32>>(&flexes))
-                    .transpose()?;
+        .map(
+            |(group_id, axis, pane_id, active, pinned_count, zoomed, flexes)| {
+                let maybe_pane = maybe!({ Some((pane_id?, active?, pinned_count?, zoomed?)) });
+                if let Some((group_id, axis)) = group_id.zip(axis) {
+                    let flexes = flexes
+                        .map(|flexes: String| serde_json::from_str::<Vec<f32>>(&flexes))
+                        .transpose()?;
 
-                Ok(SerializedPaneGroup::Group {
-                    axis,
-                    children: self.get_pane_group(workspace_id, Some(group_id))?,
-                    flexes,
-                })
-            } else if let Some((pane_id, active, pinned_count)) = maybe_pane {
-                Ok(SerializedPaneGroup::Pane(SerializedPane::new(
-                    self.get_items(pane_id)?,
-                    active,
-                    pinned_count,
-                )))
-            } else {
-                bail!("Pane Group Child was neither a pane group or a pane");
-            }
-        })
+                    Ok(SerializedPaneGroup::Group {
+                        axis,
+                        children: self.get_pane_group(workspace_id, Some(group_id))?,
+                        flexes,
+                    })
+                } else if let Some((pane_id, active, pinned_count, zoomed)) = maybe_pane {
+                    Ok(SerializedPaneGroup::Pane(SerializedPane::new(
+                        self.get_items(pane_id)?,
+                        active,
+                        pinned_count,
+                        zoomed,
+                    )))
+                } else {
+                    bail!("Pane Group Child was neither a pane group or a pane");
+                }
+            },
+        )
         // Filter out panes and pane groups which don't have any children or items
         .filter(|pane_group| match pane_group {
             Ok(SerializedPaneGroup::Group { children, .. }) => !children.is_empty(),
@@ -2219,10 +2229,10 @@ impl WorkspaceDb {
         parent: Option<(GroupId, usize)>,
     ) -> Result<PaneId> {
         let pane_id = conn.select_row_bound::<_, i64>(sql!(
-            INSERT INTO panes(workspace_id, active, pinned_count)
-            VALUES (?, ?, ?)
+            INSERT INTO panes(workspace_id, active, pinned_count, zoomed)
+            VALUES (?, ?, ?, ?)
             RETURNING pane_id
-        ))?((workspace_id, pane.active, pane.pinned_count))?
+        ))?((workspace_id, pane.active, pane.pinned_count, pane.zoomed))?
         .context("Could not retrieve inserted pane_id")?;
 
         let (parent_id, order) = parent.unzip();
@@ -3157,6 +3167,7 @@ mod tests {
                             ],
                             false,
                             0,
+                            false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
@@ -3165,6 +3176,7 @@ mod tests {
                             ],
                             false,
                             0,
+                            false,
                         )),
                     ],
                 ),
@@ -3175,6 +3187,7 @@ mod tests {
                     ],
                     false,
                     0,
+                    false,
                 )),
             ],
         );
@@ -3856,6 +3869,7 @@ mod tests {
                             ],
                             false,
                             0,
+                            false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
@@ -3864,6 +3878,7 @@ mod tests {
                             ],
                             true,
                             0,
+                            true,
                         )),
                     ],
                 ),
@@ -3874,6 +3889,7 @@ mod tests {
                     ],
                     false,
                     0,
+                    false,
                 )),
             ],
         );
@@ -3906,6 +3922,7 @@ mod tests {
                             ],
                             false,
                             0,
+                            false,
                         )),
                         SerializedPaneGroup::Pane(SerializedPane::new(
                             vec![
@@ -3914,6 +3931,7 @@ mod tests {
                             ],
                             true,
                             0,
+                            true,
                         )),
                     ],
                 ),
@@ -3924,6 +3942,7 @@ mod tests {
                     ],
                     false,
                     0,
+                    false,
                 )),
             ],
         );
@@ -3944,6 +3963,7 @@ mod tests {
                     ],
                     false,
                     0,
+                    false,
                 )),
                 SerializedPaneGroup::Pane(SerializedPane::new(
                     vec![
@@ -3952,6 +3972,7 @@ mod tests {
                     ],
                     true,
                     0,
+                    true,
                 )),
             ],
         );

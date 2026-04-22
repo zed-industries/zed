@@ -6544,7 +6544,7 @@ impl Workspace {
             window: &mut Window,
             cx: &mut App,
         ) -> SerializedPane {
-            let (items, active, pinned_count) = {
+            let (items, active, pinned_count, zoomed) = {
                 let pane = pane_handle.read(cx);
                 let active_item_id = pane.active_item().map(|item| item.item_id());
                 (
@@ -6562,10 +6562,11 @@ impl Workspace {
                         .collect::<Vec<_>>(),
                     pane.has_focus(window, cx),
                     pane.pinned_count(),
+                    pane.is_zoomed(),
                 )
             };
 
-            SerializedPane::new(items, active, pinned_count)
+            SerializedPane::new(items, active, pinned_count, zoomed)
         }
 
         fn build_serialized_pane_group(
