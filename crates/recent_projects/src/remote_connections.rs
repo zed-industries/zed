@@ -830,6 +830,128 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_reuse_existing_remote_workspace_window_with_tilde_path(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let executor = cx.executor();
+
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+
+        let remote_fs = FakeFs::new(server_cx.executor());
+        let remote_home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .expect("HOME should be set in remote path reuse tests");
+        let canonical_project_path = remote_home.join("remote-reuse-tilde-project");
+        remote_fs
+            .insert_tree(
+                &canonical_project_path,
+                json!({
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                    "README.md": "# Test Project",
+                }),
+            )
+            .await;
+
+        server_cx.update(HeadlessProject::init);
+        let http_client = Arc::new(BlockedHttpClient);
+        let node_runtime = NodeRuntime::unavailable();
+        let languages = Arc::new(language::LanguageRegistry::new(server_cx.executor()));
+        let proxy = Arc::new(ExtensionHostProxy::new());
+
+        let _headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs.clone(),
+                    http_client,
+                    node_runtime,
+                    languages,
+                    extension_host_proxy: proxy,
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+
+        drop(connect_guard);
+
+        let mut async_cx = cx.to_async();
+        open_remote_project(
+            opts.clone(),
+            vec![canonical_project_path.clone()],
+            app_state.clone(),
+            workspace::OpenOptions::default(),
+            &mut async_cx,
+        )
+        .await
+        .expect("first open_remote_project should succeed");
+
+        executor.run_until_parked();
+
+        assert_eq!(
+            cx.update(|cx| cx.windows().len()),
+            1,
+            "First open should create exactly one window"
+        );
+
+        let first_window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let project_path_relative_to_home = canonical_project_path
+            .strip_prefix(&remote_home)
+            .expect("project should be inside the fake remote home directory");
+        let tilde_project_path = PathBuf::from(format!(
+            "/~/{}/src/main.rs",
+            project_path_relative_to_home.to_string_lossy()
+        ));
+
+        match futures::future::select(
+            Box::pin(open_remote_project(
+                opts,
+                vec![tilde_project_path],
+                app_state,
+                workspace::OpenOptions::default(),
+                &mut async_cx,
+            )),
+            Box::pin(executor.timer(std::time::Duration::from_secs(1))),
+        )
+        .await
+        {
+            futures::future::Either::Left((result, _)) => {
+                result.expect("second open_remote_project should complete");
+            }
+            futures::future::Either::Right(_) => {
+                panic!("second open_remote_project timed out instead of reusing the existing window");
+            }
+        }
+
+        executor.run_until_parked();
+
+        assert_eq!(
+            cx.update(|cx| cx.windows().len()),
+            1,
+            "Opening the same remote path via /~/ should reuse the existing window"
+        );
+
+        let still_first_window =
+            cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        assert_eq!(
+            still_first_window, first_window,
+            "The window handle should be the same after reusing a /~/ remote path"
+        );
+    }
+
+    #[gpui::test]
     async fn test_reconnect_when_server_not_running(
         cx: &mut TestAppContext,
         server_cx: &mut TestAppContext,
