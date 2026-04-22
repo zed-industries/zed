@@ -19,6 +19,7 @@ use util::{
 };
 
 use crate::SettingsAssets;
+use settings_content::{ActionName, ActionWithArguments};
 use settings_json::{
     append_top_level_array_value_in_json_text, parse_json_with_comments,
     replace_top_level_array_value_in_json_text,
@@ -99,32 +100,6 @@ pub struct KeymapSection {
 impl KeymapSection {
     pub fn bindings(&self) -> impl DoubleEndedIterator<Item = (&String, &KeymapAction)> {
         self.bindings.iter().flatten()
-    }
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-#[serde(transparent)]
-pub struct ActionName(String);
-
-impl JsonSchema for ActionName {
-    fn schema_name() -> Cow<'static, str> {
-        "ActionName".into()
-    }
-    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        json_schema!(true)
-    }
-}
-
-#[derive(Debug, Deserialize, Default, Clone)]
-#[serde(transparent)]
-pub struct ActionWithArguments(Value);
-
-impl JsonSchema for ActionWithArguments {
-    fn schema_name() -> Cow<'static, str> {
-        "ActionWithArguments".into()
-    }
-    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        json_schema!(true)
     }
 }
 
@@ -724,7 +699,16 @@ impl KeymapFile {
             "minItems": 2,
             "maxItems": 2
         });
-        let mut action_name_alternatives = vec![empty_action_name.clone()];
+
+        let mut keymap_deprecations = deprecations.clone();
+        keymap_deprecations.insert(NoAction.name(), "null");
+        let action_name_schema = ActionName::build_schema(
+            action_schemas.iter().map(|(name, _)| *name),
+            action_documentation,
+            &keymap_deprecations,
+            deprecation_messages,
+        );
+
         let mut action_with_arguments_alternatives = vec![empty_action_name_with_input.clone()];
         let mut unbind_target_action_alternatives =
             vec![empty_action_name, empty_action_name_with_input];
@@ -755,7 +739,6 @@ impl KeymapFile {
             if let Some(description) = &description {
                 add_description(&mut plain_action, description);
             }
-            action_name_alternatives.push(plain_action.clone());
             if include_in_unbind_target_schema {
                 unbind_target_action_alternatives.push(plain_action);
             }
@@ -838,7 +821,7 @@ impl KeymapFile {
 
         generator.definitions_mut().insert(
             ActionName::schema_name().to_string(),
-            json!({ "anyOf": action_name_alternatives }),
+            action_name_schema.to_value(),
         );
         generator.definitions_mut().insert(
             ActionWithArguments::schema_name().to_string(),
