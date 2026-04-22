@@ -1,6 +1,6 @@
 use std::{any::Any, rc::Rc, sync::Arc};
 
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentSettings, language_model_to_selection};
 use anyhow::Result;

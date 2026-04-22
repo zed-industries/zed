@@ -6,7 +6,7 @@ use crate::{
     edit_agent::{EditAgent, EditAgentOutputEvent, EditFormat},
 };
 use acp_thread::Diff;
-use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result};
 use collections::HashSet;
 use futures::{FutureExt as _, StreamExt as _};
@@ -260,7 +260,7 @@ impl AgentTool for EditFileTool {
                     let abs_path = project.read(cx).absolute_path(&project_path, cx);
                     if let Some(abs_path) = abs_path.clone() {
                         event_stream.update_fields(
-                            ToolCallUpdateFields::new()
+                            acp::ToolCallUpdateFields::new()
                                 .locations(vec![acp::ToolCallLocation::new(abs_path)]),
                         );
                     }
@@ -409,7 +409,7 @@ impl AgentTool for EditFileTool {
                                     range.start.to_point(&buffer.snapshot()).row
                                 }));
                                 if let Some(abs_path) = abs_path.clone() {
-                                    event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path).line(line)]));
+                                    event_stream.update_fields(acp::ToolCallUpdateFields::new().locations(vec![acp::ToolCallLocation::new(abs_path).line(line)]));
                                 }
                                 emitted_location = true;
                             }

@@ -354,14 +354,35 @@ These commands modify editor options locally for the current buffer.
 
 ### Command mnemonics
 
-As any Zed command is available, you may find that it's helpful to remember mnemonics that run the correct command. For example:
+Zed does not ship with any command mnemonics by default, but you can define short aliases for Zed commands using the `command_aliases` setting in your settings file. When you type an alias from this map in the command palette, it resolves to the mapped command.
 
-- `:diffs` for "toggle all hunk diffs"
-- `:cpp` for "copy path to file"
-- `:crp` for "copy relative path"
-- `:reveal` for "reveal in finder"
-- `:zlog` for "open zed log"
-- `:clank` for "cancel language server work"
+#### Example Configuration
+
+To configure command mnemonics, add the `command_aliases` key to your settings file. Here's an example configuration with useful mnemonics:
+
+```json [settings]
+{
+  "command_aliases": {
+    "zlog": "zed::OpenLog",
+    "newf": "workspace::NewFile",
+    "diffs": "editor::ToggleSelectedDiffHunks",
+    "crp": "workspace::CopyRelativePath",
+    "cpp": "workspace::CopyPath",
+    "reveal": "editor::RevealInFileManager",
+    "clank": "editor::CancelLanguageServerWork"
+  }
+}
+```
+
+With this configuration, you can use commands like:
+
+- `:zlog` - Open the Zed log
+- `:newf` - Create a new file
+- `:diffs` - Toggle selected diff hunks
+- `:crp` - Copy the relative path to the current file
+- `:cpp` - Copy the full path to the current file
+- `:reveal` - Reveal the current file in the file manager
+- `:clank` - Cancel language server work
 
 ## Customizing key bindings
 

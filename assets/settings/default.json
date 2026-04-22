@@ -1,8 +1,5 @@
 {
   "$schema": "zed://schemas/settings",
-  /// The displayed name of this project. If not set or null, the root directory name
-  /// will be displayed.
-  "project_name": null,
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -1363,6 +1360,24 @@
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
+  // How line endings should be handled for new files and during format and save.
+  // This setting can take five values:
+  //
+  // 1. Detect existing line endings and otherwise use the platform default
+  //    (`lf` on Unix, `crlf` on Windows):
+  //    "line_ending": "detect"
+  // 2. Prefer LF (`\n`) for new files and files with no existing line ending:
+  //    "line_ending": "prefer_lf"
+  // 3. Prefer CRLF (`\r\n`) for new files and files with no existing line ending:
+  //    "line_ending": "prefer_crlf"
+  // 4. Enforce LF (`\n`) during format and save:
+  //    "line_ending": "enforce_lf"
+  // 5. Enforce CRLF (`\r\n`) during format and save:
+  //    "line_ending": "enforce_crlf"
+  //
+  // The EditorConfig `end_of_line` property overrides this setting and behaves
+  // like `enforce_lf` or `enforce_crlf`.
+  "line_ending": "detect",
   // Whether or not to perform a buffer format before saving: [on, off]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
