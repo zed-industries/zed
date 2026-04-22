@@ -186,7 +186,7 @@ impl LineLayout {
             if width > wrap_width && boundary > last_boundary {
                 // When used line_clamp, we should limit the number of lines.
                 if let Some(max_lines) = max_lines
-                    && boundaries.len() >= max_lines - 1
+                    && boundaries.len() >= max_lines.saturating_sub(1)
                 {
                     break;
                 }

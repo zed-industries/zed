@@ -19,9 +19,9 @@ use gpui::{
     Focusable, Global, HighlightStyle, KeyContext, MouseButton, ParentElement, Render, Styled,
     StyledText, Subscription, Task, WeakEntity, Window, actions, px, relative,
 };
-use language::Buffer;
+use language::{Buffer, LanguageAwareStyling};
 use menu;
-use multi_buffer::{ExcerptId, ExcerptRange, MultiBuffer};
+use multi_buffer::MultiBuffer;
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::SearchResults;
 use project::search::{SearchInputKind, SearchQuery, SearchResult};
@@ -287,7 +287,9 @@ impl QuickSearch {
             let project = workspace.project().clone();
             let weak_workspace = cx.entity().downgrade();
             let initial_query = if let Some(editor) = workspace.active_item_as::<Editor>(cx) {
-                let query = editor.update(cx, |editor, cx| editor.query_suggestion(window, cx));
+                let query = editor.update(cx, |editor, cx| {
+                    editor.query_suggestion(false, window, cx)
+                });
                 if !query.is_empty() { Some(query) } else { None }
             } else {
                 None
@@ -1048,8 +1050,8 @@ impl QuickSearch {
     ) -> impl IntoElement {
         PopoverMenu::new("split-menu-popover")
             .with_handle(split_menu_handle)
-            .attach(gpui::Corner::BottomRight)
-            .anchor(gpui::Corner::TopRight)
+            .attach(gpui::Anchor::BottomRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),
@@ -1612,47 +1614,33 @@ impl QuickSearchDelegate {
 
         self.preview_editor.update(cx, |editor, cx| {
             let multi_buffer = editor.buffer().clone();
-            let buffer_snapshot = buffer.read(cx);
-            let max_point = buffer_snapshot.max_point();
-
-            let context_start = buffer_snapshot.anchor_before(Point::new(0, 0));
-            let context_end = buffer_snapshot.anchor_after(max_point);
-
-            let primary_range = {
-                let start = buffer_snapshot.anchor_before(range.start);
-                let end = buffer_snapshot.anchor_after(range.end);
-                start..end
-            };
+            let max_point = buffer.read(cx).max_point();
 
             multi_buffer.update(cx, |multi_buffer, cx| {
                 multi_buffer.clear(cx);
-                multi_buffer.insert_excerpts_after(
-                    ExcerptId::max(),
+                multi_buffer.set_excerpts_for_buffer(
                     buffer.clone(),
-                    [ExcerptRange {
-                        context: context_start..context_end,
-                        primary: primary_range,
-                    }],
+                    [Point::new(0, 0)..max_point],
+                    0,
                     cx,
                 );
             });
 
-            let multi_buffer_snapshot = multi_buffer.read(cx);
-            if let Some(excerpt_id) = multi_buffer_snapshot.excerpt_ids().first().copied() {
-                let row_anchor = editor::Anchor::in_buffer(excerpt_id, anchor_range.start);
+            let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+            if let (Some(start_anchor), Some(end_anchor)) = (
+                multi_buffer_snapshot.anchor_in_excerpt(anchor_range.start),
+                multi_buffer_snapshot.anchor_in_excerpt(anchor_range.end),
+            ) {
                 editor.highlight_rows::<SearchMatchLineHighlight>(
-                    row_anchor..row_anchor,
+                    start_anchor..start_anchor,
                     cx.theme().colors().editor_active_line_background,
                     RowHighlightOptions::default(),
                     cx,
                 );
 
-                let highlight_range =
-                    editor::Anchor::range_in_buffer(excerpt_id, anchor_range.clone());
-
                 editor.highlight_background(
                     HighlightKey::QuickSearchView,
-                    &[highlight_range],
+                    &[start_anchor..end_anchor],
                     |_, theme| theme.colors().search_match_background,
                     cx,
                 );
@@ -2210,7 +2198,7 @@ impl PickerDelegate for QuickSearchDelegate {
         self.selected_index
     }
 
-    fn hover_to_select(&self) -> bool {
+    fn select_on_hover(&self) -> bool {
         false
     }
 
@@ -2482,7 +2470,13 @@ impl PickerDelegate for QuickSearchDelegate {
                     continue;
                 }
 
-                for chunk in snapshot.chunks(range, true) {
+                for chunk in snapshot.chunks(
+                    range,
+                    LanguageAwareStyling {
+                        tree_sitter: true,
+                        diagnostics: false,
+                    },
+                ) {
                     let chunk_len = chunk.text.len();
                     let syntax_style = chunk
                         .syntax_highlight_id

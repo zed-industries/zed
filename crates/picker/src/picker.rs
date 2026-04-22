@@ -121,9 +121,8 @@ pub trait PickerDelegate: Sized + 'static {
     ) -> bool {
         true
     }
-
     /// Whether hovering over items should change the selection.
-    fn hover_to_select(&self) -> bool {
+    fn select_on_hover(&self) -> bool {
         true
     }
 
@@ -778,7 +777,7 @@ impl<D: PickerDelegate> Picker<D> {
                 .top_0()
                 .left_0(),
             )
-            .when(!self.delegate.hover_to_select(), |this| {
+            .when(!self.delegate.select_on_hover(), |this| {
                 this.on_mouse_down(MouseButton::Left, |_, window, _cx| {
                     window.prevent_default();
                 })
@@ -798,7 +797,7 @@ impl<D: PickerDelegate> Picker<D> {
                     this.handle_click(ix, event.modifiers.platform, window, cx)
                 }),
             )
-            .when(self.delegate.hover_to_select(), |this| {
+            .when(self.delegate.select_on_hover(), |this| {
                 this.on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
                     if *hovered {
                         this.set_selected_index(ix, None, false, window, cx);

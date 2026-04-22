@@ -17,6 +17,10 @@ use gpui::{App, AppContext, Entity, Task};
 use settings::SettingsStore;
 use std::{any::Any, rc::Rc, sync::Arc};
 
+#[cfg(any(test, feature = "test-support"))]
+pub use acp::test_support::{
+    FakeAcpAgentServer, FakeAcpConnectionHarness, connect_fake_acp_connection,
+};
 pub use acp::{AcpConnection, GEMINI_TERMINAL_AUTH_METHOD_ID};
 
 pub struct AgentServerDelegate {

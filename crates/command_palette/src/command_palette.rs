@@ -13,7 +13,7 @@ use command_palette_hooks::{
     GlobalCommandPaletteInterceptor,
 };
 
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     ParentElement, Render, Styled, Task, WeakEntity, Window,
@@ -43,24 +43,28 @@ pub struct CommandPalette {
     picker: Entity<Picker<CommandPaletteDelegate>>,
 }
 
-/// Removes subsequent whitespace characters and double colons from the query.
+/// Removes subsequent whitespace characters and double colons from the query, and converts
+/// underscores to spaces.
 ///
 /// This improves the likelihood of a match by either humanized name or keymap-style name.
+/// Underscores are converted to spaces because `humanize_action_name` converts them to spaces
+/// when building the search candidates (e.g. `terminal_panel::Toggle` -> `terminal panel: toggle`).
 pub fn normalize_action_query(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut last_char = None;
 
     for char in input.trim().chars() {
-        match (last_char, char) {
+        let normalized_char = if char == '_' { ' ' } else { char };
+        match (last_char, normalized_char) {
             (Some(':'), ':') => continue,
-            (Some(last_char), char) if last_char.is_whitespace() && char.is_whitespace() => {
+            (Some(last_char), c) if last_char.is_whitespace() && c.is_whitespace() => {
                 continue;
             }
             _ => {
-                last_char = Some(char);
+                last_char = Some(normalized_char);
             }
         }
-        result.push(char);
+        result.push(normalized_char);
     }
 
     result
@@ -322,7 +326,7 @@ impl CommandPaletteDelegate {
             });
             new_matches.push(StringMatch {
                 candidate_id: commands.len() - 1,
-                string,
+                string: string.into(),
                 positions,
                 score: 0.0,
             })
@@ -470,11 +474,11 @@ impl PickerDelegate for CommandPaletteDelegate {
                     .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
                     .collect::<Vec<_>>();
 
-                let matches = fuzzy::match_strings(
+                let matches = fuzzy_nucleo::match_strings_async(
                     &candidates,
                     &query,
-                    true,
-                    true,
+                    fuzzy_nucleo::Case::Smart,
+                    fuzzy_nucleo::LengthPenalty::On,
                     10000,
                     &Default::default(),
                     executor,
@@ -774,6 +778,14 @@ mod tests {
         assert_eq!(
             normalize_action_query("editor: :GoToDefinition"),
             "editor: :GoToDefinition"
+        );
+        assert_eq!(
+            normalize_action_query("terminal_panel::Toggle"),
+            "terminal panel:Toggle"
+        );
+        assert_eq!(
+            normalize_action_query("project_panel::ToggleFocus"),
+            "project panel:ToggleFocus"
         );
     }
 

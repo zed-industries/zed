@@ -357,7 +357,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 ("number".into(), orange.into()),
                 ("operator".into(), HighlightStyle::default()),
                 ("predictive".into(), HighlightStyle::default()),
-                ("preproc".into(), HighlightStyle::default()),
+                ("preproc".into(), purple.into()),
                 ("primary".into(), HighlightStyle::default()),
                 ("property".into(), red.into()),
                 ("punctuation".into(), HighlightStyle::default()),
@@ -377,6 +377,8 @@ pub(crate) fn zed_default_dark() -> Theme {
                 ("variable".into(), HighlightStyle::default()),
                 ("variable.special".into(), red.into()),
                 ("variant".into(), HighlightStyle::default()),
+                ("diff.plus".into(), green.into()),
+                ("diff.minus".into(), red.into()),
             ])),
         },
     }

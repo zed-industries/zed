@@ -473,10 +473,7 @@ impl Default for ScrollDelta {
 /// A pinch gesture event from the platform, generated when the user performs
 /// a pinch-to-zoom gesture (typically on a trackpad).
 ///
-/// Note: This event is only available on macOS and Wayland (Linux).
-/// On Windows, pinch gestures are simulated as scroll wheel events with Ctrl held.
 #[derive(Clone, Debug, Default)]
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub struct PinchEvent {
     /// The position of the pinch center on the window.
     pub position: Point<Pixels>,
@@ -493,20 +490,15 @@ pub struct PinchEvent {
     pub phase: TouchPhase,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Sealed for PinchEvent {}
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl InputEvent for PinchEvent {
     fn to_platform_input(self) -> PlatformInput {
         PlatformInput::Pinch(self)
     }
 }
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl GestureEvent for PinchEvent {}
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl MouseEvent for PinchEvent {}
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Deref for PinchEvent {
     type Target = Modifiers;
 
@@ -675,7 +667,6 @@ pub enum PlatformInput {
     /// The scroll wheel was used.
     ScrollWheel(ScrollWheelEvent),
     /// A pinch gesture was performed.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     Pinch(PinchEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
@@ -693,7 +684,6 @@ impl PlatformInput {
             PlatformInput::MousePressure(event) => Some(event),
             PlatformInput::MouseExited(event) => Some(event),
             PlatformInput::ScrollWheel(event) => Some(event),
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
             PlatformInput::Pinch(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
         }
@@ -710,7 +700,6 @@ impl PlatformInput {
             PlatformInput::MousePressure(_) => None,
             PlatformInput::MouseExited(_) => None,
             PlatformInput::ScrollWheel(_) => None,
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
             PlatformInput::Pinch(_) => None,
             PlatformInput::FileDrop(_) => None,
         }

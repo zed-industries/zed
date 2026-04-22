@@ -1,5 +1,6 @@
 #![allow(clippy::format_collect)]
 
+mod bookmark_store;
 mod color_extractor;
 mod context_server_store;
 mod debugger;
@@ -41,10 +42,11 @@ use gpui::{
 use itertools::Itertools;
 use language::{
     Buffer, BufferEvent, Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticSet,
-    DiagnosticSourceKind, DiskState, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
-    LanguageName, LineEnding, ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Point,
-    ToPoint, Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata,
-    language_settings::{LanguageSettings, LanguageSettingsContent},
+    DiagnosticSourceKind, DiskState, FakeLspAdapter, Language, LanguageAwareStyling,
+    LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
+    ManifestQuery, OffsetRangeExt, Point, ToPoint, Toolchain, ToolchainList, ToolchainLister,
+    ToolchainMetadata,
+    language_settings::{Formatter, FormatterList, LanguageSettings, LanguageSettingsContent},
     markdown_lang, rust_lang, tree_sitter_typescript,
 };
 use lsp::{
@@ -1328,14 +1330,30 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
                 delegate,
             }: ManifestQuery,
         ) -> Option<Arc<RelPath>> {
+            const WORKSPACE_LOCKFILES: &[&str] =
+                &["uv.lock", "poetry.lock", "pdm.lock", "Pipfile.lock"];
+
+            let mut innermost_pyproject = None;
+            let mut outermost_workspace_root = None;
+
             for path in path.ancestors().take(depth) {
-                let p = path.join(rel_path("pyproject.toml"));
-                if delegate.exists(&p, Some(false)) {
-                    return Some(path.into());
+                let pyproject_path = path.join(rel_path("pyproject.toml"));
+                if delegate.exists(&pyproject_path, Some(false)) {
+                    if innermost_pyproject.is_none() {
+                        innermost_pyproject = Some(Arc::from(path));
+                    }
+
+                    let has_lockfile = WORKSPACE_LOCKFILES.iter().any(|lockfile| {
+                        let lockfile_path = path.join(rel_path(lockfile));
+                        delegate.exists(&lockfile_path, Some(false))
+                    });
+                    if has_lockfile {
+                        outermost_workspace_root = Some(Arc::from(path));
+                    }
                 }
             }
 
-            None
+            outermost_workspace_root.or(innermost_pyproject)
         }
     }
 
@@ -1771,7 +1789,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             DiagnosticSet::from_sorted_entries(
                 vec![DiagnosticEntry {
                     diagnostic: Default::default(),
-                    range: Anchor::MIN..Anchor::MAX,
+                    range: Anchor::min_max_range_for_buffer(buffer.remote_id()),
                 }],
                 &buffer.snapshot(),
             ),
@@ -1912,6 +1930,84 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await,
         close_message,
     );
+}
+
+#[gpui::test]
+async fn test_late_lsp_adapter_registration(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "test.rs": "const A: i32 = 1;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    // Add the language first so the buffer gets assigned a language.
+    language_registry.add(rust_lang());
+    cx.executor().run_until_parked();
+
+    // Open a buffer — it gets assigned the Rust language but there is no LSP adapter yet.
+    let (rust_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/test.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    rust_buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.language().map(|l| l.name()), Some("Rust".into()));
+    });
+
+    // Now register the LSP adapter late (simulating an extension loading after startup).
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-rust-language-server",
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), "::".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    cx.executor().run_until_parked();
+
+    // The language server should start and receive a DidOpenTextDocument notification
+    // for the already-open buffer.
+    let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+    assert_eq!(
+        fake_rust_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentItem {
+            uri: lsp::Uri::from_file_path(path!("/dir/test.rs")).unwrap(),
+            version: 0,
+            text: "const A: i32 = 1;".to_string(),
+            language_id: "rust".to_string(),
+        }
+    );
+
+    // The buffer should be configured with the language server's capabilities.
+    rust_buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .completion_triggers()
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            &[".".to_string(), "::".to_string()]
+        );
+    });
 }
 
 #[gpui::test]
@@ -4382,7 +4478,13 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
     range: Range<T>,
 ) -> Vec<(String, Option<DiagnosticSeverity>)> {
     let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
-    for chunk in buffer.snapshot().chunks(range, true) {
+    for chunk in buffer.snapshot().chunks(
+        range,
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: true,
+        },
+    ) {
         if chunks
             .last()
             .is_some_and(|prev_chunk| prev_chunk.1 == chunk.diagnostic_severity)
@@ -4448,7 +4550,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
 
     // Assert no new language server started
     cx.executor().run_until_parked();
-    assert!(fake_servers.try_next().is_err());
+    assert!(fake_servers.try_recv().is_err());
 
     assert_eq!(definitions.len(), 1);
     let definition = definitions.pop().unwrap();
@@ -4892,6 +4994,85 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         .collect::<Vec<_>>();
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fully\nQualified\nName");
+}
+
+#[gpui::test]
+async fn test_supports_range_formatting_ignores_unrelated_language_servers(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+                ));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.ts": "",
+            "b.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    language_registry.add(rust_lang());
+
+    let mut typescript_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            name: "typescript-fake-language-server",
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let mut rust_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-fake-language-server",
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                document_range_formatting_provider: Some(lsp::OneOf::Left(false)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (typescript_buffer, _typescript_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .unwrap();
+    let (rust_buffer, _rust_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/b.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _typescript_language_server = typescript_language_servers.next().await.unwrap();
+    let _rust_language_server = rust_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    assert!(project.read_with(cx, |project, cx| {
+        project.supports_range_formatting(&typescript_buffer, cx)
+    }));
+    assert!(!project.read_with(cx, |project, cx| {
+        project.supports_range_formatting(&rust_buffer, cx)
+    }));
 }
 
 #[gpui::test(iterations = 10)]
@@ -8525,9 +8706,10 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_diff
-                .snapshot(cx)
-                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            unstaged_diff.snapshot(cx).hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                &snapshot,
+            ),
             &snapshot,
             &unstaged_diff.base_text(cx).text(),
             &[(
@@ -8616,8 +8798,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_1.update(cx, |diff, cx| {
         let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            diff.snapshot(cx)
-                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            diff.snapshot(cx).hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                &snapshot,
+            ),
             &snapshot,
             &diff.base_text_string(cx).unwrap(),
             &[
@@ -8658,8 +8842,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_1.update(cx, |diff, cx| {
         let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            diff.snapshot(cx)
-                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            diff.snapshot(cx).hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                &snapshot,
+            ),
             &snapshot,
             &diff.base_text(cx).text(),
             &[(
@@ -8688,8 +8874,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_2.update(cx, |diff, cx| {
         let snapshot = buffer_2.read(cx).snapshot();
         assert_hunks(
-            diff.snapshot(cx)
-                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            diff.snapshot(cx).hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                &snapshot,
+            ),
             &snapshot,
             &diff.base_text_string(cx).unwrap(),
             &[(
@@ -8710,8 +8898,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_2.update(cx, |diff, cx| {
         let snapshot = buffer_2.read(cx).snapshot();
         assert_hunks(
-            diff.snapshot(cx)
-                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            diff.snapshot(cx).hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                &snapshot,
+            ),
             &snapshot,
             &diff.base_text_string(cx).unwrap(),
             &[(
@@ -9070,6 +9260,68 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
                     DiffHunkStatus::modified(NoSecondaryHunk),
                 ),
             ],
+        );
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_uncommitted_diff_opened_before_unstaged_diff(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_contents = "one\ntwo\nthree\n";
+    let file_contents = "one\nTWO\nthree\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": file_contents,
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("file.txt", committed_contents.into())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file.txt", cx)
+        })
+        .await
+        .unwrap();
+
+    let uncommitted_diff_task = project.update(cx, |project, cx| {
+        project.open_uncommitted_diff(buffer.clone(), cx)
+    });
+    let unstaged_diff_task = project.update(cx, |project, cx| {
+        project.open_unstaged_diff(buffer.clone(), cx)
+    });
+    let (uncommitted_diff, _unstaged_diff) =
+        futures::future::join(uncommitted_diff_task, unstaged_diff_task).await;
+    let uncommitted_diff = uncommitted_diff.unwrap();
+    let _unstaged_diff = _unstaged_diff.unwrap();
+
+    cx.run_until_parked();
+
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            diff.snapshot(cx).hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                &snapshot,
+            ),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(HasSecondaryHunk),
+            )],
         );
     });
 }
@@ -11152,7 +11404,7 @@ async fn test_odd_events_for_ignored_dirs(
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
-            RepositoryEvent::BranchChanged,
+            RepositoryEvent::HeadChanged,
             RepositoryEvent::StatusesChanged,
             RepositoryEvent::StatusesChanged,
         ],
@@ -11496,6 +11748,14 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
             repo.read(cx).work_directory_abs_path,
             Path::new(path!("/project/some-worktree")).into(),
         );
+        pretty_assertions::assert_eq!(
+            repo.read(cx).original_repo_abs_path,
+            Path::new(path!("/project")).into(),
+        );
+        assert!(
+            repo.read(cx).linked_worktree_path().is_some(),
+            "linked worktree should be detected as a linked worktree"
+        );
         let barrier = repo.update(cx, |repo, _| repo.barrier());
         (repo.clone(), barrier)
     });
@@ -11540,6 +11800,14 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         pretty_assertions::assert_eq!(
             repo.read(cx).work_directory_abs_path,
             Path::new(path!("/project/subdir/some-submodule")).into(),
+        );
+        pretty_assertions::assert_eq!(
+            repo.read(cx).original_repo_abs_path,
+            Path::new(path!("/project/subdir/some-submodule")).into(),
+        );
+        assert!(
+            repo.read(cx).linked_worktree_path().is_none(),
+            "submodule should not be detected as a linked worktree"
         );
         let barrier = repo.update(cx, |repo, _| repo.barrier());
         (repo.clone(), barrier)

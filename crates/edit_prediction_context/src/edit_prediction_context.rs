@@ -66,10 +66,14 @@ struct Identifier {
 
 enum DefinitionTask {
     CacheHit(Arc<CacheEntry>),
-    CacheMiss {
-        definitions: Task<Result<Option<Vec<LocationLink>>>>,
-        type_definitions: Task<Result<Option<Vec<LocationLink>>>>,
-    },
+    CacheMiss(
+        Task<
+            Option<(
+                Task<Result<Option<Vec<LocationLink>>>>,
+                Task<Result<Option<Vec<LocationLink>>>>,
+            )>,
+        >,
+    ),
 }
 
 #[derive(Debug)]
@@ -270,39 +274,37 @@ impl RelatedExcerptStore {
         let futures = this.update(cx, |this, cx| {
             identifiers_with_distance
                 .into_iter()
-                .filter_map(|(identifier, _)| {
+                .map(|(identifier, _)| {
                     let task = if let Some(entry) = this.cache.get(&identifier) {
                         DefinitionTask::CacheHit(entry.clone())
                     } else {
-                        let definitions = this
-                            .project
-                            .update(cx, |project, cx| {
-                                project.definitions(&buffer, identifier.range.start, cx)
-                            })
-                            .ok()?;
-                        let type_definitions = this
-                            .project
-                            .update(cx, |project, cx| {
-                                project.type_definitions(&buffer, identifier.range.start, cx)
-                            })
-                            .ok()?;
-                        DefinitionTask::CacheMiss {
-                            definitions,
-                            type_definitions,
-                        }
+                        let project = this.project.clone();
+                        let buffer = buffer.downgrade();
+                        DefinitionTask::CacheMiss(cx.spawn(async move |_, cx| {
+                            let buffer = buffer.upgrade()?;
+                            let definitions = project
+                                .update(cx, |project, cx| {
+                                    project.definitions(&buffer, identifier.range.start, cx)
+                                })
+                                .ok()?;
+                            let type_definitions = project
+                                .update(cx, |project, cx| {
+                                    project.type_definitions(&buffer, identifier.range.start, cx)
+                                })
+                                .ok()?;
+                            Some((definitions, type_definitions))
+                        }))
                     };
 
                     let cx = async_cx.clone();
                     let project = project.clone();
-                    Some(async move {
+                    async move {
                         match task {
                             DefinitionTask::CacheHit(cache_entry) => {
                                 Some((identifier, cache_entry, None))
                             }
-                            DefinitionTask::CacheMiss {
-                                definitions,
-                                type_definitions,
-                            } => {
+                            DefinitionTask::CacheMiss(task) => {
+                                let (definitions, type_definitions) = task.await?;
                                 let (definition_locations, type_definition_locations) =
                                     futures::join!(definitions, type_definitions);
                                 let duration = start_time.elapsed();
@@ -349,7 +351,7 @@ impl RelatedExcerptStore {
                                 }))
                             }
                         }
-                    })
+                    }
                 })
                 .collect::<Vec<_>>()
         })?;

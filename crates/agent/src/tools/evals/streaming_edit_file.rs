@@ -6,7 +6,7 @@ use crate::{
 };
 use Role::*;
 use anyhow::{Context as _, Result};
-use client::{Client, UserStore};
+use client::{Client, RefreshLlmTokenListener, UserStore};
 use fs::FakeFs;
 use futures::{FutureExt, StreamExt, future::LocalBoxFuture};
 use gpui::{AppContext as _, AsyncApp, Entity, TestAppContext, UpdateGlobal as _};
@@ -274,7 +274,8 @@ impl StreamingEditToolTest {
             cx.set_http_client(http_client);
             let client = Client::production(cx);
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-            language_model::init(user_store.clone(), client.clone(), cx);
+            language_model::init(cx);
+            RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
             language_models::init(user_store, client, cx);
         });
 
