@@ -5063,14 +5063,14 @@ impl Repository {
     pub fn fetch_commit_data(
         &mut self,
         sha: Oid,
-        get_waiter: bool,
+        needs_waiter: bool,
         cx: &mut Context<Self>,
     ) -> &CommitDataState {
         if self.commit_data.contains_key(&sha) {
             let data = &self.commit_data[&sha];
 
             if let CommitDataState::Loading(None) = data
-                && get_waiter
+                && needs_waiter
             {
                 let (tx, rx) = oneshot::channel();
                 self.commit_data
@@ -5083,7 +5083,7 @@ impl Repository {
             return &self.commit_data[&sha];
         }
 
-        let (state, completer) = if get_waiter {
+        let (state, completer) = if needs_waiter {
             let (tx, rx) = oneshot::channel();
             (CommitDataState::Loading(Some(rx.shared())), Some(tx))
         } else {
@@ -5096,14 +5096,23 @@ impl Repository {
         if let Some(tx) = completer {
             handler.completers.insert(sha, tx);
         }
+        let mut has_failed = false;
         if handler.commit_data_request.try_send(sha).is_ok() {
             handler.pending_requests.insert(sha);
         } else {
+            has_failed = true;
             handler.completers.remove(&sha);
+            debug_assert!(
+                matches!(
+                    self.commit_data.remove(&sha),
+                    Some(CommitDataState::Loading(_))
+                ),
+                "Commit data should still be loading when enqueueing the request fails"
+            );
         }
 
         &self.commit_data.get(&sha).unwrap_or_else(|| {
-            debug_panic!("This should always be inserted");
+            debug_assert!(!has_failed, "This should always be inserted");
             &CommitDataState::Loading(None)
         })
     }
