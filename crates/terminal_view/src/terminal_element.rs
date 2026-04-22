@@ -550,13 +550,20 @@ impl TerminalElement {
         minimum_contrast: f32,
     ) -> TextRun {
         let flags = indexed.cell.flags;
-        let is_true_color = matches!(fg, terminal::alacritty_terminal::vte::ansi::Color::Spec(_));
+        // Skip contrast adjustment when the application picked an exact color:
+        // 24-bit true color (`\e[38;2;R;G;Bm`) or a specific entry in the 256-color
+        // palette (`\e[38;5;Nm`) where N >= 16 (the 6x6x6 cube and 24-step grayscale
+        // ramp). Indices 0-15 still go through contrast adjustment since those map
+        // to theme-defined ANSI colors that can clash with the theme background.
+        let app_chose_exact_color = matches!(
+            fg,
+            terminal::alacritty_terminal::vte::ansi::Color::Spec(_)
+                | terminal::alacritty_terminal::vte::ansi::Color::Indexed(16..=255)
+        );
         let mut fg = convert_color(&fg, colors);
         let bg = convert_color(&bg, colors);
 
-        // Skip contrast adjustment for true-color (24-bit RGB) foregrounds — the
-        // application chose that exact color. Also skip for decorative characters.
-        if !is_true_color && !Self::is_decorative_character(indexed.c) {
+        if !app_chose_exact_color && !Self::is_decorative_character(indexed.c) {
             fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
         }
 
