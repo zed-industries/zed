@@ -2,7 +2,7 @@ use acp_thread::{
     AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
     AgentSessionListResponse,
 };
-use acp_tools::AcpConnectionRegistry;
+use acp_tools::{AcpConnectionRegistry, MessageLog};
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, Agent as _, ErrorCode};
 use anyhow::anyhow;
@@ -57,9 +57,14 @@ pub struct AcpConnection {
     default_config_options: HashMap<String, String>,
     child: Option<Child>,
     session_list: Option<Rc<AcpSessionList>>,
+    // Keep the log alive for the lifetime of the connection so that the
+    // [`AcpConnectionRegistry`]'s `Weak<MessageLog>` can always be upgraded
+    // while the connection exists.
+    _message_log: Rc<MessageLog>,
     _io_task: Task<Result<(), acp::Error>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
+    _log_task: Task<()>,
 }
 
 struct PendingAcpSession {
@@ -321,9 +326,27 @@ impl AcpConnection {
 
         let connection = Rc::new(connection);
 
+        // Create the message log and start draining the connection's broadcast
+        // stream into it *before* we initialize, so that the initialize
+        // request/response pair itself ends up in the log.
+        //
+        // The task must run on the foreground executor because `Rc<MessageLog>`
+        // is `!Send`, and because readers of the log are GPUI entities that
+        // expect to observe updates on the main thread anyway.
+        let message_log = MessageLog::new();
+        let log_task = cx.spawn({
+            let message_log = message_log.clone();
+            let mut receiver = connection.subscribe();
+            async move |_cx| {
+                while let Ok(message) = receiver.recv().await {
+                    message_log.push(message);
+                }
+            }
+        });
+
         cx.update(|cx| {
             AcpConnectionRegistry::default_global(cx).update(cx, |registry, cx| {
-                registry.set_active_connection(agent_id.clone(), &connection, cx)
+                registry.set_active_connection(agent_id.clone(), &message_log, cx)
             });
         });
 
@@ -406,9 +429,11 @@ impl AcpConnection {
             default_model,
             default_config_options,
             session_list,
+            _message_log: message_log,
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
+            _log_task: log_task,
             child: Some(child),
         })
     }
@@ -440,9 +465,11 @@ impl AcpConnection {
             default_config_options: HashMap::default(),
             child: None,
             session_list: None,
+            _message_log: MessageLog::new(),
             _io_task: io_task,
             _wait_task: Task::ready(Ok(())),
             _stderr_task: Task::ready(Ok(())),
+            _log_task: Task::ready(()),
         }
     }
 

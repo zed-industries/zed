@@ -63,6 +63,7 @@ dependencies = [
  "theme_settings",
  "ui",
  "util",
+ "watch",
  "workspace",
 ]
 
