@@ -2567,7 +2567,7 @@ impl GitStore {
                         receivers.push(shared.clone());
                     }
                     CommitDataState::Loading(None) => {
-                        // todo! this could happen if the request fails
+                        // todo(git_graph) this could happen if the request fails, we should encode an error case
                         debug_panic!(
                             "This should never happen since we passed true into fetch commit data"
                         );
