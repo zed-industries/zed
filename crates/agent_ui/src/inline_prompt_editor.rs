@@ -1690,7 +1690,6 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> Entity<PromptEditor<TerminalCodegen>> {
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
-        let history = cx.update(|window, cx| cx.new(|cx| AcpThreadHistory::new(None, window, cx)));
         let fs = FakeFs::new(cx.executor());
 
         let terminal = cx.update(|_window, cx| {
@@ -1729,7 +1728,6 @@ mod tests {
                     fs,
                     thread_store,
                     None,
-                    history.downgrade(),
                     project,
                     workspace.downgrade(),
                     window,
