@@ -333,7 +333,7 @@ impl Reporter {
             .then_some(ReviewSuccess::ApprovingComment(qualifying_comments)))
     }
 
-    fn is_qualifying_approval(item: &impl Approvable, pull_request: &PullRequestData) -> bool {
+    pub fn is_qualifying_approval(item: &impl Approvable, pull_request: &PullRequestData) -> bool {
         let Some(author_login) = item.author_login() else {
             return false;
         };
