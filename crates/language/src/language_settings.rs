@@ -84,7 +84,8 @@ pub struct LanguageSettings {
     /// Whether or not to ensure there's a single newline at the end of a buffer
     /// when saving it.
     pub ensure_final_newline_on_save: bool,
-    /// How line endings are normalized when saving a buffer.
+    /// How line endings are initialized for new files and normalized during
+    /// format and save.
     pub line_ending: LineEndingSetting,
     /// How to perform a buffer format.
     pub formatter: settings::FormatterList,
@@ -642,8 +643,8 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
         })
         .ok();
     let line_ending = cfg.get::<EndOfLine>().ok().and_then(|v| match v {
-        EndOfLine::Lf => Some(LineEndingSetting::Lf),
-        EndOfLine::CrLf => Some(LineEndingSetting::Crlf),
+        EndOfLine::Lf => Some(LineEndingSetting::EnforceLf),
+        EndOfLine::CrLf => Some(LineEndingSetting::EnforceCrlf),
         EndOfLine::Cr => None,
     });
 

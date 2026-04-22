@@ -449,13 +449,22 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub ensure_final_newline_on_save: Option<bool>,
-    /// The line ending style to use when saving the buffer.
+    /// How line endings should be handled for new files and during format and
+    /// save operations.
     ///
-    /// - `auto` preserves the existing line endings of the file.
-    /// - `lf` normalizes line endings to `\n` on save.
-    /// - `crlf` normalizes line endings to `\r\n` on save.
+    /// - `detect`: Detect existing line endings and otherwise use the platform
+    ///   default (`lf` on Unix, `crlf` on Windows).
+    /// - `prefer_lf`: Prefer LF for new files and files with no existing line
+    ///   ending.
+    /// - `prefer_crlf`: Prefer CRLF for new files and files with no existing
+    ///   line ending.
+    /// - `enforce_lf`: Enforce LF during format and save.
+    /// - `enforce_crlf`: Enforce CRLF during format and save.
     ///
-    /// Default: auto
+    /// The EditorConfig `end_of_line` property overrides this setting and
+    /// behaves like `enforce_lf` or `enforce_crlf`.
+    ///
+    /// Default: detect
     pub line_ending: Option<LineEndingSetting>,
     /// How to perform a buffer format.
     ///
@@ -921,14 +930,21 @@ pub enum FormatOnSave {
     strum::VariantArray,
     strum::VariantNames,
 )]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum LineEndingSetting {
-    /// Preserve the existing line endings of the file.
-    Auto,
-    /// Normalize line endings to LF (`\n`) on save.
-    Lf,
-    /// Normalize line endings to CRLF (`\r\n`) on save.
-    Crlf,
+    /// Preserve the existing line endings of the file. New files use the
+    /// platform default line ending.
+    Detect,
+    /// Use LF for new files and files with no existing line-ending
+    /// convention, while preserving existing LF or CRLF files.
+    PreferLf,
+    /// Use CRLF for new files and files with no existing line-ending
+    /// convention, while preserving existing LF or CRLF files.
+    PreferCrlf,
+    /// Normalize line endings to LF (`\n`) during format and save.
+    EnforceLf,
+    /// Normalize line endings to CRLF (`\r\n`) during format and save.
+    EnforceCrlf,
 }
 
 /// Controls which formatters should be used when formatting code.

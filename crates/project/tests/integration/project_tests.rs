@@ -320,7 +320,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     assert_eq!(settings_a.hard_tabs, true);
     assert_eq!(settings_a.ensure_final_newline_on_save, true);
     assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
-    assert_eq!(settings_a.line_ending, LineEndingSetting::Lf);
+    assert_eq!(settings_a.line_ending, LineEndingSetting::EnforceLf);
     assert_eq!(settings_a.preferred_line_length, 120);
 
     // .editorconfig in b/ overrides .editorconfig in root
@@ -6424,80 +6424,260 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_line_ending_normalization_on_format(cx: &mut gpui::TestAppContext) {
+async fn test_line_ending_user_settings_on_format(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/dir"),
-        json!({
-            ".editorconfig": "root = true\n[*.rs]\nend_of_line = lf\n",
-            "crlf_file.rs": "one\r\ntwo\r\nthree\r\n",
-            "lf_file.rs": "one\ntwo\nthree\n",
-        }),
-    )
-    .await;
+    let cases = [
+        (
+            "default",
+            None,
+            [
+                ("/dir/crlf_file.rs", LineEnding::Windows),
+                ("/dir/lf_file.rs", LineEnding::Unix),
+                ("/dir/no_newline.rs", LineEnding::default()),
+            ],
+        ),
+        (
+            "detect",
+            Some(LineEndingSetting::Detect),
+            [
+                ("/dir/crlf_file.rs", LineEnding::Windows),
+                ("/dir/lf_file.rs", LineEnding::Unix),
+                ("/dir/no_newline.rs", LineEnding::default()),
+            ],
+        ),
+        (
+            "prefer_lf",
+            Some(LineEndingSetting::PreferLf),
+            [
+                ("/dir/crlf_file.rs", LineEnding::Windows),
+                ("/dir/lf_file.rs", LineEnding::Unix),
+                ("/dir/no_newline.rs", LineEnding::Unix),
+            ],
+        ),
+        (
+            "prefer_crlf",
+            Some(LineEndingSetting::PreferCrlf),
+            [
+                ("/dir/crlf_file.rs", LineEnding::Windows),
+                ("/dir/lf_file.rs", LineEnding::Unix),
+                ("/dir/no_newline.rs", LineEnding::Windows),
+            ],
+        ),
+        (
+            "enforce_lf",
+            Some(LineEndingSetting::EnforceLf),
+            [
+                ("/dir/crlf_file.rs", LineEnding::Unix),
+                ("/dir/lf_file.rs", LineEnding::Unix),
+                ("/dir/no_newline.rs", LineEnding::Unix),
+            ],
+        ),
+        (
+            "enforce_crlf",
+            Some(LineEndingSetting::EnforceCrlf),
+            [
+                ("/dir/crlf_file.rs", LineEnding::Windows),
+                ("/dir/lf_file.rs", LineEnding::Windows),
+                ("/dir/no_newline.rs", LineEnding::Windows),
+            ],
+        ),
+    ];
 
-    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    for (case_name, line_ending_setting, expected_line_endings) in cases {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "crlf_file.rs": "one\r\ntwo\r\nthree\r\n",
+                "lf_file.rs": "one\ntwo\nthree\n",
+                "no_newline.rs": "single line",
+            }),
+        )
+        .await;
 
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
 
-    cx.executor().run_until_parked();
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.line_ending = line_ending_setting;
+                });
+            });
+        });
+        cx.executor().run_until_parked();
 
-    let buffer = project
-        .update(cx, |p, cx| {
-            p.open_local_buffer(path!("/dir/crlf_file.rs"), cx)
-        })
-        .await
-        .unwrap();
+        assert_line_endings_after_format(cx, &project, case_name, &expected_line_endings).await;
+    }
+}
 
-    // The buffer detected CRLF line endings on open.
-    buffer.update(cx, |buffer, _| {
-        assert_eq!(buffer.line_ending(), LineEnding::Windows);
-    });
+#[gpui::test]
+async fn test_line_ending_editorconfig_on_format_and_save(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
 
-    // Format the buffer, which triggers line ending normalization via editorconfig.
-    let mut buffers = HashSet::default();
-    buffers.insert(buffer.clone());
-    project
-        .update(cx, |project, cx| {
-            project.format(
-                buffers,
-                project::lsp_store::LspFormatTarget::Buffers,
-                false,
-                project::lsp_store::FormatTrigger::Save,
-                cx,
+    let cases = [
+        (
+            "editorconfig lf",
+            "lf",
+            "/dir/crlf_file.rs",
+            LineEnding::Windows,
+            [
+                ("/dir/crlf_file.rs", LineEnding::Unix),
+                ("/dir/lf_file.rs", LineEnding::Unix),
+                ("/dir/no_newline.rs", LineEnding::Unix),
+            ],
+            "one\ntwo\nthree\n",
+        ),
+        (
+            "editorconfig crlf",
+            "crlf",
+            "/dir/lf_file.rs",
+            LineEnding::Unix,
+            [
+                ("/dir/crlf_file.rs", LineEnding::Windows),
+                ("/dir/lf_file.rs", LineEnding::Windows),
+                ("/dir/no_newline.rs", LineEnding::Windows),
+            ],
+            "one\r\ntwo\r\nthree\r\n",
+        ),
+    ];
+
+    for (
+        case_name,
+        editorconfig_end_of_line,
+        buffer_path,
+        initial_line_ending,
+        expected_line_endings,
+        expected_saved_contents,
+    ) in cases
+    {
+        let file_system = FakeFs::new(cx.executor());
+        file_system
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    ".editorconfig": format!("root = true\n[*.rs]\nend_of_line = {editorconfig_end_of_line}\n"),
+                    "crlf_file.rs": "one\r\ntwo\r\nthree\r\n",
+                    "lf_file.rs": "one\ntwo\nthree\n",
+                    "no_newline.rs": "single line",
+                }),
             )
-        })
-        .await
-        .unwrap();
+            .await;
 
-    // The buffer's line ending was normalized to LF by the editorconfig setting.
-    buffer.update(cx, |buffer, _| {
-        assert_eq!(buffer.line_ending(), LineEnding::Unix);
-    });
+        let project = Project::test(file_system.clone(), [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        cx.executor().run_until_parked();
 
-    // Save the buffer and verify the file on disk uses LF.
-    project
-        .update(cx, |project, cx| project.save_buffer(buffer, cx))
-        .await
-        .unwrap();
-    assert_eq!(
-        fs.load(path!("/dir/crlf_file.rs").as_ref()).await.unwrap(),
-        "one\ntwo\nthree\n",
-    );
+        let buffer = project
+            .update(cx, |project, cx| project.open_local_buffer(buffer_path, cx))
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, _| {
+            assert_eq!(buffer.line_ending(), initial_line_ending);
+        });
 
-    // Verify that a file already using LF is unchanged.
-    let lf_buffer = project
-        .update(cx, |p, cx| {
-            p.open_local_buffer(path!("/dir/lf_file.rs"), cx)
-        })
-        .await
-        .unwrap();
-    lf_buffer.update(cx, |buffer, _| {
-        assert_eq!(buffer.line_ending(), LineEnding::Unix);
-    });
+        assert_line_endings_after_format(cx, &project, case_name, &expected_line_endings).await;
+
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer, cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            file_system.load(buffer_path.as_ref()).await.unwrap(),
+            expected_saved_contents,
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_line_ending_initialization_for_new_buffers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let cases = [
+        (Some(LineEndingSetting::Detect), LineEnding::default()),
+        (Some(LineEndingSetting::PreferLf), LineEnding::Unix),
+        (Some(LineEndingSetting::PreferCrlf), LineEnding::Windows),
+        (Some(LineEndingSetting::EnforceLf), LineEnding::Unix),
+        (Some(LineEndingSetting::EnforceCrlf), LineEnding::Windows),
+    ];
+
+    for (line_ending_setting, expected_line_ending) in cases {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({})).await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.line_ending = line_ending_setting;
+                });
+            });
+        });
+        cx.executor().run_until_parked();
+
+        let created_buffer = project
+            .update(cx, |project, cx| project.create_buffer(None, false, cx))
+            .unwrap()
+            .await;
+        created_buffer.update(cx, |buffer, _| {
+            assert_eq!(buffer.line_ending(), expected_line_ending);
+        });
+
+        let local_buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("single line", None, false, cx)
+        });
+        local_buffer.update(cx, |buffer, _| {
+            assert_eq!(buffer.line_ending(), expected_line_ending);
+        });
+
+        let opened_missing_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/new_file.rs"), cx)
+            })
+            .await
+            .unwrap();
+        opened_missing_buffer.update(cx, |buffer, _| {
+            assert_eq!(buffer.line_ending(), expected_line_ending);
+        });
+    }
+}
+
+async fn assert_line_endings_after_format(
+    cx: &mut gpui::TestAppContext,
+    project: &Entity<Project>,
+    case_name: &str,
+    expected_line_endings: &[(&str, LineEnding)],
+) {
+    for (path, expected_line_ending) in expected_line_endings {
+        let buffer = project
+            .update(cx, |p, cx| p.open_local_buffer(path, cx))
+            .await
+            .unwrap();
+        let mut buffers = HashSet::default();
+        buffers.insert(buffer.clone());
+        project
+            .update(cx, |project, cx| {
+                project.format(
+                    buffers,
+                    project::lsp_store::LspFormatTarget::Buffers,
+                    false,
+                    project::lsp_store::FormatTrigger::Save,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, _| {
+            assert_eq!(
+                buffer.line_ending(),
+                *expected_line_ending,
+                "unexpected line ending for {path} in {case_name}"
+            );
+        });
+    }
 }
 
 #[gpui::test]

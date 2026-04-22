@@ -1620,35 +1620,53 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 ## Line Ending
 
-- Description: The line ending style to use when saving the buffer. When `auto` is used, the file's existing line endings are preserved. Setting `lf` or `crlf` normalizes line endings on every save, matching the behavior of `remove_trailing_whitespace_on_save` and `ensure_final_newline_on_save`. The [`.editorconfig`](https://editorconfig.org) `end_of_line` property is also honored when present and overrides this setting.
+- Description: How line endings should be handled for new files and during format and save. This can be specified on a per-language basis.
 - Setting: `line_ending`
-- Default: `"auto"`
+- Default: `detect`
 
 **Options**
 
-1. Preserve the file's existing line endings:
+1. To detect existing line endings and otherwise use the platform default (`lf` on Unix, `crlf` on Windows), set it to `detect`:
 
-```json
+```json [settings]
 {
-  "line_ending": "auto"
+  "line_ending": "detect"
 }
 ```
 
-2. Normalize to LF (`\n`) on save:
+2. To prefer LF (`\n`) for new files and files with no existing line ending, use `prefer_lf`:
 
-```json
+```json [settings]
 {
-  "line_ending": "lf"
+  "line_ending": "prefer_lf"
 }
 ```
 
-3. Normalize to CRLF (`\r\n`) on save:
+3. To prefer CRLF (`\r\n`) for new files and files with no existing line ending, use `prefer_crlf`:
 
-```json
+```json [settings]
 {
-  "line_ending": "crlf"
+  "line_ending": "prefer_crlf"
 }
 ```
+
+4. To enforce LF (`\n`) during format and save, use `enforce_lf`:
+
+```json [settings]
+{
+  "line_ending": "enforce_lf"
+}
+```
+
+5. To enforce CRLF (`\r\n`) during format and save, use `enforce_crlf`:
+
+```json [settings]
+{
+  "line_ending": "enforce_crlf"
+}
+```
+
+The [`.editorconfig`](https://editorconfig.org) `end_of_line` property overrides this setting and behaves like `enforce_lf` or `enforce_crlf`.
 
 ## Expand Excerpt Lines
 
