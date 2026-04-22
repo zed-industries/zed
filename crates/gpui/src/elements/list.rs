@@ -2014,6 +2014,48 @@ mod test {
         );
     }
 
+    #[gpui::test]
+    fn test_follow_tail_reengages_after_scrollbar_disengagement(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        // 10 items × 50px = 500px total, 200px viewport, scroll_max = 300px.
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(50.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| cx.new(|_| TestView(state.clone())));
+
+        state.set_follow_mode(FollowMode::Tail);
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        assert!(state.is_following_tail());
+
+        // Drag the scrollbar up to the middle — follow_tail should suspend.
+        state.set_offset_from_scrollbar(point(px(0.), px(150.)));
+        assert!(!state.is_following_tail());
+
+        // Drag the scrollbar back to the bottom — follow_tail should re-engage
+        // on the next paint.
+        state.set_offset_from_scrollbar(point(px(0.), px(300.)));
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.into_any_element()
+        });
+        assert!(
+            state.is_following_tail(),
+            "follow_tail should re-engage after scrolling back to the bottom via the scrollbar"
+        );
+    }
+
     /// Calling `set_follow_mode(FollowState::Normal)` or dragging the scrollbar should
     /// fully disengage follow_tail — clearing any suspended state so
     /// follow_tail won’t auto-re-engage.
