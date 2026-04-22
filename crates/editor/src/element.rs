@@ -2537,7 +2537,7 @@ impl EditorElement {
 
         let icon_size = ui::IconSize::XSmall;
         let mut button = self.editor.update(cx, |editor, cx| {
-            if !editor.has_available_code_actions() {
+            if !editor.has_available_code_actions_for_selection() {
                 return None;
             }
             let active = editor
