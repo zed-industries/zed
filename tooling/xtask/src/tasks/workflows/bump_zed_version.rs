@@ -236,11 +236,7 @@ fn create_preview_branch(
                 &token,
             ))
             .add_step(commit_step)
-            .add_step(steps::CreateTagStep::new(
-                &outputs.preview_tag,
-                &commit_sha,
-                &token,
-            )),
+            .add_step(steps::create_tag(&outputs.preview_tag, &commit_sha, &token)),
     )
 }
 
@@ -289,6 +285,6 @@ fn promote_to_stable(
             .add_step(read_version_step)
             .add_step(write_channel)
             .add_step(commit_step)
-            .add_step(steps::CreateTagStep::new(&stable_tag, &commit_sha, &token)),
+            .add_step(steps::create_tag(&stable_tag, &commit_sha, &token)),
     )
 }

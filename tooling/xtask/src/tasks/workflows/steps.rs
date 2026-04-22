@@ -704,27 +704,70 @@ impl From<BotCommitStep> for Step<Use> {
     }
 }
 
-pub(crate) struct CreateTagStep {
+pub(crate) fn create_tag(
+    tag_name: impl ToString,
+    sha: impl ToString,
+    token: &StepOutput,
+) -> impl Into<Step<Use>> {
+    CreateOrUpdateTag {
+        operation: TagOperation::Create,
+        job_name: function_name(0),
+        tag_name: tag_name.to_string(),
+        sha: sha.to_string(),
+        token: token.to_string(),
+    }
+}
+
+pub(crate) fn update_tag(
+    tag_name: impl ToString,
+    sha: impl ToString,
+    token: &StepOutput,
+    force: bool,
+) -> impl Into<Step<Use>> {
+    CreateOrUpdateTag {
+        operation: TagOperation::Update { force },
+        job_name: function_name(0),
+        tag_name: tag_name.to_string(),
+        sha: sha.to_string(),
+        token: token.to_string(),
+    }
+}
+
+pub(crate) enum TagOperation {
+    Create,
+    Update { force: bool },
+}
+
+pub(crate) struct CreateOrUpdateTag {
+    operation: TagOperation,
+    job_name: String,
     tag_name: String,
     sha: String,
     token: String,
 }
 
-impl CreateTagStep {
-    pub fn new(tag_name: impl ToString, sha: impl ToString, token: &StepOutput) -> Self {
-        Self {
-            tag_name: tag_name.to_string(),
-            sha: sha.to_string(),
-            token: token.to_string(),
-        }
-    }
-}
+impl From<CreateOrUpdateTag> for Step<Use> {
+    fn from(op: CreateOrUpdateTag) -> Self {
+        let script = indoc::formatdoc! {r#"
+            github.rest.git.{operation}({{
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: 'refs/tags/{tag_name}',
+                sha: '{sha}'{force_line}
+            }})
+            "#,
+            operation = match op.operation {
+                TagOperation::Create => "createRef",
+                TagOperation::Update { .. } => "updateRef",
+            },
+            tag_name = op.tag_name,
+            sha = op.sha,
+            force_line = matches!(op.operation, TagOperation::Update { force: true })
+                .then_some(",\nforce: true")
+                .unwrap_or_default()
+        };
 
-impl From<CreateTagStep> for Step<Use> {
-    fn from(step: CreateTagStep) -> Self {
-        let tag_name = &step.tag_name;
-        let sha = &step.sha;
-        Step::new("steps::create_git_tag")
+        Step::new(op.job_name)
             .uses(
                 "actions",
                 "github-script",
@@ -732,18 +775,8 @@ impl From<CreateTagStep> for Step<Use> {
             )
             .with(
                 Input::default()
-                    .add(
-                        "script",
-                        indoc::formatdoc! {r#"
-                            github.rest.git.createRef({{
-                                owner: context.repo.owner,
-                                repo: context.repo.repo,
-                                ref: 'refs/tags/{tag_name}',
-                                sha: '{sha}'
-                            }})
-                        "#},
-                    )
-                    .add("github-token", step.token),
+                    .add("script", script)
+                    .add("github-token", op.token),
             )
     }
 }

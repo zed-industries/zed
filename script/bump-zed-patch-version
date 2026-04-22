@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+set -eu
+
+usage() {
+  echo "Usage: $0 [--retag] <branch>"
+  echo ""
+  echo "Triggers the bump_patch_version workflow."
+  echo ""
+  echo "Arguments:"
+  echo "  branch    Release branch name (e.g. v0.180.x)"
+  echo ""
+  echo "Flags:"
+  echo "  --retag   Re-tag the current version instead of bumping"
+  exit 1
+}
+
+retag=false
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --retag) retag=true; shift ;;
+    *) echo "error: unknown flag '$1'" >&2; usage ;;
+  esac
+done
+
+branch="${1:-}"
+
+if [[ -z "$branch" ]]; then
+  usage
+fi
+
+which gh > /dev/null 2>&1 || {
+  echo "error: GitHub CLI (gh) is required but not installed." >&2
+  echo "Install it with: brew install gh" >&2
+  exit 1
+}
+
+echo "Triggering bump_patch_version workflow:"
+echo "  branch: $branch"
+echo "  retag:  $retag"
+echo ""
+
+gh workflow run bump_patch_version.yml \
+  -f branch="$branch" \
+  -f retag="$retag"
+
+echo ""
+echo "Workflow triggered. Monitor progress at:"
+echo "  https://github.com/zed-industries/zed/actions/workflows/bump_patch_version.yml"

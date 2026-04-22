@@ -8,6 +8,10 @@ on:
         description: Branch name to run on
         required: true
         type: string
+      retag:
+        description: Re-tag the current version instead of bumping (force-updates the tag)
+        type: boolean
+        default: 'false'
 jobs:
   run_bump_patch_version:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -25,12 +29,8 @@ jobs:
         clean: false
         ref: ${{ inputs.branch }}
         token: ${{ steps.generate-token.outputs.token }}
-    - name: steps::install_cargo_edit
-      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
-      with:
-        tool: cargo-edit
-    - id: bump-version
-      name: bump_patch_version::run_bump_patch_version::bump_version
+    - id: channel
+      name: bump_patch_version::run_bump_patch_version::read_channel
       run: |
         channel="$(cat crates/zed/RELEASE_CHANNEL)"
 
@@ -42,30 +42,71 @@ jobs:
             tag_suffix="-pre"
             ;;
           *)
-            echo "this must be run on either of stable|preview release branches" >&2
+            echo "::error::must be run on a stable or preview release branch"
             exit 1
             ;;
         esac
-        version="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
-        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+        echo "channel=$channel" >> "$GITHUB_OUTPUT"
         echo "tag_suffix=$tag_suffix" >> "$GITHUB_OUTPUT"
+    - name: bump_patch_version::run_bump_patch_version
+      if: inputs.retag != true
+      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
+      with:
+        tool: cargo-edit
+    - name: bump_patch_version::run_bump_patch_version::bump_version
+      if: inputs.retag != true
+      run: cargo set-version -p zed --bump patch
+    - id: version
+      name: bump_patch_version::run_bump_patch_version::resolve_version
+      run: |
+        version=$(script/get-crate-version zed)
+        {
+            echo "version=$version"
+            echo "head_sha=$(git rev-parse HEAD)"
+        } >> "$GITHUB_OUTPUT"
+    - name: bump_patch_version::run_bump_patch_version::verify_no_existing_release
+      run: |
+        released=$(script/get-released-version "$CHANNEL" "$VERSION")
+        if [[ "$released" == "$VERSION" ]]; then
+            echo "::error::version $VERSION is already released on $CHANNEL"
+            exit 1
+        fi
+      env:
+        CHANNEL: ${{ steps.channel.outputs.channel }}
+        VERSION: ${{ steps.version.outputs.version }}
     - id: commit
       name: steps::bot_commit
+      if: inputs.retag != true
       uses: IAreKyleW00t/verified-bot-commit@126a6a11889ab05bcff72ec2403c326cd249b84c
       with:
-        message: Bump to ${{ steps.bump-version.outputs.version }} for @${{ github.actor }}
+        message: Bump to ${{ steps.version.outputs.version }} for @${{ github.actor }}
         ref: refs/heads/${{ inputs.branch }}
         files: '**'
         token: ${{ steps.generate-token.outputs.token }}
-    - name: steps::create_git_tag
+    - name: steps::create_tag::<&alloc[d66a2b52346aa9d5]::string::String, &xtask[b6d01c04fc3244ef]::tasks::workflows::vars::StepOutput>
+      if: inputs.retag != true
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         script: |
           github.rest.git.createRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              ref: 'refs/tags/v${{ steps.bump-version.outputs.version }}${{ steps.bump-version.outputs.tag_suffix }}',
+              ref: 'refs/tags/v${{ steps.version.outputs.version }}${{ steps.channel.outputs.tag_suffix }}',
               sha: '${{ steps.commit.outputs.commit }}'
+          })
+        github-token: ${{ steps.generate-token.outputs.token }}
+    - name: steps::update_tag::<&alloc[d66a2b52346aa9d5]::string::String, &xtask[b6d01c04fc3244ef]::tasks::workflows::vars::StepOutput>
+      if: inputs.retag == true
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+      with:
+        script: |
+          github.rest.git.updateRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/v${{ steps.version.outputs.version }}${{ steps.channel.outputs.tag_suffix }}',
+              sha: '${{ steps.version.outputs.head_sha }}',
+          force: true
           })
         github-token: ${{ steps.generate-token.outputs.token }}
 concurrency:
