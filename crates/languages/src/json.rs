@@ -5,7 +5,10 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use gpui::{App, AsyncApp, Entity, Task};
-use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
+use http_client::{
+    HttpClient as _,
+    github::{GitHubLspBinaryVersion, latest_github_release},
+};
 use language::{
     Buffer, ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
     LspAdapterDelegate, LspInstaller, Toolchain,
