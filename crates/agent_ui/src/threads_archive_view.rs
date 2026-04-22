@@ -31,8 +31,9 @@ use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::{
-    AgentThreadStatus, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tab,
-    ThreadItem, Tooltip, WithScrollbar, prelude::*, utils::platform_title_bar_height,
+    AgentThreadStatus, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, ScrollAxes,
+    Scrollbars, Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
+    utils::platform_title_bar_height,
 };
 use ui_input::ErasedEditor;
 use util::ResultExt;
@@ -914,6 +915,7 @@ impl ThreadsArchiveView {
             )
             .child(
                 h_flex()
+                    .gap_1()
                     .child(
                         IconButton::new("thread-import", IconName::Download)
                             .icon_size(IconSize::Small)
@@ -1011,7 +1013,13 @@ impl Render for ThreadsArchiveView {
                     .flex_1()
                     .size_full(),
                 )
-                .vertical_scrollbar_for(&self.list_state, window, cx)
+                .custom_scrollbars(
+                    Scrollbars::new(ScrollAxes::Vertical)
+                        .tracked_scroll_handle(&self.list_state)
+                        .width_sm(),
+                    window,
+                    cx,
+                )
                 .into_any_element()
         };
 
