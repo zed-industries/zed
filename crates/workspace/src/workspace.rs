@@ -3668,12 +3668,20 @@ impl Workspace {
                 };
 
                 let this = this.clone();
-                let abs_path: Arc<Path> = SanitizedPath::new(&abs_path).as_path().into();
-                let fs = fs.clone();
                 let pane = pane.clone();
                 let task = cx.spawn(async move |cx| {
-                    let (_worktree, project_path) = project_path?;
-                    if fs.is_dir(&abs_path).await {
+                    let (worktree, project_path) = project_path?;
+                    let is_directory = worktree.read_with(cx, |worktree, _| {
+                        if project_path.path.as_unix_str().is_empty() {
+                            worktree.root_entry().is_some_and(|entry| entry.is_dir())
+                        } else {
+                            worktree
+                                .entry_for_path(&project_path.path)
+                                .is_some_and(|entry| entry.is_dir())
+                        }
+                    });
+
+                    if is_directory {
                         // Opening a directory should not race to update the active entry.
                         // We'll select/reveal a deterministic final entry after all paths finish opening.
                         None
