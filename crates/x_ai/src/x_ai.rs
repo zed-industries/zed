@@ -1,5 +1,3 @@
-pub mod completion;
-
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
