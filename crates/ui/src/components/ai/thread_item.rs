@@ -387,6 +387,7 @@ impl RenderOnce for ThreadItem {
             .cursor_pointer()
             .group("thread-item")
             .relative()
+            .flex_shrink_0()
             .overflow_hidden()
             .w_full()
             .py_1()
