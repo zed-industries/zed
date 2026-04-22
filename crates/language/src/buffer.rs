@@ -8,7 +8,7 @@ use crate::{
     outline::OutlineItem,
     row_chunk::RowChunks,
     syntax_map::{
-        MAX_CONTEXT_BYTES, SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures,
+        MAX_BYTES_TO_QUERY, SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures,
         SyntaxMapMatch, SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
@@ -3441,7 +3441,7 @@ impl BufferSnapshot {
             range.clone(),
             &self.text,
             TreeSitterOptions {
-                max_context_bytes: Some(MAX_CONTEXT_BYTES),
+                max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
                 max_start_depth: None,
             },
             |grammar| Some(&grammar.indents_config.as_ref()?.query),
@@ -3722,20 +3722,12 @@ impl BufferSnapshot {
 
     #[ztracing::instrument(skip_all)]
     fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures<'_>, Vec<HighlightMap>) {
-        let captures = self.syntax.captures_with_options(
-            range,
-            &self.text,
-            TreeSitterOptions {
-                max_context_bytes: Some(1024),
-                max_start_depth: None,
-            },
-            |grammar| {
-                grammar
-                    .highlights_config
-                    .as_ref()
-                    .map(|config| &config.query)
-            },
-        );
+        let captures = self.syntax.captures(range, &self.text, |grammar| {
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| &config.query)
+        });
         let highlight_maps = captures
             .grammars()
             .iter()
@@ -4628,7 +4620,7 @@ impl BufferSnapshot {
                 chunk_range.clone(),
                 &self.text,
                 TreeSitterOptions {
-                    max_context_bytes: Some(MAX_CONTEXT_BYTES),
+                    max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
                     max_start_depth: None,
                 },
                 |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
