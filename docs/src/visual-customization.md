@@ -105,7 +105,7 @@ To disable this behavior use:
   // "outline_panel": {"button": false },
   // "collaboration_panel": {"button": false },
   // "git_panel": {"button": false },
-  // "notification_panel": {"button": false },
+
   // "agent": {"button": false },
   // "debugger": {"button": false },
   // "diagnostics": {"button": false },
@@ -118,7 +118,7 @@ To disable this behavior use:
 ```json [settings]
   // Control which items are shown/hidden in the title bar
   "title_bar": {
-    "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
+    "show_branch_status_icon": false, // Show git status on branch icon
     "show_branch_name": true,       // Show/hide branch name
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
@@ -470,6 +470,12 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     },
     // Sort order for entries (directories_first, mixed, files_first)
     "sort_mode": "directories_first",
+    // Whether to sort file and folder names case-sensitively.
+    // "default": Case-insensitive natural sort, lowercase preferred in ties.
+    // "upper":   Uppercase names grouped before lowercase, natural sort within.
+    // "lower":   Lowercase names grouped before uppercase, natural sort within.
+    // "unicode":  Pure Unicode codepoint comparison, no case folding.
+    "sort_order": "default",
     // Whether to hide the root entry when only one folder is open in the window;
     // this also affects how file paths appear in the file finder history.
     "hide_root": false,
@@ -588,16 +594,6 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "dock": "left", // Where to dock: left, right
     "default_width": 240 // Default width of the collaboration panel.
   },
-  "show_call_status_icon": true, // Shown call status in the OS status bar.
-
-  // Notification Panel
-  "notification_panel": {
-    // Whether to show the notification panel button in the status bar.
-    "button": true,
-    // Where to dock the notification panel. Can be 'left' or 'right'.
-    "dock": "right",
-    // Default width of the notification panel.
-    "default_width": 380
-  }
+  "show_call_status_icon": true // Shown call status in the OS status bar.
 }
 ```

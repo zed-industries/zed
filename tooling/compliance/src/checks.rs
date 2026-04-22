@@ -1,25 +1,26 @@
-use std::{fmt, ops::Not as _};
+use std::{fmt, ops::Not as _, rc::Rc};
 
 use itertools::Itertools as _;
 
 use crate::{
-    git::{CommitDetails, CommitList},
+    git::{CommitDetails, CommitList, ZED_ZIPPY_LOGIN},
     github::{
-        CommitAuthor, GitHubClient, GitHubUser, GithubLogin, PullRequestComment, PullRequestData,
-        PullRequestReview, ReviewState,
+        CommitAuthor, GithubApiClient, GithubLogin, PullRequestComment, PullRequestData,
+        PullRequestReview, Repository, ReviewState,
     },
     report::Report,
 };
 
 const ZED_ZIPPY_COMMENT_APPROVAL_PATTERN: &str = "@zed-zippy approve";
 const ZED_ZIPPY_GROUP_APPROVAL: &str = "@zed-industries/approved";
+const EXPECTED_VERSION_BUMP_LOC: u64 = 2;
 
 #[derive(Debug)]
 pub enum ReviewSuccess {
     ApprovingComment(Vec<PullRequestComment>),
     CoAuthored(Vec<CommitAuthor>),
-    ExternalMergedContribution { merged_by: GitHubUser },
     PullRequestReviewed(Vec<PullRequestReview>),
+    ZedZippyCommit(GithubLogin),
 }
 
 impl ReviewSuccess {
@@ -35,9 +36,7 @@ impl ReviewSuccess {
                 .iter()
                 .map(|comment| format!("@{}", comment.user.login))
                 .collect_vec(),
-            Self::ExternalMergedContribution { merged_by } => {
-                vec![format!("@{}", merged_by.login)]
-            }
+            Self::ZedZippyCommit(login) => vec![login.to_string()],
         };
 
         let reviewers = reviewers.into_iter().unique().collect_vec();
@@ -60,8 +59,8 @@ impl fmt::Display for ReviewSuccess {
             Self::ApprovingComment(_) => {
                 formatter.write_str("Approved by an organization approval comment")
             }
-            Self::ExternalMergedContribution { .. } => {
-                formatter.write_str("External merged contribution")
+            Self::ZedZippyCommit(_) => {
+                formatter.write_str("Fully untampered automated version bump commit")
             }
         }
     }
@@ -72,7 +71,7 @@ pub enum ReviewFailure {
     // todo: We could still query the GitHub API here to search for one
     NoPullRequestFound,
     Unreviewed,
-    UnableToDetermineReviewer,
+    UnexpectedZippyAction(VersionBumpFailure),
     Other(anyhow::Error),
 }
 
@@ -82,8 +81,46 @@ impl fmt::Display for ReviewFailure {
             Self::NoPullRequestFound => formatter.write_str("No pull request found"),
             Self::Unreviewed => formatter
                 .write_str("No qualifying organization approval found for the pull request"),
-            Self::UnableToDetermineReviewer => formatter.write_str("Could not determine reviewer"),
+            Self::UnexpectedZippyAction(failure) => {
+                write!(formatter, "Validating Zed Zippy change failed: {failure}")
+            }
             Self::Other(error) => write!(formatter, "Failed to inspect review state: {error}"),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum VersionBumpFailure {
+    NoMentionInTitle,
+    MissingCommitData,
+    AuthorMismatch,
+    UnexpectedCoAuthors,
+    NotSigned,
+    InvalidSignature,
+    UnexpectedLineChanges { additions: u64, deletions: u64 },
+}
+
+impl fmt::Display for VersionBumpFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoMentionInTitle => formatter.write_str("No @-mention found in commit title"),
+            Self::MissingCommitData => formatter.write_str("No commit data found on GitHub"),
+            Self::AuthorMismatch => {
+                formatter.write_str("GitHub author does not match bot identity")
+            }
+            Self::UnexpectedCoAuthors => formatter.write_str("Commit has unexpected co-authors"),
+            Self::NotSigned => formatter.write_str("Commit is not signed"),
+            Self::InvalidSignature => formatter.write_str("Commit signature is invalid"),
+            Self::UnexpectedLineChanges {
+                additions,
+                deletions,
+            } => {
+                write!(
+                    formatter,
+                    "Unexpected line changes ({additions} additions, {deletions} deletions, \
+                     expected {EXPECTED_VERSION_BUMP_LOC} each)"
+                )
+            }
         }
     }
 }
@@ -96,28 +133,50 @@ impl<E: Into<anyhow::Error>> From<E> for ReviewFailure {
     }
 }
 
-pub struct Reporter<'a> {
+pub struct Reporter {
     commits: CommitList,
-    github_client: &'a GitHubClient,
+    github_client: Rc<dyn GithubApiClient>,
 }
 
-impl<'a> Reporter<'a> {
-    pub fn new(commits: CommitList, github_client: &'a GitHubClient) -> Self {
+impl Reporter {
+    pub fn new(commits: CommitList, github_client: Rc<dyn GithubApiClient>) -> Self {
         Self {
             commits,
             github_client,
         }
     }
 
+    pub async fn result_for_commit(
+        commit: CommitDetails,
+        github_client: Rc<dyn GithubApiClient>,
+    ) -> ReviewResult {
+        Self::new(Default::default(), github_client)
+            .check_commit(&commit)
+            .await
+    }
+
     /// Method that checks every commit for compliance
-    async fn check_commit(&self, commit: &CommitDetails) -> Result<ReviewSuccess, ReviewFailure> {
+    pub async fn check_commit(
+        &self,
+        commit: &CommitDetails,
+    ) -> Result<ReviewSuccess, ReviewFailure> {
         let Some(pr_number) = commit.pr_number() else {
-            return Err(ReviewFailure::NoPullRequestFound);
+            if commit.author().is_zed_zippy() {
+                return self.check_zippy_version_bump(commit).await;
+            } else {
+                return Err(ReviewFailure::NoPullRequestFound);
+            }
         };
 
-        let pull_request = self.github_client.get_pull_request(pr_number).await?;
+        let pull_request = self
+            .github_client
+            .get_pull_request(&Repository::ZED, pr_number)
+            .await?;
 
-        if let Some(approval) = self.check_pull_request_approved(&pull_request).await? {
+        if let Some(approval) = self
+            .check_approving_pull_request_review(&pull_request)
+            .await?
+        {
             return Ok(approval);
         }
 
@@ -132,11 +191,73 @@ impl<'a> Reporter<'a> {
             return Ok(approval);
         }
 
-        // if let Some(approval) = self.check_external_merged_pr(pr_number).await? {
-        //     return Ok(approval);
-        // }
-
         Err(ReviewFailure::Unreviewed)
+    }
+
+    async fn check_zippy_version_bump(
+        &self,
+        commit: &CommitDetails,
+    ) -> Result<ReviewSuccess, ReviewFailure> {
+        let responsible_actor =
+            commit
+                .version_bump_mention()
+                .ok_or(ReviewFailure::UnexpectedZippyAction(
+                    VersionBumpFailure::NoMentionInTitle,
+                ))?;
+
+        let commit_data = self
+            .github_client
+            .get_commit_metadata(&Repository::ZED, &[commit.sha()])
+            .await?;
+
+        let authors = commit_data
+            .get(commit.sha())
+            .ok_or(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::MissingCommitData,
+            ))?;
+
+        if !authors
+            .primary_author()
+            .user()
+            .is_some_and(|login| login.as_str() == ZED_ZIPPY_LOGIN)
+        {
+            return Err(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::AuthorMismatch,
+            ));
+        }
+
+        if authors.co_authors().is_some() {
+            return Err(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::UnexpectedCoAuthors,
+            ));
+        }
+
+        let signature = authors
+            .signature()
+            .ok_or(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::NotSigned,
+            ))?;
+
+        if !signature.is_valid() {
+            return Err(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::InvalidSignature,
+            ));
+        }
+
+        if authors.additions() != EXPECTED_VERSION_BUMP_LOC
+            || authors.deletions() != EXPECTED_VERSION_BUMP_LOC
+        {
+            return Err(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::UnexpectedLineChanges {
+                    additions: authors.additions(),
+                    deletions: authors.deletions(),
+                },
+            ));
+        }
+
+        Ok(ReviewSuccess::ZedZippyCommit(GithubLogin::new(
+            responsible_actor.to_owned(),
+        )))
     }
 
     async fn check_commit_co_authors(
@@ -146,7 +267,7 @@ impl<'a> Reporter<'a> {
         if commit.co_authors().is_some()
             && let Some(commit_authors) = self
                 .github_client
-                .get_commit_authors([commit.sha()])
+                .get_commit_metadata(&Repository::ZED, &[commit.sha()])
                 .await?
                 .get(commit.sha())
                 .and_then(|authors| authors.co_authors())
@@ -156,7 +277,7 @@ impl<'a> Reporter<'a> {
                 if let Some(github_login) = co_author.user()
                     && self
                         .github_client
-                        .check_org_membership(github_login)
+                        .check_repo_write_permission(&Repository::ZED, github_login)
                         .await?
                 {
                     org_co_authors.push(co_author.clone());
@@ -172,38 +293,13 @@ impl<'a> Reporter<'a> {
         }
     }
 
-    #[allow(unused)]
-    async fn check_external_merged_pr(
-        &self,
-        pull_request: PullRequestData,
-    ) -> Result<Option<ReviewSuccess>, ReviewFailure> {
-        if let Some(user) = pull_request.user
-            && self
-                .github_client
-                .check_org_membership(&GithubLogin::new(user.login))
-                .await?
-                .not()
-        {
-            pull_request.merged_by.map_or(
-                Err(ReviewFailure::UnableToDetermineReviewer),
-                |merged_by| {
-                    Ok(Some(ReviewSuccess::ExternalMergedContribution {
-                        merged_by,
-                    }))
-                },
-            )
-        } else {
-            Ok(None)
-        }
-    }
-
-    async fn check_pull_request_approved(
+    async fn check_approving_pull_request_review(
         &self,
         pull_request: &PullRequestData,
     ) -> Result<Option<ReviewSuccess>, ReviewFailure> {
         let pr_reviews = self
             .github_client
-            .get_pull_request_reviews(pull_request.number)
+            .get_pull_request_reviews(&Repository::ZED, pull_request.number)
             .await?;
 
         if !pr_reviews.is_empty() {
@@ -214,12 +310,19 @@ impl<'a> Reporter<'a> {
                         .user
                         .as_ref()
                         .is_none_or(|pr_user| pr_user.login != github_login.login)
-                    && review
+                    && (review
                         .state
                         .is_some_and(|state| state == ReviewState::Approved)
+                        || review
+                            .body
+                            .as_deref()
+                            .is_some_and(Self::contains_approving_pattern))
                     && self
                         .github_client
-                        .check_org_membership(&GithubLogin::new(github_login.login.clone()))
+                        .check_repo_write_permission(
+                            &Repository::ZED,
+                            &GithubLogin::new(github_login.login.clone()),
+                        )
                         .await?
                 {
                     org_approving_reviews.push(review);
@@ -241,7 +344,7 @@ impl<'a> Reporter<'a> {
     ) -> Result<Option<ReviewSuccess>, ReviewFailure> {
         let other_comments = self
             .github_client
-            .get_pull_request_comments(pull_request.number)
+            .get_pull_request_comments(&Repository::ZED, pull_request.number)
             .await?;
 
         if !other_comments.is_empty() {
@@ -252,13 +355,16 @@ impl<'a> Reporter<'a> {
                     .user
                     .as_ref()
                     .is_some_and(|pr_author| pr_author.login != comment.user.login)
-                    && comment.body.as_ref().is_some_and(|body| {
-                        body.contains(ZED_ZIPPY_COMMENT_APPROVAL_PATTERN)
-                            || body.contains(ZED_ZIPPY_GROUP_APPROVAL)
-                    })
+                    && comment
+                        .body
+                        .as_deref()
+                        .is_some_and(Self::contains_approving_pattern)
                     && self
                         .github_client
-                        .check_org_membership(&GithubLogin::new(comment.user.login.clone()))
+                        .check_repo_write_permission(
+                            &Repository::ZED,
+                            &GithubLogin::new(comment.user.login.clone()),
+                        )
                         .await?
                 {
                     org_approving_comments.push(comment);
@@ -272,6 +378,10 @@ impl<'a> Reporter<'a> {
         } else {
             Ok(None)
         }
+    }
+
+    fn contains_approving_pattern(body: &str) -> bool {
+        body.contains(ZED_ZIPPY_COMMENT_APPROVAL_PATTERN) || body.contains(ZED_ZIPPY_GROUP_APPROVAL)
     }
 
     pub async fn generate_report(mut self) -> anyhow::Result<Report> {
@@ -306,30 +416,35 @@ mod tests {
     use std::rc::Rc;
     use std::str::FromStr;
 
-    use crate::git::{CommitDetails, CommitList, CommitSha};
+    use crate::git::{CommitDetails, CommitList, CommitSha, ZED_ZIPPY_EMAIL, ZED_ZIPPY_LOGIN};
     use crate::github::{
-        AuthorsForCommits, GitHubApiClient, GitHubClient, GitHubUser, GithubLogin,
-        PullRequestComment, PullRequestData, PullRequestReview, ReviewState,
+        CommitMetadataBySha, GithubApiClient, GithubLogin, GithubUser, PullRequestComment,
+        PullRequestData, PullRequestReview, Repository, ReviewState,
     };
 
-    use super::{Reporter, ReviewFailure, ReviewSuccess};
+    use super::{Reporter, ReviewFailure, ReviewSuccess, VersionBumpFailure};
 
-    struct MockGitHubApi {
+    struct MockGithubApi {
         pull_request: PullRequestData,
         reviews: Vec<PullRequestReview>,
         comments: Vec<PullRequestComment>,
-        commit_authors_json: serde_json::Value,
+        commit_metadata_json: serde_json::Value,
         org_members: Vec<String>,
     }
 
     #[async_trait::async_trait(?Send)]
-    impl GitHubApiClient for MockGitHubApi {
-        async fn get_pull_request(&self, _pr_number: u64) -> anyhow::Result<PullRequestData> {
+    impl GithubApiClient for MockGithubApi {
+        async fn get_pull_request(
+            &self,
+            _repo: &Repository<'_>,
+            _pr_number: u64,
+        ) -> anyhow::Result<PullRequestData> {
             Ok(self.pull_request.clone())
         }
 
         async fn get_pull_request_reviews(
             &self,
+            _repo: &Repository<'_>,
             _pr_number: u64,
         ) -> anyhow::Result<Vec<PullRequestReview>> {
             Ok(self.reviews.clone())
@@ -337,27 +452,34 @@ mod tests {
 
         async fn get_pull_request_comments(
             &self,
+            _repo: &Repository<'_>,
             _pr_number: u64,
         ) -> anyhow::Result<Vec<PullRequestComment>> {
             Ok(self.comments.clone())
         }
 
-        async fn get_commit_authors(
+        async fn get_commit_metadata(
             &self,
+            _repo: &Repository<'_>,
             _commit_shas: &[&CommitSha],
-        ) -> anyhow::Result<AuthorsForCommits> {
-            serde_json::from_value(self.commit_authors_json.clone()).map_err(Into::into)
+        ) -> anyhow::Result<CommitMetadataBySha> {
+            serde_json::from_value(self.commit_metadata_json.clone()).map_err(Into::into)
         }
 
-        async fn check_org_membership(&self, login: &GithubLogin) -> anyhow::Result<bool> {
+        async fn check_repo_write_permission(
+            &self,
+            _repo: &Repository<'_>,
+            login: &GithubLogin,
+        ) -> anyhow::Result<bool> {
             Ok(self
                 .org_members
                 .iter()
                 .any(|member| member == login.as_str()))
         }
 
-        async fn ensure_pull_request_has_label(
+        async fn add_label_to_issue(
             &self,
+            _repo: &Repository<'_>,
             _label: &str,
             _pr_number: u64,
         ) -> anyhow::Result<()> {
@@ -385,27 +507,60 @@ mod tests {
 
     fn review(login: &str, state: ReviewState) -> PullRequestReview {
         PullRequestReview {
-            user: Some(GitHubUser {
+            user: Some(GithubUser {
                 login: login.to_owned(),
             }),
             state: Some(state),
+            body: None,
         }
     }
 
     fn comment(login: &str, body: &str) -> PullRequestComment {
         PullRequestComment {
-            user: GitHubUser {
+            user: GithubUser {
                 login: login.to_owned(),
             },
             body: Some(body.to_owned()),
         }
     }
 
+    fn alice_author() -> serde_json::Value {
+        serde_json::json!({
+            "name": "Alice",
+            "email": "alice@test.com",
+            "user": { "login": "alice" }
+        })
+    }
+
+    fn bob_author() -> serde_json::Value {
+        serde_json::json!({
+            "name": "Bob",
+            "email": "bob@test.com",
+            "user": { "login": "bob" }
+        })
+    }
+
+    fn charlie_author() -> serde_json::Value {
+        serde_json::json!({
+            "name": "Charlie",
+            "email": "charlie@test.com",
+            "user": { "login": "charlie" }
+        })
+    }
+
+    fn zippy_author() -> serde_json::Value {
+        serde_json::json!({
+            "name": "Zed Zippy",
+            "email": ZED_ZIPPY_EMAIL,
+            "user": { "login": ZED_ZIPPY_LOGIN }
+        })
+    }
+
     struct TestScenario {
         pull_request: PullRequestData,
         reviews: Vec<PullRequestReview>,
         comments: Vec<PullRequestComment>,
-        commit_authors_json: serde_json::Value,
+        commit_metadata_json: serde_json::Value,
         org_members: Vec<String>,
         commit: CommitDetails,
     }
@@ -415,14 +570,15 @@ mod tests {
             Self {
                 pull_request: PullRequestData {
                     number: 1234,
-                    user: Some(GitHubUser {
+                    user: Some(GithubUser {
                         login: "alice".to_owned(),
                     }),
                     merged_by: None,
+                    labels: None,
                 },
                 reviews: vec![],
                 comments: vec![],
-                commit_authors_json: serde_json::json!({}),
+                commit_metadata_json: serde_json::json!({}),
                 org_members: vec![],
                 commit: make_commit(
                     "abc12345abc12345",
@@ -449,8 +605,8 @@ mod tests {
             self
         }
 
-        fn with_commit_authors_json(mut self, json: serde_json::Value) -> Self {
-            self.commit_authors_json = json;
+        fn with_commit_metadata_json(mut self, json: serde_json::Value) -> Self {
+            self.commit_metadata_json = json;
             self
         }
 
@@ -459,16 +615,49 @@ mod tests {
             self
         }
 
+        fn zippy_version_bump() -> Self {
+            Self {
+                pull_request: PullRequestData {
+                    number: 0,
+                    user: None,
+                    merged_by: None,
+                    labels: None,
+                },
+                reviews: vec![],
+                comments: vec![],
+                commit_metadata_json: serde_json::json!({
+                    "abc12345abc12345": {
+                        "author": zippy_author(),
+                        "authors": { "nodes": [] },
+                        "signature": {
+                            "isValid": true,
+                            "signer": { "login": ZED_ZIPPY_LOGIN }
+                        },
+                        "additions": 2,
+                        "deletions": 2
+                    }
+                }),
+                org_members: vec![],
+                commit: make_commit(
+                    "abc12345abc12345",
+                    "Zed Zippy",
+                    ZED_ZIPPY_EMAIL,
+                    "Bump to 0.230.2 for @cole-miller",
+                    "",
+                ),
+            }
+        }
+
         async fn run_scenario(self) -> Result<ReviewSuccess, ReviewFailure> {
-            let mock = MockGitHubApi {
+            let mock = MockGithubApi {
                 pull_request: self.pull_request,
                 reviews: self.reviews,
                 comments: self.comments,
-                commit_authors_json: self.commit_authors_json,
+                commit_metadata_json: self.commit_metadata_json,
                 org_members: self.org_members,
             };
-            let client = GitHubClient::new(Rc::new(mock));
-            let reporter = Reporter::new(CommitList::default(), &client);
+            let client = Rc::new(mock);
+            let reporter = Reporter::new(CommitList::default(), client);
             reporter.check_commit(&self.commit).await
         }
     }
@@ -582,18 +771,10 @@ mod tests {
     async fn comment_takes_precedence_over_co_author() {
         let result = TestScenario::single_commit()
             .with_comments(vec![comment("bob", "@zed-zippy approve")])
-            .with_commit_authors_json(serde_json::json!({
+            .with_commit_metadata_json(serde_json::json!({
                 "abc12345abc12345": {
-                    "author": {
-                        "name": "Alice",
-                        "email": "alice@test.com",
-                        "user": { "login": "alice" }
-                    },
-                    "authors": [{
-                        "name": "Charlie",
-                        "email": "charlie@test.com",
-                        "user": { "login": "charlie" }
-                    }]
+                    "author": alice_author(),
+                    "authors": { "nodes": [charlie_author()] }
                 }
             }))
             .with_commit(make_commit(
@@ -612,18 +793,10 @@ mod tests {
     #[tokio::test]
     async fn co_author_org_member_succeeds() {
         let result = TestScenario::single_commit()
-            .with_commit_authors_json(serde_json::json!({
+            .with_commit_metadata_json(serde_json::json!({
                 "abc12345abc12345": {
-                    "author": {
-                        "name": "Alice",
-                        "email": "alice@test.com",
-                        "user": { "login": "alice" }
-                    },
-                    "authors": [{
-                        "name": "Bob",
-                        "email": "bob@test.com",
-                        "user": { "login": "bob" }
-                    }]
+                    "author": alice_author(),
+                    "authors": { "nodes": [bob_author()] }
                 }
             }))
             .with_commit(make_commit(
@@ -643,5 +816,246 @@ mod tests {
     async fn no_reviews_no_comments_no_coauthors_is_unreviewed() {
         let result = TestScenario::single_commit().run_scenario().await;
         assert!(matches!(result, Err(ReviewFailure::Unreviewed)));
+    }
+
+    #[tokio::test]
+    async fn review_with_zippy_approval_body_is_accepted() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("bob", ReviewState::Other).with_body("@zed-zippy approve"),
+            ])
+            .with_org_members(vec!["bob"])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Ok(ReviewSuccess::PullRequestReviewed(_))));
+    }
+
+    #[tokio::test]
+    async fn review_with_group_approval_body_is_accepted() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("bob", ReviewState::Other).with_body("@zed-industries/approved"),
+            ])
+            .with_org_members(vec!["bob"])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Ok(ReviewSuccess::PullRequestReviewed(_))));
+    }
+
+    #[tokio::test]
+    async fn review_with_non_approving_body_is_not_accepted() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("bob", ReviewState::Other).with_body("looks good to me"),
+            ])
+            .with_org_members(vec!["bob"])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Err(ReviewFailure::Unreviewed)));
+    }
+
+    #[tokio::test]
+    async fn review_with_approving_body_from_external_user_is_not_accepted() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("bob", ReviewState::Other).with_body("@zed-zippy approve"),
+            ])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Err(ReviewFailure::Unreviewed)));
+    }
+
+    #[tokio::test]
+    async fn review_with_approving_body_from_pr_author_is_rejected() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("alice", ReviewState::Other).with_body("@zed-zippy approve"),
+            ])
+            .with_org_members(vec!["alice"])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Err(ReviewFailure::Unreviewed)));
+    }
+
+    #[tokio::test]
+    async fn zippy_version_bump_with_valid_signature_succeeds() {
+        let result = TestScenario::zippy_version_bump().run_scenario().await;
+        assert!(matches!(result, Ok(ReviewSuccess::ZedZippyCommit(_))));
+        if let Ok(ReviewSuccess::ZedZippyCommit(login)) = &result {
+            assert_eq!(login.as_str(), "cole-miller");
+        }
+    }
+
+    #[tokio::test]
+    async fn zippy_version_bump_without_mention_fails() {
+        let result = TestScenario::zippy_version_bump()
+            .with_commit(make_commit(
+                "abc12345abc12345",
+                "Zed Zippy",
+                ZED_ZIPPY_EMAIL,
+                "Bump to 0.230.2",
+                "",
+            ))
+            .run_scenario()
+            .await;
+        assert!(matches!(
+            result,
+            Err(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::NoMentionInTitle
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn zippy_version_bump_without_signature_fails() {
+        let result = TestScenario::zippy_version_bump()
+            .with_commit_metadata_json(serde_json::json!({
+                "abc12345abc12345": {
+                    "author": zippy_author(),
+                    "authors": { "nodes": [] },
+                    "additions": 2,
+                    "deletions": 2
+                }
+            }))
+            .run_scenario()
+            .await;
+        assert!(matches!(
+            result,
+            Err(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::NotSigned
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn zippy_version_bump_with_invalid_signature_fails() {
+        let result = TestScenario::zippy_version_bump()
+            .with_commit_metadata_json(serde_json::json!({
+                "abc12345abc12345": {
+                    "author": zippy_author(),
+                    "authors": { "nodes": [] },
+                    "signature": {
+                        "isValid": false,
+                        "signer": { "login": ZED_ZIPPY_LOGIN }
+                    },
+                    "additions": 2,
+                    "deletions": 2
+                }
+            }))
+            .run_scenario()
+            .await;
+        assert!(matches!(
+            result,
+            Err(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::InvalidSignature
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn zippy_version_bump_with_unequal_line_changes_fails() {
+        let result = TestScenario::zippy_version_bump()
+            .with_commit_metadata_json(serde_json::json!({
+                "abc12345abc12345": {
+                    "author": zippy_author(),
+                    "authors": { "nodes": [] },
+                    "signature": {
+                        "isValid": true,
+                        "signer": { "login": ZED_ZIPPY_LOGIN }
+                    },
+                    "additions": 5,
+                    "deletions": 2
+                }
+            }))
+            .run_scenario()
+            .await;
+        assert!(matches!(
+            result,
+            Err(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::UnexpectedLineChanges { .. }
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn zippy_version_bump_with_wrong_github_author_fails() {
+        let result = TestScenario::zippy_version_bump()
+            .with_commit_metadata_json(serde_json::json!({
+                "abc12345abc12345": {
+                    "author": alice_author(),
+                    "authors": { "nodes": [] },
+                    "signature": {
+                        "isValid": true,
+                        "signer": { "login": "alice" }
+                    },
+                    "additions": 2,
+                    "deletions": 2
+                }
+            }))
+            .run_scenario()
+            .await;
+        assert!(matches!(
+            result,
+            Err(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::AuthorMismatch
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn zippy_version_bump_with_co_authors_fails() {
+        let result = TestScenario::zippy_version_bump()
+            .with_commit_metadata_json(serde_json::json!({
+                "abc12345abc12345": {
+                    "author": zippy_author(),
+                    "authors": { "nodes": [alice_author()] },
+                    "signature": {
+                        "isValid": true,
+                        "signer": { "login": ZED_ZIPPY_LOGIN }
+                    },
+                    "additions": 2,
+                    "deletions": 2
+                }
+            }))
+            .run_scenario()
+            .await;
+        assert!(matches!(
+            result,
+            Err(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::UnexpectedCoAuthors
+            ))
+        ));
+    }
+
+    #[tokio::test]
+    async fn non_zippy_commit_without_pr_is_no_pr_found() {
+        let result = TestScenario::single_commit()
+            .with_commit(make_commit(
+                "abc12345abc12345",
+                "Alice",
+                "alice@test.com",
+                "Some direct push",
+                "",
+            ))
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Err(ReviewFailure::NoPullRequestFound)));
+    }
+
+    #[tokio::test]
+    async fn zippy_commit_with_pr_number_goes_through_normal_flow() {
+        let result = TestScenario::single_commit()
+            .with_commit(make_commit(
+                "abc12345abc12345",
+                "Zed Zippy",
+                ZED_ZIPPY_EMAIL,
+                "Some change (#1234)",
+                "",
+            ))
+            .with_reviews(vec![review("bob", ReviewState::Approved)])
+            .with_org_members(vec!["bob"])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Ok(ReviewSuccess::PullRequestReviewed(_))));
     }
 }

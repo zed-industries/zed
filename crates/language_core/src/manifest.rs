@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 
-use gpui::SharedString;
+use gpui_shared_string::SharedString;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ManifestName(SharedString);

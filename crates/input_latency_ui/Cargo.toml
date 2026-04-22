@@ -1,0 +1,17 @@
+[package]
+name = "input_latency_ui"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/input_latency_ui.rs"
+
+[dependencies]
+chrono.workspace = true
+gpui = { workspace = true, features = ["input-latency-histogram"] }
+hdrhistogram.workspace = true
