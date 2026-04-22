@@ -29,7 +29,7 @@ impl ActiveBufferLanguage {
         self.active_language = Some(None);
 
         let editor = editor.read(cx);
-        if let Some((_, buffer, _)) = editor.active_excerpt(cx)
+        if let Some(buffer) = editor.active_buffer(cx)
             && let Some(language) = buffer.read(cx).language()
         {
             self.active_language = Some(Some(language.name()));

@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use anthropic::AnthropicModelMode;
 use anyhow::{Result, anyhow};
-use cloud_llm_client::CompletionIntent;
 use collections::HashMap;
 use copilot::{GlobalCopilotAuth, Status};
 use copilot_chat::responses as copilot_responses;
@@ -21,7 +20,7 @@ use gpui::{AnyView, App, AsyncApp, Entity, Subscription, Task};
 use http_client::StatusCode;
 use language::language_settings::all_language_settings;
 use language_model::{
-    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
+    AuthenticateError, CompletionIntent, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelCostInfo, LanguageModelEffortLevel, LanguageModelId,
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
@@ -33,7 +32,7 @@ use ui::prelude::*;
 use util::debug_panic;
 
 use crate::provider::anthropic::{AnthropicEventMapper, into_anthropic};
-use crate::provider::util::parse_tool_arguments;
+use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
 const PROVIDER_NAME: LanguageModelProviderName =
@@ -269,15 +268,16 @@ impl LanguageModel for CopilotChatLanguageModel {
         levels
             .iter()
             .map(|level| {
-                let name: SharedString = match level.as_str() {
+                let name = match level.as_str() {
                     "low" => "Low".into(),
                     "medium" => "Medium".into(),
                     "high" => "High".into(),
-                    _ => SharedString::from(level.clone()),
+                    "xhigh" => "Extra High".into(),
+                    _ => language_model::SharedString::from(level.clone()),
                 };
                 LanguageModelEffortLevel {
                     name,
-                    value: SharedString::from(level.clone()),
+                    value: language_model::SharedString::from(level.clone()),
                     is_default: level == "high",
                 }
             })
@@ -357,7 +357,8 @@ impl LanguageModel for CopilotChatLanguageModel {
             | CompletionIntent::TerminalInlineAssist
             | CompletionIntent::GenerateGitCommitMessage => true,
 
-            CompletionIntent::ToolResults
+            CompletionIntent::Subagent
+            | CompletionIntent::ToolResults
             | CompletionIntent::ThreadSummarization
             | CompletionIntent::CreateFile
             | CompletionIntent::EditFile => false,
@@ -382,7 +383,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                         AnthropicModelMode::Thinking {
                             budget_tokens: None,
                         }
-                    } else if model.can_think() {
+                    } else if model.supports_thinking() {
                         AnthropicModelMode::Thinking {
                             budget_tokens: compute_thinking_budget(
                                 model.min_thinking_budget(),
@@ -405,15 +406,19 @@ impl LanguageModel for CopilotChatLanguageModel {
                 if model.supports_adaptive_thinking() {
                     if anthropic_request.thinking.is_some() {
                         anthropic_request.thinking = Some(anthropic::Thinking::Adaptive);
-                        anthropic_request.output_config = Some(anthropic::OutputConfig { effort });
+                        anthropic_request.output_config =
+                            effort.map(|effort| anthropic::OutputConfig {
+                                effort: Some(effort),
+                            });
                     }
                 }
 
-                let anthropic_beta = if !model.supports_adaptive_thinking() && model.can_think() {
-                    Some("interleaved-thinking-2025-05-14".to_string())
-                } else {
-                    None
-                };
+                let anthropic_beta =
+                    if !model.supports_adaptive_thinking() && model.supports_thinking() {
+                        Some("interleaved-thinking-2025-05-14".to_string())
+                    } else {
+                        None
+                    };
 
                 let body = serde_json::to_string(&anthropic::StreamingRequest {
                     base: anthropic_request,
@@ -579,7 +584,7 @@ pub fn map_to_language_model_completion_events(
 
                             if !entry.id.is_empty() && !entry.name.is_empty() {
                                 if let Ok(input) = serde_json::from_str::<serde_json::Value>(
-                                    &partial_json_fixer::fix_json(&entry.arguments),
+                                    &fix_streamed_json(&entry.arguments),
                                 ) {
                                     events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                                         LanguageModelToolUse {
@@ -880,6 +885,7 @@ fn into_copilot_chat(
 ) -> Result<CopilotChatRequest> {
     let temperature = request.temperature;
     let tool_choice = request.tool_choice;
+    let thinking_allowed = request.thinking_allowed;
 
     let mut request_messages: Vec<LanguageModelRequestMessage> = Vec::new();
     for message in request.messages {
@@ -1046,10 +1052,18 @@ fn into_copilot_chat(
         tools,
         tool_choice: tool_choice.map(|choice| match choice {
             LanguageModelToolChoice::Auto => ToolChoice::Auto,
-            LanguageModelToolChoice::Any => ToolChoice::Any,
+            LanguageModelToolChoice::Any => ToolChoice::Required,
             LanguageModelToolChoice::None => ToolChoice::None,
         }),
-        thinking_budget: None,
+        thinking_budget: if thinking_allowed && model.supports_thinking() {
+            compute_thinking_budget(
+                model.min_thinking_budget(),
+                model.max_thinking_budget(),
+                model.max_output_tokens() as u32,
+            )
+        } else {
+            None
+        },
     })
 }
 
@@ -1072,6 +1086,7 @@ fn compute_thinking_budget(
 fn intent_to_chat_location(intent: Option<CompletionIntent>) -> ChatLocation {
     match intent {
         Some(CompletionIntent::UserPrompt) => ChatLocation::Agent,
+        Some(CompletionIntent::Subagent) => ChatLocation::Agent,
         Some(CompletionIntent::ToolResults) => ChatLocation::Agent,
         Some(CompletionIntent::ThreadSummarization) => ChatLocation::Panel,
         Some(CompletionIntent::ThreadContextSummarization) => ChatLocation::Panel,
@@ -1100,7 +1115,7 @@ fn into_copilot_responses(
         stop: _,
         temperature,
         thinking_allowed,
-        thinking_effort: _,
+        thinking_effort,
         speed: _,
     } = request;
 
@@ -1111,38 +1126,26 @@ fn into_copilot_responses(
             Role::User => {
                 for content in &message.content {
                     if let MessageContent::ToolResult(tool_result) = content {
-                        let output = if let Some(out) = &tool_result.output {
-                            match out {
-                                serde_json::Value::String(s) => {
-                                    responses::ResponseFunctionOutput::Text(s.clone())
-                                }
-                                serde_json::Value::Null => {
-                                    responses::ResponseFunctionOutput::Text(String::new())
-                                }
-                                other => responses::ResponseFunctionOutput::Text(other.to_string()),
+                        let output = match &tool_result.content {
+                            LanguageModelToolResultContent::Text(text) => {
+                                responses::ResponseFunctionOutput::Text(text.to_string())
                             }
-                        } else {
-                            match &tool_result.content {
-                                LanguageModelToolResultContent::Text(text) => {
-                                    responses::ResponseFunctionOutput::Text(text.to_string())
-                                }
-                                LanguageModelToolResultContent::Image(image) => {
-                                    if model.supports_vision() {
-                                        responses::ResponseFunctionOutput::Content(vec![
-                                            responses::ResponseInputContent::InputImage {
-                                                image_url: Some(image.to_base64_url()),
-                                                detail: Default::default(),
-                                            },
-                                        ])
-                                    } else {
-                                        debug_panic!(
-                                            "This should be caught at {} level",
-                                            tool_result.tool_name
-                                        );
-                                        responses::ResponseFunctionOutput::Text(
+                            LanguageModelToolResultContent::Image(image) => {
+                                if model.supports_vision() {
+                                    responses::ResponseFunctionOutput::Content(vec![
+                                        responses::ResponseInputContent::InputImage {
+                                            image_url: Some(image.to_base64_url()),
+                                            detail: Default::default(),
+                                        },
+                                    ])
+                                } else {
+                                    debug_panic!(
+                                        "This should be caught at {} level",
+                                        tool_result.tool_name
+                                    );
+                                    responses::ResponseFunctionOutput::Text(
                                             "[Tool responded with an image, but this model does not support vision]".into(),
                                         )
-                                    }
                                 }
                             }
                         };
@@ -1267,7 +1270,7 @@ fn into_copilot_responses(
 
     let mapped_tool_choice = tool_choice.map(|choice| match choice {
         LanguageModelToolChoice::Auto => responses::ToolChoice::Auto,
-        LanguageModelToolChoice::Any => responses::ToolChoice::Any,
+        LanguageModelToolChoice::Any => responses::ToolChoice::Required,
         LanguageModelToolChoice::None => responses::ToolChoice::None,
     });
 
@@ -1279,8 +1282,12 @@ fn into_copilot_responses(
         tools: converted_tools,
         tool_choice: mapped_tool_choice,
         reasoning: if thinking_allowed {
+            let effort = thinking_effort
+                .as_deref()
+                .and_then(|e| e.parse::<copilot_responses::ReasoningEffort>().ok())
+                .unwrap_or(copilot_responses::ReasoningEffort::Medium);
             Some(copilot_responses::ReasoningConfig {
-                effort: copilot_responses::ReasoningEffort::Medium,
+                effort,
                 summary: Some(copilot_responses::ReasoningSummary::Detailed),
             })
         } else {

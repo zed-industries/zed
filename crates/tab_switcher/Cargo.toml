@@ -15,7 +15,7 @@ doctest = false
 [dependencies]
 collections.workspace = true
 editor.workspace = true
-fuzzy.workspace = true
+fuzzy_nucleo.workspace = true
 gpui.workspace = true
 menu.workspace = true
 picker.workspace = true
@@ -23,7 +23,6 @@ project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
-smol.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
@@ -33,5 +32,6 @@ ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 theme = { workspace = true, features = ["test-support"] }
+theme_settings.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

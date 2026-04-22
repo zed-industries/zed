@@ -240,9 +240,9 @@ impl LineWrapper {
         matches!(c, '\u{0980}'..='\u{09FF}') ||
 
         // Some other known special characters that should be treated as word characters,
-        // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
+        // e.g. `a-b`, `var_name`, `I'm`/`won’t`, '@mention`, `#hashtag`, `100%`, `3.1415`,
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
-        matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
+        matches!(c, '-' | '_' | '.' | '\'' | '’' | '‘' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯')
     }
@@ -838,6 +838,8 @@ mod tests {
         assert_word("a=1");
         assert_word("Self::is_word_char");
         assert_word("more⋯");
+        assert_word("won’t");
+        assert_word("‘twas");
 
         // Space
         assert_not_word("foo bar");

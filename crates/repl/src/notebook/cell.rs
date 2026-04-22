@@ -12,7 +12,7 @@ use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use nbformat::v4::{CellId, CellMetadata, CellType};
 use runtimelib::{JupyterMessage, JupyterMessageContent};
 use settings::Settings as _;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{CommonAnimationExt, IconButtonShape, prelude::*};
 use util::ResultExt;
 
@@ -96,6 +96,11 @@ pub enum Cell {
     Code(Entity<CodeCell>),
     Markdown(Entity<MarkdownCell>),
     Raw(Entity<RawCell>),
+}
+
+pub(crate) enum MovementDirection {
+    Start,
+    End,
 }
 
 fn convert_outputs(
@@ -221,6 +226,52 @@ impl Cell {
                 selected: false,
                 cell_position: None,
             })),
+        }
+    }
+
+    pub(crate) fn move_to(&self, direction: MovementDirection, window: &mut Window, cx: &mut App) {
+        fn move_in_editor(
+            editor: &Entity<Editor>,
+            direction: MovementDirection,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            editor.update(cx, |editor, cx| {
+                match direction {
+                    MovementDirection::Start => {
+                        editor.move_to_beginning(&Default::default(), window, cx);
+                    }
+                    MovementDirection::End => {
+                        editor.move_to_end(&Default::default(), window, cx);
+                    }
+                }
+                editor.focus_handle(cx).focus(window, cx);
+            })
+        }
+
+        match self {
+            Cell::Code(cell) => {
+                cell.update(cx, |cell, cx| {
+                    move_in_editor(&cell.editor, direction, window, cx)
+                });
+            }
+            Cell::Markdown(cell) => {
+                cell.update(cx, |cell, cx| {
+                    cell.set_editing(true);
+                    move_in_editor(&cell.editor, direction, window, cx);
+
+                    cx.notify();
+                });
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn editor<'a>(&'a self, cx: &'a App) -> Option<&'a Entity<Editor>> {
+        match self {
+            Cell::Code(cell) => Some(cell.read(cx).editor()),
+            Cell::Markdown(cell) => Some(cell.read(cx).editor()),
+            _ => None,
         }
     }
 }
@@ -378,6 +429,7 @@ impl MarkdownCell {
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
             editor.set_use_modal_editing(true);
+            editor.disable_mouse_wheel_zoom();
             editor
         });
 
@@ -619,7 +671,7 @@ impl CodeCell {
         let buffer = cx.new(|cx| Buffer::local(source.clone(), cx));
         let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
-        let editor_view = cx.new(|cx| {
+        let editor = cx.new(|cx| {
             let mut editor = Editor::new(
                 EditorMode::Full {
                     scale_ui_elements_with_buffer_font_size: false,
@@ -641,6 +693,8 @@ impl CodeCell {
                 ..Default::default()
             };
 
+            editor.disable_mouse_wheel_zoom();
+            editor.disable_scrollbars_and_minimap(window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
             editor.set_use_modal_editing(true);
@@ -659,7 +713,7 @@ impl CodeCell {
             metadata,
             execution_count: None,
             source,
-            editor: editor_view,
+            editor,
             outputs: Vec::new(),
             selected: false,
             cell_position: None,
@@ -718,6 +772,7 @@ impl CodeCell {
                 ..Default::default()
             };
 
+            editor.disable_mouse_wheel_zoom();
             editor.set_text(source.clone(), window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);

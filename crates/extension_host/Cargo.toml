@@ -68,6 +68,7 @@ project = { workspace = true, features = ["test-support"] }
 
 reqwest_client.workspace = true
 theme = { workspace = true, features = ["test-support"] }
+theme_settings.workspace = true
 theme_extension.workspace = true
 zlog.workspace = true
 
