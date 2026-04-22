@@ -196,6 +196,11 @@ impl MarkdownStyle {
                 font_size: Some(buffer_font_size.into()),
                 font_weight: Some(buffer_font_weight),
                 background_color: Some(colors.editor_foreground.opacity(0.08)),
+                color: cx
+                    .theme()
+                    .syntax()
+                    .style_for_name("text.literal")
+                    .and_then(|style| style.color),
                 ..Default::default()
             },
             link: TextStyleRefinement {
