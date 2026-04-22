@@ -84,7 +84,7 @@ jobs:
         ref: refs/heads/${{ inputs.branch }}
         files: '**'
         token: ${{ steps.generate-token.outputs.token }}
-    - name: steps::create_tag::<&alloc[d66a2b52346aa9d5]::string::String, &xtask[b6d01c04fc3244ef]::tasks::workflows::vars::StepOutput>
+    - name: steps::create_tag
       if: inputs.retag != true
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
@@ -96,7 +96,7 @@ jobs:
               sha: '${{ steps.commit.outputs.commit }}'
           })
         github-token: ${{ steps.generate-token.outputs.token }}
-    - name: steps::update_tag::<&alloc[d66a2b52346aa9d5]::string::String, &xtask[b6d01c04fc3244ef]::tasks::workflows::vars::StepOutput>
+    - name: steps::update_tag
       if: inputs.retag == true
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:

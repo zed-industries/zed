@@ -711,7 +711,7 @@ pub(crate) fn create_tag(
 ) -> impl Into<Step<Use>> {
     CreateOrUpdateTag {
         operation: TagOperation::Create,
-        job_name: function_name(0),
+        job_name: "steps::create_tag",
         tag_name: tag_name.to_string(),
         sha: sha.to_string(),
         token: token.to_string(),
@@ -726,7 +726,7 @@ pub(crate) fn update_tag(
 ) -> impl Into<Step<Use>> {
     CreateOrUpdateTag {
         operation: TagOperation::Update { force },
-        job_name: function_name(0),
+        job_name: "steps::update_tag",
         tag_name: tag_name.to_string(),
         sha: sha.to_string(),
         token: token.to_string(),
@@ -740,7 +740,7 @@ pub(crate) enum TagOperation {
 
 pub(crate) struct CreateOrUpdateTag {
     operation: TagOperation,
-    job_name: String,
+    job_name: &'static str,
     tag_name: String,
     sha: String,
     token: String,

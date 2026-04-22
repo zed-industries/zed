@@ -206,7 +206,7 @@ jobs:
         ref: refs/heads/${{ needs.resolve_versions.outputs.preview_branch }}
         files: crates/zed/RELEASE_CHANNEL
         token: ${{ steps.generate-token.outputs.token }}
-    - name: steps::create_tag::<&xtask[b6d01c04fc3244ef]::tasks::workflows::vars::JobOutput, &xtask[b6d01c04fc3244ef]::tasks::workflows::vars::StepOutput>
+    - name: steps::create_tag
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         script: |
@@ -252,7 +252,7 @@ jobs:
         ref: refs/heads/${{ needs.resolve_versions.outputs.stable_branch }}
         files: crates/zed/RELEASE_CHANNEL
         token: ${{ steps.generate-token.outputs.token }}
-    - name: steps::create_tag::<&xtask[b6d01c04fc3244ef]::tasks::workflows::vars::StepOutput, &xtask[b6d01c04fc3244ef]::tasks::workflows::vars::StepOutput>
+    - name: steps::create_tag
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         script: |
