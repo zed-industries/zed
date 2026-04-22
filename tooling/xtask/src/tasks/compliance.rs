@@ -10,7 +10,7 @@ use compliance::{
     report::ReportReviewSummary,
 };
 
-const MAX_CONCURRENT_REQUESTS: usize = 7;
+const MAX_CONCURRENT_REQUESTS: usize = 5;
 
 #[derive(Parser)]
 pub(crate) struct ComplianceArgs {
