@@ -167,7 +167,6 @@ impl Render for QuickActionBar {
         );
 
         let code_actions_dropdown = code_action_enabled.then(|| {
-            let focus = editor.focus_handle(cx);
             let is_deployed = {
                 let menu_ref = editor.read(cx).context_menu().borrow();
                 let code_action_menu = menu_ref
@@ -209,16 +208,18 @@ impl Render for QuickActionBar {
                             )
                         })
                         .on_click({
-                            let focus = focus;
+                            let editor = editor.clone();
                             move |_, window, cx| {
-                                focus.dispatch_action(
-                                    &ToggleCodeActions {
-                                        deployed_from: Some(CodeActionSource::QuickActionBar),
-                                        quick_launch: false,
-                                    },
-                                    window,
-                                    cx,
-                                );
+                                editor.update(cx, |editor, cx| {
+                                    editor.toggle_code_actions(
+                                        &ToggleCodeActions {
+                                            deployed_from: Some(CodeActionSource::QuickActionBar),
+                                            quick_launch: false,
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                })
                             }
                         }),
                 )

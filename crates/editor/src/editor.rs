@@ -7005,11 +7005,7 @@ impl Editor {
             .runnables((buffer_id, buffer_row))
             .map(|t| Arc::new(t.to_owned()));
 
-        if !self.focus_handle.is_focused(window) {
-            return;
-        }
         let project = self.project.clone();
-
         let runnable_task = match deployed_from {
             Some(CodeActionSource::Indicator(_)) => Task::ready(Ok(Default::default())),
             _ => {
@@ -7415,10 +7411,10 @@ impl Editor {
     }
 
     pub fn has_available_code_actions_for_selection(&self) -> bool {
-        match &self.code_actions_for_selection {
-            CodeActionsForSelection::Ready(ready) => !ready.actions.is_empty(),
-            CodeActionsForSelection::Fetching(_) => true,
-            CodeActionsForSelection::None => false,
+        if let CodeActionsForSelection::Ready(ready) = &self.code_actions_for_selection {
+            !ready.actions.is_empty()
+        } else {
+            false
         }
     }
 
