@@ -7938,6 +7938,7 @@ fn graph_commit_data_to_proto(commit: &GraphCommitData) -> proto::GraphCommitDat
         author_email: commit.author_email.to_string(),
         commit_timestamp: commit.commit_timestamp,
         subject: commit.subject.to_string(),
+        message: commit.message.to_string(),
     }
 }
 
@@ -7954,6 +7955,7 @@ fn graph_commit_data_from_proto(commit: proto::GraphCommitData) -> Result<GraphC
         author_email: SharedString::from(commit.author_email),
         commit_timestamp: commit.commit_timestamp,
         subject: SharedString::from(commit.subject),
+        message: SharedString::from(commit.message),
     })
 }
 
@@ -8290,6 +8292,7 @@ mod tests {
                         author_email: SharedString::from(format!("{sha}@example.com")),
                         commit_timestamp: rng.random_range(0..10_000),
                         subject: SharedString::from(format!("Subject {sha}")),
+                        message: SharedString::from(format!("Subject {sha}\n\nBody for {sha}")),
                     },
                     failing_shas.contains(sha),
                 )

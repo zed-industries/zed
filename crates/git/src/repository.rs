@@ -107,7 +107,7 @@ pub struct GraphCommitData {
     pub author_email: SharedString,
     pub commit_timestamp: i64,
     pub subject: SharedString,
-    // todo! we should add message as a field here
+    pub message: SharedString,
 }
 
 #[derive(Debug)]
@@ -168,6 +168,7 @@ fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<GraphCommitData> {
     let mut commit_timestamp = 0i64;
     let mut in_headers = true;
     let mut subject = None;
+    let mut message_lines = Vec::new();
 
     for line in content.lines() {
         if in_headers {
@@ -194,8 +195,11 @@ fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<GraphCommitData> {
                     }
                 }
             }
-        } else if subject.is_none() {
-            subject = Some(SharedString::from(line.to_string()));
+        } else {
+            if subject.is_none() {
+                subject = Some(SharedString::from(line.to_string()));
+            }
+            message_lines.push(line);
         }
     }
 
@@ -206,6 +210,7 @@ fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<GraphCommitData> {
         author_email,
         commit_timestamp,
         subject: subject.unwrap_or_default(),
+        message: SharedString::from(message_lines.join("\n")),
     })
 }
 

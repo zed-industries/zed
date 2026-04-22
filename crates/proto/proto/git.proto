@@ -706,6 +706,7 @@ message GraphCommitData {
   string author_email = 4;
   int64 commit_timestamp = 5;
   string subject = 6;
+  string message = 7;
 }
 
 message GetGraphCommitDataResponse {
