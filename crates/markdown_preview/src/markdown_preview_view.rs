@@ -653,7 +653,20 @@ impl MarkdownPreviewView {
         cx: &mut App,
     ) {
         let task_marker = if new_checked { "[x]" } else { "[ ]" };
+        let expected_existing_marker = if new_checked { "[ ]" } else { "[x]" };
+
         editor.update(cx, |editor, cx| {
+            let existing_marker: String = editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .text_for_range(
+                    MultiBufferOffset(source_range.start)..MultiBufferOffset(source_range.end),
+                )
+                .collect();
+
+            debug_assert_eq!(existing_marker, expected_existing_marker);
+
             editor.edit(
                 [(
                     MultiBufferOffset(source_range.start)..MultiBufferOffset(source_range.end),
@@ -666,9 +679,12 @@ impl MarkdownPreviewView {
 
     fn refresh_preview(view_handle: WeakEntity<Self>, window: &mut Window, cx: &mut App) {
         if let Some(view) = view_handle.upgrade() {
-            cx.update_entity(&view, |this, cx| {
-                this.update_markdown_from_active_editor(false, false, window, cx);
-            });
+            let preview_is_focused = view.read(cx).focus_handle(cx).contains_focused(window, cx);
+            if preview_is_focused {
+                cx.update_entity(&view, |this, cx| {
+                    this.update_markdown_from_active_editor(false, false, window, cx);
+                });
+            }
         }
     }
 }
@@ -754,10 +770,12 @@ fn resolve_preview_image(
         .map(|decoded| decoded.into_owned())
         .unwrap_or_else(|_| dest_url.to_string());
 
-    let workspace_relative_path = decoded.trim_start_matches(['/', '\\']);
-    if workspace_relative_path.len() != decoded.len() {
+    if let Some(stripped) = decoded
+        .strip_prefix('/')
+        .or_else(|| decoded.strip_prefix('\\'))
+    {
         if let Some(root) = workspace_directory {
-            let absolute_path = root.join(workspace_relative_path);
+            let absolute_path = root.join(stripped);
             if absolute_path.exists() {
                 return Some(ImageSource::Resource(Resource::Path(Arc::from(
                     absolute_path.as_path(),
@@ -774,13 +792,8 @@ fn resolve_preview_image(
         base_directory?.join(decoded)
     };
 
-    if path.exists() {
-        Some(ImageSource::Resource(Resource::Path(Arc::from(
-            path.as_path(),
-        ))))
-    } else {
-        None
-    }
+    path.exists()
+        .then(|| ImageSource::Resource(Resource::Path(Arc::from(path.as_path()))))
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -1183,6 +1196,7 @@ mod tests {
             .update(cx, |multi_workspace, window, cx| {
                 let workspace: Entity<Workspace> = multi_workspace.workspace().clone();
                 let view_handle = preview.downgrade();
+                assert!(preview.read(cx).focus_handle.contains_focused(window, cx));
                 preview.update(cx, |preview, cx| {
                     let editor = preview.active_editor.as_ref().unwrap().editor.clone();
                     MarkdownPreviewView::apply_checkbox_toggle_to_editor(&editor, 2..5, true, cx);
