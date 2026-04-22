@@ -8141,6 +8141,16 @@ mod tests {
         Ok(())
     }
 
+    fn verify_repository_invariants(
+        repository: &Entity<Repository>,
+        context: impl FnOnce() -> String,
+        cx: &mut TestAppContext,
+    ) {
+        repository.read_with(cx, |repository, _cx| {
+            verify_invariants(repository).with_context(context).unwrap();
+        });
+    }
+
     #[gpui::property_test(config = ProptestConfig {
         cases: 20,
         ..Default::default()
@@ -8222,25 +8232,51 @@ mod tests {
         })
         .detach();
 
-        for (step, commit_index) in commit_indexes.into_iter().enumerate() {
-            let sha = commit_shas[commit_index % commit_shas.len()];
-            let await_result = await_results[step % await_results.len()];
+        let mut next_step = 0;
+        while next_step < commit_indexes.len() {
+            let remaining_steps = commit_indexes.len() - next_step;
+            let chunk_size = rng.random_range(1..=remaining_steps.min(16));
+            let chunk_end = next_step + chunk_size;
 
-            repository.update(cx, |repository, cx| {
-                repository.fetch_commit_data(sha, await_result, cx);
-                verify_invariants(repository)
-                    .with_context(|| {
-                        format!(
-                            "commit data invariant violation after step {} for sha {}",
-                            step + 1,
-                            sha,
-                        )
-                    })
-                    .unwrap();
-            });
+            for step in next_step..chunk_end {
+                let sha = commit_shas[commit_indexes[step] % commit_shas.len()];
+                let await_result = await_results[step % await_results.len()];
 
-            // todo! wait until park, and the repository should have random shas we want to fetcg
+                repository.update(cx, |repository, cx| {
+                    repository.fetch_commit_data(sha, await_result, cx);
+                    verify_invariants(repository)
+                        .with_context(|| {
+                            format!(
+                                "commit data invariant violation after step {} for sha {}",
+                                step + 1,
+                                sha,
+                            )
+                        })
+                        .unwrap();
+                });
+            }
+
+            cx.run_until_parked();
+            verify_repository_invariants(
+                &repository,
+                || {
+                    format!(
+                        "commit data invariant violation after draining through step {}",
+                        chunk_end,
+                    )
+                },
+                cx,
+            );
+
+            next_step = chunk_end;
         }
+
+        cx.run_until_parked();
+        verify_repository_invariants(
+            &repository,
+            || "commit data invariant violation after final drain".to_string(),
+            cx,
+        );
     }
 }
 
