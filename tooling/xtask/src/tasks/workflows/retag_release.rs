@@ -29,8 +29,13 @@ fn run_retag_release(branch: &WorkflowInput) -> steps::NamedJob {
             .with_ref(branch.to_string())
     }
 
-    fn resolve_tag() -> Step<Run> {
+    fn resolve_tag(branch: &WorkflowInput) -> Step<Run> {
         named::bash(indoc::indoc! {r#"
+            if [[ ! "$BRANCH" =~ ^v[0-9]+\.[0-9]{1,3}\.x$ ]]; then
+                echo "::error::branch '$BRANCH' does not match the release branch pattern v[N].[N].x"
+                exit 1
+            fi
+
             channel="$(cat crates/zed/RELEASE_CHANNEL)"
 
             tag_suffix=""
@@ -56,6 +61,7 @@ fn run_retag_release(branch: &WorkflowInput) -> steps::NamedJob {
             } >> "$GITHUB_OUTPUT"
         "#})
         .id("info")
+        .add_env(("BRANCH", branch.to_string()))
     }
 
     fn verify_no_existing_release() -> Step<Run> {
@@ -71,7 +77,7 @@ fn run_retag_release(branch: &WorkflowInput) -> steps::NamedJob {
     }
 
     let (authenticate, token) = steps::authenticate_as_zippy().into();
-    let resolve_step = resolve_tag();
+    let resolve_step = resolve_tag(branch);
     let version = StepOutput::new(&resolve_step, "version");
     let tag_suffix = StepOutput::new(&resolve_step, "tag_suffix");
     let head_sha = StepOutput::new(&resolve_step, "head_sha");

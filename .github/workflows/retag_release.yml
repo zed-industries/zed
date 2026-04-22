@@ -28,6 +28,11 @@ jobs:
     - id: info
       name: retag_release::run_retag_release::resolve_tag
       run: |
+        if [[ ! "$BRANCH" =~ ^v[0-9]+\.[0-9]{1,3}\.x$ ]]; then
+            echo "::error::branch '$BRANCH' does not match the release branch pattern v[N].[N].x"
+            exit 1
+        fi
+
         channel="$(cat crates/zed/RELEASE_CHANNEL)"
 
         tag_suffix=""
@@ -51,6 +56,8 @@ jobs:
             echo "tag_suffix=$tag_suffix"
             echo "head_sha=$(git rev-parse HEAD)"
         } >> "$GITHUB_OUTPUT"
+      env:
+        BRANCH: ${{ inputs.branch }}
     - name: retag_release::run_retag_release::verify_no_existing_release
       run: |
         released=$(script/get-released-version "$CHANNEL" "$VERSION")
