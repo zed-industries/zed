@@ -3,26 +3,15 @@
 set -eu
 
 usage() {
-  echo "Usage: $0 [--retag] <major|minor> [target]"
+  echo "Usage: $0 <major|minor> [target]"
   echo ""
   echo "Triggers the bump_zed_version workflow to perform a release version bump."
   echo ""
   echo "Arguments:"
   echo "  bump_type   Version bump type: major or minor"
   echo "  target      Which channels to bump: all (default), main, preview, or stable"
-  echo ""
-  echo "Flags:"
-  echo "  --retag     Only create tags on existing branches (skip version bumps and commits)"
   exit 1
 }
-
-tag_only=false
-while [[ "${1:-}" == --* ]]; do
-  case "$1" in
-    --retag) tag_only=true; shift ;;
-    *) echo "error: unknown flag '$1'" >&2; usage ;;
-  esac
-done
 
 bump_type="${1:-}"
 target="${2:-all}"
@@ -57,13 +46,11 @@ which gh > /dev/null 2>&1 || {
 echo "Triggering bump_zed_version workflow:"
 echo "  bump_type: $bump_type"
 echo "  target:    $target"
-echo "  tag_only:  $tag_only"
 echo ""
 
 gh workflow run bump_zed_version.yml \
   -f bump_type="$bump_type" \
-  -f target="$target" \
-  -f tag_only="$tag_only"
+  -f target="$target"
 
 echo ""
 echo "Workflow triggered. Monitor progress at:"

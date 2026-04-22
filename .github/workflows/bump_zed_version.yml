@@ -12,10 +12,6 @@ on:
         description: 'Which channels to bump: all, main, preview, or stable'
         type: string
         default: all
-      tag_only:
-        description: Only create tags on existing branches (skip version bumps and commits)
-        type: boolean
-        default: 'false'
 jobs:
   resolve_versions:
     if: github.repository_owner == 'zed-industries'
@@ -106,7 +102,7 @@ jobs:
   bump_main:
     needs:
     - resolve_versions
-    if: (inputs.target == 'all' || inputs.target == 'main') && inputs.tag_only != true
+    if: inputs.target == 'all' || inputs.target == 'main'
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - id: generate-token
@@ -184,17 +180,14 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
-        ref: ${{ inputs.tag_only && '${{ needs.resolve_versions.outputs.preview_branch }}' || 'main' }}
+        ref: main
         token: ${{ steps.generate-token.outputs.token }}
     - id: main-sha
       name: bump_zed_version::create_preview_branch
-      if: inputs.tag_only != true
       run: echo "main_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
     - name: bump_zed_version::create_preview_branch
-      if: inputs.tag_only != true
       run: echo -n preview > crates/zed/RELEASE_CHANNEL
     - name: steps::create_git_branch
-      if: inputs.tag_only != true
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         script: |
@@ -207,27 +200,12 @@ jobs:
         github-token: ${{ steps.generate-token.outputs.token }}
     - id: commit
       name: steps::bot_commit
-      if: inputs.tag_only != true
       uses: IAreKyleW00t/verified-bot-commit@126a6a11889ab05bcff72ec2403c326cd249b84c
       with:
         message: ${{ needs.resolve_versions.outputs.preview_branch }} preview
         ref: refs/heads/${{ needs.resolve_versions.outputs.preview_branch }}
         files: crates/zed/RELEASE_CHANNEL
         token: ${{ steps.generate-token.outputs.token }}
-    - id: head-sha
-      name: bump_zed_version::create_preview_branch
-      if: inputs.tag_only == true
-      run: |
-        version=$(script/get-crate-version zed)
-        channel=$(cat crates/zed/RELEASE_CHANNEL)
-        tag_suffix=""
-        case $channel in
-          preview) tag_suffix="-pre" ;;
-          stable) ;;
-          *) echo "::error::unexpected channel $channel on preview branch"; exit 1 ;;
-        esac
-        echo "tag_name=v${version}${tag_suffix}" >> "$GITHUB_OUTPUT"
-        echo "head_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
     - name: steps::create_git_tag
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
@@ -235,8 +213,8 @@ jobs:
           github.rest.git.createRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              ref: 'refs/tags/${{ inputs.tag_only && '${{ steps.head-sha.outputs.tag_name }}' || '${{ needs.resolve_versions.outputs.preview_tag }}' }}',
-              sha: '${{ inputs.tag_only && '${{ steps.head-sha.outputs.head_sha }}' || '${{ steps.commit.outputs.commit }}' }}'
+              ref: 'refs/tags/${{ needs.resolve_versions.outputs.preview_tag }}',
+              sha: '${{ steps.commit.outputs.commit }}'
           })
         github-token: ${{ steps.generate-token.outputs.token }}
   promote_to_stable:
@@ -262,16 +240,12 @@ jobs:
       run: |
         stable_version=$(script/get-crate-version zed)
         {
-            echo "stable_version=$stable_version"
             echo "stable_tag=v${stable_version}"
-            echo "head_sha=$(git rev-parse HEAD)"
         } >> "$GITHUB_OUTPUT"
     - name: bump_zed_version::promote_to_stable
-      if: inputs.tag_only != true
       run: echo -n stable > crates/zed/RELEASE_CHANNEL
     - id: commit
       name: steps::bot_commit
-      if: inputs.tag_only != true
       uses: IAreKyleW00t/verified-bot-commit@126a6a11889ab05bcff72ec2403c326cd249b84c
       with:
         message: ${{ needs.resolve_versions.outputs.stable_branch }} stable
@@ -286,7 +260,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               ref: 'refs/tags/${{ steps.stable-info.outputs.stable_tag }}',
-              sha: '${{ inputs.tag_only && '${{ steps.stable-info.outputs.head_sha }}' || '${{ steps.commit.outputs.commit }}' }}'
+              sha: '${{ steps.commit.outputs.commit }}'
           })
         github-token: ${{ steps.generate-token.outputs.token }}
 defaults:
