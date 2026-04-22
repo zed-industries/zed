@@ -340,6 +340,7 @@
       "ctrl-alt-down": "agent::ScrollOutputLineDown",
       "ctrl-alt-pageup": "agent::ScrollOutputToPreviousMessage",
       "ctrl-alt-pagedown": "agent::ScrollOutputToNextMessage",
+      "cmd-f": "buffer_search::Deploy",
     },
   },
   {

@@ -297,6 +297,8 @@
       "ctrl-alt-down": "agent::ScrollOutputLineDown",
       "ctrl-alt-shift-pageup": "agent::ScrollOutputToPreviousMessage",
       "ctrl-alt-shift-pagedown": "agent::ScrollOutputToNextMessage",
+      "find": "buffer_search::Deploy",
+      "ctrl-f": "buffer_search::Deploy",
     },
   },
   {

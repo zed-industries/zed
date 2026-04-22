@@ -6346,7 +6346,7 @@ mod tests {
         });
     }
     #[gpui::test]
-    async fn test_vim_search_does_not_steal_focus_from_agent_panel(cx: &mut TestAppContext) {
+    async fn test_vim_slash_deploys_thread_search_not_center_pane(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
@@ -6354,12 +6354,10 @@ mod tests {
             vim::init(cx);
             search::init(cx);
 
-            // Enable vim mode
             settings::SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |s| s.vim_mode = Some(true));
             });
 
-            // Load vim keybindings
             let mut vim_key_bindings =
                 settings::KeymapFile::load_asset_allow_partial_failure("keymaps/vim.json", cx)
                     .unwrap();
@@ -6369,7 +6367,6 @@ mod tests {
             cx.bind_keys(vim_key_bindings);
         });
 
-        // Create a project with a file so we have a buffer in the center pane.
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/project", json!({ "file.txt": "hello world" }))
             .await;
@@ -6382,7 +6379,6 @@ mod tests {
             .unwrap();
         let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
 
-        // Open a file in the center pane.
         workspace
             .update_in(&mut cx, |workspace, window, cx| {
                 workspace.open_paths(
@@ -6396,34 +6392,29 @@ mod tests {
             .await;
         cx.run_until_parked();
 
-        // Add a BufferSearchBar to the center pane's toolbar, as a real
-        // workspace would have.
-        workspace.update_in(&mut cx, |workspace, window, cx| {
+        let center_search_bar = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let bar = cx.new(|cx| search::BufferSearchBar::new(None, window, cx));
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
-                    let search_bar = cx.new(|cx| search::BufferSearchBar::new(None, window, cx));
-                    toolbar.add_item(search_bar, window, cx);
+                    toolbar.add_item(bar.clone(), window, cx);
                 });
             });
+            bar
         });
 
-        // Create the agent panel and add it to the workspace.
         let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
             panel
         });
 
-        // Open a thread so the panel has an active editor.
         open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
 
-        // Focus the agent panel.
         workspace.update_in(&mut cx, |workspace, window, cx| {
             workspace.focus_panel::<AgentPanel>(window, cx);
         });
         cx.run_until_parked();
 
-        // Verify the agent panel has focus.
         workspace.update_in(&mut cx, |_, window, cx| {
             assert!(
                 panel.read(cx).focus_handle(cx).contains_focused(window, cx),
@@ -6431,14 +6422,27 @@ mod tests {
             );
         });
 
-        // Press '/' — the vim search keybinding.
         cx.simulate_keystrokes("/");
+        cx.run_until_parked();
 
-        // Focus should remain on the agent panel.
-        workspace.update_in(&mut cx, |_, window, cx| {
+        center_search_bar.read_with(&mut cx, |bar, _| {
             assert!(
-                panel.read(cx).focus_handle(cx).contains_focused(window, cx),
-                "Focus should remain on the agent panel after pressing '/'"
+                bar.is_dismissed(),
+                "pressing '/' in the agent panel must not deploy the center pane's BufferSearchBar"
+            );
+        });
+
+        let thread_view = panel
+            .read_with(&mut cx, |panel, cx| panel.active_thread_view(cx))
+            .expect("agent panel should have an active thread view");
+        thread_view.read_with(&mut cx, |thread_view, cx| {
+            let bar = thread_view
+                .search_bar
+                .as_ref()
+                .expect("thread view should have lazily constructed its search bar");
+            assert!(
+                !bar.read(cx).is_dismissed(),
+                "thread view's own search bar should be deployed after pressing '/'"
             );
         });
     }

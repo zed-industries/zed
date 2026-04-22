@@ -1117,6 +1117,12 @@
     },
   },
   {
+    "context": "AcpThread > Editor && VimControl",
+    "bindings": {
+      "/": "buffer_search::Deploy",
+    },
+  },
+  {
     "context": "FileHistoryView",
     "bindings": {
       "j": "menu::SelectNext",
