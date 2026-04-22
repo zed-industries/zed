@@ -42,16 +42,12 @@ pub use since_v0_0_4::LanguageServerConfig;
 
 pub fn new_linker(
     executor: &BackgroundExecutor,
-    f: impl Fn(&mut Linker<WasmState>, fn(&mut WasmState) -> &mut WasmState) -> Result<()>,
+    f: impl FnOnce(&mut Linker<WasmState>) -> Result<()>,
 ) -> Linker<WasmState> {
     let mut linker = Linker::new(&wasm_engine(executor));
     wasmtime_wasi::p2::add_to_linker_async(&mut linker).unwrap();
-    f(&mut linker, wasi_view).unwrap();
+    f(&mut linker).unwrap();
     linker
-}
-
-fn wasi_view(state: &mut WasmState) -> &mut WasmState {
-    state
 }
 
 /// Returns whether the given Wasm API version is supported by the Wasm host.
@@ -462,6 +458,60 @@ impl Extension {
                 .await
             }
             Extension::V0_0_4(_) | Extension::V0_0_1(_) => Ok(Ok(None)),
+        }
+    }
+
+    pub async fn call_language_server_initialization_options_schema(
+        &self,
+        store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<Option<String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_language_server_initialization_options_schema(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
+            Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => Ok(None),
+        }
+    }
+
+    pub async fn call_language_server_workspace_configuration_schema(
+        &self,
+        store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<Option<String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_language_server_workspace_configuration_schema(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
+            Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => Ok(None),
         }
     }
 

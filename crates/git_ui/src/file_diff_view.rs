@@ -6,9 +6,9 @@ use editor::{Editor, EditorEvent, MultiBuffer};
 use futures::{FutureExt, select_biased};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, Render, Task, Window,
+    Focusable, Font, IntoElement, Render, Task, WeakEntity, Window,
 };
-use language::{Buffer, LanguageRegistry};
+use language::{Buffer, HighlightedText, LanguageRegistry};
 use project::Project;
 use std::{
     any::{Any, TypeId},
@@ -21,7 +21,7 @@ use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
 use util::paths::PathExt as _;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
@@ -36,14 +36,14 @@ pub struct FileDiffView {
 const RECALCULATE_DIFF_DEBOUNCE: Duration = Duration::from_millis(250);
 
 impl FileDiffView {
+    #[ztracing::instrument(skip_all)]
     pub fn open(
         old_path: PathBuf,
         new_path: PathBuf,
-        workspace: &Workspace,
+        workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let workspace = workspace.weak_handle();
         window.spawn(cx, async move |cx| {
             let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
             let old_buffer = project
@@ -108,7 +108,7 @@ impl FileDiffView {
 
         for buffer in [&old_buffer, &new_buffer] {
             cx.subscribe(buffer, move |this, _, event, _| match event {
-                language::BufferEvent::Edited
+                language::BufferEvent::Edited { .. }
                 | language::BufferEvent::LanguageChanged(_)
                 | language::BufferEvent::Reparsed => {
                     this.buffer_changes_tx.send(()).ok();
@@ -162,6 +162,7 @@ impl FileDiffView {
     }
 }
 
+#[ztracing::instrument(skip_all)]
 async fn build_buffer_diff(
     old_buffer: &Entity<Buffer>,
     new_buffer: &Entity<Buffer>,
@@ -258,7 +259,7 @@ impl Item for FileDiffView {
         Some(format!("{old_path} ↔ {new_path}").into())
     }
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
@@ -323,7 +324,7 @@ impl Item for FileDiffView {
         ToolbarItemLocation::PrimaryLeft
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
         self.editor.breadcrumbs(cx)
     }
 
@@ -372,13 +373,13 @@ mod tests {
     use std::path::PathBuf;
     use unindent::unindent;
     use util::path;
-    use workspace::Workspace;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
     }
 
@@ -398,15 +399,16 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let diff_view = workspace
             .update_in(cx, |workspace, window, cx| {
                 FileDiffView::open(
                     path!("/test/old_file.txt").into(),
                     path!("/test/new_file.txt").into(),
-                    workspace,
+                    workspace.weak_handle(),
                     window,
                     cx,
                 )
@@ -532,15 +534,16 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
 
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let diff_view = workspace
             .update_in(cx, |workspace, window, cx| {
                 FileDiffView::open(
                     PathBuf::from(path!("/test/old_file.txt")),
                     PathBuf::from(path!("/test/new_file.txt")),
-                    workspace,
+                    workspace.weak_handle(),
                     window,
                     cx,
                 )

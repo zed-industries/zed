@@ -261,6 +261,17 @@ impl Database {
                 .chain(Some(channel_id))
                 .collect::<Vec<_>>();
 
+            let channel_has_active_participants = room_participant::Entity::find()
+                .inner_join(room::Entity)
+                .filter(room::Column::ChannelId.is_in(channels_to_remove.iter().copied()))
+                .count(&*tx)
+                .await?
+                > 0;
+
+            if channel_has_active_participants {
+                Err(anyhow!("can't delete channel while a call is in progress"))?;
+            }
+
             channel::Entity::delete_many()
                 .filter(channel::Column::Id.is_in(channels_to_remove.iter().copied()))
                 .exec(&*tx)

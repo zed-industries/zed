@@ -2,12 +2,10 @@ use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, Focusable, Rende
 use project::project_settings::ProjectSettings;
 use remote::RemoteConnectionOptions;
 use settings::Settings;
-use ui::{
-    Button, ButtonCommon, ButtonStyle, Clickable, Context, ElevationIndex, FluentBuilder, Headline,
-    HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement, Label, Modal,
-    ModalFooter, ModalHeader, ParentElement, Section, Styled, StyledExt, Window, div, h_flex, rems,
+use ui::{ElevationIndex, Modal, ModalFooter, ModalHeader, Section, prelude::*};
+use workspace::{
+    ModalView, MultiWorkspace, OpenOptions, Workspace, notifications::DetachAndPromptErr,
 };
-use workspace::{ModalView, OpenOptions, Workspace, notifications::DetachAndPromptErr};
 
 use crate::open_remote_project;
 
@@ -109,7 +107,7 @@ impl DisconnectedOverlay {
             return;
         };
 
-        let Some(window_handle) = window.window_handle().downcast::<Workspace>() else {
+        let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
             return;
         };
 
@@ -127,7 +125,7 @@ impl DisconnectedOverlay {
                 paths,
                 app_state,
                 OpenOptions {
-                    replace_window: Some(window_handle),
+                    requesting_window: Some(window_handle),
                     ..Default::default()
                 },
                 cx,
@@ -205,8 +203,7 @@ impl Render for DisconnectedOverlay {
                                         Button::new("reconnect", "Reconnect")
                                             .style(ButtonStyle::Filled)
                                             .layer(ElevationIndex::ModalSurface)
-                                            .icon(IconName::ArrowCircle)
-                                            .icon_position(IconPosition::Start)
+                                            .start_icon(Icon::new(IconName::ArrowCircle))
                                             .on_click(cx.listener(Self::handle_reconnect)),
                                     )
                                 }),

@@ -3,7 +3,7 @@ use std::rc::Rc;
 use editor::Editor;
 use gpui::{AnyElement, ElementId, Focusable, TextStyleRefinement};
 use settings::Settings as _;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*, rems};
 
 #[derive(IntoElement)]
@@ -16,6 +16,7 @@ pub struct SettingsInputField {
     use_buffer_font: bool,
     display_confirm_button: bool,
     display_clear_button: bool,
+    clear_on_confirm: bool,
     action_slot: Option<AnyElement>,
     color: Option<Color>,
 }
@@ -31,6 +32,7 @@ impl SettingsInputField {
             use_buffer_font: false,
             display_confirm_button: false,
             display_clear_button: false,
+            clear_on_confirm: false,
             action_slot: None,
             color: None,
         }
@@ -69,6 +71,11 @@ impl SettingsInputField {
         self
     }
 
+    pub fn clear_on_confirm(mut self) -> Self {
+        self.clear_on_confirm = true;
+        self
+    }
+
     pub fn action_slot(mut self, action: impl IntoElement) -> Self {
         self.action_slot = Some(action.into_any_element());
         self
@@ -102,14 +109,35 @@ impl RenderOnce for SettingsInputField {
             ..Default::default()
         };
 
+        let first_render_initial_text = window.use_state(cx, |_, _| self.initial_text.clone());
+
         let editor = if let Some(id) = self.id {
             window.use_keyed_state(id, cx, {
                 let initial_text = self.initial_text.clone();
                 let placeholder = self.placeholder;
+                let mut confirm = self.confirm.clone();
+
                 move |window, cx| {
                     let mut editor = Editor::single_line(window, cx);
+                    let editor_focus_handle = editor.focus_handle(cx);
                     if let Some(text) = initial_text {
                         editor.set_text(text, window, cx);
+                    }
+
+                    if let Some(confirm) = confirm.take()
+                        && !self.display_confirm_button
+                        && !self.display_clear_button
+                        && !self.clear_on_confirm
+                    {
+                        cx.on_focus_out(
+                            &editor_focus_handle,
+                            window,
+                            move |editor, _, window, cx| {
+                                let text = Some(editor.text(cx));
+                                confirm(text, window, cx);
+                            },
+                        )
+                        .detach();
                     }
 
                     if let Some(placeholder) = placeholder {
@@ -123,10 +151,29 @@ impl RenderOnce for SettingsInputField {
             window.use_state(cx, {
                 let initial_text = self.initial_text.clone();
                 let placeholder = self.placeholder;
+                let mut confirm = self.confirm.clone();
+
                 move |window, cx| {
                     let mut editor = Editor::single_line(window, cx);
+                    let editor_focus_handle = editor.focus_handle(cx);
                     if let Some(text) = initial_text {
                         editor.set_text(text, window, cx);
+                    }
+
+                    if let Some(confirm) = confirm.take()
+                        && !self.display_confirm_button
+                        && !self.display_clear_button
+                        && !self.clear_on_confirm
+                    {
+                        cx.on_focus_out(
+                            &editor_focus_handle,
+                            window,
+                            move |editor, _, window, cx| {
+                                let text = Some(editor.text(cx));
+                                confirm(text, window, cx);
+                            },
+                        )
+                        .detach();
                     }
 
                     if let Some(placeholder) = placeholder {
@@ -138,9 +185,34 @@ impl RenderOnce for SettingsInputField {
             })
         };
 
+        // When settings change externally (e.g. editing settings.json), the page
+        // re-renders but use_keyed_state returns the cached editor with stale text.
+        // Reconcile with the expected initial_text when the editor is not focused,
+        // so we don't clobber what the user is actively typing.
+        if let Some(initial_text) = &self.initial_text
+            && let Some(first_initial) = first_render_initial_text.read(cx)
+        {
+            if initial_text != first_initial && !editor.read(cx).is_focused(window) {
+                *first_render_initial_text.as_mut(cx) = self.initial_text.clone();
+                let weak_editor = editor.downgrade();
+                let initial_text = initial_text.clone();
+
+                window.defer(cx, move |window, cx| {
+                    weak_editor
+                        .update(cx, |editor, cx| {
+                            editor.set_text(initial_text, window, cx);
+                        })
+                        .ok();
+                });
+            }
+        }
+
         let weak_editor = editor.downgrade();
         let weak_editor_for_button = editor.downgrade();
         let weak_editor_for_clear = editor.downgrade();
+
+        let clear_on_confirm = self.clear_on_confirm;
+        let clear_on_confirm_for_button = self.clear_on_confirm;
 
         let theme_colors = cx.theme().colors();
 
@@ -214,6 +286,11 @@ impl RenderOnce for SettingsInputField {
                                         let new_value =
                                             (!new_value.is_empty()).then_some(new_value);
                                         confirm(new_value, window, cx);
+                                        if clear_on_confirm_for_button {
+                                            editor.update(cx, |editor, cx| {
+                                                editor.set_text("", window, cx);
+                                            });
+                                        }
                                     }),
                             )
                         },
@@ -229,6 +306,11 @@ impl RenderOnce for SettingsInputField {
                         let new_value = editor.read_with(cx, |editor, cx| editor.text(cx));
                         let new_value = (!new_value.is_empty()).then_some(new_value);
                         confirm(new_value, window, cx);
+                        if clear_on_confirm {
+                            editor.update(cx, |editor, cx| {
+                                editor.set_text("", window, cx);
+                            });
+                        }
                     }
                 })
             })

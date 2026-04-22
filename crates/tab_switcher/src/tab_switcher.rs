@@ -5,7 +5,7 @@ use collections::{HashMap, HashSet};
 use editor::items::{
     entry_diagnostic_aware_icon_decoration_and_color, entry_git_aware_label_color,
 };
-use fuzzy::StringMatchCandidate;
+use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Point,
@@ -441,15 +441,13 @@ impl TabSwitcherDelegate {
                     ))
                 })
                 .collect::<Vec<_>>();
-            smol::block_on(fuzzy::match_strings(
+            fuzzy_nucleo::match_strings(
                 &candidates,
                 &query,
-                true,
-                true,
+                fuzzy_nucleo::Case::Smart,
+                fuzzy_nucleo::LengthPenalty::On,
                 10000,
-                &Default::default(),
-                cx.background_executor().clone(),
-            ))
+            )
             .into_iter()
             .map(|m| all_items[m.candidate_id].clone())
             .collect()
@@ -591,29 +589,15 @@ impl TabSwitcherDelegate {
             let Some(workspace) = self.workspace.upgrade() else {
                 return;
             };
-            let panes_and_items: Vec<_> = workspace
-                .read(cx)
-                .panes()
-                .iter()
-                .map(|pane| {
-                    let items_to_close: Vec<_> = pane
-                        .read(cx)
-                        .items()
-                        .filter(|item| item.project_path(cx) == Some(project_path.clone()))
-                        .map(|item| item.item_id())
-                        .collect();
-                    (pane.clone(), items_to_close)
-                })
-                .collect();
-
-            for (pane, items_to_close) in panes_and_items {
-                for item_id in items_to_close {
-                    pane.update(cx, |pane, cx| {
-                        pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
-                            .detach_and_log_err(cx);
-                    });
-                }
-            }
+            workspace.update(cx, |workspace, cx| {
+                workspace.close_items_with_project_path(
+                    &project_path,
+                    SaveIntent::Close,
+                    true,
+                    window,
+                    cx,
+                );
+            });
         } else {
             let Some(pane) = tab_match.pane.upgrade() else {
                 return;
@@ -889,7 +873,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                         el.end_slot::<AnyElement>(close_button)
                     } else {
                         el.end_slot::<AnyElement>(indicator)
-                            .end_hover_slot::<AnyElement>(close_button)
+                            .end_slot_on_hover::<AnyElement>(close_button)
                     }
                 }),
         )

@@ -11,14 +11,14 @@ on:
 jobs:
   publish_job:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -27,7 +27,7 @@ jobs:
     - name: publish_extension_cli::publish_job::build_extension_cli
       run: cargo build --release --package extension_cli
     - name: publish_extension_cli::publish_job::upload_binary
-      run: script/upload-extension-cli ${{ github.sha }}
+      run: script/upload-extension-cli "$GITHUB_SHA"
       env:
         DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
         DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
@@ -38,32 +38,32 @@ jobs:
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - id: generate-token
-      name: extension_bump::generate_token
-      uses: actions/create-github-app-token@v2
+      name: steps::generate_token
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
     - id: short-sha
       name: publish_extension_cli::get_short_sha
       run: |
-        echo "sha_short=$(echo "${{ github.sha }}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+        echo "sha_short=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
     - name: publish_extension_cli::update_sha_in_zed::replace_sha
       run: |
-        sed -i "s/ZED_EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/ZED_EXTENSION_CLI_SHA: \&str = \"${{ github.sha }}\"/" \
+        sed -i "s/ZED_EXTENSION_CLI_SHA: &str = \"[a-f0-9]*\"/ZED_EXTENSION_CLI_SHA: \&str = \"$GITHUB_SHA\"/" \
             tooling/xtask/src/tasks/workflows/extension_tests.rs
     - name: publish_extension_cli::update_sha_in_zed::regenerate_workflows
       run: cargo xtask workflows
     - name: publish_extension_cli::create_pull_request_zed
-      uses: peter-evans/create-pull-request@v7
+      uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
         title: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
         body: |
@@ -87,8 +87,8 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
-      name: extension_bump::generate_token
-      uses: actions/create-github-app-token@v2
+      name: steps::generate_token
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
@@ -97,7 +97,7 @@ jobs:
     - id: short-sha
       name: publish_extension_cli::get_short_sha
       run: |
-        echo "sha_short=$(echo "${{ github.sha }}" | cut -c1-7)" >> "$GITHUB_OUTPUT"
+        echo "sha_short=$(echo "$GITHUB_SHA" | cut -c1-7)" >> "$GITHUB_OUTPUT"
     - name: publish_extension_cli::update_sha_in_extensions::checkout_extensions_repo
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
@@ -105,10 +105,10 @@ jobs:
         token: ${{ steps.generate-token.outputs.token }}
     - name: publish_extension_cli::update_sha_in_extensions::replace_sha
       run: |
-        sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ZED_EXTENSION_CLI_SHA: ${{ github.sha }}/" \
+        sed -i "s/ZED_EXTENSION_CLI_SHA: [a-f0-9]*/ZED_EXTENSION_CLI_SHA: $GITHUB_SHA/" \
             .github/workflows/ci.yml
     - name: publish_extension_cli::create_pull_request_extensions
-      uses: peter-evans/create-pull-request@v7
+      uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
         title: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
         body: |
