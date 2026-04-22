@@ -1,5 +1,5 @@
 use acp_thread::{SUBAGENT_SESSION_INFO_META_KEY, SubagentSessionInfo};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
@@ -10,21 +10,30 @@ use std::sync::Arc;
 
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
-/// Spawns an agent to perform a delegated task.
+/// Spawn a sub-agent for a well-scoped task.
 ///
-/// Use this tool when you want to:
-/// - Run multiple tasks in parallel.
-/// - Delegate a self-contained task where you only need the final outcome.
+/// ### Designing delegated subtasks
+/// - An agent does not see your conversation history. Include all relevant context (file paths, requirements, constraints) in the message.
+/// - Subtasks must be concrete, well-defined, and self-contained.
+/// - Delegated subtasks must materially advance the main task.
+/// - Do not duplicate work between your work and delegated subtasks.
+/// - Do not use this tool for tasks you could accomplish directly with one or two tool calls.
+/// - When you delegate work, focus on coordinating and synthesizing results instead of duplicating the same work yourself.
+/// - Avoid issuing multiple delegate calls for the same unresolved subproblem unless the new delegated task is genuinely different and necessary.
+/// - Narrow the delegated ask to the concrete output you need next.
+/// - For code-edit subtasks, decompose work so each delegated task has a disjoint write set.
+/// - When sending a follow-up using an existing agent session_id, the agent already has the context from the previous turn. Send only a short, direct message. Do NOT repeat the original task or context.
 ///
-/// Do NOT use this tool for tasks you could accomplish directly with one or two tool calls (e.g. reading a file, running a single command).
+/// ### Parallel delegation patterns
+/// - Run multiple independent information-seeking subtasks in parallel when you have distinct questions that can be answered independently.
+/// - Split implementation into disjoint codebase slices and spawn multiple agents for them in parallel when the write scopes do not overlap.
+/// - When a plan has multiple independent steps, prefer delegating those steps in parallel rather than serializing them unnecessarily.
+/// - Reuse the returned session_id when you want to follow up on the same delegated subproblem instead of creating a duplicate session.
 ///
-/// You will receive only the agent's final message as output.
-///
-/// **New session** (no session_id): Creates a new agent that does NOT see your conversation history. Include all relevant context (file paths, requirements, constraints) in the message.
-///
-/// **Follow-up** (with session_id): Sends a follow-up to an existing agent session. The agent already has full context, so send only a short, direct message — do NOT repeat the original task or context. Examples: "Also update the tests", "Fix the compile error in foo.rs", "Retry".
-///
-/// - If spawning multiple agents that might write to the filesystem, provide guidance on how to avoid conflicts (e.g. assign each to different directories).
+/// ### Output
+/// - You will receive only the agent's final message as output.
+/// - Successful calls return a session_id that you can use for follow-up messages.
+/// - Error results may also include a session_id if a session was already created.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct SpawnAgentToolInput {
