@@ -1,23 +1,19 @@
-use std::{mem, ops::Range, sync::Arc};
+use std::{ops::Range, rc::Rc, sync::Arc};
 
-use collections::HashSet;
 use gpui::{App, AppContext, Context, Entity};
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot};
 use rope::Point;
-use text::{Bias, OffsetRangeExt, locator::Locator};
-use util::{post_inc, rel_path::RelPath};
+use sum_tree::{Dimensions, SumTree};
+use text::{Bias, BufferId, Edit, OffsetRangeExt, Patch};
+use util::rel_path::RelPath;
 use ztracing::instrument;
 
 use crate::{
-    Anchor, ExcerptId, ExcerptRange, ExpandExcerptDirection, MultiBuffer, build_excerpt_ranges,
+    Anchor, BufferState, BufferStateSnapshot, DiffChangeKind, Event, Excerpt, ExcerptOffset,
+    ExcerptRange, ExcerptSummary, ExpandExcerptDirection, MultiBuffer, MultiBufferOffset,
+    PathKeyIndex, build_excerpt_ranges, remove_diff_state,
 };
-
-#[derive(Debug, Clone)]
-pub struct PathExcerptInsertResult {
-    pub excerpt_ids: Vec<ExcerptId>,
-    pub added_new_excerpt: bool,
-}
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
@@ -27,6 +23,13 @@ pub struct PathKey {
 }
 
 impl PathKey {
+    pub fn min() -> Self {
+        Self {
+            sort_prefix: None,
+            path: RelPath::empty().into_arc(),
+        }
+    }
+
     pub fn sorted(sort_prefix: u64) -> Self {
         Self {
             sort_prefix: Some(sort_prefix),
@@ -55,41 +58,11 @@ impl PathKey {
 }
 
 impl MultiBuffer {
-    pub fn paths(&self) -> impl Iterator<Item = &PathKey> + '_ {
-        self.excerpts_by_path.keys()
-    }
-
-    pub fn excerpts_for_path(&self, path: &PathKey) -> impl '_ + Iterator<Item = ExcerptId> {
-        self.excerpts_by_path
-            .get(path)
-            .map(|excerpts| excerpts.as_slice())
-            .unwrap_or_default()
-            .iter()
-            .copied()
-    }
-
-    pub fn path_for_excerpt(&self, excerpt: ExcerptId) -> Option<PathKey> {
-        self.paths_by_excerpt.get(&excerpt).cloned()
-    }
-
-    pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
-        if let Some(to_remove) = self.excerpts_by_path.remove(&path) {
-            self.remove_excerpts(to_remove, cx)
-        }
-    }
-
-    pub fn buffer_for_path(&self, path: &PathKey, cx: &App) -> Option<Entity<Buffer>> {
-        let excerpt_id = self.excerpts_by_path.get(path)?.first()?;
-        let snapshot = self.read(cx);
-        let excerpt = snapshot.excerpt(*excerpt_id)?;
-        self.buffer(excerpt.buffer_id)
-    }
-
     pub fn location_for_path(&self, path: &PathKey, cx: &App) -> Option<Anchor> {
-        let excerpt_id = self.excerpts_by_path.get(path)?.first()?;
-        let snapshot = self.read(cx);
-        let excerpt = snapshot.excerpt(*excerpt_id)?;
-        Some(Anchor::in_buffer(excerpt.id, excerpt.range.context.start))
+        let snapshot = self.snapshot(cx);
+        let excerpt = snapshot.excerpts_for_path(path).next()?;
+        let path_key_index = snapshot.path_key_index_for_buffer(excerpt.context.start.buffer_id)?;
+        Some(Anchor::in_buffer(path_key_index, excerpt.context.start))
     }
 
     pub fn set_excerpts_for_buffer(
@@ -98,12 +71,14 @@ impl MultiBuffer {
         ranges: impl IntoIterator<Item = Range<Point>>,
         context_line_count: u32,
         cx: &mut Context<Self>,
-    ) -> (Vec<Range<Anchor>>, bool) {
+    ) -> bool {
         let path = PathKey::for_buffer(&buffer, cx);
         self.set_excerpts_for_path(path, buffer, ranges, context_line_count, cx)
     }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
+    ///
+    /// Any existing excerpts for this buffer or this path will be replaced by the provided ranges.
     #[instrument(skip_all)]
     pub fn set_excerpts_for_path(
         &mut self,
@@ -112,20 +87,83 @@ impl MultiBuffer {
         ranges: impl IntoIterator<Item = Range<Point>>,
         context_line_count: u32,
         cx: &mut Context<Self>,
-    ) -> (Vec<Range<Anchor>>, bool) {
+    ) -> bool {
         let buffer_snapshot = buffer.read(cx).snapshot();
+        let ranges: Vec<_> = ranges.into_iter().collect();
         let excerpt_ranges = build_excerpt_ranges(ranges, context_line_count, &buffer_snapshot);
 
-        let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
-        self.set_merged_excerpt_ranges_for_path(
-            path,
-            buffer,
-            excerpt_ranges,
+        let merged = Self::merge_excerpt_ranges(&excerpt_ranges);
+        let (inserted, _path_key_index) =
+            self.set_merged_excerpt_ranges_for_path(path, buffer, &buffer_snapshot, merged, cx);
+        inserted
+    }
+
+    /// Like [`Self::set_excerpts_for_path`], but expands the provided ranges to cover any overlapping existing excerpts
+    /// for the same buffer and path.
+    ///
+    /// Existing excerpts that do not overlap any of the provided ranges are discarded.
+    pub fn update_excerpts_for_path(
+        &mut self,
+        path: PathKey,
+        buffer: Entity<Buffer>,
+        ranges: impl IntoIterator<Item = Range<Point>>,
+        context_line_count: u32,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let ranges: Vec<_> = ranges.into_iter().collect();
+        let excerpt_ranges = build_excerpt_ranges(ranges, context_line_count, &buffer_snapshot);
+        let merged = self.merge_new_with_existing_excerpt_ranges(
+            &path,
             &buffer_snapshot,
-            new,
-            counts,
+            excerpt_ranges,
             cx,
-        )
+        );
+
+        let (inserted, _path_key_index) =
+            self.set_merged_excerpt_ranges_for_path(path, buffer, &buffer_snapshot, merged, cx);
+        inserted
+    }
+
+    pub fn merge_new_with_existing_excerpt_ranges(
+        &self,
+        path: &PathKey,
+        buffer_snapshot: &BufferSnapshot,
+        mut excerpt_ranges: Vec<ExcerptRange<Point>>,
+        cx: &App,
+    ) -> Vec<ExcerptRange<Point>> {
+        let multibuffer_snapshot = self.snapshot(cx);
+
+        if multibuffer_snapshot.path_for_buffer(buffer_snapshot.remote_id()) == Some(path) {
+            excerpt_ranges.sort_by_key(|range| range.context.start);
+            let mut combined_ranges = Vec::new();
+            let mut new_ranges = excerpt_ranges.into_iter().peekable();
+            for existing_range in
+                multibuffer_snapshot.excerpts_for_buffer(buffer_snapshot.remote_id())
+            {
+                let existing_range = ExcerptRange {
+                    context: existing_range.context.to_point(buffer_snapshot),
+                    primary: existing_range.primary.to_point(buffer_snapshot),
+                };
+                while let Some(new_range) = new_ranges.peek()
+                    && new_range.context.end < existing_range.context.start
+                {
+                    combined_ranges.push(new_range.clone());
+                    new_ranges.next();
+                }
+
+                if let Some(new_range) = new_ranges.peek()
+                    && new_range.context.start <= existing_range.context.end
+                {
+                    combined_ranges.push(existing_range)
+                }
+            }
+            combined_ranges.extend(new_ranges);
+            excerpt_ranges = combined_ranges;
+        }
+
+        excerpt_ranges.sort_by_key(|range| range.context.start);
+        Self::merge_excerpt_ranges(&excerpt_ranges)
     }
 
     pub fn set_excerpt_ranges_for_path(
@@ -135,17 +173,11 @@ impl MultiBuffer {
         buffer_snapshot: &BufferSnapshot,
         excerpt_ranges: Vec<ExcerptRange<Point>>,
         cx: &mut Context<Self>,
-    ) -> (Vec<Range<Anchor>>, bool) {
-        let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
-        self.set_merged_excerpt_ranges_for_path(
-            path,
-            buffer,
-            excerpt_ranges,
-            buffer_snapshot,
-            new,
-            counts,
-            cx,
-        )
+    ) -> bool {
+        let merged = Self::merge_excerpt_ranges(&excerpt_ranges);
+        let (inserted, _path_key_index) =
+            self.set_merged_excerpt_ranges_for_path(path, buffer, buffer_snapshot, merged, cx);
+        inserted
     }
 
     pub fn set_anchored_excerpts_for_path(
@@ -161,350 +193,502 @@ impl MultiBuffer {
         let mut app = cx.to_async();
         async move {
             let snapshot = buffer_snapshot.clone();
-            let (excerpt_ranges, new, counts) = app
+            let (ranges, merged_excerpt_ranges) = app
                 .background_spawn(async move {
-                    let ranges = ranges.into_iter().map(|range| range.to_point(&snapshot));
+                    let point_ranges = ranges.iter().map(|range| range.to_point(&snapshot));
                     let excerpt_ranges =
-                        build_excerpt_ranges(ranges, context_line_count, &snapshot);
-                    let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
-                    (excerpt_ranges, new, counts)
+                        build_excerpt_ranges(point_ranges, context_line_count, &snapshot);
+                    let merged = Self::merge_excerpt_ranges(&excerpt_ranges);
+                    (ranges, merged)
                 })
                 .await;
 
             multi_buffer
                 .update(&mut app, move |multi_buffer, cx| {
-                    let (ranges, _) = multi_buffer.set_merged_excerpt_ranges_for_path(
+                    let (_, path_key_index) = multi_buffer.set_merged_excerpt_ranges_for_path(
                         path_key,
                         buffer,
-                        excerpt_ranges,
                         &buffer_snapshot,
-                        new,
-                        counts,
+                        merged_excerpt_ranges,
                         cx,
                     );
                     ranges
+                        .into_iter()
+                        .map(|range| Anchor::range_in_buffer(path_key_index, range))
+                        .collect()
                 })
                 .ok()
                 .unwrap_or_default()
         }
     }
 
-    pub(super) fn expand_excerpts_with_paths(
+    pub fn expand_excerpts(
         &mut self,
-        ids: impl IntoIterator<Item = ExcerptId>,
+        anchors: impl IntoIterator<Item = Anchor>,
         line_count: u32,
         direction: ExpandExcerptDirection,
         cx: &mut Context<Self>,
     ) {
-        let mut sorted_ids: Vec<ExcerptId> = ids.into_iter().collect();
-        sorted_ids.sort_by(|a, b| {
-            let path_a = self.paths_by_excerpt.get(a);
-            let path_b = self.paths_by_excerpt.get(b);
-            path_a.cmp(&path_b)
-        });
-        let grouped = sorted_ids
-            .into_iter()
-            .chunk_by(|id| self.paths_by_excerpt.get(id).cloned())
-            .into_iter()
-            .filter_map(|(k, v)| Some((k?, v.into_iter().collect::<Vec<_>>())))
-            .collect::<Vec<_>>();
-        let snapshot = self.snapshot(cx);
+        if line_count == 0 {
+            return;
+        }
 
-        for (path, ids) in grouped.into_iter() {
-            let Some(excerpt_ids) = self.excerpts_by_path.get(&path) else {
+        let snapshot = self.snapshot(cx);
+        let mut sorted_anchors = anchors
+            .into_iter()
+            .filter_map(|anchor| anchor.excerpt_anchor())
+            .collect::<Vec<_>>();
+        if sorted_anchors.is_empty() {
+            return;
+        }
+        sorted_anchors.sort_by(|a, b| a.cmp(b, &snapshot));
+        let buffers = sorted_anchors.into_iter().chunk_by(|anchor| anchor.path);
+        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>(());
+
+        for (path_index, excerpt_anchors) in &buffers {
+            let path = snapshot
+                .path_keys
+                .get_index(path_index.0 as usize)
+                .expect("anchor from wrong multibuffer");
+
+            let mut excerpt_anchors = excerpt_anchors.peekable();
+            let mut ranges = Vec::new();
+
+            cursor.seek_forward(path, Bias::Left);
+            let Some((buffer, buffer_snapshot)) = cursor
+                .item()
+                .map(|excerpt| (excerpt.buffer(&self), excerpt.buffer_snapshot(&snapshot)))
+            else {
                 continue;
             };
 
-            let ids_to_expand = HashSet::from_iter(ids);
-            let mut excerpt_id_ = None;
-            let expanded_ranges = excerpt_ids.iter().filter_map(|excerpt_id| {
-                let excerpt = snapshot.excerpt(*excerpt_id)?;
-                let excerpt_id = excerpt.id;
-                if excerpt_id_.is_none() {
-                    excerpt_id_ = Some(excerpt_id);
+            while let Some(excerpt) = cursor.item()
+                && &excerpt.path_key == path
+            {
+                let mut range = ExcerptRange {
+                    context: excerpt.range.context.to_point(buffer_snapshot),
+                    primary: excerpt.range.primary.to_point(buffer_snapshot),
+                };
+
+                let mut needs_expand = false;
+                while excerpt_anchors.peek().is_some_and(|anchor| {
+                    excerpt
+                        .range
+                        .contains(&anchor.text_anchor(), buffer_snapshot)
+                }) {
+                    needs_expand = true;
+                    excerpt_anchors.next();
                 }
 
-                let mut context = excerpt.range.context.to_point(&excerpt.buffer);
-                if ids_to_expand.contains(&excerpt_id) {
+                if needs_expand {
                     match direction {
                         ExpandExcerptDirection::Up => {
-                            context.start.row = context.start.row.saturating_sub(line_count);
-                            context.start.column = 0;
+                            range.context.start.row =
+                                range.context.start.row.saturating_sub(line_count);
+                            range.context.start.column = 0;
                         }
                         ExpandExcerptDirection::Down => {
-                            context.end.row =
-                                (context.end.row + line_count).min(excerpt.buffer.max_point().row);
-                            context.end.column = excerpt.buffer.line_len(context.end.row);
+                            range.context.end.row = (range.context.end.row + line_count)
+                                .min(excerpt.buffer_snapshot(&snapshot).max_point().row);
+                            range.context.end.column = excerpt
+                                .buffer_snapshot(&snapshot)
+                                .line_len(range.context.end.row);
                         }
                         ExpandExcerptDirection::UpAndDown => {
-                            context.start.row = context.start.row.saturating_sub(line_count);
-                            context.start.column = 0;
-                            context.end.row =
-                                (context.end.row + line_count).min(excerpt.buffer.max_point().row);
-                            context.end.column = excerpt.buffer.line_len(context.end.row);
+                            range.context.start.row =
+                                range.context.start.row.saturating_sub(line_count);
+                            range.context.start.column = 0;
+                            range.context.end.row = (range.context.end.row + line_count)
+                                .min(excerpt.buffer_snapshot(&snapshot).max_point().row);
+                            range.context.end.column = excerpt
+                                .buffer_snapshot(&snapshot)
+                                .line_len(range.context.end.row);
                         }
                     }
                 }
 
-                Some(ExcerptRange {
-                    context,
-                    primary: excerpt.range.primary.to_point(&excerpt.buffer),
-                })
-            });
-            let mut merged_ranges: Vec<ExcerptRange<Point>> = Vec::new();
-            for range in expanded_ranges {
-                if let Some(last_range) = merged_ranges.last_mut()
-                    && last_range.context.end >= range.context.start
-                {
-                    last_range.context.end = range.context.end;
-                    continue;
-                }
-                merged_ranges.push(range)
+                ranges.push(range);
+                cursor.next();
             }
-            let Some(excerpt_id) = excerpt_id_ else {
-                continue;
-            };
-            let Some(buffer_id) = &snapshot.buffer_id_for_excerpt(excerpt_id) else {
-                continue;
-            };
 
-            let Some(buffer) = self.buffers.get(buffer_id).map(|b| b.buffer.clone()) else {
-                continue;
-            };
+            ranges.sort_by(|l, r| l.context.start.cmp(&r.context.start));
 
-            let buffer_snapshot = buffer.read(cx).snapshot();
-            self.update_path_excerpts(path.clone(), buffer, &buffer_snapshot, merged_ranges, cx);
+            self.set_excerpt_ranges_for_path(path.clone(), buffer, buffer_snapshot, ranges, cx);
         }
     }
 
     /// Sets excerpts, returns `true` if at least one new excerpt was added.
-    fn set_merged_excerpt_ranges_for_path(
+    pub(crate) fn set_merged_excerpt_ranges_for_path<T>(
         &mut self,
         path: PathKey,
         buffer: Entity<Buffer>,
-        ranges: Vec<ExcerptRange<Point>>,
         buffer_snapshot: &BufferSnapshot,
-        new: Vec<ExcerptRange<Point>>,
-        counts: Vec<usize>,
+        new: Vec<ExcerptRange<T>>,
         cx: &mut Context<Self>,
-    ) -> (Vec<Range<Anchor>>, bool) {
-        let insert_result = self.update_path_excerpts(path, buffer, buffer_snapshot, new, cx);
-
-        let mut result = Vec::new();
-        let mut ranges = ranges.into_iter();
-        for (excerpt_id, range_count) in insert_result
-            .excerpt_ids
+    ) -> (bool, PathKeyIndex)
+    where
+        T: language::ToOffset,
+    {
+        let anchor_ranges = new
             .into_iter()
-            .zip(counts.into_iter())
-        {
-            for range in ranges.by_ref().take(range_count) {
-                let range = Anchor::range_in_buffer(
-                    excerpt_id,
-                    buffer_snapshot.anchor_before(&range.primary.start)
-                        ..buffer_snapshot.anchor_after(&range.primary.end),
-                );
-                result.push(range)
-            }
+            .map(|r| ExcerptRange {
+                context: buffer_snapshot.anchor_before(r.context.start)
+                    ..buffer_snapshot.anchor_after(r.context.end),
+                primary: buffer_snapshot.anchor_before(r.primary.start)
+                    ..buffer_snapshot.anchor_after(r.primary.end),
+            })
+            .collect::<Vec<_>>();
+        let inserted =
+            self.update_path_excerpts(path.clone(), buffer, buffer_snapshot, &anchor_ranges, cx);
+        let path_key_index = self.get_or_create_path_key_index(&path);
+        (inserted, path_key_index)
+    }
+
+    pub(crate) fn get_or_create_path_key_index(&mut self, path_key: &PathKey) -> PathKeyIndex {
+        let mut snapshot = self.snapshot.borrow_mut();
+
+        if let Some(existing) = snapshot.path_keys.get_index_of(path_key) {
+            return PathKeyIndex(existing as u64);
         }
-        (result, insert_result.added_new_excerpt)
+
+        PathKeyIndex(
+            Arc::make_mut(&mut snapshot.path_keys)
+                .insert_full(path_key.clone())
+                .0 as u64,
+        )
     }
 
     pub fn update_path_excerpts(
         &mut self,
-        path: PathKey,
+        path_key: PathKey,
         buffer: Entity<Buffer>,
         buffer_snapshot: &BufferSnapshot,
-        new: Vec<ExcerptRange<Point>>,
+        to_insert: &Vec<ExcerptRange<text::Anchor>>,
         cx: &mut Context<Self>,
-    ) -> PathExcerptInsertResult {
-        let mut insert_after = self
-            .excerpts_by_path
-            .range(..path.clone())
-            .next_back()
-            .and_then(|(_, value)| value.last().copied())
-            .unwrap_or(ExcerptId::min());
+    ) -> bool {
+        let path_key_index = self.get_or_create_path_key_index(&path_key);
+        if let Some(old_path_key) = self
+            .snapshot(cx)
+            .path_for_buffer(buffer_snapshot.remote_id())
+            && old_path_key != &path_key
+        {
+            self.remove_excerpts(old_path_key.clone(), cx);
+        }
 
-        let existing = self
-            .excerpts_by_path
-            .get(&path)
-            .cloned()
-            .unwrap_or_default();
-        let mut new_iter = new.into_iter().peekable();
-        let mut existing_iter = existing.into_iter().peekable();
+        if to_insert.len() == 0 {
+            self.remove_excerpts(path_key.clone(), cx);
 
-        let mut excerpt_ids = Vec::new();
-        let mut to_remove = Vec::new();
-        let mut to_insert: Vec<(ExcerptId, ExcerptRange<Point>)> = Vec::new();
-        let mut added_a_new_excerpt = false;
-        let snapshot = self.snapshot(cx);
+            return false;
+        }
+        assert_eq!(self.history.transaction_depth(), 0);
+        self.sync_mut(cx);
 
-        let mut next_excerpt_id =
-            if let Some(last_entry) = self.snapshot.get_mut().excerpt_ids.last() {
-                last_entry.id.0 + 1
-            } else {
-                1
+        let buffer_id = buffer_snapshot.remote_id();
+
+        let mut snapshot = self.snapshot.get_mut();
+        let mut cursor = snapshot
+            .excerpts
+            .cursor::<Dimensions<PathKey, ExcerptOffset>>(());
+        let mut new_excerpts = SumTree::new(());
+
+        let new_ranges = to_insert.clone();
+        let mut to_insert = to_insert.iter().peekable();
+        let mut patch = Patch::empty();
+        let mut added_new_excerpt = false;
+
+        new_excerpts.append(cursor.slice(&path_key, Bias::Left), ());
+
+        // handle the case where the path key used to be associated
+        // with a different buffer by removing its excerpts.
+        if let Some(excerpt) = cursor.item()
+            && &excerpt.path_key == &path_key
+            && excerpt.buffer_id != buffer_id
+        {
+            let old_buffer_id = excerpt.buffer_id;
+            self.buffers.remove(&old_buffer_id);
+            snapshot.buffers.remove(&old_buffer_id);
+            remove_diff_state(&mut snapshot.diffs, old_buffer_id);
+            self.diffs.remove(&old_buffer_id);
+            let before = cursor.position.1;
+            cursor.seek_forward(&path_key, Bias::Right);
+            let after = cursor.position.1;
+            patch.push(Edit {
+                old: before..after,
+                new: new_excerpts.summary().len()..new_excerpts.summary().len(),
+            });
+            cx.emit(Event::BuffersRemoved {
+                removed_buffer_ids: vec![old_buffer_id],
+            });
+        }
+
+        while let Some(excerpt) = cursor.item()
+            && excerpt.path_key == path_key
+        {
+            assert_eq!(excerpt.buffer_id, buffer_id);
+            let Some(next_excerpt) = to_insert.peek() else {
+                break;
             };
+            if &excerpt.range == *next_excerpt {
+                let before = new_excerpts.summary().len();
+                new_excerpts.update_last(
+                    |prev_excerpt| {
+                        if !prev_excerpt.has_trailing_newline {
+                            prev_excerpt.has_trailing_newline = true;
+                            patch.push(Edit {
+                                old: cursor.position.1..cursor.position.1,
+                                new: before..before + MultiBufferOffset(1),
+                            });
+                        }
+                    },
+                    (),
+                );
+                new_excerpts.push(excerpt.clone(), ());
+                to_insert.next();
+                cursor.next();
+                continue;
+            }
 
-        let mut next_excerpt_id = move || ExcerptId(post_inc(&mut next_excerpt_id));
+            if excerpt
+                .range
+                .context
+                .start
+                .cmp(&next_excerpt.context.start, &buffer_snapshot)
+                .is_le()
+            {
+                // remove old excerpt
+                let before = cursor.position.1;
+                cursor.next();
+                let after = cursor.position.1;
+                patch.push(Edit {
+                    old: before..after,
+                    new: new_excerpts.summary().len()..new_excerpts.summary().len(),
+                });
+            } else {
+                // insert new excerpt
+                let next_excerpt = to_insert.next().unwrap();
+                added_new_excerpt = true;
+                let before = new_excerpts.summary().len();
+                new_excerpts.update_last(
+                    |prev_excerpt| {
+                        prev_excerpt.has_trailing_newline = true;
+                    },
+                    (),
+                );
+                new_excerpts.push(
+                    Excerpt::new(
+                        path_key.clone(),
+                        path_key_index,
+                        &buffer_snapshot,
+                        next_excerpt.clone(),
+                        false,
+                    ),
+                    (),
+                );
+                let after = new_excerpts.summary().len();
+                patch.push_maybe_empty(Edit {
+                    old: cursor.position.1..cursor.position.1,
+                    new: before..after,
+                });
+            }
+        }
 
-        let mut excerpts_cursor = snapshot.excerpts.cursor::<Option<&Locator>>(());
-        excerpts_cursor.next();
-
-        loop {
-            let existing = if let Some(&existing_id) = existing_iter.peek() {
-                let locator = snapshot.excerpt_locator_for_id(existing_id);
-                excerpts_cursor.seek_forward(&Some(locator), Bias::Left);
-                if let Some(excerpt) = excerpts_cursor.item() {
-                    if excerpt.buffer_id != buffer_snapshot.remote_id() {
-                        to_remove.push(existing_id);
-                        existing_iter.next();
-                        continue;
+        // remove any further trailing excerpts
+        let mut before = cursor.position.1;
+        cursor.seek_forward(&path_key, Bias::Right);
+        let after = cursor.position.1;
+        // if we removed the previous last excerpt, remove the trailing newline from the new last excerpt
+        if cursor.item().is_none() && to_insert.peek().is_none() {
+            new_excerpts.update_last(
+                |excerpt| {
+                    if excerpt.has_trailing_newline {
+                        before.0.0 = before
+                            .0
+                            .0
+                            .checked_sub(1)
+                            .expect("should have preceding excerpt");
+                        excerpt.has_trailing_newline = false;
                     }
-                    Some((existing_id, excerpt.range.context.to_point(buffer_snapshot)))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+                },
+                (),
+            );
+        }
+        patch.push(Edit {
+            old: before..after,
+            new: new_excerpts.summary().len()..new_excerpts.summary().len(),
+        });
 
-            let new = new_iter.peek();
-            // Try to merge the next new range or existing excerpt into the last
-            // queued insert.
-            if let Some((last_id, last)) = to_insert.last_mut() {
-                // Next new range overlaps the last queued insert: absorb it by
-                // extending the insert's end.
-                if let Some(new) = new
-                    && last.context.end >= new.context.start
-                {
-                    last.context.end = last.context.end.max(new.context.end);
-                    excerpt_ids.push(*last_id);
-                    new_iter.next();
-                    continue;
-                }
-                // Next existing excerpt overlaps the last queued insert: absorb
-                // it by extending the insert's end, and record the existing
-                // excerpt as replaced so anchors in it resolve to the new one.
-                if let Some((existing_id, existing_range)) = &existing
-                    && last.context.end >= existing_range.start
-                {
-                    last.context.end = last.context.end.max(existing_range.end);
-                    to_remove.push(*existing_id);
-                    Arc::make_mut(&mut self.snapshot.get_mut().replaced_excerpts)
-                        .insert(*existing_id, *last_id);
-                    existing_iter.next();
-                    continue;
-                }
+        while let Some(next_excerpt) = to_insert.next() {
+            added_new_excerpt = true;
+            let before = new_excerpts.summary().len();
+            new_excerpts.update_last(
+                |prev_excerpt| {
+                    prev_excerpt.has_trailing_newline = true;
+                },
+                (),
+            );
+            new_excerpts.push(
+                Excerpt::new(
+                    path_key.clone(),
+                    path_key_index,
+                    &buffer_snapshot,
+                    next_excerpt.clone(),
+                    false,
+                ),
+                (),
+            );
+            let after = new_excerpts.summary().len();
+            patch.push_maybe_empty(Edit {
+                old: cursor.position.1..cursor.position.1,
+                new: before..after,
+            });
+        }
+
+        let suffix_start = cursor.position.1;
+        let suffix = cursor.suffix();
+        let changed_trailing_excerpt = suffix.is_empty();
+        if !suffix.is_empty() {
+            let before = new_excerpts.summary().len();
+            new_excerpts.update_last(
+                |prev_excerpt| {
+                    if !prev_excerpt.has_trailing_newline {
+                        prev_excerpt.has_trailing_newline = true;
+                        patch.push(Edit {
+                            old: suffix_start..suffix_start,
+                            new: before..before + MultiBufferOffset(1),
+                        });
+                    }
+                },
+                (),
+            );
+        }
+        new_excerpts.append(suffix, ());
+        drop(cursor);
+
+        snapshot.excerpts = new_excerpts;
+        snapshot.buffers.insert(
+            buffer_id,
+            BufferStateSnapshot {
+                path_key: path_key.clone(),
+                path_key_index,
+                buffer_snapshot: buffer_snapshot.clone(),
+            },
+        );
+
+        self.buffers.entry(buffer_id).or_insert_with(|| {
+            self.buffer_changed_since_sync.replace(true);
+            buffer.update(cx, |buffer, _| {
+                buffer.record_changes(Rc::downgrade(&self.buffer_changed_since_sync));
+            });
+            BufferState {
+                _subscriptions: [
+                    cx.observe(&buffer, |_, _, cx| cx.notify()),
+                    cx.subscribe(&buffer, Self::on_buffer_event),
+                ],
+                buffer: buffer.clone(),
             }
+        });
 
-            match (new, existing) {
-                (None, None) => break,
-
-                // No more new ranges; remove the remaining existing excerpt.
-                (None, Some((existing_id, _))) => {
-                    existing_iter.next();
-                    to_remove.push(existing_id);
-                }
-
-                // No more existing excerpts; queue the new range for insertion.
-                (Some(_), None) => {
-                    added_a_new_excerpt = true;
-                    let new_id = next_excerpt_id();
-                    excerpt_ids.push(new_id);
-                    to_insert.push((new_id, new_iter.next().unwrap()));
-                }
-
-                // Existing excerpt ends before the new range starts, so it
-                // has no corresponding new range and must be removed. Flush
-                // pending inserts and advance `insert_after` past it so that
-                // future inserts receive locators *after* this excerpt's
-                // locator, preserving forward ordering.
-                (Some(new), Some((_, existing_range)))
-                    if existing_range.end < new.context.start =>
-                {
-                    self.insert_excerpts_with_ids_after(
-                        insert_after,
-                        buffer.clone(),
-                        mem::take(&mut to_insert),
-                        cx,
-                    );
-                    insert_after = existing_iter.next().unwrap();
-                    to_remove.push(insert_after);
-                }
-                // New range ends before the existing excerpt starts, so the
-                // new range has no corresponding existing excerpt. Queue it
-                // for insertion at the current `insert_after` position
-                // (before the existing excerpt), which is the correct
-                // spatial ordering.
-                (Some(new), Some((_, existing_range)))
-                    if existing_range.start > new.context.end =>
-                {
-                    let new_id = next_excerpt_id();
-                    excerpt_ids.push(new_id);
-                    to_insert.push((new_id, new_iter.next().unwrap()));
-                }
-                // Exact match: keep the existing excerpt in place, flush
-                // any pending inserts before it, and use it as the new
-                // `insert_after` anchor.
-                (Some(new), Some((_, existing_range)))
-                    if existing_range.start == new.context.start
-                        && existing_range.end == new.context.end =>
-                {
-                    self.insert_excerpts_with_ids_after(
-                        insert_after,
-                        buffer.clone(),
-                        mem::take(&mut to_insert),
-                        cx,
-                    );
-                    insert_after = existing_iter.next().unwrap();
-                    excerpt_ids.push(insert_after);
-                    new_iter.next();
-                }
-
-                // Partial overlap: replace the existing excerpt with a new
-                // one whose range is the union of both, and record the
-                // replacement so that anchors in the old excerpt resolve to
-                // the new one.
-                (Some(_), Some((_, existing_range))) => {
-                    let existing_id = existing_iter.next().unwrap();
-                    let new_id = next_excerpt_id();
-                    Arc::make_mut(&mut self.snapshot.get_mut().replaced_excerpts)
-                        .insert(existing_id, new_id);
-                    to_remove.push(existing_id);
-                    let mut range = new_iter.next().unwrap();
-                    range.context.start = range.context.start.min(existing_range.start);
-                    range.context.end = range.context.end.max(existing_range.end);
-                    excerpt_ids.push(new_id);
-                    to_insert.push((new_id, range));
-                }
-            };
+        if changed_trailing_excerpt {
+            snapshot.trailing_excerpt_update_count += 1;
         }
 
-        self.insert_excerpts_with_ids_after(insert_after, buffer, to_insert, cx);
-        // todo(lw): There is a logic bug somewhere that causes the to_remove vector to be not ordered correctly
-        to_remove.sort_by_cached_key(|&id| snapshot.excerpt_locator_for_id(id));
-        self.remove_excerpts(to_remove, cx);
-
-        if excerpt_ids.is_empty() {
-            self.excerpts_by_path.remove(&path);
-        } else {
-            let snapshot = &*self.snapshot.get_mut();
-            let excerpt_ids = excerpt_ids
-                .iter()
-                .dedup()
-                .cloned()
-                // todo(lw): There is a logic bug somewhere that causes excerpt_ids to not necessarily be in order by locator
-                .sorted_by_cached_key(|&id| snapshot.excerpt_locator_for_id(id))
-                .collect();
-            for &excerpt_id in &excerpt_ids {
-                self.paths_by_excerpt.insert(excerpt_id, path.clone());
-            }
-            self.excerpts_by_path.insert(path, excerpt_ids);
+        let edits = Self::sync_diff_transforms(
+            &mut snapshot,
+            patch.into_inner(),
+            DiffChangeKind::BufferEdited,
+        );
+        if !edits.is_empty() {
+            self.subscriptions.publish(edits);
         }
 
-        PathExcerptInsertResult {
-            excerpt_ids,
-            added_new_excerpt: added_a_new_excerpt,
+        cx.emit(Event::Edited {
+            edited_buffer: None,
+            is_local: true,
+        });
+        cx.emit(Event::BufferRangesUpdated {
+            buffer,
+            path_key: path_key.clone(),
+            ranges: new_ranges,
+        });
+        cx.notify();
+
+        added_new_excerpt
+    }
+
+    pub fn remove_excerpts_for_buffer(&mut self, buffer: BufferId, cx: &mut Context<Self>) {
+        let snapshot = self.sync_mut(cx);
+        let Some(path) = snapshot.path_for_buffer(buffer).cloned() else {
+            return;
+        };
+        self.remove_excerpts(path, cx);
+    }
+
+    pub fn remove_excerpts(&mut self, path: PathKey, cx: &mut Context<Self>) {
+        assert_eq!(self.history.transaction_depth(), 0);
+        self.sync_mut(cx);
+
+        let mut snapshot = self.snapshot.get_mut();
+        let mut cursor = snapshot
+            .excerpts
+            .cursor::<Dimensions<PathKey, ExcerptOffset>>(());
+        let mut new_excerpts = SumTree::new(());
+        new_excerpts.append(cursor.slice(&path, Bias::Left), ());
+        let mut edit_start = cursor.position.1;
+        let mut buffer_id = None;
+        if let Some(excerpt) = cursor.item()
+            && excerpt.path_key == path
+        {
+            buffer_id = Some(excerpt.buffer_id);
         }
+        cursor.seek(&path, Bias::Right);
+        let edit_end = cursor.position.1;
+        let suffix = cursor.suffix();
+        let changed_trailing_excerpt = suffix.is_empty();
+        new_excerpts.append(suffix, ());
+
+        if let Some(buffer_id) = buffer_id {
+            snapshot.buffers.remove(&buffer_id);
+            remove_diff_state(&mut snapshot.diffs, buffer_id);
+            self.buffers.remove(&buffer_id);
+            self.diffs.remove(&buffer_id);
+            cx.emit(Event::BuffersRemoved {
+                removed_buffer_ids: vec![buffer_id],
+            })
+        }
+        drop(cursor);
+        if changed_trailing_excerpt {
+            snapshot.trailing_excerpt_update_count += 1;
+            new_excerpts.update_last(
+                |excerpt| {
+                    if excerpt.has_trailing_newline {
+                        excerpt.has_trailing_newline = false;
+                        edit_start.0.0 = edit_start
+                            .0
+                            .0
+                            .checked_sub(1)
+                            .expect("should have at least one excerpt");
+                    }
+                },
+                (),
+            )
+        }
+
+        let edit = Edit {
+            old: edit_start..edit_end,
+            new: edit_start..edit_start,
+        };
+        snapshot.excerpts = new_excerpts;
+
+        let edits =
+            Self::sync_diff_transforms(&mut snapshot, vec![edit], DiffChangeKind::BufferEdited);
+        if !edits.is_empty() {
+            self.subscriptions.publish(edits);
+        }
+
+        cx.emit(Event::Edited {
+            edited_buffer: None,
+            is_local: true,
+        });
+        cx.notify();
     }
 }

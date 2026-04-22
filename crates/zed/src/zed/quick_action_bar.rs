@@ -11,7 +11,7 @@ use editor::actions::{
 use editor::code_context_menus::{CodeContextMenu, ContextMenuOrigin};
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Action, AnchoredPositionMode, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter,
+    Action, Anchor, AnchoredPositionMode, ClickEvent, Context, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
     WeakEntity, Window, anchored, deferred, point,
 };
@@ -227,7 +227,7 @@ impl Render for QuickActionBar {
                         anchored()
                             .position_mode(AnchoredPositionMode::Local)
                             .position(point(px(20.), px(20.)))
-                            .anchor(Corner::TopRight)
+                            .anchor(Anchor::TopRight)
                             .child(menu),
                     )
                 }))
@@ -257,7 +257,7 @@ impl Render for QuickActionBar {
                     Tooltip::text("Selection Controls"),
                 )
                 .with_handle(self.toggle_selections_handle.clone())
-                .anchor(Corner::TopRight)
+                .anchor(Anchor::TopRight)
                 .menu(move |window, cx| {
                     let focus = focus.clone();
                     let menu = ContextMenu::build(window, cx, move |menu, _, _| {
@@ -329,7 +329,7 @@ impl Render for QuickActionBar {
                         .toggle_state(self.toggle_settings_handle.is_deployed()),
                     Tooltip::text("Editor Controls"),
                 )
-                .anchor(Corner::TopRight)
+                .anchor(Anchor::TopRight)
                 .with_handle(self.toggle_settings_handle.clone())
                 .menu(move |window, cx| {
                     let menu = ContextMenu::build(window, cx, {

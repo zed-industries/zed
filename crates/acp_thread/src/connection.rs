@@ -1,5 +1,5 @@
 use crate::AcpThread;
-use agent_client_protocol::{self as acp};
+use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, IndexMap};
@@ -117,7 +117,7 @@ pub trait AgentConnection {
         &self,
         _method: &acp::AuthMethodId,
         _cx: &App,
-    ) -> Option<SpawnInTerminal> {
+    ) -> Option<Task<Result<SpawnInTerminal>>> {
         None
     }
 
@@ -125,7 +125,7 @@ pub trait AgentConnection {
 
     fn prompt(
         &self,
-        user_message_id: Option<UserMessageId>,
+        user_message_id: UserMessageId,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
@@ -477,6 +477,24 @@ impl PermissionOptionChoice {
     pub fn label(&self) -> SharedString {
         self.allow.name.clone().into()
     }
+
+    /// Build a `SelectedPermissionOutcome` for this choice.
+    ///
+    /// If the choice carries `sub_patterns`, they are attached as
+    /// `SelectedPermissionParams::Terminal`.
+    pub fn build_outcome(&self, is_allow: bool) -> crate::SelectedPermissionOutcome {
+        let option = if is_allow { &self.allow } else { &self.deny };
+
+        let params = if !self.sub_patterns.is_empty() {
+            Some(crate::SelectedPermissionParams::Terminal {
+                patterns: self.sub_patterns.clone(),
+            })
+        } else {
+            None
+        };
+
+        crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind).params(params)
+    }
 }
 
 /// Pairs a tool's permission pattern with its display name
@@ -548,6 +566,57 @@ impl PermissionOptions {
         self.first_option_of_kind(acp::PermissionOptionKind::RejectOnce)
             .map(|option| option.option_id.clone())
     }
+
+    /// Build a `SelectedPermissionOutcome` for the `DropdownWithPatterns`
+    /// variant when the user has checked specific pattern indices.
+    ///
+    /// Returns `Some` with the always-allow/deny outcome when at least one
+    /// pattern is checked. Returns `None` when zero patterns are checked,
+    /// signaling that the caller should degrade to allow-once / deny-once.
+    ///
+    /// Panics (debug) or returns `None` (release) if called on a non-
+    /// `DropdownWithPatterns` variant.
+    pub fn build_outcome_for_checked_patterns(
+        &self,
+        checked_indices: &[usize],
+        is_allow: bool,
+    ) -> Option<crate::SelectedPermissionOutcome> {
+        let PermissionOptions::DropdownWithPatterns {
+            choices, patterns, ..
+        } = self
+        else {
+            debug_assert!(
+                false,
+                "build_outcome_for_checked_patterns called on non-DropdownWithPatterns"
+            );
+            return None;
+        };
+
+        let checked_patterns: Vec<String> = patterns
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| checked_indices.contains(index))
+            .map(|(_, cp)| cp.pattern.clone())
+            .collect();
+
+        if checked_patterns.is_empty() {
+            return None;
+        }
+
+        // Use the first choice (the "Always" choice) as the base for the outcome.
+        let always_choice = choices.first()?;
+        let option = if is_allow {
+            &always_choice.allow
+        } else {
+            &always_choice.deny
+        };
+
+        let outcome = crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind)
+            .params(Some(crate::SelectedPermissionParams::Terminal {
+                patterns: checked_patterns,
+            }));
+        Some(outcome)
+    }
 }
 
 #[cfg(feature = "test-support")]
@@ -594,6 +663,23 @@ mod test_support {
             &base64::engine::general_purpose::STANDARD,
             png_data.as_bytes(),
         )
+    }
+
+    /// Test-scoped counter for generating unique session IDs across all
+    /// `StubAgentConnection` instances within a test case. Set as a GPUI
+    /// global in test init so each case starts fresh.
+    pub struct StubSessionCounter(pub AtomicUsize);
+    impl gpui::Global for StubSessionCounter {}
+
+    impl StubSessionCounter {
+        pub fn next(cx: &App) -> usize {
+            cx.try_global::<Self>()
+                .map(|g| g.0.fetch_add(1, Ordering::SeqCst))
+                .unwrap_or_else(|| {
+                    static FALLBACK: AtomicUsize = AtomicUsize::new(0);
+                    FALLBACK.fetch_add(1, Ordering::SeqCst)
+                })
+        }
     }
 
     #[derive(Clone)]
@@ -665,11 +751,10 @@ mod test_support {
             cx: &mut gpui::App,
         ) -> Entity<AcpThread> {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread_title = title.unwrap_or_else(|| SharedString::new_static("Test"));
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    thread_title,
+                    title,
                     Some(work_dirs),
                     self.clone(),
                     project,
@@ -755,9 +840,7 @@ mod test_support {
             work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(0);
-            let session_id =
-                acp::SessionId::new(NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst).to_string());
+            let session_id = acp::SessionId::new(StubSessionCounter::next(cx).to_string());
             let thread = self.create_session(session_id, project, work_dirs, None, cx);
             Task::ready(Ok(thread))
         }
@@ -792,7 +875,7 @@ mod test_support {
 
         fn prompt(
             &self,
-            _id: Option<UserMessageId>,
+            _id: UserMessageId,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -871,7 +954,7 @@ mod test_support {
 
         fn truncate(
             &self,
-            _session_id: &agent_client_protocol::SessionId,
+            _session_id: &acp::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(StubAgentSessionEditor))

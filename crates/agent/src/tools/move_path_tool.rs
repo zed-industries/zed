@@ -5,7 +5,7 @@ use super::tool_permissions::{
 use crate::{
     AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_paths,
 };
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
@@ -62,8 +62,8 @@ impl AgentTool for MovePathTool {
 
     const NAME: &'static str = "move_path";
 
-    fn kind() -> ToolKind {
-        ToolKind::Move
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Move
     }
 
     fn initial_title(
@@ -205,7 +205,6 @@ impl AgentTool for MovePathTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::TestAppContext;
     use project::{FakeFs, Project};
@@ -273,7 +272,10 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow").into())
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let result = task.await;
@@ -379,13 +381,16 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow").into())
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Expected a single authorization prompt",
         );
@@ -451,8 +456,8 @@ mod tests {
         assert!(result.is_err(), "Tool should fail when policy denies");
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Deny policy should not emit symlink authorization prompt",
         );

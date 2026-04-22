@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
-use util::test::TempTree;
+use util::{rel_path::rel_path_buf, test::TempTree};
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -150,7 +150,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         themes: Default::default(),
                         icon_themes: Vec::new(),
                         lib: Default::default(),
-                        languages: vec!["languages/erb".into(), "languages/ruby".into()],
+                        languages: vec![
+                            rel_path_buf("languages/erb"),
+                            rel_path_buf("languages/ruby"),
+                        ],
                         grammars: [
                             ("embedded_template".into(), GrammarManifestEntry::default()),
                             ("ruby".into(), GrammarManifestEntry::default()),
@@ -182,8 +185,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         authors: vec![],
                         repository: None,
                         themes: vec![
-                            "themes/monokai-pro.json".into(),
-                            "themes/monokai.json".into(),
+                            rel_path_buf("themes/monokai-pro.json"),
+                            rel_path_buf("themes/monokai.json"),
                         ],
                         icon_themes: Vec::new(),
                         lib: Default::default(),
@@ -216,6 +219,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     matcher: LanguageMatcher {
                         path_suffixes: vec!["erb".into()],
                         first_line_pattern: None,
+                        ..LanguageMatcher::default()
                     },
                 },
             ),
@@ -229,6 +233,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                     matcher: LanguageMatcher {
                         path_suffixes: vec!["rb".into()],
                         first_line_pattern: None,
+                        ..LanguageMatcher::default()
                     },
                 },
             ),
@@ -365,7 +370,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 description: None,
                 authors: vec![],
                 repository: None,
-                themes: vec!["themes/gruvbox.json".into()],
+                themes: vec![rel_path_buf("themes/gruvbox.json")],
                 icon_themes: Vec::new(),
                 lib: Default::default(),
                 languages: Default::default(),
@@ -719,6 +724,11 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .detach();
     });
 
+    let mut extension_events = cx.events(&cx.update(|cx| {
+        extension::ExtensionEvents::try_global(cx)
+            .expect("ExtensionEvents should be initialized in tests")
+    }));
+
     let executor = cx.executor();
     await_or_timeout(
         &executor,
@@ -731,6 +741,24 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     .await
     .unwrap();
 
+    await_or_timeout(
+        &executor,
+        "awaiting ExtensionsInstalledChanged",
+        10,
+        async {
+            while let Some(event) = extension_events.next().await {
+                if matches!(event, extension::Event::ExtensionsInstalledChanged) {
+                    return;
+                }
+            }
+
+            panic!(
+                "[test_extension_store_with_test_extension] extension event stream ended before ExtensionsInstalledChanged"
+            );
+        },
+    )
+    .await;
+
     let mut fake_servers = language_registry.register_fake_lsp_server(
         LanguageServerName("gleam".into()),
         lsp::ServerCapabilities {
@@ -741,17 +769,21 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     );
     cx.executor().run_until_parked();
 
+    let mut project_events = cx.events(&project);
+    let buffer_path = project_dir.join("test.gleam");
     let (buffer, _handle) = await_or_timeout(
         &executor,
         "awaiting open_local_buffer_with_lsp",
         5,
         project.update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(project_dir.join("test.gleam"), cx)
+            project.open_local_buffer_with_lsp(buffer_path.clone(), cx)
         }),
     )
     .await
     .unwrap();
     cx.executor().run_until_parked();
+
+    let buffer_remote_id = buffer.read_with(cx, |buffer, _cx| buffer.remote_id());
 
     let fake_server = await_or_timeout(
         &executor,
@@ -868,18 +900,26 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         ])))
     });
 
-    // `register_fake_lsp_server` can yield a server instance before the client has finished the LSP
-    // initialization handshake. Wait until we observe the client's `initialized` notification before
-    // issuing requests like completion.
+    // `register_fake_lsp_server` can yield a server instance before the client has fully registered
+    // the buffer with the project LSP plumbing. Wait for the project to observe that registration
+    // before issuing requests like completion.
     await_or_timeout(
         &executor,
-        "awaiting LSP Initialized notification",
+        "awaiting LanguageServerBufferRegistered",
         5,
         async {
-            fake_server
-                .clone()
-                .try_receive_notification::<lsp::notification::Initialized>()
-                .await;
+            while let Some(event) = project_events.next().await {
+                if let project::Event::LanguageServerBufferRegistered { buffer_id, .. } = event {
+                    if buffer_id == buffer_remote_id {
+                        return;
+                    }
+                }
+            }
+
+            panic!(
+                "[test_extension_store_with_test_extension] project event stream ended before buffer registration for {}",
+                buffer_path.display()
+            );
         },
     )
     .await;
@@ -1005,7 +1045,7 @@ fn init_test(cx: &mut TestAppContext) {
         cx.set_global(store);
         release_channel::init(semver::Version::new(0, 0, 0), cx);
         extension::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         gpui_tokio::init(cx);
     });
 }

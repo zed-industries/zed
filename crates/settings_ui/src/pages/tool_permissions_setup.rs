@@ -7,7 +7,7 @@ use gpui::{
 use settings::{Settings as _, SettingsStore, ToolPermissionMode};
 use shell_command_parser::extract_commands;
 use std::sync::Arc;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Banner, ContextMenu, Divider, PopoverMenu, Severity, Tooltip, prelude::*};
 use util::ResultExt as _;
 use util::shell::ShellKind;
@@ -69,7 +69,7 @@ const TOOLS: &[ToolInfo] = &[
         regex_explanation: "Patterns are matched against the URL being fetched.",
     },
     ToolInfo {
-        id: "web_search",
+        id: "search_web",
         name: "Web Search",
         description: "Web search queries",
         regex_explanation: "Patterns are matched against the search query.",
@@ -309,7 +309,7 @@ fn get_tool_render_fn(
         "create_directory" => render_create_directory_tool_config,
         "save_file" => render_save_file_tool_config,
         "fetch" => render_fetch_tool_config,
-        "web_search" => render_web_search_tool_config,
+        "search_web" => render_web_search_tool_config,
         "restore_file_from_disk" => render_restore_file_from_disk_tool_config,
         _ => render_terminal_tool_config, // fallback
     }
@@ -1112,7 +1112,7 @@ fn render_global_default_mode_section(current_mode: ToolPermissionMode) -> AnyEl
                         })
                     }))
                 })
-                .anchor(gpui::Corner::TopRight),
+                .anchor(gpui::Anchor::TopRight),
         )
         .into_any_element()
 }
@@ -1171,7 +1171,7 @@ fn render_default_mode_section(
                         })
                     }))
                 })
-                .anchor(gpui::Corner::TopRight),
+                .anchor(gpui::Anchor::TopRight),
         )
         .into_any_element()
 }
@@ -1389,7 +1389,7 @@ tool_config_page_fn!(render_move_path_tool_config, "move_path");
 tool_config_page_fn!(render_create_directory_tool_config, "create_directory");
 tool_config_page_fn!(render_save_file_tool_config, "save_file");
 tool_config_page_fn!(render_fetch_tool_config, "fetch");
-tool_config_page_fn!(render_web_search_tool_config, "web_search");
+tool_config_page_fn!(render_web_search_tool_config, "search_web");
 tool_config_page_fn!(
     render_restore_file_from_disk_tool_config,
     "restore_file_from_disk"

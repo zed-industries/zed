@@ -4,7 +4,7 @@ use crate::{
     AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
     decide_permission_from_settings,
 };
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use cloud_llm_client::WebSearchResponse;
@@ -53,7 +53,7 @@ impl AgentTool for WebSearchTool {
     type Input = WebSearchToolInput;
     type Output = WebSearchToolOutput;
 
-    const NAME: &'static str = "web_search";
+    const NAME: &'static str = "search_web";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Fetch
