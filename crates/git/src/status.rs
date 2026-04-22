@@ -1,15 +1,16 @@
 use crate::repository::GitBinary;
 use crate::{Oid, repository::RepoPath};
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use collections::{HashMap, HashSet};
 use futures::stream::FuturesUnordered;
 use futures::{FutureExt, Stream};
 use gpui::SharedString;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use smol::io::{AsyncBufReadExt, BufReader};
+use smol::io::{AsyncReadExt, BufReader};
+use smol::stream::StreamExt;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{str::FromStr, sync::Arc};
 use util::{ResultExt, rel_path::RelPath};
 
@@ -653,6 +654,7 @@ pub(crate) async fn count_untracked_lines(
     git_binary: &GitBinary,
     mut path_prefixes: Vec<OsString>,
     paths_with_stats: &Mutex<HashSet<RepoPath>>,
+    repo_path: PathBuf,
 ) -> Result<impl Stream<Item = Option<(RepoPath, DiffStat)>>> {
     let mut args: Vec<OsString> = vec![
         "ls-files".into(),
@@ -665,8 +667,9 @@ pub(crate) async fn count_untracked_lines(
         args.append(&mut path_prefixes);
     }
     let output = git_binary.run_raw(&args).await?;
+    let repo_path: Arc<Path> = repo_path.into();
 
-    let stream = output
+    let stream = output // TODO!(Yara) check if this is not regressing pref (use chromium)
         .split_terminator('\0')
         .filter_map(|path_str| {
             let Ok(path) = RepoPath::new(path_str) else {
@@ -677,7 +680,7 @@ pub(crate) async fn count_untracked_lines(
             }
 
             let full_path: Arc<Path> = git_binary.working_directory.join(path.as_std_path()).into();
-            untracked_path_diff_stat(Arc::clone(&full_path))
+            untracked_path_diff_stat(Arc::clone(&full_path), Arc::clone(&repo_path))
                 .map(move |res| match res {
                     Ok(Some(diff_stat)) => {
                         paths_with_stats.lock().insert(path.clone());
@@ -695,50 +698,86 @@ pub(crate) async fn count_untracked_lines(
     Ok(stream)
 }
 
-async fn untracked_path_diff_stat(full_path: Arc<Path>) -> Result<Option<crate::status::DiffStat>> {
-    let metadata = smol::fs::symlink_metadata(&full_path).await?;
-    let file_type = metadata.file_type();
-    let added = if file_type.is_file() {
-        line_count_for_diff_stat_file(&full_path).await?
-    } else if file_type.is_symlink() {
-        let target = smol::fs::read_link(&full_path).await?;
-        line_count_for_diff_stat(target.to_string_lossy().as_bytes())
-    } else {
+async fn untracked_path_diff_stat(
+    full_path: Arc<Path>,
+    repo_path: Arc<Path>,
+) -> Result<Option<crate::status::DiffStat>> {
+    const ONE_MEGABYTE: u64 = 1024 * 1024;
+
+    let file = smol::fs::symlink_metadata(&full_path).await?;
+    if file.len() > ONE_MEGABYTE {
         return Ok(None);
-    };
-
-    Ok(Some(crate::status::DiffStat { added, deleted: 0 }))
-}
-
-async fn line_count_for_diff_stat_file(path: &Path) -> Result<u32> {
-    let file = smol::fs::File::open(path).await?;
-    let mut reader = BufReader::new(file);
-    let mut line_count = 0u32;
-    let mut line = Vec::new();
-
-    loop {
-        line.clear();
-        if reader.read_until(b'\n', &mut line).await? == 0 {
-            break;
-        }
-        line_count = line_count.saturating_add(1);
     }
 
-    Ok(line_count)
-}
-
-fn line_count_for_diff_stat(contents: &[u8]) -> u32 {
-    if contents.is_empty() {
-        return 0;
-    }
-
-    let trailing_line = if contents.last() == Some(&b'\n') {
-        0
+    let path = if file.is_symlink() {
+        smol::fs::read_link(&full_path).await?.into()
     } else {
-        1
+        full_path
     };
-    let line_count = contents.iter().filter(|byte| **byte == b'\n').count() + trailing_line;
-    u32::try_from(line_count).unwrap_or(u32::MAX)
+
+    if file.is_symlink() && path.strip_prefix(repo_path).is_err() {
+        return Ok(None); // symlink to file outside repository
+    }
+
+    if !file.is_file() {
+        return Ok(None);
+    }
+
+    match utf8_line_count_for_file(&path).await {
+        Ok(count) => Ok(Some(DiffStat {
+            added: count,
+            deleted: 0,
+        })),
+        Err(LineCountErr::NotUtf8) => Ok(None),
+        Err(LineCountErr::ReadError(e)) => Err(e)
+            .context("Count not count lines for untracked diff file")
+            .with_context(|| format!("path: {}", path.display())),
+    }
+}
+
+enum LineCountErr {
+    NotUtf8,
+    ReadError(std::io::Error),
+}
+
+async fn utf8_line_count_for_file(path: &Path) -> Result<u32, LineCountErr> {
+    fn is_validate_utf8(bytes: &[u8]) -> bool {
+        fn are_cnt_bytes<const N: usize>(bytes: [u8; N]) -> bool {
+            bytes.iter().all(|b| b & 0b1000_0000 != 0)
+        }
+
+        match bytes {
+            [b1] => b1 & 0b1000_0000 != 0,
+            [b1, b2] => b1 & 0b1100_0000 != 0 && are_cnt_bytes([*b2]),
+            [b1, b2, b3] => b1 & 0b1110_0000 != 0 && are_cnt_bytes([*b2, *b3]),
+            [b1, b2, b3, b4] => b1 & 0b1111_0000 != 0 && are_cnt_bytes([*b2, *b3, *b4]),
+            _ => unreachable!("only slices of length 1 to 4 are passed in"),
+        }
+    }
+    fn is_linefeed(bytes: &[u8]) -> bool {
+        matches!(bytes, [b'\r', b'\n', ..] | [b'\n', ..])
+    }
+
+    let file = smol::fs::File::open(path)
+        .await
+        .map_err(LineCountErr::ReadError)?;
+    let mut bytes = BufReader::new(file).bytes();
+
+    let mut count = 0;
+    let mut maybe_utf8 = heapless::Vec::<u8, 4>::new();
+    while let Some(byte) = bytes.next().await {
+        let byte = byte.map_err(LineCountErr::ReadError)?;
+        maybe_utf8.push(byte).expect("cleared before out of space");
+        if is_validate_utf8(&maybe_utf8) {
+            count += is_linefeed(&maybe_utf8) as u32;
+            maybe_utf8.clear();
+        }
+        if maybe_utf8.is_full() {
+            return Err(LineCountErr::NotUtf8);
+        }
+    }
+
+    Ok(count)
 }
 
 #[cfg(test)]
