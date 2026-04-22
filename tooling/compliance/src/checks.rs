@@ -115,7 +115,9 @@ impl Reporter {
         commit: &CommitDetails,
     ) -> Result<ReviewSuccess, ReviewFailure> {
         let Some(pr_number) = commit.pr_number() else {
-            if commit.author().name().contains("Zed Zippy") && commit.title().starts_with("Bump to")
+            let author_name = commit.author().name();
+            if (author_name.contains("Zed Zippy") || author_name.contains("zed-zippy[bot]"))
+                && commit.title().starts_with("Bump to")
             {
                 return Ok(ReviewSuccess::CoAuthored(vec![ZED_ZIPPY_AUTHOR.clone()]));
             }
