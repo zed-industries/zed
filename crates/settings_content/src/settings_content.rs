@@ -1,3 +1,4 @@
+mod action;
 mod agent;
 mod editor;
 mod extension;
@@ -12,6 +13,7 @@ mod theme;
 mod title_bar;
 mod workspace;
 
+pub use action::{ActionName, ActionWithArguments};
 pub use agent::*;
 pub use editor::*;
 pub use extension::*;

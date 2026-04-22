@@ -207,14 +207,12 @@ where
             return;
         };
 
-        let Some(diff) =
-            source_snapshot.diff_for_buffer_id(first.source_buffer_snapshot.remote_id())
-        else {
+        let source_buffer_id = first.source_buffer_snapshot.remote_id();
+        let Some(diff) = source_snapshot.diff_for_buffer_id(source_buffer_id) else {
             pending.clear();
             return;
         };
-        let source_is_lhs =
-            first.source_buffer_snapshot.remote_id() == diff.base_text().remote_id();
+        let source_is_lhs = source_buffer_id == diff.base_text().remote_id();
         let target_buffer_id = if source_is_lhs {
             diff.buffer_id()
         } else {
@@ -232,28 +230,34 @@ where
 
         let patch = translate_fn(diff, union_start..=union_end, rhs_buffer);
 
-        for excerpt in pending.drain(..) {
-            let target_position = patch.old_to_new(excerpt.buffer_point_range.start);
-            let target_position = target_buffer.anchor_before(target_position);
-            let Some(target_position) = target_snapshot.anchor_in_excerpt(target_position) else {
-                continue;
-            };
-            let Some((target_buffer_snapshot, target_excerpt_range)) =
-                target_snapshot.excerpt_containing(target_position..target_position)
-            else {
-                continue;
-            };
+        let mut source_excerpts = source_snapshot
+            .excerpts_for_buffer(source_buffer_id)
+            .peekable();
+        let mut target_excerpts = target_snapshot
+            .excerpts_for_buffer(target_buffer_id)
+            .peekable();
 
-            result.push(patch_for_excerpt(
-                source_snapshot,
-                target_snapshot,
-                &excerpt.source_buffer_snapshot,
-                target_buffer_snapshot,
-                excerpt.source_excerpt_range,
-                target_excerpt_range,
-                &patch,
-                excerpt.buffer_point_range,
-            ));
+        for excerpt in pending.drain(..) {
+            while let Some(source_excerpt_range) = source_excerpts.peek()
+                && source_excerpt_range != &excerpt.source_excerpt_range
+            {
+                source_excerpts.next();
+                target_excerpts.next();
+            }
+            if let Some(source_excerpt_range) = source_excerpts.peek()
+                && let Some(target_excerpt_range) = target_excerpts.peek()
+            {
+                result.push(patch_for_excerpt(
+                    source_snapshot,
+                    target_snapshot,
+                    &excerpt.source_buffer_snapshot,
+                    target_buffer,
+                    source_excerpt_range.clone(),
+                    target_excerpt_range.clone(),
+                    &patch,
+                    excerpt.buffer_point_range,
+                ));
+            }
         }
     };
 

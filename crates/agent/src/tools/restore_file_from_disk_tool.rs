@@ -3,7 +3,7 @@ use super::tool_permissions::{
     canonicalize_worktree_roots, path_has_symlink_escape, resolve_project_path,
     sensitive_settings_kind,
 };
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use collections::FxHashSet;
 use futures::FutureExt as _;
