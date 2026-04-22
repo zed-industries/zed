@@ -110,7 +110,10 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
     let frames_33to100 = count_frames_in_range(&delta_latency, MS33_NS, MS100_NS);
     // frames > 100 ms are implicitly total_frames - (sub4 + 4to8 + 8to16 + 16to33 + 33to100)
 
-    let events_per_frame_p99 = delta_coalesce.value_at_quantile(0.99);
+    let frames_with_1_event = count_frames_in_range(&delta_coalesce, 1, 2);
+    let frames_with_2_events = count_frames_in_range(&delta_coalesce, 2, 3);
+    let frames_with_3_events = count_frames_in_range(&delta_coalesce, 3, 4);
+    // frames with 4+ events are implicitly total_frames - (1 + 2 + 3)
 
     telemetry::event!(
         "Latency Report",
@@ -120,7 +123,9 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
         frames_16to33 = frames_16to33,
         frames_33to100 = frames_33to100,
         total_frames = total_frames,
-        events_per_frame_p99 = events_per_frame_p99,
+        frames_with_1_event = frames_with_1_event,
+        frames_with_2_events = frames_with_2_events,
+        frames_with_3_events = frames_with_3_events,
         report_window_seconds = report_window_seconds,
     );
 }
