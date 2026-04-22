@@ -416,12 +416,20 @@ pub fn into_mistral(
                             // Tool use is not supported in User messages for Mistral
                         }
                         MessageContent::ToolResult(tool_result) => {
-                            let tool_content = match &tool_result.content {
-                                LanguageModelToolResultContent::Text(text) => text.to_string(),
-                                LanguageModelToolResultContent::Image(_) => {
-                                    "[Tool responded with an image, but Zed doesn't support these in Mistral models yet]".to_string()
+                            // Mistral's tool role only accepts a single string. Text parts
+                            // are concatenated; each non-text part contributes a placeholder
+                            // line (matching the original single-element behavior).
+                            let mut tool_content = String::new();
+                            for part in &tool_result.content {
+                                match part {
+                                    LanguageModelToolResultContent::Text(text) => {
+                                        tool_content.push_str(text);
+                                    }
+                                    LanguageModelToolResultContent::Image(_) => {
+                                        tool_content.push_str("[Tool responded with an image, but Zed doesn't support these in Mistral models yet]");
+                                    }
                                 }
-                            };
+                            }
                             messages.push(mistral::RequestMessage::Tool {
                                 content: tool_content,
                                 tool_call_id: tool_result.tool_use_id.to_string(),

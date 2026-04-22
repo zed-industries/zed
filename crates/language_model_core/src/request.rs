@@ -102,10 +102,77 @@ pub struct LanguageModelToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub tool_name: Arc<str>,
     pub is_error: bool,
-    /// The tool output formatted for presenting to the model
-    pub content: LanguageModelToolResultContent,
+    /// The tool output formatted for presenting to the model.
+    ///
+    /// Multiple parts allow tools (most notably MCP tools) to return a
+    /// combination of text and non-text content (e.g. images) in a single
+    /// result. Built-in tools still typically produce a single-element `Vec`.
+    #[serde(with = "tool_result_content_vec")]
+    pub content: Vec<LanguageModelToolResultContent>,
     /// The raw tool output, if available, often for debugging or extra state for replay
     pub output: Option<serde_json::Value>,
+}
+
+impl LanguageModelToolResult {
+    /// Concatenates all `Text` parts of the content, ignoring non-text parts.
+    pub fn text_contents(&self) -> String {
+        let mut buffer = String::new();
+        for part in &self.content {
+            if let LanguageModelToolResultContent::Text(text) = part {
+                buffer.push_str(text);
+            }
+        }
+        buffer
+    }
+
+    /// Returns true when there are no content parts, or every part is empty.
+    pub fn is_content_empty(&self) -> bool {
+        self.content.iter().all(|part| part.is_empty())
+    }
+}
+
+/// Serde helper that accepts both the legacy single-value shape and the new
+/// array shape for `LanguageModelToolResult::content`, and normalizes both to
+/// `Vec<LanguageModelToolResultContent>`.
+mod tool_result_content_vec {
+    use super::LanguageModelToolResultContent;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(
+        value: &Vec<LanguageModelToolResultContent>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<Vec<LanguageModelToolResultContent>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::Array(items) => {
+                let mut out = Vec::with_capacity(items.len());
+                for item in items {
+                    out.push(
+                        serde_json::from_value::<LanguageModelToolResultContent>(item)
+                            .map_err(serde::de::Error::custom)?,
+                    );
+                }
+                Ok(out)
+            }
+            other => {
+                let single = serde_json::from_value::<LanguageModelToolResultContent>(other)
+                    .map_err(serde::de::Error::custom)?;
+                Ok(vec![single])
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Eq, PartialEq, Hash)]
@@ -236,7 +303,11 @@ impl MessageContent {
             MessageContent::Text(text) => Some(text.as_str()),
             MessageContent::Thinking { text, .. } => Some(text.as_str()),
             MessageContent::RedactedThinking(_) => None,
-            MessageContent::ToolResult(tool_result) => tool_result.content.to_str(),
+            MessageContent::ToolResult(tool_result) => {
+                // Only return the first Text part as a borrowed string; multi-part
+                // callers should use `LanguageModelToolResult::text_contents` instead.
+                tool_result.content.iter().find_map(|part| part.to_str())
+            }
             MessageContent::ToolUse(_) | MessageContent::Image(_) => None,
         }
     }
@@ -245,7 +316,7 @@ impl MessageContent {
         match self {
             MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
             MessageContent::Thinking { text, .. } => text.chars().all(|c| c.is_whitespace()),
-            MessageContent::ToolResult(tool_result) => tool_result.content.is_empty(),
+            MessageContent::ToolResult(tool_result) => tool_result.is_content_empty(),
             MessageContent::RedactedThinking(_)
             | MessageContent::ToolUse(_)
             | MessageContent::Image(_) => false,
@@ -461,5 +532,65 @@ mod tests {
             }
             _ => panic!("Expected Image variant"),
         }
+    }
+
+    #[test]
+    fn test_language_model_tool_result_content_vec_deserialization() {
+        // Legacy single-value shape is normalized to a Vec.
+        let json = serde_json::json!({
+            "tool_use_id": "abc",
+            "tool_name": "echo",
+            "is_error": false,
+            "content": "hello",
+            "output": null,
+        });
+        let result: LanguageModelToolResult = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            result.content,
+            vec![LanguageModelToolResultContent::Text(Arc::from("hello"))]
+        );
+
+        // Legacy wrapped single-value shape also works.
+        let json = serde_json::json!({
+            "tool_use_id": "abc",
+            "tool_name": "echo",
+            "is_error": false,
+            "content": {"type": "text", "text": "hello"},
+            "output": null,
+        });
+        let result: LanguageModelToolResult = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            result.content,
+            vec![LanguageModelToolResultContent::Text(Arc::from("hello"))]
+        );
+
+        // New array shape with text + image deserializes into a Vec.
+        let json = serde_json::json!({
+            "tool_use_id": "abc",
+            "tool_name": "echo",
+            "is_error": false,
+            "content": [
+                {"type": "text", "text": "foo"},
+                {"source": "data", "size": {"width": 1, "height": 2}}
+            ],
+            "output": null,
+        });
+        let result: LanguageModelToolResult = serde_json::from_value(json).unwrap();
+        assert_eq!(result.content.len(), 2);
+        assert_eq!(
+            result.content[0],
+            LanguageModelToolResultContent::Text(Arc::from("foo"))
+        );
+        match &result.content[1] {
+            LanguageModelToolResultContent::Image(image) => {
+                assert_eq!(image.source.as_ref(), "data");
+            }
+            _ => panic!("Expected Image variant"),
+        }
+
+        // Round-tripping preserves multi-part content.
+        let roundtripped: LanguageModelToolResult =
+            serde_json::from_value(serde_json::to_value(&result).unwrap()).unwrap();
+        assert_eq!(roundtripped, result);
     }
 }

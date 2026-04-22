@@ -70,25 +70,41 @@ fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
             input: tool_use.input,
             cache_control: None,
         }),
-        MessageContent::ToolResult(tool_result) => Some(RequestContent::ToolResult {
-            tool_use_id: tool_result.tool_use_id.to_string(),
-            is_error: tool_result.is_error,
-            content: match tool_result.content {
-                LanguageModelToolResultContent::Text(text) => {
+        MessageContent::ToolResult(tool_result) => {
+            // Preserve the existing on-wire shape: a single `Text` part becomes
+            // `ToolResultContent::Plain`; anything else (multiple parts, or any
+            // non-text part) becomes `ToolResultContent::Multipart`.
+            let content = match tool_result.content.as_slice() {
+                [LanguageModelToolResultContent::Text(text)] => {
                     ToolResultContent::Plain(text.to_string())
                 }
-                LanguageModelToolResultContent::Image(image) => {
-                    ToolResultContent::Multipart(vec![ToolResultPart::Image {
-                        source: ImageSource {
-                            source_type: "base64".to_string(),
-                            media_type: "image/png".to_string(),
-                            data: image.source.to_string(),
-                        },
-                    }])
+                _ => {
+                    let parts = tool_result
+                        .content
+                        .into_iter()
+                        .map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => ToolResultPart::Text {
+                                text: text.to_string(),
+                            },
+                            LanguageModelToolResultContent::Image(image) => ToolResultPart::Image {
+                                source: ImageSource {
+                                    source_type: "base64".to_string(),
+                                    media_type: "image/png".to_string(),
+                                    data: image.source.to_string(),
+                                },
+                            },
+                        })
+                        .collect();
+                    ToolResultContent::Multipart(parts)
                 }
-            },
-            cache_control: None,
-        }),
+            };
+            Some(RequestContent::ToolResult {
+                tool_use_id: tool_result.tool_use_id.to_string(),
+                is_error: tool_result.is_error,
+                content,
+                cache_control: None,
+            })
+        }
     }
 }
 
@@ -207,14 +223,18 @@ pub fn count_anthropic_tokens_with_tiktoken(request: LanguageModelRequest) -> Re
                 MessageContent::ToolUse(_tool_use) => {
                     // TODO: Estimate token usage from tool uses.
                 }
-                MessageContent::ToolResult(tool_result) => match &tool_result.content {
-                    LanguageModelToolResultContent::Text(text) => {
-                        string_contents.push_str(text);
+                MessageContent::ToolResult(tool_result) => {
+                    for part in &tool_result.content {
+                        match part {
+                            LanguageModelToolResultContent::Text(text) => {
+                                string_contents.push_str(text);
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                tokens_from_images += image.estimate_tokens();
+                            }
+                        }
                     }
-                    LanguageModelToolResultContent::Image(image) => {
-                        tokens_from_images += image.estimate_tokens();
-                    }
-                },
+                }
             }
         }
 

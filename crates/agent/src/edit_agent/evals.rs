@@ -1156,7 +1156,7 @@ fn tool_result(
         tool_use_id: LanguageModelToolUseId::from(id.into()),
         tool_name: name.into(),
         is_error: false,
-        content: LanguageModelToolResultContent::Text(result.into()),
+        content: vec![LanguageModelToolResultContent::Text(result.into())],
         output: None,
     })
 }

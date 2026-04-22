@@ -926,9 +926,10 @@ pub fn into_bedrock(
                         }
                         MessageContent::ToolResult(tool_result) => {
                             messages_contain_tool_content = true;
-                            BedrockToolResultBlock::builder()
-                                .tool_use_id(tool_result.tool_use_id.to_string())
-                                .content(match tool_result.content {
+                            let mut builder = BedrockToolResultBlock::builder()
+                                .tool_use_id(tool_result.tool_use_id.to_string());
+                            for part in tool_result.content {
+                                let block = match part {
                                     LanguageModelToolResultContent::Text(text) => {
                                         BedrockToolResultContentBlock::Text(text.to_string())
                                     }
@@ -969,7 +970,10 @@ pub fn into_bedrock(
                                             }
                                         }
                                     }
-                                })
+                                };
+                                builder = builder.content(block);
+                            }
+                            builder
                                 .status({
                                     if tool_result.is_error {
                                         BedrockToolResultStatus::Error
@@ -1180,14 +1184,18 @@ pub fn get_bedrock_tokens(
                         MessageContent::ToolUse(_tool_use) => {
                             // TODO: Estimate token usage from tool uses.
                         }
-                        MessageContent::ToolResult(tool_result) => match tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => {
-                                string_contents.push_str(&text);
+                        MessageContent::ToolResult(tool_result) => {
+                            for part in tool_result.content {
+                                match part {
+                                    LanguageModelToolResultContent::Text(text) => {
+                                        string_contents.push_str(&text);
+                                    }
+                                    LanguageModelToolResultContent::Image(image) => {
+                                        tokens_from_images += image.estimate_tokens();
+                                    }
+                                }
                             }
-                            LanguageModelToolResultContent::Image(image) => {
-                                tokens_from_images += image.estimate_tokens();
-                            }
-                        },
+                        }
                     }
                 }
 

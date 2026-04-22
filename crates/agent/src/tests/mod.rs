@@ -637,7 +637,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
         tool_use_id: "tool_1".into(),
         tool_name: EchoTool::NAME.into(),
         is_error: false,
-        content: "test".into(),
+        content: vec!["test".into()],
         output: Some("test".into()),
     };
     assert_eq!(
@@ -866,14 +866,14 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 tool_use_id: tool_call_auth_1.tool_call.tool_call_id.0.to_string().into(),
                 tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
-                content: "Allowed".into(),
+                content: vec!["Allowed".into()],
                 output: Some("Allowed".into())
             }),
             language_model::MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_2.tool_call.tool_call_id.0.to_string().into(),
                 tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: true,
-                content: "Permission to run tool denied by user".into(),
+                content: vec!["Permission to run tool denied by user".into()],
                 output: Some("Permission to run tool denied by user".into())
             })
         ]
@@ -912,7 +912,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 tool_use_id: tool_call_auth_3.tool_call.tool_call_id.0.to_string().into(),
                 tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
-                content: "Allowed".into(),
+                content: vec!["Allowed".into()],
                 output: Some("Allowed".into())
             }
         )]
@@ -940,7 +940,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 tool_use_id: "tool_id_4".into(),
                 tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
-                content: "Allowed".into(),
+                content: vec!["Allowed".into()],
                 output: Some("Allowed".into())
             }
         )]
@@ -1562,18 +1562,137 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
                 tool_use_id: "tool_3".into(),
                 tool_name: "echo".into(),
                 is_error: false,
-                content: "native".into(),
+                content: vec!["native".into()],
                 output: Some("native".into()),
             },),
             MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: "tool_2".into(),
                 tool_name: "test_server_echo".into(),
                 is_error: false,
-                content: "mcp".into(),
+                content: vec!["mcp".into()],
                 output: Some("mcp".into()),
             },),
         ]
     );
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+}
+
+#[gpui::test]
+async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    fake_model.set_supports_images(true);
+
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {}
+                    },
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    let mut mcp_tool_calls = setup_context_server(
+        "screenshot_server",
+        vec![context_server::types::Tool {
+            name: "screenshot".into(),
+            description: None,
+            input_schema: json!({"type": "object", "properties": {}}),
+            output_schema: None,
+            annotations: None,
+        }],
+        &context_server_store,
+        cx,
+    );
+
+    let events = thread.update(cx, |thread, cx| {
+        thread
+            .send(UserMessageId::new(), ["Take a screenshot"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "screenshot".into(),
+            raw_input: json!({}).to_string(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    let _ = completion;
+
+    let (tool_call_params, tool_call_response) = mcp_tool_calls.next().await.unwrap();
+    assert_eq!(tool_call_params.name, "screenshot");
+    tool_call_response
+        .send(context_server::types::CallToolResponse {
+            content: vec![
+                context_server::types::ToolResponseContent::Text {
+                    text: "Screenshot attached".into(),
+                },
+                context_server::types::ToolResponseContent::Image {
+                    data: "aGVsbG8=".into(),
+                    mime_type: "image/png".into(),
+                },
+            ],
+            is_error: None,
+            meta: None,
+            structured_content: None,
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Verify the tool result round-trips back to the model as a multi-part Vec.
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let tool_result = completion
+        .messages
+        .last()
+        .unwrap()
+        .content
+        .iter()
+        .find_map(|c| match c {
+            MessageContent::ToolResult(r) => Some(r.clone()),
+            _ => None,
+        })
+        .expect("expected a tool result");
+    assert_eq!(tool_result.tool_use_id, "tool_1".into());
+    assert_eq!(tool_result.content.len(), 2);
+    assert_eq!(
+        tool_result.content[0],
+        language_model::LanguageModelToolResultContent::Text(Arc::from("Screenshot attached"))
+    );
+    match &tool_result.content[1] {
+        language_model::LanguageModelToolResultContent::Image(image) => {
+            assert_eq!(image.source.as_ref(), "aGVsbG8=");
+        }
+        other => panic!("expected Image as second part, got: {:?}", other),
+    }
     fake_model.end_last_completion_stream();
     events.collect::<Vec<_>>().await;
 }
@@ -2106,10 +2225,7 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
             .get(&tool_use.id)
             .expect("expected tool result");
 
-        let result_text = match &tool_result.content {
-            language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
-            _ => panic!("expected text content in tool result"),
-        };
+        let result_text = tool_result.text_contents();
 
         // "partial output" comes from FakeTerminalHandle's output field
         assert!(
@@ -2571,10 +2687,7 @@ async fn test_terminal_tool_stopped_via_terminal_card_button(cx: &mut TestAppCon
             .get(&tool_use.id)
             .expect("expected tool result");
 
-        let result_text = match &tool_result.content {
-            language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
-            _ => panic!("expected text content in tool result"),
-        };
+        let result_text = tool_result.text_contents();
 
         assert!(
             result_text.contains("The user stopped this command"),
@@ -2666,10 +2779,7 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
             .get(&tool_use.id)
             .expect("expected tool result");
 
-        let result_text = match &tool_result.content {
-            language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
-            _ => panic!("expected text content in tool result"),
-        };
+        let result_text = tool_result.text_contents();
 
         assert!(
             result_text.contains("timed out"),
@@ -3290,7 +3400,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
                     tool_use_id: echo_tool_use.id.clone(),
                     tool_name: echo_tool_use.name,
                     is_error: false,
-                    content: "test".into(),
+                    content: vec!["test".into()],
                     output: Some("test".into())
                 })],
                 cache: false,
@@ -3776,7 +3886,7 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
                         tool_use_id: tool_use_1.id.clone(),
                         tool_name: tool_use_1.name.clone(),
                         is_error: false,
-                        content: "test".into(),
+                        content: vec!["test".into()],
                         output: Some("test".into())
                     }
                 )],
@@ -3936,8 +4046,10 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
                         tool_use_id: tool_use.id.clone(),
                         tool_name: tool_use.name,
                         is_error: true,
-                        content: "Failed to receive tool input: tool input was not fully received"
-                            .into(),
+                        content: vec![
+                            "Failed to receive tool input: tool input was not fully received"
+                                .into(),
+                        ],
                         output: Some(
                             "Failed to receive tool input: tool input was not fully received"
                                 .into()
@@ -4044,10 +4156,7 @@ async fn test_streaming_tool_json_parse_error_is_forwarded_to_running_tool(
 
     let result = tool_results[0];
     assert!(result.is_error);
-    let content_text = match &result.content {
-        language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
-        other => panic!("Expected text content, got {:?}", other),
-    };
+    let content_text = result.text_contents();
     assert!(
         content_text.contains("Saw partial text 'partial' before invalid JSON"),
         "Expected tool-enriched partial context, got: {content_text}"
@@ -6680,7 +6789,7 @@ async fn test_streaming_tool_error_breaks_stream_loop_immediately(cx: &mut TestA
                         tool_use_id: tool_use.id.clone(),
                         tool_name: tool_use.name,
                         is_error: true,
-                        content: "failed".into(),
+                        content: vec!["failed".into()],
                         output: Some("failed".into()),
                     }
                 )],
@@ -6791,14 +6900,14 @@ async fn test_streaming_tool_error_waits_for_prior_tools_to_complete(cx: &mut Te
                         tool_use_id: second_tool_use.id.clone(),
                         tool_name: second_tool_use.name,
                         is_error: true,
-                        content: "failed".into(),
+                        content: vec!["failed".into()],
                         output: Some("failed".into()),
                     }),
                     language_model::MessageContent::ToolResult(LanguageModelToolResult {
                         tool_use_id: first_tool_use.id.clone(),
                         tool_name: first_tool_use.name,
                         is_error: false,
-                        content: "hello world".into(),
+                        content: vec!["hello world".into()],
                         output: Some("hello world".into()),
                     }),
                 ],

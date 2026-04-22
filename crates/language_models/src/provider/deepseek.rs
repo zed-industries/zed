@@ -404,15 +404,20 @@ pub fn into_deepseek(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            messages.push(deepseek::RequestMessage::Tool {
-                                content: text.to_string(),
-                                tool_call_id: tool_result.tool_use_id.to_string(),
-                            });
+                    // DeepSeek's Chat Completions tool role only accepts a single
+                    // string. Concatenate all text parts; non-text parts are dropped.
+                    let mut text_content = String::new();
+                    for part in &tool_result.content {
+                        if let LanguageModelToolResultContent::Text(text) = part {
+                            text_content.push_str(text);
                         }
-                        LanguageModelToolResultContent::Image(_) => {}
-                    };
+                    }
+                    if !text_content.is_empty() {
+                        messages.push(deepseek::RequestMessage::Tool {
+                            content: text_content,
+                            tool_call_id: tool_result.tool_use_id.to_string(),
+                        });
+                    }
                 }
             }
         }
