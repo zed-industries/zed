@@ -242,7 +242,7 @@ impl CommitDetails {
         &self.title
     }
 
-    pub(crate) fn sha(&self) -> &CommitSha {
+    pub fn sha(&self) -> &CommitSha {
         &self.sha
     }
 

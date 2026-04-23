@@ -47,6 +47,12 @@ impl<R: ToString> ReportEntry<R> {
     }
 }
 
+impl ReportEntry<ReviewResult> {
+    pub fn is_unknown_error(&self) -> bool {
+        matches!(self.reason, Err(ReviewFailure::Other(_)))
+    }
+}
+
 impl ReportEntry<ReviewFailure> {
     fn issue_kind(&self) -> IssueKind {
         match self.reason {
@@ -109,7 +115,7 @@ impl ReportSummary {
                 .count(),
             errors: entries
                 .iter()
-                .filter(|entry| matches!(entry.reason, Err(ReviewFailure::Other(_))))
+                .filter(|entry| entry.is_unknown_error())
                 .count(),
         }
     }
