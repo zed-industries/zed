@@ -9,6 +9,7 @@ use gpui::{
 use std::any::TypeId;
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
 use ui::{Divider, Indicator, Tooltip, prelude::*};
+use util::ResultExt;
 
 pub trait StatusItemView: Render {
     /// Event callback that is triggered when the active pane item changes.
@@ -245,7 +246,7 @@ impl StatusBar {
         self.left_items
             .iter()
             .chain(self.right_items.iter())
-            .find_map(|item| item.to_any().downcast().ok())
+            .find_map(|item| item.to_any().downcast().log_err())
     }
 
     pub fn position_of_item<T>(&self) -> Option<usize>

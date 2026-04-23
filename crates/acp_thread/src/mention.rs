@@ -96,18 +96,13 @@ impl MentionUri {
         let path = url.path();
         match url.scheme() {
             "file" => {
-                let trimmed = if path_style.is_windows() {
+                let normalized = if path_style.is_windows() {
                     path.trim_start_matches("/")
                 } else {
                     path
                 };
-                let decoded = decode(trimmed).unwrap_or(Cow::Borrowed(trimmed));
-                let normalized: Cow<str> = if path_style.is_windows() {
-                    Cow::Owned(decoded.replace('/', "\\"))
-                } else {
-                    decoded
-                };
-                let path = normalized.as_ref();
+                let decoded = decode(normalized).unwrap_or(Cow::Borrowed(normalized));
+                let path = decoded.as_ref();
 
                 if let Some(fragment) = url.fragment() {
                     let line_range = parse_line_range(fragment).log_err().unwrap_or(1..=1);
@@ -496,49 +491,6 @@ mod tests {
             _ => panic!("Expected Directory variant"),
         }
         assert_eq!(parsed.to_uri().to_string(), file_uri);
-    }
-
-    #[test]
-    fn test_parse_file_uris_use_native_separators_on_windows() {
-        let parsed = MentionUri::parse("file:///C:/path/to/file.rs", PathStyle::Windows).unwrap();
-        match parsed {
-            MentionUri::File { abs_path } => {
-                assert_eq!(abs_path, PathBuf::from("C:\\path\\to\\file.rs"));
-            }
-            other => panic!("Expected File variant, got {other:?}"),
-        }
-
-        let parsed = MentionUri::parse("file:///C:/path/to/dir/", PathStyle::Windows).unwrap();
-        match parsed {
-            MentionUri::Directory { abs_path } => {
-                assert_eq!(abs_path, PathBuf::from("C:\\path\\to\\dir\\"));
-            }
-            other => panic!("Expected Directory variant, got {other:?}"),
-        }
-
-        let parsed = MentionUri::parse(
-            "file:///C:/path/to/file.rs?symbol=MySymbol#L10:20",
-            PathStyle::Windows,
-        )
-        .unwrap();
-        match parsed {
-            MentionUri::Symbol { abs_path, .. } => {
-                assert_eq!(abs_path, PathBuf::from("C:\\path\\to\\file.rs"));
-            }
-            other => panic!("Expected Symbol variant, got {other:?}"),
-        }
-
-        let parsed =
-            MentionUri::parse("file:///C:/path/to/file.rs#L5:15", PathStyle::Windows).unwrap();
-        match parsed {
-            MentionUri::Selection {
-                abs_path: Some(abs_path),
-                ..
-            } => {
-                assert_eq!(abs_path, PathBuf::from("C:\\path\\to\\file.rs"));
-            }
-            other => panic!("Expected Selection variant, got {other:?}"),
-        }
     }
 
     #[test]

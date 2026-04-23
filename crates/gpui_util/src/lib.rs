@@ -79,12 +79,6 @@ pub trait ResultExt<E> {
     type Ok;
 
     fn log_err(self) -> Option<Self::Ok>;
-    /// Like [`ResultExt::log_err`], but uses `{:?}` formatting so `anyhow::Error` values emit their
-    /// full backtrace. Reach for this only when a backtrace is genuinely wanted — most call sites
-    /// should stick with `log_err` / `warn_on_err`, whose output is a single chained error message.
-    fn log_err_with_backtrace(self) -> Option<Self::Ok>
-    where
-        E: std::fmt::Debug;
     /// Assert that this result should never be an error in development or tests.
     fn debug_assert_ok(self, reason: &str) -> Self;
     fn warn_on_err(self) -> Option<Self::Ok>;
@@ -96,7 +90,7 @@ pub trait ResultExt<E> {
 
 impl<T, E> ResultExt<E> for Result<T, E>
 where
-    E: std::fmt::Display,
+    E: std::fmt::Debug,
 {
     type Ok = T;
 
@@ -106,27 +100,9 @@ where
     }
 
     #[track_caller]
-    fn log_err_with_backtrace(self) -> Option<T>
-    where
-        E: std::fmt::Debug,
-    {
-        match self {
-            Ok(value) => Some(value),
-            Err(error) => {
-                log_error_with_caller(
-                    *Location::caller(),
-                    DebugAsDisplay(&error),
-                    log::Level::Error,
-                );
-                None
-            }
-        }
-    }
-
-    #[track_caller]
     fn debug_assert_ok(self, reason: &str) -> Self {
         if let Err(error) = &self {
-            debug_panic!("{reason} - {error:#}");
+            debug_panic!("{reason} - {error:?}");
         }
         self
     }
@@ -157,7 +133,7 @@ where
 
 fn log_error_with_caller<E>(caller: core::panic::Location<'_>, error: E, level: log::Level)
 where
-    E: std::fmt::Display,
+    E: std::fmt::Debug,
 {
     #[cfg(not(windows))]
     let file = caller.file();
@@ -180,7 +156,7 @@ where
         &log::Record::builder()
             .target(module_path.as_deref().unwrap_or(""))
             .module_path(file.as_deref())
-            .args(format_args!("{:#}", error))
+            .args(format_args!("{:?}", error))
             .file(Some(caller.file()))
             .line(Some(caller.line()))
             .level(level)
@@ -188,18 +164,8 @@ where
     );
 }
 
-pub fn log_err<E: std::fmt::Display>(error: &E) {
+pub fn log_err<E: std::fmt::Debug>(error: &E) {
     log_error_with_caller(*Location::caller(), error, log::Level::Error);
-}
-
-// Forces `{:?}` formatting through a `Display`-bounded logging helper so `anyhow::Error` emits a
-// backtrace instead of the single-line chained message produced by its `Display`/`{:#}` forms.
-struct DebugAsDisplay<'a, E>(&'a E);
-
-impl<E: std::fmt::Debug> std::fmt::Display for DebugAsDisplay<'_, E> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.0)
-    }
 }
 
 pub trait TryFutureExt {
@@ -219,25 +185,10 @@ pub trait TryFutureExt {
         Self: Sized;
 }
 
-/// `{:?}`-formatting companion to [`TryFutureExt`]; emits a backtrace for `anyhow::Error`. Prefer
-/// [`TryFutureExt`] unless a backtrace is genuinely wanted.
-pub trait TryFutureExtBacktrace {
-    fn log_err_with_backtrace(self) -> LogErrorWithBacktraceFuture<Self>
-    where
-        Self: Sized;
-
-    fn log_tracked_err_with_backtrace(
-        self,
-        location: core::panic::Location<'static>,
-    ) -> LogErrorWithBacktraceFuture<Self>
-    where
-        Self: Sized;
-}
-
 impl<F, T, E> TryFutureExt for F
 where
     F: Future<Output = Result<T, E>>,
-    E: std::fmt::Display,
+    E: std::fmt::Debug,
 {
     #[track_caller]
     fn log_err(self) -> LogErrorFuture<Self>
@@ -272,38 +223,13 @@ where
     }
 }
 
-impl<F, T, E> TryFutureExtBacktrace for F
-where
-    F: Future<Output = Result<T, E>>,
-    E: std::fmt::Debug,
-{
-    #[track_caller]
-    fn log_err_with_backtrace(self) -> LogErrorWithBacktraceFuture<Self>
-    where
-        Self: Sized,
-    {
-        let location = Location::caller();
-        LogErrorWithBacktraceFuture(self, log::Level::Error, *location)
-    }
-
-    fn log_tracked_err_with_backtrace(
-        self,
-        location: core::panic::Location<'static>,
-    ) -> LogErrorWithBacktraceFuture<Self>
-    where
-        Self: Sized,
-    {
-        LogErrorWithBacktraceFuture(self, log::Level::Error, location)
-    }
-}
-
 #[must_use]
 pub struct LogErrorFuture<F>(F, log::Level, core::panic::Location<'static>);
 
 impl<F, T, E> Future for LogErrorFuture<F>
 where
     F: Future<Output = Result<T, E>>,
-    E: std::fmt::Display,
+    E: std::fmt::Debug,
 {
     type Output = Option<T>;
 
@@ -316,33 +242,6 @@ where
                 Ok(output) => Some(output),
                 Err(error) => {
                     log_error_with_caller(location, error, level);
-                    None
-                }
-            }),
-            Poll::Pending => Poll::Pending,
-        }
-    }
-}
-
-#[must_use]
-pub struct LogErrorWithBacktraceFuture<F>(F, log::Level, core::panic::Location<'static>);
-
-impl<F, T, E> Future for LogErrorWithBacktraceFuture<F>
-where
-    F: Future<Output = Result<T, E>>,
-    E: std::fmt::Debug,
-{
-    type Output = Option<T>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let level = self.1;
-        let location = self.2;
-        let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
-        match inner.poll(cx) {
-            Poll::Ready(output) => Poll::Ready(match output {
-                Ok(output) => Some(output),
-                Err(error) => {
-                    log_error_with_caller(location, DebugAsDisplay(&error), level);
                     None
                 }
             }),

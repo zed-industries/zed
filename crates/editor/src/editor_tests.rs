@@ -3,7 +3,7 @@ use crate::{
     JoinLines,
     code_context_menus::CodeContextMenu,
     edit_prediction_tests::FakeEditPredictionDelegate,
-    element::{StickyHeader, header_jump_data},
+    element::StickyHeader,
     linked_editing_ranges::LinkedEditingRanges,
     runnables::RunnableTasks,
     scroll::scroll_amount::ScrollAmount,
@@ -19336,112 +19336,6 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_header_jump_data_uses_selection_excerpt(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    // 25-line buffer so excerpts at rows 1, 10, and 20 (each a 1-line range,
-    // expanded by 2 context lines) can't merge into a single excerpt.
-    let buffer_text = (0..25)
-        .map(|row| format!("line {row}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
-    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
-
-    let multibuffer = cx.new(|cx| {
-        let mut multibuffer = MultiBuffer::new(ReadWrite);
-        multibuffer.set_excerpts_for_path(
-            PathKey::sorted(0),
-            buffer.clone(),
-            [
-                Point::new(1, 0)..Point::new(1, 0),
-                Point::new(10, 0)..Point::new(10, 0),
-                Point::new(20, 0)..Point::new(20, 0),
-            ],
-            2,
-            cx,
-        );
-        multibuffer
-    });
-
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx));
-
-    editor.update_in(cx, |editor, window, cx| {
-        let snapshot = editor.snapshot(window, cx);
-        let display_snapshot = editor.display_snapshot(cx);
-
-        // Ensure the three ranges landed in three separate excerpts.
-        let excerpts: Vec<_> = snapshot
-            .buffer_snapshot()
-            .excerpts_for_buffer(buffer_id)
-            .collect();
-        assert_eq!(excerpts.len(), 3);
-
-        // Place the cursor at the start of the third excerpt, expressed in
-        // terms of the underlying buffer.
-        let selection_buffer_row = 20;
-        let buffer_entity = editor.buffer().read(cx).buffer(buffer_id).unwrap();
-        let selection_anchor = editor.buffer().update(cx, |multibuffer, cx| {
-            multibuffer
-                .buffer_point_to_anchor(&buffer_entity, Point::new(selection_buffer_row, 0), cx)
-                .expect("buffer row 20 maps to a multibuffer anchor")
-        });
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_anchor_ranges([selection_anchor..selection_anchor])
-        });
-
-        let mut latest_selection_anchors: HashMap<BufferId, Anchor> = HashMap::default();
-        for selection in editor.selections.all_anchors(&display_snapshot).iter() {
-            let head = selection.head();
-            if let Some((text_anchor, _)) = snapshot.buffer_snapshot().anchor_to_buffer_anchor(head)
-            {
-                latest_selection_anchors.insert(text_anchor.buffer_id, head);
-            }
-        }
-
-        // The sticky buffer header represents the FIRST excerpt of its buffer,
-        // even when the cursor is in a later excerpt. That mismatch is the
-        // precondition for the regression.
-        let first_excerpt = snapshot
-            .buffer_snapshot()
-            .excerpt_boundaries_in_range(MultiBufferOffset(0)..snapshot.buffer_snapshot().len())
-            .next()
-            .expect("multibuffer has at least one excerpt")
-            .next;
-
-        let jump_data = header_jump_data(
-            &snapshot,
-            DisplayRow(0),
-            FILE_HEADER_HEIGHT + MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
-            &first_excerpt,
-            &latest_selection_anchors,
-        );
-
-        match jump_data {
-            JumpData::MultiBufferPoint {
-                position,
-                line_offset_from_top,
-                ..
-            } => {
-                assert_eq!(
-                    position.row, selection_buffer_row,
-                    "jump should target the cursor's buffer row, not the first excerpt's row"
-                );
-                assert!(
-                    line_offset_from_top < selection_buffer_row,
-                    "line_offset_from_top ({line_offset_from_top}) should be measured from the \
-                     selection's excerpt, not the first excerpt; expected less than \
-                     selection_buffer_row ({selection_buffer_row})"
-                );
-            }
-            JumpData::MultiBufferRow { .. } => {
-                panic!("expected MultiBufferPoint jump data when a selection is present")
-            }
-        }
-    });
-}
-
-#[gpui::test]
 async fn test_extra_newline_insertion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -32819,78 +32713,6 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
     assert_eq!(sticky_headers(9.0), vec![]);
     assert_eq!(sticky_headers(9.5), vec![]);
     assert_eq!(sticky_headers(10.0), vec![]);
-}
-
-#[gpui::test]
-async fn test_sticky_scroll_with_decoration_prefix_in_item(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-    let mut cx = EditorTestContext::new(cx).await;
-
-    let language = Arc::new(
-        Language::new(
-            LanguageConfig {
-                name: "TypeScript".into(),
-                ..Default::default()
-            },
-            Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
-        )
-        .with_outline_query(
-            r#"
-            (class_declaration
-                "class" @context
-                name: (_) @name) @item
-            "#,
-        )
-        .expect("TypeScript outline query"),
-    );
-
-    let buffer = indoc! {"
-        ˇ@Decorator
-        class Foo {
-            x = 1;
-            y = 2;
-            z = 3;
-            w = 4;
-        }
-    "};
-    cx.set_state(buffer);
-    cx.update_editor(|e, _, cx| {
-        e.buffer()
-            .read(cx)
-            .as_singleton()
-            .unwrap()
-            .update(cx, |buffer, cx| {
-                buffer.set_language(Some(language), cx);
-            })
-    });
-
-    let mut sticky_headers = |offset: ScrollOffset| {
-        cx.update_editor(|e, window, cx| {
-            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
-        });
-        cx.run_until_parked();
-        cx.update_editor(|e, window, cx| {
-            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
-                .into_iter()
-                .map(
-                    |StickyHeader {
-                         start_point,
-                         offset,
-                         ..
-                     }| { (start_point, offset) },
-                )
-                .collect::<Vec<_>>()
-        })
-    };
-
-    let class_foo = Point { row: 1, column: 0 };
-
-    assert_eq!(sticky_headers(0.0), vec![]);
-    assert_eq!(sticky_headers(1.5), vec![(class_foo, 0.0)]);
-    assert_eq!(sticky_headers(2.5), vec![(class_foo, 0.0)]);
-    assert_eq!(sticky_headers(5.5), vec![(class_foo, -0.5)]);
-    assert_eq!(sticky_headers(6.0), vec![]);
-    assert_eq!(sticky_headers(7.0), vec![]);
 }
 
 #[gpui::test]

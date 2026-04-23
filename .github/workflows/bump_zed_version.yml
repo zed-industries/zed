@@ -160,7 +160,7 @@ jobs:
       name: steps::bot_commit
       uses: IAreKyleW00t/verified-bot-commit@126a6a11889ab05bcff72ec2403c326cd249b84c
       with:
-        message: ${{ needs.resolve_versions.outputs.preview_branch }} preview for @${{ github.actor }}
+        message: ${{ needs.resolve_versions.outputs.preview_branch }} preview
         ref: refs/heads/${{ needs.resolve_versions.outputs.preview_branch }}
         files: crates/zed/RELEASE_CHANNEL
         token: ${{ steps.generate-token.outputs.token }}
@@ -206,7 +206,7 @@ jobs:
       name: steps::bot_commit
       uses: IAreKyleW00t/verified-bot-commit@126a6a11889ab05bcff72ec2403c326cd249b84c
       with:
-        message: ${{ needs.resolve_versions.outputs.stable_branch }} stable for @${{ github.actor }}
+        message: ${{ needs.resolve_versions.outputs.stable_branch }} stable
         ref: refs/heads/${{ needs.resolve_versions.outputs.stable_branch }}
         files: crates/zed/RELEASE_CHANNEL
         token: ${{ steps.generate-token.outputs.token }}

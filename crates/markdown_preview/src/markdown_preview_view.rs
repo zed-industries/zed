@@ -999,6 +999,7 @@ impl SearchableItem for MarkdownPreviewView {
                 markdown.set_active_search_highlight(Some(index), cx);
                 markdown.request_autoscroll_to_source_index(start, cx);
             });
+            cx.emit(SearchEvent::ActiveMatchChanged);
         }
     }
 

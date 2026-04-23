@@ -30,7 +30,6 @@ pub struct GitPanelSettings {
     pub diff_stats: bool,
     pub show_count_badge: bool,
     pub starts_open: bool,
-    pub commit_title_max_length: usize,
 }
 
 #[derive(Default)]
@@ -77,7 +76,6 @@ impl Settings for GitPanelSettings {
             diff_stats: git_panel.diff_stats.unwrap(),
             show_count_badge: git_panel.show_count_badge.unwrap(),
             starts_open: git_panel.starts_open.unwrap(),
-            commit_title_max_length: git_panel.commit_title_max_length.unwrap(),
         }
     }
 }
