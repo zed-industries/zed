@@ -152,6 +152,7 @@ pub struct EditPredictionStore {
     preferred_experiment: Option<String>,
     available_experiments: Vec<String>,
     pub mercury: Mercury,
+    legacy_data_collection_enabled: bool,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejectionPayload>,
     settled_predictions_tx: mpsc::UnboundedSender<Instant>,
     shown_predictions: VecDeque<EditPrediction>,
@@ -758,6 +759,7 @@ impl EditPredictionStore {
 
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let llm_token = global_llm_token(cx);
+        let legacy_data_collection_enabled = Self::load_legacy_data_collection_enabled(cx);
 
         let (reject_tx, reject_rx) = mpsc::unbounded();
         cx.background_spawn({
@@ -812,6 +814,7 @@ impl EditPredictionStore {
             preferred_experiment: None,
             available_experiments: Vec::new(),
             mercury: Mercury::new(cx),
+            legacy_data_collection_enabled,
 
             reject_predictions_tx: reject_tx,
             settled_predictions_tx,
@@ -2781,17 +2784,20 @@ impl EditPredictionStore {
         {
             EditPredictionDataCollectionChoice::Yes => true,
             EditPredictionDataCollectionChoice::No => false,
-            EditPredictionDataCollectionChoice::Default => {
-                // Fall back to the legacy KV entry for users who have not yet set
-                // the new setting explicitly via the toggle or settings.json.
-                KeyValueStore::global(cx)
-                    .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
-                    .log_err()
-                    .flatten()
-                    .as_deref()
-                    == Some("true")
-            }
+            // Fall back to the legacy KV entry captured when the store was
+            // created, preserving existing users' choices without per-request
+            // database reads.
+            EditPredictionDataCollectionChoice::Default => self.legacy_data_collection_enabled,
         }
+    }
+
+    fn load_legacy_data_collection_enabled(cx: &App) -> bool {
+        KeyValueStore::global(cx)
+            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
+            .log_err()
+            .flatten()
+            .as_deref()
+            == Some("true")
     }
 
     pub(crate) fn is_data_collection_allowed_by_organization(&self, cx: &App) -> bool {

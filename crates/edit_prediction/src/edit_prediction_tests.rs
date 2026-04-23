@@ -2396,11 +2396,29 @@ struct RequestChannels {
 fn init_test_with_fake_client(
     cx: &mut TestAppContext,
 ) -> (Entity<EditPredictionStore>, RequestChannels) {
+    init_test_with_fake_client_and_legacy_data_collection(cx, None)
+}
+
+fn init_test_with_fake_client_and_legacy_data_collection(
+    cx: &mut TestAppContext,
+    legacy_data_collection_choice: Option<&str>,
+) -> (Entity<EditPredictionStore>, RequestChannels) {
     cx.update(move |cx| {
         cx.set_global(AppDatabase::test_new());
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         zlog::init_test();
+
+        if let Some(legacy_data_collection_choice) = legacy_data_collection_choice {
+            KeyValueStore::global(cx)
+                .write_kvp(
+                    ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
+                    legacy_data_collection_choice.to_string(),
+                )
+                .now_or_never()
+                .expect("legacy data collection write should complete immediately")
+                .expect("legacy data collection write should succeed");
+        }
 
         let (predict_req_tx, predict_req_rx) = mpsc::unbounded();
         let (reject_req_tx, reject_req_rx) = mpsc::unbounded();
@@ -3402,10 +3420,6 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_data_collection_disabled_by_default(cx: &mut TestAppContext) {
     let (ep_store, _channels) = init_test_with_fake_client(cx);
-    cx.update(|cx| KeyValueStore::global(cx))
-        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
-        .await
-        .ok();
 
     cx.update(|cx| {
         assert!(!ep_store.read(cx).is_data_collection_enabled(cx));
@@ -3414,12 +3428,25 @@ async fn test_data_collection_disabled_by_default(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_data_collection_enabled_via_legacy_kv_store(cx: &mut TestAppContext) {
-    let (ep_store, _channels) = init_test_with_fake_client(cx);
-    let kvp = cx.update(|cx| KeyValueStore::global(cx));
-    kvp.delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
-        .await
-        .ok();
-    kvp.write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), "true".into())
+    let (ep_store, _channels) =
+        init_test_with_fake_client_and_legacy_data_collection(cx, Some("true"));
+
+    cx.update(|cx| {
+        assert!(ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+}
+
+#[gpui::test]
+async fn test_data_collection_default_uses_cached_legacy_value(cx: &mut TestAppContext) {
+    let (ep_store, _channels) =
+        init_test_with_fake_client_and_legacy_data_collection(cx, Some("true"));
+
+    cx.update(|cx| {
+        assert!(ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+
+    cx.update(|cx| KeyValueStore::global(cx))
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
         .await
         .unwrap();
 
@@ -3430,11 +3457,8 @@ async fn test_data_collection_enabled_via_legacy_kv_store(cx: &mut TestAppContex
 
 #[gpui::test]
 async fn test_data_collection_setting_overrides_kv_store(cx: &mut TestAppContext) {
-    let (ep_store, _channels) = init_test_with_fake_client(cx);
-    cx.update(|cx| KeyValueStore::global(cx))
-        .write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), "true".into())
-        .await
-        .unwrap();
+    let (ep_store, _channels) =
+        init_test_with_fake_client_and_legacy_data_collection(cx, Some("true"));
 
     // An explicit false in settings.json wins over the KV store.
     cx.update_global::<SettingsStore, _>(|settings, cx| {
@@ -3456,10 +3480,6 @@ async fn test_data_collection_setting_overrides_kv_store(cx: &mut TestAppContext
 #[gpui::test]
 async fn test_data_collection_enabled_via_setting(cx: &mut TestAppContext) {
     let (ep_store, _channels) = init_test_with_fake_client(cx);
-    cx.update(|cx| KeyValueStore::global(cx))
-        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
-        .await
-        .ok();
 
     cx.update_global::<SettingsStore, _>(|settings, cx| {
         settings.update_user_settings(cx, |content| {
@@ -3480,10 +3500,6 @@ async fn test_data_collection_enabled_via_setting(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_data_collection_always_enabled_for_staff(cx: &mut TestAppContext) {
     let (ep_store, _channels) = init_test_with_fake_client(cx);
-    cx.update(|cx| KeyValueStore::global(cx))
-        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
-        .await
-        .ok();
 
     cx.update(|cx| {
         cx.set_staff(true);
@@ -3537,14 +3553,8 @@ async fn test_data_collection_disabled_by_organization_configuration(cx: &mut Te
 // (true) and write Some(false).
 #[gpui::test]
 async fn test_toggle_data_collection_from_kv_enabled_state(cx: &mut TestAppContext) {
-    let (ep_store, _channels) = init_test_with_fake_client(cx);
-    let kvp = cx.update(|cx| KeyValueStore::global(cx));
-    kvp.delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
-        .await
-        .ok();
-    kvp.write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), "true".into())
-        .await
-        .unwrap();
+    let (ep_store, _channels) =
+        init_test_with_fake_client_and_legacy_data_collection(cx, Some("true"));
 
     cx.update(|cx| {
         assert!(
