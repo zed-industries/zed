@@ -1519,7 +1519,7 @@ mod tests {
         stream: &mut UnboundedReceiver<EditAgentOutputEvent>,
     ) -> Vec<EditAgentOutputEvent> {
         let mut events = Vec::new();
-        while let Ok(Some(event)) = stream.try_next() {
+        while let Ok(event) = stream.try_recv() {
             events.push(event);
         }
         events

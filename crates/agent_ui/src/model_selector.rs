@@ -1,9 +1,9 @@
 use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
 use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelList, AgentModelSelector};
-use agent_client_protocol::ModelId;
+use agent_client_protocol::schema as acp;
 use agent_servers::AgentServer;
-use agent_settings::AgentSettings;
+
 use anyhow::Result;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
@@ -16,12 +16,15 @@ use gpui::{
 use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use settings::{Settings, SettingsStore};
-use ui::{DocumentationAside, DocumentationSide, IntoElement, prelude::*};
+use settings::SettingsStore;
+use ui::{DocumentationAside, IntoElement, prelude::*};
 use util::ResultExt;
 use zed_actions::agent::OpenSettings;
 
-use crate::ui::{HoldForDefault, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem};
+use crate::ui::{
+    HoldForDefault, ModelSelectorFooter, ModelSelectorHeader, ModelSelectorListItem,
+    documentation_aside_side,
+};
 
 pub type ModelSelector = Picker<ModelPickerDelegate>;
 
@@ -54,7 +57,7 @@ pub struct ModelPickerDelegate {
     selected_index: usize,
     selected_description: Option<(usize, SharedString, bool)>,
     selected_model: Option<AgentModelInfo>,
-    favorites: HashSet<ModelId>,
+    favorites: HashSet<acp::ModelId>,
     _refresh_models_task: Task<()>,
     _settings_subscription: Subscription,
     focus_handle: FocusHandle,
@@ -385,13 +388,7 @@ impl PickerDelegate for ModelPickerDelegate {
                 let description = description.clone();
                 let is_default = *is_default;
 
-                let settings = AgentSettings::get_global(cx);
-                let side = match settings.dock {
-                    settings::DockPosition::Left => DocumentationSide::Right,
-                    settings::DockPosition::Bottom | settings::DockPosition::Right => {
-                        DocumentationSide::Left
-                    }
-                };
+                let side = documentation_aside_side(cx);
 
                 DocumentationAside::new(
                     side,
@@ -427,7 +424,7 @@ impl PickerDelegate for ModelPickerDelegate {
 
 fn info_list_to_picker_entries(
     model_list: AgentModelList,
-    favorites: &HashSet<ModelId>,
+    favorites: &HashSet<acp::ModelId>,
 ) -> Vec<ModelPickerEntry> {
     let mut entries = Vec::new();
 
@@ -533,7 +530,6 @@ async fn fuzzy_search(
 
 #[cfg(test)]
 mod tests {
-    use agent_client_protocol as acp;
     use gpui::TestAppContext;
 
     use super::*;
@@ -595,10 +591,10 @@ mod tests {
         }
     }
 
-    fn create_favorites(models: Vec<&str>) -> HashSet<ModelId> {
+    fn create_favorites(models: Vec<&str>) -> HashSet<acp::ModelId> {
         models
             .into_iter()
-            .map(|m| ModelId::new(m.to_string()))
+            .map(|m| acp::ModelId::new(m.to_string()))
             .collect()
     }
 
@@ -794,7 +790,7 @@ mod tests {
 
     #[gpui::test]
     fn test_favorites_count_returns_correct_count(_cx: &mut TestAppContext) {
-        let empty_favorites: HashSet<ModelId> = HashSet::default();
+        let empty_favorites: HashSet<acp::ModelId> = HashSet::default();
         assert_eq!(empty_favorites.len(), 0);
 
         let one_favorite = create_favorites(vec!["model-a"]);

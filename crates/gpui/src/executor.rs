@@ -1,7 +1,7 @@
 use crate::{App, PlatformDispatcher, PlatformScheduler};
 use futures::channel::mpsc;
 use futures::prelude::*;
-use gpui_util::TryFutureExt;
+use gpui_util::{TryFutureExt, TryFutureExtBacktrace};
 use scheduler::Instant;
 use scheduler::Scheduler;
 use std::{
@@ -84,7 +84,7 @@ impl<T> Task<T> {
 impl<T, E> Task<Result<T, E>>
 where
     T: 'static,
-    E: 'static + Debug,
+    E: 'static + std::fmt::Display,
 {
     /// Run the task to completion in the background and log any errors that occur.
     #[track_caller]
@@ -92,6 +92,22 @@ where
         let location = core::panic::Location::caller();
         cx.foreground_executor()
             .spawn(self.log_tracked_err(*location))
+            .detach();
+    }
+}
+
+impl<T, E> Task<Result<T, E>>
+where
+    T: 'static,
+    E: 'static + std::fmt::Debug,
+{
+    /// Like [`Self::detach_and_log_err`], but uses `{:?}` formatting on failure so `anyhow::Error`
+    /// values emit their full backtrace. Prefer `detach_and_log_err` unless a backtrace is wanted.
+    #[track_caller]
+    pub fn detach_and_log_err_with_backtrace(self, cx: &App) {
+        let location = *core::panic::Location::caller();
+        cx.foreground_executor()
+            .spawn(self.log_tracked_err_with_backtrace(location))
             .detach();
     }
 }

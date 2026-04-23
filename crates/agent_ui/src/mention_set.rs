@@ -1,7 +1,7 @@
 use crate::diagnostics::{DiagnosticsOptions, codeblock_fence_for_path, collect_diagnostics};
 use acp_thread::{MentionUri, selection_name};
 use agent::{ThreadStore, outline};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -18,7 +18,7 @@ use gpui::{
 use http_client::{AsyncBody, HttpClientWithUrl};
 use itertools::Either;
 use language::Buffer;
-use language_model::LanguageModelImage;
+use language_model::{LanguageModelImage, LanguageModelImageExt};
 use multi_buffer::MultiBufferRow;
 use postage::stream::Stream as _;
 use project::{Project, ProjectItem, ProjectPath, Worktree};
@@ -154,7 +154,7 @@ impl MentionSet {
             MentionUri::Selection { abs_path: None, .. } => Task::ready(Err(anyhow!(
                 "Untitled buffer selection mentions are not supported for paste"
             ))),
-            MentionUri::PastedImage
+            MentionUri::PastedImage { .. }
             | MentionUri::TerminalSelection { .. }
             | MentionUri::MergeConflict { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
@@ -172,6 +172,10 @@ impl MentionSet {
 
     pub fn mentions(&self) -> HashSet<MentionUri> {
         self.mentions.values().map(|(uri, _)| uri.clone()).collect()
+    }
+
+    pub fn mention_uri_for_crease(&self, crease_id: &CreaseId) -> Option<MentionUri> {
+        self.mentions.get(crease_id).map(|(uri, _)| uri.clone())
     }
 
     pub fn set_mentions(&mut self, mentions: HashMap<CreaseId, (MentionUri, MentionTask)>) {
@@ -283,7 +287,7 @@ impl MentionSet {
                 include_errors,
                 include_warnings,
             } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
-            MentionUri::PastedImage => {
+            MentionUri::PastedImage { .. } => {
                 debug_panic!("pasted image URI should not be included in completions");
                 Task::ready(Err(anyhow!(
                     "pasted imaged URI should not be included in completions"
@@ -739,9 +743,11 @@ pub(crate) async fn insert_images_as_context(
         return;
     }
 
-    let replacement_text = MentionUri::PastedImage.as_link().to_string();
-
     for (image, name) in images {
+        let mention_uri = MentionUri::PastedImage {
+            name: name.to_string(),
+        };
+        let replacement_text = mention_uri.as_link().to_string();
         let Some((text_anchor, multibuffer_anchor)) = editor
             .update_in(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
@@ -804,7 +810,13 @@ pub(crate) async fn insert_images_as_context(
             .shared();
 
         mention_set.update(cx, |mention_set, _cx| {
-            mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
+            mention_set.insert_mention(
+                crease_id,
+                MentionUri::PastedImage {
+                    name: name.to_string(),
+                },
+                task.clone(),
+            )
         });
 
         if task
@@ -831,7 +843,11 @@ fn image_format_from_external_content(format: image::ImageFormat) -> Option<Imag
         image::ImageFormat::Bmp => Some(ImageFormat::Bmp),
         image::ImageFormat::Tiff => Some(ImageFormat::Tiff),
         image::ImageFormat::Ico => Some(ImageFormat::Ico),
-        _ => None,
+        image::ImageFormat::Pnm => Some(ImageFormat::Pnm),
+        _ => {
+            debug_panic!("An unhandled image format: {format:?}");
+            None
+        }
     }
 }
 
@@ -873,7 +889,7 @@ pub(crate) fn paste_images_as_context(
 
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
-        let default_name: SharedString = MentionUri::PastedImage.name().into();
+        let default_name: SharedString = "Image".into();
         let (mut images, paths): (Vec<(gpui::Image, SharedString)>, Vec<_>) = clipboard
             .into_entries()
             .filter_map(|entry| match entry {

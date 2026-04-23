@@ -360,27 +360,6 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         self.model.max_output_tokens
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let max_token_count = self.max_token_count();
-        cx.background_spawn(async move {
-            let messages = super::open_ai::collect_tiktoken_messages(request);
-            let model = if max_token_count >= 100_000 {
-                // If the max tokens is 100k or more, it is likely the o200k_base tokenizer from gpt4o
-                "gpt-4o"
-            } else {
-                // Otherwise fallback to gpt-4, since only cl100k_base and o200k_base are
-                // supported with this tiktoken method
-                "gpt-4"
-            };
-            tiktoken_rs::num_tokens_from_messages(model, &messages).map(|tokens| tokens as u64)
-        })
-        .boxed()
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -402,7 +381,8 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.parallel_tool_calls,
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
-                None,
+                self.model.reasoning_effort,
+                self.model.capabilities.interleaved_reasoning,
             );
             let completions = self.stream_completion(request, cx);
             async move {
@@ -417,7 +397,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.parallel_tool_calls,
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
-                None,
+                self.model.reasoning_effort,
             );
             let completions = self.stream_response(request, cx);
             async move {
