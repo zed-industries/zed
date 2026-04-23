@@ -6606,6 +6606,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "telemetry",
  "tempfile",
  "text",
  "thiserror 2.0.17",
