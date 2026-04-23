@@ -27,7 +27,7 @@ use rope::Point;
 use settings::Settings;
 use terminal::terminal_settings::TerminalSettings;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
-use text::{Anchor, ToOffset as _, ToPoint as _};
+use text::{Anchor, ToPoint as _};
 use ui::IconName;
 use ui::prelude::*;
 use util::ResultExt as _;
@@ -302,7 +302,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             }),
             PromptContextEntry::Action(action) => {
                 let (editor_selections, terminal_selections) =
-                    gather_focused_content(None, workspace, cx);
+                    workspace.update(cx, |workspace, cx| gather_active_content(workspace, cx));
                 Self::completion_for_action(
                     action,
                     source_range,
@@ -310,7 +310,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     mention_set,
                     editor_selections,
                     terminal_selections,
-                    cx,
                 )
             }
         }
@@ -582,18 +581,9 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         mention_set: WeakEntity<MentionSet>,
         editor_selections: Vec<(Entity<Buffer>, Range<text::Anchor>)>,
         terminal_selections: Vec<String>,
-        cx: &mut App,
     ) -> Option<Completion> {
         let (new_text, on_action) = match action {
             PromptContextAction::AddSelections => {
-                let editor_selections: Vec<_> = editor_selections
-                    .into_iter()
-                    .filter(|(buffer, range)| {
-                        let snapshot = buffer.read(cx).snapshot();
-                        range.start.to_offset(&snapshot) != range.end.to_offset(&snapshot)
-                    })
-                    .collect();
-
                 const EDITOR_PLACEHOLDER: &str = "selection ";
                 const TERMINAL_PLACEHOLDER: &str = "terminal ";
 
@@ -2215,10 +2205,10 @@ fn terminal_view_selection(terminal_view: &Entity<TerminalView>, cx: &App) -> Op
 }
 
 fn terminal_selections(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
+    let workspace = workspace.read(cx);
     let mut selections = Vec::new();
 
     if let Some(terminal_view) = workspace
-        .read(cx)
         .active_item(cx)
         .and_then(|item| item.act_as::<TerminalView>(cx))
         && let Some(text) = terminal_view_selection(&terminal_view, cx)
@@ -2226,13 +2216,9 @@ fn terminal_selections(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
         selections.push(text);
     }
 
-    if let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) {
+    if let Some(panel) = workspace.panel::<TerminalPanel>(cx) {
         let position = TerminalSettings::get_global(cx).dock.into();
-        let dock_is_open = workspace
-            .read(cx)
-            .dock_at_position(position)
-            .read(cx)
-            .is_open();
+        let dock_is_open = workspace.dock_at_position(position).read(cx).is_open();
         if dock_is_open {
             selections.extend(panel.read(cx).terminal_selections(cx));
         }
@@ -2252,11 +2238,16 @@ fn editor_selection_ranges(
         let buffer = editor.buffer().read(cx);
         let snapshot = buffer.snapshot(cx);
 
+        let mut seen_current_line_rows = collections::HashSet::default();
+
         selections
             .into_iter()
             .filter_map(|s| {
                 let (start, end) = if s.is_empty() {
                     if !include_current_line {
+                        return None;
+                    }
+                    if !seen_current_line_rows.insert(s.start.row) {
                         return None;
                     }
                     let row = multi_buffer::MultiBufferRow(s.start.row);
@@ -2281,32 +2272,43 @@ fn editor_selection_ranges(
 }
 
 pub(crate) fn gather_focused_content(
-    source: Option<FocusedContentSource>,
-    workspace: &Entity<Workspace>,
+    source: FocusedContentSource,
     cx: &mut App,
 ) -> (Vec<(Entity<Buffer>, Range<text::Anchor>)>, Vec<String>) {
     match source {
-        Some(FocusedContentSource::Editor(editor)) => {
+        FocusedContentSource::Editor(editor) => {
             (editor_selection_ranges(&editor, true, cx), Vec::new())
         }
-        Some(FocusedContentSource::TerminalView(terminal_view)) => (
+        FocusedContentSource::TerminalView(terminal_view) => (
             Vec::new(),
             terminal_view_selection(&terminal_view, cx)
                 .into_iter()
                 .collect(),
         ),
-        Some(FocusedContentSource::TerminalPanel(panel)) => {
+        FocusedContentSource::TerminalPanel(panel) => {
             (Vec::new(), panel.read(cx).terminal_selections(cx))
         }
-        None => {
-            let editor_ranges = workspace
-                .read(cx)
-                .active_item(cx)
-                .and_then(|item| item.act_as::<Editor>(cx))
-                .map(|editor| editor_selection_ranges(&editor, false, cx))
-                .unwrap_or_default();
-            (editor_ranges, terminal_selections(workspace, cx))
-        }
+    }
+}
+
+pub(crate) fn gather_active_content(
+    workspace: &Workspace,
+    cx: &mut App,
+) -> (Vec<(Entity<Buffer>, Range<text::Anchor>)>, Vec<String>) {
+    let Some(active_item) = workspace.active_item(cx) else {
+        return (Vec::new(), Vec::new());
+    };
+    if let Some(editor) = active_item.act_as::<Editor>(cx) {
+        (editor_selection_ranges(&editor, false, cx), Vec::new())
+    } else if let Some(terminal_view) = active_item.act_as::<TerminalView>(cx) {
+        (
+            Vec::new(),
+            terminal_view_selection(&terminal_view, cx)
+                .into_iter()
+                .collect(),
+        )
+    } else {
+        (Vec::new(), Vec::new())
     }
 }
 

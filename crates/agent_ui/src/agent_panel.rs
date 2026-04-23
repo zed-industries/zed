@@ -33,7 +33,9 @@ use crate::DEFAULT_THREAD_TITLE;
 use crate::ExpandMessageEditor;
 use crate::ManageProfiles;
 use crate::agent_connection_store::AgentConnectionStore;
-use crate::completion_provider::{focused_content_source, gather_focused_content};
+use crate::completion_provider::{
+    focused_content_source, gather_active_content, gather_focused_content,
+};
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow,
@@ -412,10 +414,11 @@ pub fn init(cx: &mut App) {
                 )
                 .register_action(
                     |workspace: &mut Workspace, _: &AddSelectionToThread, window, cx| {
-                        let focused_source = focused_content_source(workspace, window, cx);
-                        let workspace_entity = cx.entity();
                         let (editor_selections, terminal_selections) =
-                            gather_focused_content(focused_source, &workspace_entity, cx);
+                            match focused_content_source(workspace, window, cx) {
+                                Some(source) => gather_focused_content(source, cx),
+                                None => gather_active_content(workspace, cx),
+                            };
 
                         if editor_selections.is_empty() && terminal_selections.is_empty() {
                             return;

@@ -1400,7 +1400,6 @@ impl MessageEditor {
                 self.mention_set.downgrade(),
                 editor_selections,
                 terminal_selections,
-                cx,
             )
         else {
             return;
@@ -3664,8 +3663,9 @@ mod tests {
         // range.
         message_editor.update_in(&mut cx, |message_editor, window, cx| {
             let workspace = message_editor.workspace.upgrade().unwrap();
-            let (editor_selections, terminal_selections) =
-                crate::completion_provider::gather_focused_content(None, &workspace, cx);
+            let (editor_selections, terminal_selections) = workspace.update(cx, |workspace, cx| {
+                crate::completion_provider::gather_active_content(workspace, cx)
+            });
             message_editor.insert_selections(editor_selections, terminal_selections, window, cx);
         });
 
