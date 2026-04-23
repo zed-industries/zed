@@ -1,5 +1,6 @@
 use std::{fmt, ops::Not as _, rc::Rc};
 
+use futures::StreamExt;
 use itertools::Itertools as _;
 
 use crate::{
@@ -8,7 +9,7 @@ use crate::{
         Approvable, CommitAuthor, CommitFileChange, CommitMetadata, GithubApiClient, GithubLogin,
         PullRequestComment, PullRequestData, PullRequestReview, Repository, ReviewState,
     },
-    report::Report,
+    report::{Report, ReportEntry},
 };
 
 const ZED_ZIPPY_COMMENT_APPROVAL_PATTERN: &str = "@zed-zippy approve";
@@ -409,30 +410,37 @@ impl Reporter {
         body.contains(ZED_ZIPPY_COMMENT_APPROVAL_PATTERN) || body.contains(ZED_ZIPPY_GROUP_APPROVAL)
     }
 
-    pub async fn generate_report(mut self) -> anyhow::Result<Report> {
-        let mut report = Report::new();
-
+    pub async fn generate_report(mut self, max_concurrent_checks: usize) -> Report {
         let commits_to_check = std::mem::take(&mut self.commits);
         let total_commits = commits_to_check.len();
 
-        for (i, commit) in commits_to_check.into_iter().enumerate() {
-            println!(
-                "Checking commit {:?} ({current}/{total})",
-                commit.sha().short(),
-                current = i + 1,
-                total = total_commits
-            );
+        let reports = futures::stream::iter(commits_to_check.into_iter().enumerate().map(
+            async |(i, commit)| {
+                println!(
+                    "Checking commit {:?} ({current}/{total})",
+                    commit.sha().short(),
+                    current = i + 1,
+                    total = total_commits
+                );
 
-            let review_result = self.check_commit(&commit).await;
+                let review_result = self.check_commit(&commit).await;
 
-            if let Err(err) = &review_result {
-                println!("Commit {:?} failed review: {:?}", commit.sha().short(), err);
-            }
+                if let Err(err) = &review_result {
+                    println!("Commit {:?} failed review: {:?}", commit.sha().short(), err);
+                }
 
-            report.add(commit, review_result);
-        }
+                (commit, review_result)
+            },
+        ))
+        .buffered(max_concurrent_checks)
+        .collect::<Vec<_>>()
+        .await;
 
-        Ok(report)
+        Report::from_entries(
+            reports
+                .into_iter()
+                .map(|(commit, result)| ReportEntry::new(commit, result)),
+        )
     }
 }
 
