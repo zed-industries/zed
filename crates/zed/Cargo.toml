@@ -230,6 +230,8 @@ windows.workspace = true
 gpui = { workspace = true, features = [
     "windows-manifest",
 ] }
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 winresource = "0.1"

@@ -185,6 +185,20 @@ fn main() {
 
     let args = Args::parse();
 
+    #[cfg(target_os = "macos")]
+    if let Some(restart_wait_pid) = args.restart_wait_pid {
+        let Some(restart_open_path) = args.restart_open_path else {
+            process::exit(1);
+        };
+
+        if let Err(error) = run_restart_helper(restart_wait_pid, restart_open_path) {
+            eprintln!("restart helper failed: {error:#}");
+            process::exit(1);
+        }
+
+        return;
+    }
+
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
     #[cfg(not(target_os = "windows"))]
     if let Some(socket) = &args.askpass {
@@ -1658,6 +1672,14 @@ struct Args {
     #[arg(long, hide = true)]
     crash_handler: Option<PathBuf>,
 
+    #[cfg(target_os = "macos")]
+    #[arg(long, hide = true, requires = "restart_open_path")]
+    restart_wait_pid: Option<u32>,
+
+    #[cfg(target_os = "macos")]
+    #[arg(long, hide = true, requires = "restart_wait_pid")]
+    restart_open_path: Option<PathBuf>,
+
     /// Run zed in the foreground, only used on Windows, to match the behavior on macOS.
     #[arg(long)]
     #[cfg(target_os = "windows")]
@@ -1926,4 +1948,46 @@ fn check_for_conpty_dll() {
     } else {
         log::warn!("Failed to load conpty.dll. Terminal will work with reduced functionality.");
     }
+}
+
+#[cfg(target_os = "macos")]
+
+fn run_restart_helper(wait_pid: u32, open_path: PathBuf) -> Result<()> {
+    use std::time::Duration;
+    let wait_pid = i32::try_from(wait_pid).context("restart helper pid does not fit in pid_t")?;
+
+    loop {
+        let result = unsafe { libc::kill(wait_pid, 0) };
+        if result == 0 {
+            std::thread::sleep(Duration::from_millis(100));
+            continue;
+        }
+
+        match io::Error::last_os_error().raw_os_error() {
+            Some(libc::ESRCH) => break,
+            Some(libc::EPERM) => std::thread::sleep(Duration::from_millis(100)),
+            Some(error) => {
+                return Err(anyhow::anyhow!(
+                    "failed to query process {wait_pid}: {}",
+                    error
+                ));
+            }
+            None => {
+                return Err(anyhow::anyhow!(
+                    "failed to query process {wait_pid}: unknown error"
+                ));
+            }
+        }
+    }
+
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "This helper only exists to reopen the app after restart"
+    )]
+    util::command::new_std_command("/usr/bin/open")
+        .arg(open_path)
+        .status()
+        .context("failed to reopen app after restart")?;
+
+    Ok(())
 }

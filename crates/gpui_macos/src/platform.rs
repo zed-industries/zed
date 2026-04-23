@@ -517,6 +517,17 @@ impl Platform for MacPlatform {
         use std::os::unix::process::CommandExt as _;
 
         let app_pid = std::process::id().to_string();
+
+        let helper_path = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(e) => {
+                log::error!(
+                    "failed to determine current executable for restart helper: {:?}",
+                    e
+                );
+                return;
+            }
+        };
         let app_path = self
             .app_path()
             .ok()
@@ -524,31 +535,23 @@ impl Platform for MacPlatform {
             // directory containing the executable. Disregard this
             // and get the path to the executable itself.
             .and_then(|path| (path.extension()?.to_str()? == "app").then_some(path))
-            .unwrap_or_else(|| std::env::current_exe().unwrap());
-
-        // Wait until this process has exited and then re-open this path.
-        let script = r#"
-            while kill -0 $0 2> /dev/null; do
-                sleep 0.1
-            done
-            open "$1"
-        "#;
+            .unwrap_or_else(|| helper_path.clone());
 
         #[allow(
             clippy::disallowed_methods,
             reason = "We are restarting ourselves, using std command thus is fine"
         )]
-        let restart_process = new_std_command("/bin/bash")
-            .arg("-c")
-            .arg(script)
+        let restart_process = new_std_command(&helper_path)
+            .arg("--restart-wait-pid")
             .arg(app_pid)
+            .arg("--restart-open-path")
             .arg(app_path)
             .process_group(0)
             .spawn();
 
         match restart_process {
             Ok(_) => self.quit(),
-            Err(e) => log::error!("failed to spawn restart script: {:?}", e),
+            Err(e) => log::error!("failed to spawn restart helper: {:?}", e),
         }
     }
 
