@@ -552,19 +552,6 @@ impl Render for CommitModal {
             false
         };
 
-        // Compute the left padding to align the warning text with the editor text.
-        // The editor text is offset by:
-        //   - editor-container's p_2 (0.5rem)
-        //   - render_commit_editor's px_1p5 (0.375rem)
-        //   - the editor's internal content margin (based on the buffer font's descent)
-        let warning_left_padding = {
-            let editor_style = panel_editor_style(true, window, cx);
-            let font_id = window.text_system().resolve_font(&editor_style.text.font());
-            let font_size = editor_style.text.font_size.to_pixels(window.rem_size());
-            let editor_content_margin = -window.text_system().descent(font_id, font_size);
-            rems(0.875).to_pixels(window.rem_size()) + editor_content_margin
-        };
-
         v_flex()
             .id("commit-modal")
             .key_context("GitCommit")
@@ -593,6 +580,9 @@ impl Render for CommitModal {
                     this.toggle_branch_selector(window, cx);
                 }),
             )
+            .w(width)
+            .h_112()
+            .p(container_padding)
             .elevation_3(cx)
             .overflow_hidden()
             .flex_none()
@@ -601,29 +591,16 @@ impl Render for CommitModal {
             .rounded(px(border_radius))
             .border_1()
             .border_color(cx.theme().colors().border)
-            .w(width)
-            .p(container_padding)
-            .when(title_exceeds_limit, |el| {
-                el.child(
-                    div().pl(warning_left_padding).py_1().child(
-                        Label::new(format!(
-                            "Commit message title exceeds {max_title_length}-character limit"
-                        ))
-                        .size(LabelSize::Small)
-                        .color(Color::Warning),
-                    ),
-                )
-            })
             .child(
                 v_flex()
                     .id("editor-container")
-                    .justify_between()
+                    .cursor_text()
                     .p_2()
                     .size_full()
                     .gap_2()
+                    .justify_between()
                     .rounded(properties.editor_border_radius())
                     .overflow_hidden()
-                    .cursor_text()
                     .bg(cx.theme().colors().editor_background)
                     .border_1()
                     .border_color(if title_exceeds_limit {
@@ -634,12 +611,30 @@ impl Render for CommitModal {
                     .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
                         window.focus(&editor_focus_handle, cx);
                     }))
-                    .child(
-                        div()
-                            .flex_1()
-                            .size_full()
-                            .child(self.render_commit_editor(window, cx)),
-                    )
+                    .child(self.render_commit_editor(window, cx))
+                    .when(title_exceeds_limit, |this| {
+                        this.child(
+                            h_flex()
+                                .absolute()
+                                .bottom_12()
+                                .w_full()
+                                .py_1()
+                                .px_2()
+                                .gap_1()
+                                .justify_center()
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Warning),
+                                )
+                                .child(
+                                    Label::new(format!(
+                                        "Commit message title exceeds {max_title_length}-character limit."
+                                    ))
+                                    .size(LabelSize::Small),
+                                ),
+                        )
+                    })
                     .child(self.render_footer(window, cx)),
             )
     }
