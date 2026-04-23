@@ -1637,6 +1637,182 @@ async fn test_fold_with_unindented_multiline_block_comment_includes_closing_brac
 }
 
 #[gpui::test]
+async fn test_fold_preserves_top_level_comments_between_python_classes(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_python::LANGUAGE.into()),
+        )
+        .with_queries(LanguageQueries {
+            overrides: Some(Cow::from(indoc! {"
+                (comment) @comment.inclusive
+                (string) @string
+            "})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries"),
+    );
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.set_state(indoc! {"
+        class Foo:
+            def bar(self):
+                pass
+
+
+        # SECTION SEPARATOR
+
+        class Baz:
+            def qux(self):
+                passˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                class Foo:⋯
+
+
+                # SECTION SEPARATOR
+
+                class Baz:
+                    def qux(self):
+                        pass
+            "},
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_preserves_top_level_comments_between_rust_functions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_queries(LanguageQueries {
+            overrides: Some(Cow::from(indoc! {"
+                [
+                  (string_literal)
+                  (raw_string_literal)
+                ] @string
+                [
+                  (line_comment)
+                  (block_comment)
+                ] @comment.inclusive
+            "})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries"),
+    );
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.set_state(indoc! {"
+        fn foo() {
+            bar();
+        }
+
+
+        // SECTION SEPARATOR
+
+
+        fn baz() {
+            qux();ˇ
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                fn foo() {⋯
+                }
+
+
+                // SECTION SEPARATOR
+
+
+                fn baz() {
+                    qux();
+                }
+            "},
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_terminates_at_top_level_multiline_string_between_python_classes(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_python::LANGUAGE.into()),
+        )
+        .with_queries(LanguageQueries {
+            overrides: Some(Cow::from(indoc! {"
+                (comment) @comment.inclusive
+                (string) @string
+            "})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries"),
+    );
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.set_state(indoc! {r#"
+        class Foo:
+            def bar(self):
+                pass
+
+
+        """
+        top-level docstring at zero indent
+        """
+
+
+        class Baz:
+            def qux(self):
+                passˇ
+    "#});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {r#"
+                class Foo:⋯
+
+
+                """
+                top-level docstring at zero indent
+                """
+
+
+                class Baz:
+                    def qux(self):
+                        pass
+            "#},
+        );
+    });
+}
+
+#[gpui::test]
 fn test_fold_at_level(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -32537,6 +32713,78 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
     assert_eq!(sticky_headers(9.0), vec![]);
     assert_eq!(sticky_headers(9.5), vec![]);
     assert_eq!(sticky_headers(10.0), vec![]);
+}
+
+#[gpui::test]
+async fn test_sticky_scroll_with_decoration_prefix_in_item(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "TypeScript".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        )
+        .with_outline_query(
+            r#"
+            (class_declaration
+                "class" @context
+                name: (_) @name) @item
+            "#,
+        )
+        .expect("TypeScript outline query"),
+    );
+
+    let buffer = indoc! {"
+        ˇ@Decorator
+        class Foo {
+            x = 1;
+            y = 2;
+            z = 3;
+            w = 4;
+        }
+    "};
+    cx.set_state(buffer);
+    cx.update_editor(|e, _, cx| {
+        e.buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_language(Some(language), cx);
+            })
+    });
+
+    let mut sticky_headers = |offset: ScrollOffset| {
+        cx.update_editor(|e, window, cx| {
+            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+        });
+        cx.run_until_parked();
+        cx.update_editor(|e, window, cx| {
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
+                .into_iter()
+                .map(
+                    |StickyHeader {
+                         start_point,
+                         offset,
+                         ..
+                     }| { (start_point, offset) },
+                )
+                .collect::<Vec<_>>()
+        })
+    };
+
+    let class_foo = Point { row: 1, column: 0 };
+
+    assert_eq!(sticky_headers(0.0), vec![]);
+    assert_eq!(sticky_headers(1.5), vec![(class_foo, 0.0)]);
+    assert_eq!(sticky_headers(2.5), vec![(class_foo, 0.0)]);
+    assert_eq!(sticky_headers(5.5), vec![(class_foo, -0.5)]);
+    assert_eq!(sticky_headers(6.0), vec![]);
+    assert_eq!(sticky_headers(7.0), vec![]);
 }
 
 #[gpui::test]

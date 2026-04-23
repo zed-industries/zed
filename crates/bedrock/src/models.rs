@@ -289,7 +289,7 @@ impl Model {
             Self::ClaudeOpus4_1 => "anthropic.claude-opus-4-1-20250805-v1:0",
             Self::ClaudeOpus4_5 => "anthropic.claude-opus-4-5-20251101-v1:0",
             Self::ClaudeOpus4_6 => "anthropic.claude-opus-4-6-v1",
-            Self::ClaudeOpus4_7 => "anthropic.claude-opus-4-7-v1",
+            Self::ClaudeOpus4_7 => "anthropic.claude-opus-4-7",
             Self::ClaudeSonnet4_6 => "anthropic.claude-sonnet-4-6",
             Self::Llama4Scout17B => "meta.llama4-scout-17b-instruct-v1:0",
             Self::Llama4Maverick17B => "meta.llama4-maverick-17b-instruct-v1:0",
@@ -817,7 +817,7 @@ mod tests {
         );
         assert_eq!(
             Model::ClaudeOpus4_7.cross_region_inference_id("eu-west-1", false)?,
-            "eu.anthropic.claude-opus-4-7-v1"
+            "eu.anthropic.claude-opus-4-7"
         );
         Ok(())
     }
@@ -851,7 +851,7 @@ mod tests {
         );
         assert_eq!(
             Model::ClaudeOpus4_7.cross_region_inference_id("ap-southeast-2", false)?,
-            "au.anthropic.claude-opus-4-7-v1"
+            "au.anthropic.claude-opus-4-7"
         );
         Ok(())
     }
@@ -915,7 +915,7 @@ mod tests {
         );
         assert_eq!(
             Model::ClaudeOpus4_7.cross_region_inference_id("us-east-1", true)?,
-            "global.anthropic.claude-opus-4-7-v1"
+            "global.anthropic.claude-opus-4-7"
         );
         assert_eq!(
             Model::Nova2Lite.cross_region_inference_id("us-east-1", true)?,

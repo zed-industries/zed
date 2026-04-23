@@ -1799,6 +1799,10 @@ impl SearchableItem for Editor {
             });
         }
     }
+
+    /// Takes the current cursor position and finds the next match in the
+    /// provided `direction`, the provide `count` number of times, wrapping
+    /// around if necessary.
     fn match_index_for_direction(
         &mut self,
         matches: &[Range<Anchor>],
@@ -1809,45 +1813,48 @@ impl SearchableItem for Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> usize {
-        let buffer = self.buffer().read(cx).snapshot(cx);
-        let current_index_position = if self.selections.disjoint_anchors_arc().len() == 1 {
+        if count == 0 {
+            return current_index;
+        }
+
+        let cursor = if self.selections.disjoint_anchors_arc().len() == 1 {
             self.selections.newest_anchor().head()
         } else {
             matches[current_index].start
         };
 
-        let mut count = count % matches.len();
-        if count == 0 {
-            return current_index;
-        }
-        match direction {
-            Direction::Next => {
-                if matches[current_index]
-                    .start
-                    .cmp(&current_index_position, &buffer)
-                    .is_gt()
-                {
-                    count -= 1
-                }
+        let buffer = self.buffer().read(cx).snapshot(cx);
+        let new_idx = match direction {
+            Direction::Next => matches
+                .iter()
+                .position(|m| m.start.cmp(&cursor, &buffer).is_gt())
+                .unwrap_or(0),
+            Direction::Prev => matches
+                .iter()
+                .rposition(|m| m.end.cmp(&cursor, &buffer).is_lt())
+                .unwrap_or(matches.len() - 1),
+        } as isize;
 
-                (current_index + count) % matches.len()
-            }
-            Direction::Prev => {
-                if matches[current_index]
-                    .end
-                    .cmp(&current_index_position, &buffer)
-                    .is_lt()
-                {
-                    count -= 1;
-                }
+        // We'll use `count - 1` because the first jump to the next or previous
+        // match already happens in the scenario above, when we find the next or
+        // previous match starting from the cursor position.
+        let count = count.saturating_sub(1);
+        let count = match direction {
+            Direction::Prev => -(count as isize),
+            Direction::Next => count as isize,
+        };
 
-                if current_index >= count {
-                    current_index - count
-                } else {
-                    matches.len() - (count - current_index)
-                }
-            }
-        }
+        let new_idx = (new_idx + count) % matches.len() as isize;
+        let new_idx = if new_idx.is_negative() {
+            // We need a `matches.len() - 1` here in case `next_idx` has now been
+            // set to `0`, otherwise we'd end up returning `matches.len()`, which
+            // would be out of bounds.
+            new_idx + (matches.len() - 1) as isize
+        } else {
+            new_idx
+        };
+        assert!(new_idx < matches.len() as isize);
+        new_idx as usize
     }
 
     fn find_matches(
