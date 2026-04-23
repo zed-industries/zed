@@ -3,7 +3,8 @@ use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, actions,
     prelude::*,
 };
-use project::ProjectItem as _;
+use language::{Buffer, BufferEvent};
+use project::{Project, ProjectItem as _};
 use ui::{ButtonLike, ElevationIndex, KeyBinding, prelude::*};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
@@ -11,6 +12,29 @@ use workspace::{Workspace, item::Item};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
+
+fn refresh_python_kernelspecs_for_buffer(
+    buffer: &Entity<Buffer>,
+    project: &Entity<Project>,
+    cx: &mut App,
+) {
+    let buffer = buffer.read(cx);
+    let Some(language) = buffer.language() else {
+        return;
+    };
+    if language.name() != "Python" {
+        return;
+    }
+    let Some(project_path) = buffer.project_path(cx) else {
+        return;
+    };
+    let store = ReplStore::global(cx);
+    store.update(cx, |store, cx| {
+        store
+            .refresh_python_kernelspecs(project_path.worktree_id, project, cx)
+            .detach_and_log_err(cx);
+    });
+}
 
 actions!(
     repl,
@@ -97,24 +121,21 @@ pub fn init(cx: &mut App) {
 
                 let buffer = editor.buffer().read(cx).as_singleton();
 
-                let language = buffer
-                    .as_ref()
-                    .and_then(|buffer| buffer.read(cx).language());
-
-                let project_path = buffer.and_then(|buffer| buffer.read(cx).project_path(cx));
-
                 let editor_handle = cx.entity().downgrade();
 
-                if let Some(language) = language
-                    && language.name() == "Python"
-                    && let (Some(project_path), Some(project)) = (project_path, project)
-                {
-                    let store = ReplStore::global(cx);
-                    store.update(cx, |store, cx| {
-                        store
-                            .refresh_python_kernelspecs(project_path.worktree_id, &project, cx)
-                            .detach_and_log_err(cx);
-                    });
+                // Subscribe to the buffer's `LanguageChanged` events so remote projects,
+                // where language detection can complete after the editor is observed,
+                // still trigger a kernelspec refresh. Without this the REPL UI stays
+                // hidden until something else populates the global kernel list.
+                if let (Some(buffer), Some(project)) = (buffer, project) {
+                    refresh_python_kernelspecs_for_buffer(&buffer, &project, cx);
+
+                    cx.subscribe(&buffer, move |_editor, buffer, event, cx| {
+                        if let BufferEvent::LanguageChanged(_) = event {
+                            refresh_python_kernelspecs_for_buffer(&buffer, &project, cx);
+                        }
+                    })
+                    .detach();
                 }
 
                 editor
