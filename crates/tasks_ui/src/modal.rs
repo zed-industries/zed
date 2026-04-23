@@ -56,6 +56,11 @@ impl TasksModalDelegate {
         }) = &task_overrides
         {
             Arc::from("Find a task, or run a command in the central pane")
+        } else if let Some(TaskOverrides {
+            reveal_target: Some(RevealTarget::Floating),
+        }) = &task_overrides
+        {
+            Arc::from("Find a task, or run a command in a floating view")
         } else {
             Arc::from("Find a task, or run a command")
         };

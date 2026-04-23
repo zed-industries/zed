@@ -230,6 +230,8 @@ This could be useful for launching a terminal application that you want to use i
 }
 ```
 
+The `reveal_target` field also supports `"floating"` to open the task in a floating view within the current Zed window.
+
 ## Hooks
 
 In addition to being spawned manually, tasks can be configured to run automatically in response to certain Zed events by adding a hook to the `hooks` field on a task template. A task with a matching hook will be resolved and spawned when that event fires.

@@ -13,4 +13,11 @@
     "allow_concurrent_runs": true,
     "use_new_terminal": false,
   },
+  {
+        "label": "Floating echo",
+        "command": "for i in {1..5}; do echo \"tick $i\"; sleep 1; done",
+        "reveal_target": "floating",
+        "reveal": "always",
+        "hide": "never"
+      }
 ]

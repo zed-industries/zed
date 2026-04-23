@@ -290,7 +290,7 @@ pub struct MultiWorkspace {
     active_workspace: Entity<Workspace>,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
-    sidebar_overlay: Option<AnyView>,
+    overlay_view: Option<AnyView>,
     pending_removal_tasks: Vec<Task<()>>,
     _serialize_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -344,7 +344,7 @@ impl MultiWorkspace {
             active_workspace: workspace,
             sidebar: None,
             sidebar_open: false,
-            sidebar_overlay: None,
+            overlay_view: None,
             pending_removal_tasks: Vec::new(),
             _serialize_task: None,
             _subscriptions: vec![
@@ -374,9 +374,14 @@ impl MultiWorkspace {
         self.sidebar.as_deref()
     }
 
-    pub fn set_sidebar_overlay(&mut self, overlay: Option<AnyView>, cx: &mut Context<Self>) {
-        self.sidebar_overlay = overlay;
+    pub fn set_overlay(&mut self, overlay: Option<AnyView>, cx: &mut Context<Self>) {
+        self.overlay_view = overlay;
         cx.notify();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_overlay(&self) -> bool {
+        self.overlay_view.is_some()
     }
 
     pub fn sidebar_open(&self) -> bool {
@@ -2176,8 +2181,8 @@ impl Render for MultiWorkspace {
                 )
                 .children(right_sidebar)
                 .child(self.workspace().read(cx).modal_layer.clone())
-                .children(self.sidebar_overlay.as_ref().map(|view| {
-                    deferred(div().absolute().size_full().inset_0().occlude().child(
+                .children(self.overlay_view.as_ref().map(|view| {
+                    deferred(div().absolute().size_full().inset_0().child(
                         v_flex().h(px(0.0)).top_20().items_center().child(
                             h_flex().occlude().child(view.clone()).on_mouse_down(
                                 MouseButton::Left,

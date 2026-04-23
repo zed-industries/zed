@@ -50,6 +50,7 @@ pub struct TaskTemplate {
     /// Where to place the task's terminal item after starting the task.
     /// * `dock` — in the terminal dock, "regular" terminal items' place (default).
     /// * `center` — in the central pane group, "main" editor area.
+    /// * `floating` — in a floating view within the current window.
     #[serde(default)]
     pub reveal_target: RevealTarget,
     /// What to do with the terminal pane and tab, after the command had finished:

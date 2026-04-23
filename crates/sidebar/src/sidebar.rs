@@ -3714,7 +3714,7 @@ impl Sidebar {
         self._thread_switcher_subscriptions.clear();
         if let Some(mw) = self.multi_workspace.upgrade() {
             mw.update(cx, |mw, cx| {
-                mw.set_sidebar_overlay(None, cx);
+                mw.set_overlay(None, cx);
             });
         }
     }
@@ -3864,7 +3864,7 @@ impl Sidebar {
         self._thread_switcher_subscriptions = subscriptions;
         if let Some(mw) = self.multi_workspace.upgrade() {
             mw.update(cx, |mw, cx| {
-                mw.set_sidebar_overlay(Some(overlay_view), cx);
+                mw.set_overlay(Some(overlay_view), cx);
             });
         }
 

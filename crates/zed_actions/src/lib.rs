@@ -621,6 +621,8 @@ pub struct OpenDevContainer;
 pub enum RevealTarget {
     /// In the central pane group, "main" editor area.
     Center,
+    /// In a floating view within the current window.
+    Floating,
     /// In the terminal dock, "regular" terminal items' place.
     #[default]
     Dock,

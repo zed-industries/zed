@@ -12,18 +12,18 @@ use db::kvp::KeyValueStore;
 use futures::{channel::oneshot, future::join_all};
 use gpui::{
     Action, Anchor, AnyView, App, AsyncApp, AsyncWindowContext, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render, Styled, Task, WeakEntity,
-    Window, actions,
+    FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render, Styled, Subscription, Task,
+    WeakEntity, Window, actions, px,
 };
 use itertools::Itertools;
 use project::{Fs, Project};
 
 use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
-use terminal::{Terminal, terminal_settings::TerminalSettings};
+use terminal::{Event as TerminalEvent, Terminal, terminal_settings::TerminalSettings};
 use ui::{
-    ButtonLike, Clickable, ContextMenu, FluentBuilder, PopoverMenu, SplitButton, Toggleable,
-    Tooltip, prelude::*,
+    ButtonLike, Clickable, ContextMenu, FluentBuilder, IconButton, PopoverMenu, SplitButton,
+    Toggleable, Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -85,6 +85,94 @@ pub struct TerminalPanel {
     assistant_enabled: bool,
     assistant_tab_bar_button: Option<AnyView>,
     active: bool,
+}
+
+struct FloatingTerminal {
+    terminal_view: Entity<TerminalView>,
+    workspace: WeakEntity<Workspace>,
+    title: String,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl FloatingTerminal {
+    fn new(
+        terminal_view: Entity<TerminalView>,
+        workspace: WeakEntity<Workspace>,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let terminal = terminal_view.read(cx).terminal().clone();
+        let close_subscription = cx.subscribe_in(
+            &terminal,
+            window,
+            |this, _, event: &TerminalEvent, window, cx| {
+                if matches!(event, TerminalEvent::CloseTerminal) {
+                    this.dismiss(window, cx);
+                }
+            },
+        );
+
+        Self {
+            terminal_view,
+            workspace,
+            title,
+            _subscriptions: vec![close_subscription],
+        }
+    }
+
+    fn dismiss(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        let _ = self.workspace.update(cx, |workspace, cx| {
+            let Some(multi_workspace) = workspace
+                .multi_workspace()
+                .and_then(|handle| handle.upgrade())
+            else {
+                return;
+            };
+            multi_workspace.update(cx, |multi_workspace, cx| {
+                multi_workspace.set_overlay(None, cx);
+            });
+        });
+    }
+}
+
+impl Focusable for FloatingTerminal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.terminal_view.read(cx).focus_handle(cx)
+    }
+}
+
+impl Render for FloatingTerminal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .id("floating-terminal")
+            .w(px(960.))
+            .h(px(640.))
+            .overflow_hidden()
+            .elevation_3(cx)
+            .bg(cx.theme().colors().elevated_surface_background)
+            .rounded_lg()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .bg(cx.theme().colors().editor_background)
+                    .child(Label::new(self.title.clone()).size(LabelSize::Small))
+                    .child(
+                        IconButton::new("dismiss-floating-terminal", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dismiss(window, cx);
+                            })),
+                    ),
+            )
+            .child(div().flex_1().size_full().child(self.terminal_view.clone()))
+    }
 }
 
 impl TerminalPanel {
@@ -642,6 +730,7 @@ impl TerminalPanel {
                     })
                 })
                 .unwrap_or_else(|e| Task::ready(Err(e))),
+            RevealTarget::Floating => self.add_floating_terminal(spawn_task, window, cx),
             RevealTarget::Dock => self.add_terminal_task(spawn_task, reveal, window, cx),
         }
     }
@@ -840,6 +929,78 @@ impl TerminalPanel {
                 terminal_panel.serialize(cx)
             })?;
             result
+        })
+    }
+
+    pub fn add_floating_terminal(
+        &mut self,
+        task: SpawnInTerminal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<WeakEntity<Terminal>>> {
+        let workspace = self.workspace.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            let workspace_handle = workspace
+                .upgrade()
+                .ok_or_else(|| anyhow!("failed to read workspace"))?;
+
+            if workspace_handle.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))
+            {
+                anyhow::bail!("terminal not yet supported for remote projects");
+            }
+
+            let project =
+                workspace_handle.read_with(cx, |workspace, _| workspace.project().clone());
+
+            let overlay_title = task.label.clone();
+            let reveal_strategy = task.reveal;
+            let terminal = project
+                .update(cx, |project, cx| project.create_terminal_task(task, cx))
+                .await?;
+
+            let workspace = workspace_handle.clone();
+            let project = project.clone();
+            let overlay_terminal = terminal.clone();
+            workspace_handle.update_in(cx, |workspace, window, cx| {
+                let Some(multi_workspace) = workspace
+                    .multi_workspace()
+                    .and_then(|handle| handle.upgrade())
+                else {
+                    anyhow::bail!("failed to read multi-workspace");
+                };
+
+                let terminal_view = cx.new(|cx| {
+                    TerminalView::new(
+                        overlay_terminal,
+                        workspace.weak_handle(),
+                        workspace.database_id(),
+                        project.downgrade(),
+                        window,
+                        cx,
+                    )
+                });
+                let overlay = cx.new(|cx| {
+                    FloatingTerminal::new(
+                        terminal_view,
+                        workspace.weak_handle(),
+                        overlay_title,
+                        window,
+                        cx,
+                    )
+                });
+
+                multi_workspace.update(cx, |multi_workspace, cx| {
+                    multi_workspace.set_overlay(Some(overlay.clone().into()), cx);
+                });
+
+                if matches!(reveal_strategy, RevealStrategy::Always) {
+                    window.focus(&overlay.focus_handle(cx), cx);
+                }
+
+                anyhow::Ok(())
+            })?;
+
+            Ok(terminal.downgrade())
         })
     }
 
@@ -1057,6 +1218,9 @@ impl TerminalPanel {
                         })
                         .detach();
                     }
+                    RevealTarget::Floating => {
+                        unreachable!("floating tasks are not replaced in panes")
+                    }
                 },
                 RevealStrategy::NoFocus => match reveal_target {
                     RevealTarget::Center => {
@@ -1083,6 +1247,9 @@ impl TerminalPanel {
                                 .ok()
                         })
                         .detach();
+                    }
+                    RevealTarget::Floating => {
+                        unreachable!("floating tasks are not replaced in panes")
                     }
                 },
                 RevealStrategy::Never => {}
@@ -1995,6 +2162,56 @@ mod tests {
         assert_eq!(
             center_items_after, center_items_before,
             "Center pane should not gain a new terminal"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_task_with_floating_reveal_target_opens_overlay(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+
+        let windows_before = cx.windows().len();
+        let panel_items_before =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+
+        let task = SpawnInTerminal {
+            id: TaskId("floating-task".into()),
+            full_label: "Floating task".into(),
+            label: "Floating task".into(),
+            reveal: RevealStrategy::Always,
+            reveal_target: RevealTarget::Floating,
+            ..SpawnInTerminal::default()
+        };
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |panel, cx| panel.spawn_task(&task, window, cx))
+            })
+            .expect("Failed to spawn floating task")
+            .await
+            .expect("Failed to open floating task terminal");
+        cx.run_until_parked();
+
+        let windows_after = cx.windows().len();
+        let panel_items_after =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        let overlay_visible = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.has_overlay())
+            .expect("Failed to read overlay state");
+
+        assert_eq!(
+            windows_after, windows_before,
+            "Floating task should stay in the current window"
+        );
+        assert_eq!(
+            panel_items_after, panel_items_before,
+            "Floating task should not add a terminal to the dock panel"
+        );
+        assert!(
+            overlay_visible,
+            "Floating task should render an in-window overlay"
         );
     }
 
