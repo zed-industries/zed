@@ -305,8 +305,14 @@ mod test {
 
         let shift_home = Keystroke::parse("shift-home").unwrap();
         let shift_end = Keystroke::parse("shift-end").unwrap();
-        assert_eq!(to_esc_str(&shift_home, &none, false), Some("\x1b[1;2H".into()));
-        assert_eq!(to_esc_str(&shift_end, &none, false), Some("\x1b[1;2F".into()));
+        assert_eq!(
+            to_esc_str(&shift_home, &none, false),
+            Some("\x1b[1;2H".into())
+        );
+        assert_eq!(
+            to_esc_str(&shift_end, &none, false),
+            Some("\x1b[1;2F".into())
+        );
     }
 
     #[test]
