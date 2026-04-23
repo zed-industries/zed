@@ -179,6 +179,7 @@ impl VsCodeSettings {
             base_keymap: Some(BaseKeymapContent::VSCode),
             calls: None,
             collaboration_panel: None,
+            credentials_url: None,
             debugger: None,
             diagnostics: None,
             editor: self.editor_settings_content(),
@@ -898,6 +899,21 @@ impl VsCodeSettings {
                 .read_f32("terminal.integrated.lineHeight")
                 .map(|lh| TerminalLineHeight::Custom(lh)),
             max_scroll_history_lines: self.read_usize("terminal.integrated.scrollback"),
+            bell: self
+                .read_value("accessibility.signals.terminalBell")
+                .and_then(|v| Some(v.get("sound")?.as_str()? == "on"))
+                .or_else(|| {
+                    // Older deprecated setting, might as well still support it:
+                    self.read_value("terminal.integrated.enableBell")
+                        .map(|v| v.as_bool() == Some(true) || v.as_str() == Some("both"))
+                })
+                .map(|enabled| {
+                    if enabled {
+                        TerminalBell::System
+                    } else {
+                        TerminalBell::Off
+                    }
+                }),
             minimum_contrast: None,
             option_as_meta: self.read_bool("terminal.integrated.macOptionIsMeta"),
             project: self.project_terminal_settings_content(),

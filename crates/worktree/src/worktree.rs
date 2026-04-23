@@ -4319,14 +4319,86 @@ impl BackgroundScanner {
             events = Self::normalized_events_for_worktree(&state, &root_canonical_path, events);
         }
 
+        fn skip_ix(ranges: &mut SmallVec<[Range<usize>; 4]>, ix: usize) {
+            if let Some(last_range) = ranges.last_mut()
+                && last_range.end == ix
+            {
+                last_range.end += 1;
+            } else {
+                ranges.push(ix..ix + 1);
+            }
+        }
+
+        // Check for events inside .git directories, so that we know which repositories need their git state reloaded.
+        //
         // Certain directories may have FS changes, but do not lead to git data changes that Zed cares about.
         // Ignore these, to avoid Zed unnecessarily rescanning git metadata.
         let skipped_files_in_dot_git = [COMMIT_MESSAGE, INDEX_LOCK];
         let skipped_dirs_in_dot_git = [FSMONITOR_DAEMON, LFS_DIR];
 
-        let mut relative_paths = Vec::with_capacity(events.len());
         let mut dot_git_abs_paths = Vec::new();
         let mut work_dirs_needing_exclude_update = Vec::new();
+
+        {
+            let snapshot = &self.state.lock().await.snapshot;
+
+            let mut ranges_to_drop = SmallVec::<[Range<usize>; 4]>::new();
+
+            for (ix, event) in events.iter().enumerate() {
+                let abs_path = SanitizedPath::new(&event.path);
+
+                let mut dot_git_paths = None;
+
+                for ancestor in abs_path.as_path().ancestors() {
+                    if is_dot_git(ancestor, self.fs.as_ref()).await {
+                        let path_in_git_dir = abs_path
+                            .as_path()
+                            .strip_prefix(ancestor)
+                            .expect("stripping off the ancestor");
+                        dot_git_paths = Some((ancestor.to_owned(), path_in_git_dir.to_owned()));
+                        break;
+                    }
+                }
+
+                if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
+                    let skip = skipped_files_in_dot_git.iter().any(|skipped| {
+                        OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
+                    }) || skipped_dirs_in_dot_git
+                        .iter()
+                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir))
+                        || path_in_git_dir == Path::new("")
+                            && self.fs.is_dir(&dot_git_abs_path).await;
+                    if skip {
+                        log::debug!(
+                            "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
+                        );
+                        skip_ix(&mut ranges_to_drop, ix);
+                        continue;
+                    }
+
+                    if !dot_git_abs_paths.contains(&dot_git_abs_path) {
+                        dot_git_abs_paths.push(dot_git_abs_path);
+                    }
+                }
+
+                if abs_path
+                    .as_path()
+                    .ends_with(Path::new(DOT_GIT).join(REPO_EXCLUDE))
+                {
+                    if let Some(repository) = snapshot.git_repositories.values().find(|repo| {
+                        repo.common_dir_abs_path.join(REPO_EXCLUDE) == abs_path.as_path()
+                    }) {
+                        work_dirs_needing_exclude_update
+                            .push(repository.work_directory_abs_path.clone());
+                    }
+                }
+            }
+
+            for range_to_drop in ranges_to_drop.into_iter().rev() {
+                events.drain(range_to_drop);
+            }
+        }
+
         events.sort_unstable_by(|left, right| left.path.cmp(&right.path));
         events.dedup_by(|left, right| {
             if left.path == right.path {
@@ -4343,87 +4415,24 @@ impl BackgroundScanner {
                 false
             }
         });
+
+        let mut relative_paths = Vec::with_capacity(events.len());
+
         {
             let snapshot = &self.state.lock().await.snapshot;
 
             let mut ranges_to_drop = SmallVec::<[Range<usize>; 4]>::new();
 
-            fn skip_ix(ranges: &mut SmallVec<[Range<usize>; 4]>, ix: usize) {
-                if let Some(last_range) = ranges.last_mut()
-                    && last_range.end == ix
-                {
-                    last_range.end += 1;
-                } else {
-                    ranges.push(ix..ix + 1);
-                }
-            }
-
             for (ix, event) in events.iter().enumerate() {
                 let abs_path = SanitizedPath::new(&event.path);
-
-                let mut is_git_related = false;
-                let mut dot_git_paths = None;
-
-                for ancestor in abs_path.as_path().ancestors() {
-                    if is_dot_git(ancestor, self.fs.as_ref()).await {
-                        let path_in_git_dir = abs_path
-                            .as_path()
-                            .strip_prefix(ancestor)
-                            .expect("stripping off the ancestor");
-                        dot_git_paths = Some((ancestor.to_owned(), path_in_git_dir.to_owned()));
-                        break;
-                    }
-                }
-
-                if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
-                    let condition = skipped_files_in_dot_git.iter().any(|skipped| {
-                        OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
-                    }) || skipped_dirs_in_dot_git
-                        .iter()
-                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir));
-                    if condition {
-                        log::debug!(
-                            "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
-                        );
-                        skip_ix(&mut ranges_to_drop, ix);
-                        continue;
-                    }
-
-                    is_git_related = true;
-                    if !dot_git_abs_paths.contains(&dot_git_abs_path) {
-                        dot_git_abs_paths.push(dot_git_abs_path);
-                    }
-                }
-
                 let relative_path = if let Ok(path) = abs_path.strip_prefix(&root_canonical_path)
                     && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
                     path
                 } else {
-                    if is_git_related {
-                        log::debug!(
-                            "ignoring event {abs_path:?}, since it's in git dir outside of root path {root_canonical_path:?}",
-                        );
-                    } else {
-                        log::error!(
-                            "ignoring event {abs_path:?} outside of root path {root_canonical_path:?}",
-                        );
-                    }
                     skip_ix(&mut ranges_to_drop, ix);
                     continue;
                 };
-
-                let absolute_path = abs_path.to_path_buf();
-                if absolute_path.ends_with(Path::new(DOT_GIT).join(REPO_EXCLUDE)) {
-                    if let Some(repository) = snapshot
-                        .git_repositories
-                        .values()
-                        .find(|repo| repo.common_dir_abs_path.join(REPO_EXCLUDE) == absolute_path)
-                    {
-                        work_dirs_needing_exclude_update
-                            .push(repository.work_directory_abs_path.clone());
-                    }
-                }
 
                 if abs_path.file_name() == Some(OsStr::new(GITIGNORE)) {
                     for (_, repo) in snapshot
@@ -4451,9 +4460,6 @@ impl BackgroundScanner {
                 }
 
                 if self.settings.is_path_excluded(&relative_path) {
-                    if !is_git_related {
-                        log::debug!("ignoring FS event for excluded path {relative_path:?}");
-                    }
                     skip_ix(&mut ranges_to_drop, ix);
                     continue;
                 }

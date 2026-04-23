@@ -806,6 +806,7 @@ web-time = "1.1.0"
 webrtc-sys = "0.3.23"
 wgpu = { git = "https://github.com/zed-industries/wgpu.git", branch = "v29" }
 windows-core = "0.61"
+yaml-rust2 = "0.8"
 yawc = "0.2.5"
 zeroize = "1.8"
 zstd = "0.11"

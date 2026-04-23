@@ -52,7 +52,7 @@ pub(crate) fn run_tests() -> Workflow {
             .and_not_in_merge_queue()
             .then(clippy(Platform::Windows, None)),
         should_run_tests
-            .and_not_in_merge_queue()
+            .and_always()
             .then(clippy(Platform::Linux, None)),
         should_run_tests
             .and_not_in_merge_queue()
