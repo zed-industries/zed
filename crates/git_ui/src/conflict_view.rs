@@ -2,16 +2,18 @@ use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
     ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
-    Editor, EditorEvent, MultiBuffer, RowHighlightOptions,
+    Editor, EditorEvent, MultiBuffer, RowHighlightOptions, SelectionEffects,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
+    scroll::Autoscroll,
 };
 use gpui::{
     App, ClickEvent, Context, Empty, Entity, InteractiveElement as _, ParentElement as _,
     Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, BufferId};
+use language::{Anchor, Buffer, BufferId, ToOffset as _, ToPoint as _};
 use project::{
-    ConflictRegion, ConflictSet, ConflictSetUpdate, Project, ProjectItem as _,
+    ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate, Project, ProjectItem as _,
+    ProjectPath,
     git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
 use settings::Settings;
@@ -411,7 +413,7 @@ fn render_conflict_buttons(
         .into_any()
 }
 
-fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
+fn collect_conflicted_project_paths(project: &Project, cx: &App) -> Vec<ProjectPath> {
     let git_store = project.git_store().read(cx);
     let mut paths = Vec::new();
 
@@ -425,18 +427,212 @@ fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
                 continue;
             }
             if let Some(project_path) = repo.read(cx).repo_path_to_project_path(repo_path, cx) {
-                paths.push(
-                    project_path
-                        .path
-                        .as_std_path()
-                        .to_string_lossy()
-                        .to_string(),
-                );
+                paths.push(project_path);
             }
         }
     }
 
+    paths.sort();
+    paths.dedup();
     paths
+}
+
+fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
+    collect_conflicted_project_paths(project, cx)
+        .into_iter()
+        .map(|p| p.path.as_std_path().to_string_lossy().to_string())
+        .collect()
+}
+
+fn find_next_path(
+    paths: &[ProjectPath],
+    current: Option<&ProjectPath>,
+    next: bool,
+) -> Option<ProjectPath> {
+    if paths.is_empty() {
+        return None;
+    }
+
+    let Some(current) = current else {
+        return if next {
+            paths.first().cloned()
+        } else {
+            paths.last().cloned()
+        };
+    };
+
+    if next {
+        let index = paths.partition_point(|p| p <= current);
+        paths.get(index).or_else(|| paths.first()).cloned()
+    } else {
+        let index = paths.partition_point(|p| p < current);
+        if index > 0 {
+            Some(paths[index - 1].clone())
+        } else {
+            paths.last().cloned()
+        }
+    }
+}
+
+fn find_conflict_in_snapshot(
+    conflict_set: &ConflictSetSnapshot,
+    snapshot: &text::BufferSnapshot,
+    cursor_offset: usize,
+    next: bool,
+) -> Option<text::Point> {
+    if conflict_set.conflicts.is_empty() {
+        return None;
+    }
+
+    if next {
+        conflict_set
+            .conflicts
+            .iter()
+            .find(|c| c.range.start.to_offset(snapshot) > cursor_offset)
+            .map(|c| c.range.start.to_point(snapshot))
+    } else {
+        conflict_set
+            .conflicts
+            .iter()
+            .rev()
+            .find(|c| c.range.start.to_offset(snapshot) < cursor_offset)
+            .map(|c| c.range.start.to_point(snapshot))
+    }
+}
+
+pub fn go_to_next_conflict(
+    workspace: &mut Workspace,
+    _action: &zed_actions::git::GoToNextConflict,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    go_to_conflict_impl(workspace, true, window, cx);
+}
+
+pub fn go_to_previous_conflict(
+    workspace: &mut Workspace,
+    _action: &zed_actions::git::GoToPreviousConflict,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    go_to_conflict_impl(workspace, false, window, cx);
+}
+
+fn jump_to_conflict_point(
+    editor: &mut Editor,
+    destination: text::Point,
+    window: &mut Window,
+    cx: &mut Context<Editor>,
+) {
+    editor.unfold_ranges(&[destination..destination], false, false, cx);
+    editor.change_selections(
+        SelectionEffects::scroll(Autoscroll::center()),
+        window,
+        cx,
+        |s| s.select_ranges([destination..destination]),
+    );
+}
+
+fn go_to_conflict_impl(
+    workspace: &mut Workspace,
+    next: bool,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let project = workspace.project().clone();
+    let conflicted_paths = collect_conflicted_project_paths(project.read(cx), cx);
+    if conflicted_paths.is_empty() {
+        return;
+    }
+
+    let active_editor = workspace
+        .active_item(cx)
+        .and_then(|item| item.act_as::<Editor>(cx));
+
+    let current_path = if let Some(ref editor_entity) = active_editor {
+        let jumped = editor_entity.update(cx, |editor, cx| {
+            let multibuffer = editor.buffer().read(cx);
+            let buffer = multibuffer.as_singleton()?;
+            let path = buffer.read(cx).project_path(cx)?;
+
+            if !conflicted_paths.iter().any(|p| p == &path) {
+                return Some((path, false));
+            }
+
+            let buffer_id = buffer.read(cx).remote_id();
+            let text_snapshot = buffer.read(cx).text_snapshot();
+            let conflict_set = editor
+                .addon::<ConflictAddon>()
+                .and_then(|addon| addon.conflict_set(buffer_id))
+                .map(|cs| cs.read(cx).snapshot())
+                .unwrap_or_else(|| ConflictSet::parse(&text_snapshot));
+            let display_snapshot = editor.display_snapshot(cx);
+            let cursor_point = editor
+                .selections
+                .newest::<text::Point>(&display_snapshot)
+                .head();
+            let cursor_offset = cursor_point.to_offset(&text_snapshot);
+
+            let target = find_conflict_in_snapshot(
+                &conflict_set,
+                &text_snapshot,
+                cursor_offset,
+                next,
+            );
+
+            if let Some(destination) = target {
+                jump_to_conflict_point(editor, destination, window, cx);
+                return Some((path, true));
+            }
+
+            Some((path, false))
+        });
+
+        match jumped {
+            Some((_path, true)) => return,
+            Some((path, false)) => Some(path),
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    let target_path = find_next_path(&conflicted_paths, current_path.as_ref(), next);
+    let Some(target_path) = target_path else {
+        return;
+    };
+
+    let open_task = workspace.open_path(target_path, None, true, window, cx);
+
+    cx.spawn_in(window, async move |workspace, cx| {
+        let item = open_task.await?;
+        workspace.update_in(cx, |_workspace, window, cx| {
+            let Some(editor_entity) = item.act_as::<Editor>(&*cx) else {
+                return;
+            };
+            editor_entity.update(cx, |editor, cx| {
+                let multibuffer = editor.buffer().read(cx);
+                let Some(buffer) = multibuffer.as_singleton() else {
+                    return;
+                };
+                let text_snapshot = buffer.read(cx).text_snapshot();
+                let conflict_set = ConflictSet::parse(&text_snapshot);
+
+                let conflict = if next {
+                    conflict_set.conflicts.first()
+                } else {
+                    conflict_set.conflicts.last()
+                };
+
+                if let Some(conflict) = conflict {
+                    let destination = conflict.range.start.to_point(&text_snapshot);
+                    jump_to_conflict_point(editor, destination, window, cx);
+                }
+            });
+        })?;
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 pub(crate) fn resolve_conflict(
