@@ -100,7 +100,7 @@ struct FocusFile(pub u32);
 
 struct SettingField<T: 'static> {
     pick: fn(&SettingsContent) -> Option<&T>,
-    write: fn(&mut SettingsContent, Option<T>),
+    write: fn(&mut SettingsContent, Option<T>, &App),
 
     /// A json-path-like string that gives a unique-ish string that identifies
     /// where in the JSON the setting is defined.
@@ -149,7 +149,7 @@ impl<T: 'static> SettingField<T> {
     fn unimplemented(self) -> SettingField<UnimplementedSettingField> {
         SettingField {
             pick: |_| Some(&UnimplementedSettingField),
-            write: |_, _| unreachable!(),
+            write: |_, _, _| unreachable!(),
             json_path: self.json_path,
         }
     }
@@ -232,8 +232,8 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
                 None,
                 window,
                 cx,
-                move |settings, _| {
-                    (this.write)(settings, value_to_set);
+                move |settings, app| {
+                    (this.write)(settings, value_to_set, app);
                 },
             );
         }));
@@ -558,6 +558,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DocumentSymbols>(render_dropdown)
         .add_basic_renderer::<settings::AudioInputDeviceName>(render_input_audio_device_dropdown)
         .add_basic_renderer::<settings::AudioOutputDeviceName>(render_output_audio_device_dropdown)
+        .add_basic_renderer::<settings::TerminalBell>(render_dropdown)
         // please semicolon stay on next line
         ;
 }
@@ -4162,8 +4163,8 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
                     field.json_path,
                     window,
                     cx,
-                    move |settings, _cx| {
-                        (field.write)(settings, new_text.map(Into::into));
+                    move |settings, app| {
+                        (field.write)(settings, new_text.map(Into::into), app);
                     },
                 );
             }
@@ -4227,8 +4228,8 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
                     field.json_path,
                     window,
                     cx,
-                    move |settings, _cx| {
-                        (field.write)(settings, Some(value));
+                    move |settings, app| {
+                        (field.write)(settings, Some(value), app);
                     },
                 );
             }
@@ -4266,8 +4267,8 @@ where
                 field.json_path,
                 window,
                 cx,
-                move |settings, _cx| {
-                    (field.write)(settings, Some(value));
+                move |settings, app| {
+                    (field.write)(settings, Some(value), app);
                 },
             );
         }
@@ -4320,8 +4321,8 @@ fn render_font_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
-                                (field.write)(settings, Some(font_name.to_string().into()));
+                            move |settings, app| {
+                                (field.write)(settings, Some(font_name.to_string().into()), app);
                             },
                         );
                     },
@@ -4369,10 +4370,11 @@ fn render_theme_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
+                            move |settings, app| {
                                 (field.write)(
                                     settings,
                                     Some(settings::ThemeName(theme_name.into())),
+                                    app,
                                 );
                             },
                         );
@@ -4421,10 +4423,11 @@ fn render_icon_theme_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
+                            move |settings, app| {
                                 (field.write)(
                                     settings,
                                     Some(settings::IconThemeName(theme_name.into())),
+                                    app,
                                 );
                             },
                         );

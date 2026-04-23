@@ -32716,6 +32716,78 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_sticky_scroll_with_decoration_prefix_in_item(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "TypeScript".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        )
+        .with_outline_query(
+            r#"
+            (class_declaration
+                "class" @context
+                name: (_) @name) @item
+            "#,
+        )
+        .expect("TypeScript outline query"),
+    );
+
+    let buffer = indoc! {"
+        ˇ@Decorator
+        class Foo {
+            x = 1;
+            y = 2;
+            z = 3;
+            w = 4;
+        }
+    "};
+    cx.set_state(buffer);
+    cx.update_editor(|e, _, cx| {
+        e.buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_language(Some(language), cx);
+            })
+    });
+
+    let mut sticky_headers = |offset: ScrollOffset| {
+        cx.update_editor(|e, window, cx| {
+            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+        });
+        cx.run_until_parked();
+        cx.update_editor(|e, window, cx| {
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
+                .into_iter()
+                .map(
+                    |StickyHeader {
+                         start_point,
+                         offset,
+                         ..
+                     }| { (start_point, offset) },
+                )
+                .collect::<Vec<_>>()
+        })
+    };
+
+    let class_foo = Point { row: 1, column: 0 };
+
+    assert_eq!(sticky_headers(0.0), vec![]);
+    assert_eq!(sticky_headers(1.5), vec![(class_foo, 0.0)]);
+    assert_eq!(sticky_headers(2.5), vec![(class_foo, 0.0)]);
+    assert_eq!(sticky_headers(5.5), vec![(class_foo, -0.5)]);
+    assert_eq!(sticky_headers(6.0), vec![]);
+    assert_eq!(sticky_headers(7.0), vec![]);
+}
+
+#[gpui::test]
 async fn test_sticky_scroll_with_expanded_deleted_diff_hunks(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
