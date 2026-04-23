@@ -1489,6 +1489,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                     })
                     .unzip();
 
+                let tooltip_title = if paths.clone().len() > 1 {
+                    "Add Folders to this Project"
+                } else {
+                    "Add Folder to this Project"
+                };
+
                 let prefix = match &location {
                     SerializedWorkspaceLocation::Remote(options) => {
                         Some(SharedString::from(options.display_name()))
@@ -1513,7 +1519,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .icon_size(IconSize::Small)
                                 .tooltip(move |_, cx| {
                                     Tooltip::with_meta(
-                                        "Add Folders to this Project",
+                                        tooltip_title,
                                         None,
                                         "As a multi-root folder",
                                         cx,
@@ -1826,7 +1832,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         menu.context(focus_handle)
                                             .when(show_add_to_workspace, |menu| {
                                                 menu.action(
-                                                    "Add to this Workspace",
+                                                    "Add Folder to this Project",
                                                     AddToWorkspace.boxed_clone(),
                                                 )
                                                 .separator()
