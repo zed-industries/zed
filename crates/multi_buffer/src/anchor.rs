@@ -34,21 +34,28 @@ pub enum Anchor {
     Max,
 }
 
-pub(crate) enum AnchorSeekTarget {
-    Excerpt {
-        path_key: PathKey,
-        anchor: ExcerptAnchor,
-        // None when the buffer no longer exists in the multibuffer
-        snapshot: Option<BufferSnapshot>,
+pub(crate) enum AnchorSeekTarget<'a> {
+    // buffer no longer exists at its original path key in the multibuffer
+    Missing {
+        path_key: &'a PathKey,
     },
+    // we have excerpts for the buffer at the expected path key
+    Excerpt {
+        path_key: &'a PathKey,
+        path_key_index: PathKeyIndex,
+        anchor: text::Anchor,
+        snapshot: &'a BufferSnapshot,
+    },
+    // no excerpts and it's a min or max anchor
     Empty,
 }
 
-impl std::fmt::Debug for AnchorSeekTarget {
+impl std::fmt::Debug for AnchorSeekTarget<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Excerpt {
                 path_key,
+                path_key_index: _,
                 anchor,
                 snapshot: _,
             } => f
@@ -56,7 +63,11 @@ impl std::fmt::Debug for AnchorSeekTarget {
                 .field("path_key", path_key)
                 .field("anchor", anchor)
                 .finish(),
-            Self::Empty => write!(f, "Empty"),
+            Self::Missing { path_key } => f
+                .debug_struct("Missing")
+                .field("path_key", path_key)
+                .finish(),
+            Self::Empty => f.debug_struct("Empty").finish(),
         }
     }
 }
@@ -92,15 +103,16 @@ impl ExcerptAnchor {
     }
 
     pub(crate) fn cmp(&self, other: &Self, snapshot: &MultiBufferSnapshot) -> Ordering {
-        let Some(self_path_key) = snapshot.path_keys_by_index.get(&self.path) else {
+        let Some(self_path_key) = snapshot.path_keys.get_index(self.path.0 as usize) else {
             panic!("anchor's path was never added to multibuffer")
         };
-        let Some(other_path_key) = snapshot.path_keys_by_index.get(&other.path) else {
+        let Some(other_path_key) = snapshot.path_keys.get_index(other.path.0 as usize) else {
             panic!("anchor's path was never added to multibuffer")
         };
 
-        if self_path_key.cmp(other_path_key) != Ordering::Equal {
-            return self_path_key.cmp(other_path_key);
+        match self_path_key.cmp(other_path_key) {
+            Ordering::Equal => (),
+            ordering => return ordering,
         }
 
         // in the case that you removed the buffer containing self,
@@ -110,16 +122,20 @@ impl ExcerptAnchor {
             return self.text_anchor.buffer_id.cmp(&other.text_anchor.buffer_id);
         }
 
-        let Some(buffer) = snapshot.buffer_for_path(&self_path_key) else {
+        // two anchors into the same buffer at the same path
+        let Some(buffer) = snapshot
+            .buffers
+            .get(&self.text_anchor.buffer_id)
+            .filter(|buffer_state| buffer_state.path_key == *self_path_key)
+        else {
+            // buffer no longer exists at the original path (which may have been reused for a different buffer),
+            // so no way to compare the anchors
             return Ordering::Equal;
         };
-        // Comparing two anchors into buffer A that formerly existed at path P,
-        // when path P has since been reused for a different buffer B
-        if buffer.remote_id() != self.text_anchor.buffer_id {
-            return Ordering::Equal;
-        };
-        assert_eq!(self.text_anchor.buffer_id, buffer.remote_id());
-        let text_cmp = self.text_anchor().cmp(&other.text_anchor(), buffer);
+        // two anchors into the same buffer at the same path that still exists at that path in the multibuffer
+        let text_cmp = self
+            .text_anchor()
+            .cmp(&other.text_anchor(), &buffer.buffer_snapshot);
         if text_cmp != Ordering::Equal {
             return text_cmp;
         }
@@ -234,21 +250,33 @@ impl ExcerptAnchor {
                 .is_ge()
     }
 
-    pub(crate) fn seek_target(&self, snapshot: &MultiBufferSnapshot) -> AnchorSeekTarget {
+    pub(crate) fn seek_target<'a>(
+        &self,
+        snapshot: &'a MultiBufferSnapshot,
+    ) -> AnchorSeekTarget<'a> {
         self.try_seek_target(snapshot)
             .expect("anchor is from different multi-buffer")
     }
 
-    pub(crate) fn try_seek_target(
+    pub(crate) fn try_seek_target<'a>(
         &self,
-        snapshot: &MultiBufferSnapshot,
-    ) -> Option<AnchorSeekTarget> {
+        snapshot: &'a MultiBufferSnapshot,
+    ) -> Option<AnchorSeekTarget<'a>> {
         let path_key = snapshot.try_path_for_anchor(*self)?;
-        let buffer = snapshot.buffer_for_path(&path_key).cloned();
+
+        let Some(state) = snapshot
+            .buffers
+            .get(&self.buffer_id())
+            .filter(|state| &state.path_key == path_key)
+        else {
+            return Some(AnchorSeekTarget::Missing { path_key });
+        };
+
         Some(AnchorSeekTarget::Excerpt {
             path_key,
-            anchor: *self,
-            snapshot: buffer,
+            path_key_index: self.path,
+            anchor: self.text_anchor(),
+            snapshot: &state.buffer_snapshot,
         })
     }
 }
@@ -372,7 +400,10 @@ impl Anchor {
         }
     }
 
-    pub(crate) fn seek_target(&self, snapshot: &MultiBufferSnapshot) -> AnchorSeekTarget {
+    pub(crate) fn seek_target<'a>(
+        &self,
+        snapshot: &'a MultiBufferSnapshot,
+    ) -> AnchorSeekTarget<'a> {
         let Some(excerpt_anchor) = self.to_excerpt_anchor(snapshot) else {
             return AnchorSeekTarget::Empty;
         };
@@ -406,10 +437,10 @@ impl Anchor {
         }
     }
 
-    pub(crate) fn try_seek_target(
+    pub(crate) fn try_seek_target<'a>(
         &self,
-        snapshot: &MultiBufferSnapshot,
-    ) -> Option<AnchorSeekTarget> {
+        snapshot: &'a MultiBufferSnapshot,
+    ) -> Option<AnchorSeekTarget<'a>> {
         let Some(excerpt_anchor) = self.to_excerpt_anchor(snapshot) else {
             return Some(AnchorSeekTarget::Empty);
         };

@@ -377,6 +377,20 @@ pub async fn connect(
     .map_err(|e| e.cloned())
 }
 
+/// Returns `true` if the global [`ConnectionPool`] already has a live
+/// connection for the given options. Callers can use this to decide
+/// whether to show interactive UI (e.g., a password modal) before
+/// connecting.
+pub fn has_active_connection(opts: &RemoteConnectionOptions, cx: &App) -> bool {
+    cx.try_global::<ConnectionPool>().is_some_and(|pool| {
+        matches!(
+            pool.connections.get(opts),
+            Some(ConnectionPoolEntry::Connected(remote))
+                if remote.upgrade().is_some_and(|r| !r.has_been_killed())
+        )
+    })
+}
+
 impl RemoteClient {
     pub fn new(
         unique_identifier: ConnectionIdentifier,
@@ -1285,7 +1299,10 @@ pub enum RemoteConnectionOptions {
 impl RemoteConnectionOptions {
     pub fn display_name(&self) -> String {
         match self {
-            RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
+            RemoteConnectionOptions::Ssh(opts) => opts
+                .nickname
+                .clone()
+                .unwrap_or_else(|| opts.host.to_string()),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
             RemoteConnectionOptions::Docker(opts) => {
                 if opts.use_podman {
@@ -1297,6 +1314,32 @@ impl RemoteConnectionOptions {
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ssh_display_name_prefers_nickname() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            nickname: Some("My Cool Project".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(options.display_name(), "My Cool Project");
+    }
+
+    #[test]
+    fn test_ssh_display_name_falls_back_to_host() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            ..Default::default()
+        });
+
+        assert_eq!(options.display_name(), "1.2.3.4");
     }
 }
 
