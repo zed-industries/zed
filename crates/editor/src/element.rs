@@ -1438,6 +1438,9 @@ impl EditorElement {
                 editor.gutter_hover_button.1 = None;
                 None
             }
+        } else if editor.has_mouse_context_menu() {
+            editor.gutter_hover_button.1 = None;
+            editor.gutter_hover_button.0
         } else {
             editor.gutter_hover_button.1 = None;
             None
