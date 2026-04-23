@@ -136,14 +136,14 @@ fn detect_requires_poll_watcher_linux(path: &Path) -> bool {
 
     // Filesystem magic numbers where inotify does not deliver events.
     // These are defined in linux/magic.h and statfs(2).
-    const V9FS_MAGIC: i64 = 0x01021997; // Plan 9 / WSL2 interop (drvfs)
-    const NFS_SUPER_MAGIC: i64 = 0x6969;
-    const CIFS_MAGIC: i64 = 0xFF534D42u32 as i64; // CIFS/SMB
-    const SMB_SUPER_MAGIC: i64 = 0x517B;
-    const SMB2_MAGIC: i64 = 0xFE534D42u32 as i64;
-    const FUSE_SUPER_MAGIC: i64 = 0x65735546; // FUSE (includes sshfs)
+    const V9FS_MAGIC: u64 = 0x0102_1997; // Plan 9 / WSL2 interop (drvfs)
+    const NFS_SUPER_MAGIC: u64 = 0x0000_6969;
+    const CIFS_MAGIC: u64 = 0xFF53_4D42; // CIFS/SMB
+    const SMB_SUPER_MAGIC: u64 = 0x0000_517B;
+    const SMB2_MAGIC: u64 = 0xFE53_4D42;
+    const FUSE_SUPER_MAGIC: u64 = 0x6573_5546; // FUSE (includes sshfs)
 
-    let fs_type = stat.f_type;
+    let fs_type = (stat.f_type as u64) & 0xFFFF_FFFF;
     if fs_type == V9FS_MAGIC
         || fs_type == NFS_SUPER_MAGIC
         || fs_type == CIFS_MAGIC
