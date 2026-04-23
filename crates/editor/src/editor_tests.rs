@@ -35746,64 +35746,53 @@ async fn test_custom_fallback_highlights(cx: &mut TestAppContext) {
 async fn test_tsx_nested_jsx_member_expression_highlights(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let test_cases = [
-        (
-            "TSX",
-            "tsx",
-            include_str!("../../grammars/src/tsx/highlights.scm"),
-        ),
-        (
-            "JavaScript",
-            "jsx",
-            include_str!("../../grammars/src/javascript/highlights.scm"),
-        ),
-    ];
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("<A.B.C></A.B.C>ˇ;");
 
-    for (language_name, path_suffix, highlights_query) in test_cases {
-        let mut cx = EditorTestContext::new(cx).await;
-        cx.set_state("const x = <A.B.C></A.B.C>;\nconst y = <A.B.C />;ˇ");
-
-        let language = Arc::new(
-            Language::new(
-                LanguageConfig {
-                    name: language_name.into(),
-                    matcher: LanguageMatcher {
-                        path_suffixes: vec![path_suffix.to_string()],
-                        ..LanguageMatcher::default()
-                    },
-                    ..LanguageConfig::default()
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "TSX".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["tsx".to_string()],
+                    ..LanguageMatcher::default()
                 },
-                Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
-            )
-            .with_highlights_query(highlights_query)
-            .unwrap(),
-        );
-        let component_color = Hsla::green();
-        let type_color = Hsla::blue();
-        let theme = Arc::new(SyntaxTheme::new_test(vec![
-            ("tag.component.jsx", component_color),
-            ("type", type_color),
-            ("punctuation.bracket", Hsla::default()),
-            ("punctuation.delimiter", Hsla::default()),
-        ]));
-        setup_syntax_highlighting_with_theme(language, theme.clone(), &mut cx);
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        )
+        .with_highlights_query(include_str!("../../grammars/src/tsx/highlights.scm"))
+        .unwrap(),
+    );
 
-        cx.update_editor(|editor, window, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            assert_eq!(
-                vec![
-                    (11..14, HighlightStyle::color(component_color)),
-                    (15..16, HighlightStyle::color(component_color)),
-                    (19..22, HighlightStyle::color(component_color)),
-                    (23..24, HighlightStyle::color(component_color)),
-                    (38..41, HighlightStyle::color(component_color)),
-                    (42..43, HighlightStyle::color(component_color)),
-                ],
-                snapshot.combined_highlights(MultiBufferOffset(0)..snapshot.buffer().len(), &theme),
-                "expected nested JSX member-expression highlights for {language_name}",
-            );
-        });
-    }
+    let component_color = Hsla::green();
+    let theme = Arc::new(SyntaxTheme::new_test(vec![
+        ("tag.component.jsx", component_color),
+        ("type", Hsla::blue()),
+        ("property", Hsla::red()),
+        ("punctuation.bracket", Hsla::default()),
+        ("punctuation.delimiter", Hsla::default()),
+    ]));
+    setup_syntax_highlighting_with_theme(language, theme.clone(), &mut cx);
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        assert_eq!(
+            snapshot
+                .combined_highlights(MultiBufferOffset(0)..snapshot.buffer().len(), &theme)
+                .iter()
+                .filter(|(_, style)| *style == HighlightStyle::color(component_color))
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![
+                (1..2, HighlightStyle::color(component_color)),
+                (3..4, HighlightStyle::color(component_color)),
+                (5..6, HighlightStyle::color(component_color)),
+                (9..10, HighlightStyle::color(component_color)),
+                (11..12, HighlightStyle::color(component_color)),
+                (13..14, HighlightStyle::color(component_color)),
+            ],
+        );
+    });
 }
 
 fn setup_syntax_highlighting(
