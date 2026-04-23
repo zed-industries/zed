@@ -805,10 +805,10 @@ impl From<image::ImageError> for ImageCacheError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{TestAppContext, point, px, size};
+    use crate::{ParentElement as _, TestAppContext, canvas, div, point, px, size};
     use image::{Frame, ImageBuffer, Rgba};
-    use std::cell::Cell;
-    use std::rc::Rc;
+
+    const TEST_IMG_ID: &str = "test-img";
 
     fn test_image(frame_count: usize) -> Arc<RenderImage> {
         let frame = Frame::new(ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 0])));
@@ -817,76 +817,20 @@ mod tests {
         )))
     }
 
-    struct ImgWithFrameOverride {
-        image: Arc<RenderImage>,
-        frame_override: Rc<Cell<Option<usize>>>,
-    }
-
-    impl IntoElement for ImgWithFrameOverride {
-        type Element = Self;
-        fn into_element(self) -> Self {
-            self
-        }
-    }
-
-    impl Element for ImgWithFrameOverride {
-        type RequestLayoutState = AnyElement;
-        type PrepaintState = ();
-
-        fn id(&self) -> Option<ElementId> {
-            None
-        }
-
-        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
-            None
-        }
-
-        fn request_layout(
-            &mut self,
-            _: Option<&GlobalElementId>,
-            _: Option<&InspectorElementId>,
-            window: &mut Window,
-            cx: &mut App,
-        ) -> (LayoutId, Self::RequestLayoutState) {
-            let mut element = img(ImageSource::Render(self.image.clone()))
-                .id("test-img")
-                .into_any_element();
-            (element.request_layout(window, cx), element)
-        }
-
-        fn prepaint(
-            &mut self,
-            _: Option<&GlobalElementId>,
-            _: Option<&InspectorElementId>,
-            _: Bounds<Pixels>,
-            element: &mut Self::RequestLayoutState,
-            window: &mut Window,
-            cx: &mut App,
-        ) {
-            element.prepaint(window, cx);
-        }
-
-        fn paint(
-            &mut self,
-            _: Option<&GlobalElementId>,
-            _: Option<&InspectorElementId>,
-            _: Bounds<Pixels>,
-            element: &mut Self::RequestLayoutState,
-            _: &mut Self::PrepaintState,
-            window: &mut Window,
-            cx: &mut App,
-        ) {
-            element.paint(window, cx);
-            if let Some(index) = self.frame_override.take() {
-                window.with_global_id("test-img".into(), |id, window| {
+    /// Overwrites the cached `frame_index` of the sibling `img` during paint.
+    fn seed_frame_index(frame_index: usize) -> impl IntoElement {
+        canvas(
+            |_, _, _| (),
+            move |_, _, window, _| {
+                window.with_global_id(TEST_IMG_ID.into(), |id, window| {
                     window.with_element_state::<ImgState, _>(id, |state, _| {
-                        let mut state = state.unwrap();
-                        state.frame_index = index;
+                        let mut state = state.expect("img state should be initialized");
+                        state.frame_index = frame_index;
                         ((), state)
                     });
                 });
-            }
-        }
+            },
+        )
     }
 
     #[gpui::test]
@@ -899,29 +843,21 @@ mod tests {
 
     #[gpui::test]
     fn stale_frame_index_is_clamped_when_image_changes(cx: &mut TestAppContext) {
-        let frame_override = Rc::new(Cell::new(Some(4usize)));
         let window = cx.add_empty_window();
 
-        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), {
-            let frame_override = frame_override.clone();
-            move |_, _| {
-                ImgWithFrameOverride {
-                    image: test_image(5),
-                    frame_override: frame_override.clone(),
-                }
+        // Assert that a cached frame_index from a previous multi-frame image
+        // does not cause an out-of-bounds panic when the image is replaced
+        // with one that has fewer frames.
+        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            div()
+                .child(img(ImageSource::Render(test_image(5))).id(TEST_IMG_ID))
+                .child(seed_frame_index(4))
                 .into_any_element()
-            }
         });
-
-        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), {
-            let frame_override = frame_override.clone();
-            move |_, _| {
-                ImgWithFrameOverride {
-                    image: test_image(1),
-                    frame_override: frame_override.clone(),
-                }
+        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            img(ImageSource::Render(test_image(1)))
+                .id(TEST_IMG_ID)
                 .into_any_element()
-            }
         });
     }
 }
