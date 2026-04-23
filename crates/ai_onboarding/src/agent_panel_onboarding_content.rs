@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use client::{Client, UserStore};
-use cloud_llm_client::{Plan, PlanV2};
+use cloud_api_types::Plan;
 use gpui::{Entity, IntoElement, ParentElement};
 use language_model::{LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 use ui::prelude::*;
@@ -58,26 +58,27 @@ impl Render for AgentPanelOnboarding {
             .user_store
             .read(cx)
             .plan()
-            .is_some_and(|plan| plan == Plan::V2(PlanV2::ZedProTrial));
+            .is_some_and(|plan| plan == Plan::ZedProTrial);
+
         let is_pro_user = self
             .user_store
             .read(cx)
             .plan()
-            .is_some_and(|plan| plan == Plan::V2(PlanV2::ZedPro));
+            .is_some_and(|plan| plan == Plan::ZedPro);
+
+        let onboarding = ZedAiOnboarding::new(
+            self.client.clone(),
+            &self.user_store,
+            self.continue_with_zed_ai.clone(),
+            cx,
+        )
+        .with_dismiss({
+            let callback = self.continue_with_zed_ai.clone();
+            move |window, cx| callback(window, cx)
+        });
 
         AgentPanelOnboardingCard::new()
-            .child(
-                ZedAiOnboarding::new(
-                    self.client.clone(),
-                    &self.user_store,
-                    self.continue_with_zed_ai.clone(),
-                    cx,
-                )
-                .with_dismiss({
-                    let callback = self.continue_with_zed_ai.clone();
-                    move |window, cx| callback(window, cx)
-                }),
-            )
+            .child(onboarding)
             .map(|this| {
                 if enrolled_in_trial || is_pro_user || self.has_configured_providers {
                     this

@@ -4,7 +4,6 @@ pub use active_toolchain::ActiveToolchain;
 use anyhow::Context as _;
 use convert_case::Casing as _;
 use editor::Editor;
-use file_finder::OpenPathDelegate;
 use futures::channel::oneshot;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
@@ -13,6 +12,7 @@ use gpui::{
     actions, pulsating_between,
 };
 use language::{Language, LanguageName, Toolchain, ToolchainScope};
+use open_path_prompt::OpenPathDelegate;
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryLister, Project, ProjectPath, Toolchains, WorktreeId};
 use std::{
@@ -82,7 +82,7 @@ enum PathInputState {
 
 enum AddState {
     Path {
-        picker: Entity<Picker<file_finder::OpenPathDelegate>>,
+        picker: Entity<Picker<open_path_prompt::OpenPathDelegate>>,
         error: Option<Arc<str>>,
         input_state: PathInputState,
         _subscription: Subscription,
@@ -110,7 +110,14 @@ impl AddToolchainState {
             .context("Could not find worktree")?;
         Ok(cx.new(|cx| {
             let (lister, rx) = Self::create_path_browser_delegate(project.clone(), cx);
-            let picker = cx.new(|cx| Picker::uniform_list(lister, window, cx));
+            let path_style = project.read(cx).path_style(cx);
+            let picker = cx.new(|cx| {
+                let picker = Picker::uniform_list(lister, window, cx);
+                let mut worktree_root = worktree_root_path.to_string_lossy().into_owned();
+                worktree_root.push_str(path_style.primary_separator());
+                picker.set_query(&worktree_root, window, cx);
+                picker
+            });
 
             Self {
                 state: AddState::Path {
@@ -226,11 +233,7 @@ impl AddToolchainState {
                                 Self::create_path_browser_delegate(this.project.clone(), cx);
                             picker.update(cx, |picker, cx| {
                                 *picker = Picker::uniform_list(delegate, window, cx);
-                                picker.set_query(
-                                    Arc::from(path.to_string_lossy().as_ref()),
-                                    window,
-                                    cx,
-                                );
+                                picker.set_query(path.to_string_lossy().as_ref(), window, cx);
                             });
                             *input_state = Self::wait_for_path(rx, window, cx);
                             this.focus_handle(cx).focus(window, cx);
@@ -581,11 +584,11 @@ impl ToolchainSelector {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<()> {
-        let (_, buffer, _) = workspace
+        let buffer = workspace
             .active_item(cx)?
             .act_as::<Editor>(cx)?
             .read(cx)
-            .active_excerpt(cx)?;
+            .active_buffer(cx)?;
         let project = workspace.project().clone();
 
         let language_name = buffer.read(cx).language()?.name();
@@ -917,16 +920,16 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                 let worktree_abs_path_root = self.worktree_abs_path_root.clone();
                 let path = self.relative_path.clone();
                 let relative_path = self.relative_path.clone();
+                let db = workspace::WorkspaceDb::global(cx);
                 cx.spawn_in(window, async move |_, cx| {
-                    workspace::WORKSPACE_DB
-                        .set_toolchain(
-                            workspace_id,
-                            worktree_abs_path_root,
-                            relative_path,
-                            toolchain.clone(),
-                        )
-                        .await
-                        .log_err();
+                    db.set_toolchain(
+                        workspace_id,
+                        worktree_abs_path_root,
+                        relative_path,
+                        toolchain.clone(),
+                    )
+                    .await
+                    .log_err();
                     workspace
                         .update(cx, |this, cx| {
                             this.project().update(cx, |this, cx| {

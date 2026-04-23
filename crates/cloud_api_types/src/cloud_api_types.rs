@@ -1,9 +1,17 @@
+mod extension;
+mod known_or_unknown;
+mod plan;
 mod timestamp;
 pub mod websocket_protocol;
 
-use cloud_llm_client::Plan;
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
+pub use crate::extension::*;
+pub use crate::known_or_unknown::*;
+pub use crate::plan::*;
 pub use crate::timestamp::Timestamp;
 
 pub const ZED_SYSTEM_ID_HEADER_NAME: &str = "x-zed-system-id";
@@ -12,6 +20,14 @@ pub const ZED_SYSTEM_ID_HEADER_NAME: &str = "x-zed-system-id";
 pub struct GetAuthenticatedUserResponse {
     pub user: AuthenticatedUser,
     pub feature_flags: Vec<String>,
+    #[serde(default)]
+    pub organizations: Vec<Organization>,
+    #[serde(default)]
+    pub default_organization_id: Option<OrganizationId>,
+    #[serde(default)]
+    pub plans_by_organization: BTreeMap<OrganizationId, KnownOrUnknown<Plan, String>>,
+    #[serde(default)]
+    pub configuration_by_organization: BTreeMap<OrganizationId, OrganizationConfiguration>,
     pub plan: PlanInfo,
 }
 
@@ -26,26 +42,28 @@ pub struct AuthenticatedUser {
     pub accepted_tos_at: Option<Timestamp>,
 }
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
+pub struct OrganizationId(pub Arc<str>);
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct PlanInfo {
-    pub plan_v2: cloud_llm_client::PlanV2,
-    pub subscription_period: Option<SubscriptionPeriod>,
-    pub usage: cloud_llm_client::CurrentUsage,
-    pub trial_started_at: Option<Timestamp>,
-    pub is_account_too_young: bool,
-    pub has_overdue_invoices: bool,
+pub struct Organization {
+    pub id: OrganizationId,
+    pub name: Arc<str>,
+    pub is_personal: bool,
 }
 
-impl PlanInfo {
-    pub fn plan(&self) -> Plan {
-        Plan::V2(self.plan_v2)
-    }
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct OrganizationConfiguration {
+    pub is_zed_model_provider_enabled: bool,
+    pub is_agent_thread_feedback_enabled: bool,
+    pub is_collaboration_enabled: bool,
+    pub edit_prediction: OrganizationEditPredictionConfiguration,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
-pub struct SubscriptionPeriod {
-    pub started_at: Timestamp,
-    pub ended_at: Timestamp,
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct OrganizationEditPredictionConfiguration {
+    pub is_enabled: bool,
+    pub is_feedback_enabled: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -56,7 +74,42 @@ pub struct AcceptTermsOfServiceResponse {
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct LlmToken(pub String);
 
+#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize)]
+pub struct CreateLlmTokenBody {
+    #[serde(default)]
+    pub organization_id: Option<OrganizationId>,
+}
+
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub struct CreateLlmTokenResponse {
     pub token: LlmToken,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitAgentThreadFeedbackBody {
+    pub organization_id: Option<OrganizationId>,
+    pub agent: String,
+    pub session_id: String,
+    pub parent_session_id: Option<String>,
+    pub rating: String,
+    pub thread: serde_json::Value,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitAgentThreadFeedbackCommentsBody {
+    pub organization_id: Option<OrganizationId>,
+    pub agent: String,
+    pub session_id: String,
+    pub comments: String,
+    pub thread: serde_json::Value,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitEditPredictionFeedbackBody {
+    pub organization_id: Option<OrganizationId>,
+    pub request_id: String,
+    pub rating: String,
+    pub inputs: serde_json::Value,
+    pub output: Option<String>,
+    pub feedback: String,
 }

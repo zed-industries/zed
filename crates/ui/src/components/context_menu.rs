@@ -1,21 +1,19 @@
 use crate::{
-    IconButtonShape, KeyBinding, List, ListItem, ListSeparator, ListSubHeader, Tooltip, prelude::*,
-    utils::WithRemSize,
+    ButtonCommon, ButtonStyle, IconButtonShape, KeyBinding, List, ListItem, ListSeparator,
+    ListSubHeader, Tooltip, prelude::*, utils::WithRemSize,
 };
 use gpui::{
-    Action, AnyElement, App, Bounds, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Action, Anchor, AnyElement, App, Bounds, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Size,
     Subscription, anchored, canvas, prelude::*, px,
 };
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
-use settings::Settings;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     rc::Rc,
     time::{Duration, Instant},
 };
-use theme::ThemeSettings;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum SubmenuOpenTrigger {
@@ -220,7 +218,6 @@ pub struct ContextMenu {
     end_slot_action: Option<Box<dyn Action>>,
     key_context: SharedString,
     _on_blur_subscription: Subscription,
-    _on_window_deactivate_subscription: Subscription,
     keep_open_on_confirm: bool,
     fixed_width: Option<DefiniteLength>,
     main_menu: Option<Entity<ContextMenu>>,
@@ -296,12 +293,6 @@ impl ContextMenu {
                 this.cancel(&menu::Cancel, window, cx)
             },
         );
-        let _on_window_deactivate_subscription =
-            cx.observe_window_activation(window, |this: &mut ContextMenu, window, cx| {
-                if !window.is_window_active() {
-                    this.cancel(&menu::Cancel, window, cx);
-                }
-            });
         window.refresh();
 
         f(
@@ -316,7 +307,6 @@ impl ContextMenu {
                 end_slot_action: None,
                 key_context: "menu".into(),
                 _on_blur_subscription,
-                _on_window_deactivate_subscription,
                 keep_open_on_confirm: false,
                 fixed_width: None,
                 main_menu: None,
@@ -380,12 +370,6 @@ impl ContextMenu {
                     this.cancel(&menu::Cancel, window, cx)
                 },
             );
-            let _on_window_deactivate_subscription =
-                cx.observe_window_activation(window, |this: &mut ContextMenu, window, cx| {
-                    if !window.is_window_active() {
-                        this.cancel(&menu::Cancel, window, cx);
-                    }
-                });
             window.refresh();
 
             (builder.clone())(
@@ -400,7 +384,6 @@ impl ContextMenu {
                     end_slot_action: None,
                     key_context: "menu".into(),
                     _on_blur_subscription,
-                    _on_window_deactivate_subscription,
                     keep_open_on_confirm: true,
                     fixed_width: None,
                     main_menu: None,
@@ -468,14 +451,6 @@ impl ContextMenu {
                         }
 
                         this.cancel(&menu::Cancel, window, cx)
-                    },
-                ),
-                _on_window_deactivate_subscription: cx.observe_window_activation(
-                    window,
-                    |this: &mut ContextMenu, window, cx| {
-                        if !window.is_window_active() {
-                            this.cancel(&menu::Cancel, window, cx);
-                        }
                     },
                 ),
                 keep_open_on_confirm: false,
@@ -705,6 +680,17 @@ impl ContextMenu {
         self
     }
 
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        if let Some(ContextMenuItem::CustomEntry {
+            selectable: entry_selectable,
+            ..
+        }) = self.items.last_mut()
+        {
+            *entry_selectable = selectable;
+        }
+        self
+    }
+
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.items.push(ContextMenuItem::Label(label.into()));
         self
@@ -715,10 +701,20 @@ impl ContextMenu {
     }
 
     pub fn action_checked(
+        self,
+        label: impl Into<SharedString>,
+        action: Box<dyn Action>,
+        checked: bool,
+    ) -> Self {
+        self.action_checked_with_disabled(label, action, checked, false)
+    }
+
+    pub fn action_checked_with_disabled(
         mut self,
         label: impl Into<SharedString>,
         action: Box<dyn Action>,
         checked: bool,
+        disabled: bool,
     ) -> Self {
         self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
             toggle: if checked {
@@ -741,7 +737,7 @@ impl ContextMenu {
             icon_position: IconPosition::End,
             icon_size: IconSize::Small,
             icon_color: None,
-            disabled: false,
+            disabled,
             documentation_aside: None,
             end_slot_icon: None,
             end_slot_title: None,
@@ -784,12 +780,24 @@ impl ContextMenu {
         self
     }
 
-    pub fn link(mut self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
+    pub fn link(self, label: impl Into<SharedString>, action: Box<dyn Action>) -> Self {
+        self.link_with_handler(label, action, |_, _| {})
+    }
+
+    pub fn link_with_handler(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Box<dyn Action>,
+        handler: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
         self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
             toggle: None,
             label: label.into(),
             action: Some(action.boxed_clone()),
-            handler: Rc::new(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)),
+            handler: Rc::new(move |_, window, cx| {
+                handler(window, cx);
+                window.dispatch_action(action.boxed_clone(), cx);
+            }),
             secondary_handler: None,
             icon: Some(IconName::ArrowUpRight),
             custom_icon_path: None,
@@ -1229,12 +1237,6 @@ impl ContextMenu {
                 window,
                 |_this: &mut ContextMenu, _window, _cx| {},
             );
-            let _on_window_deactivate_subscription =
-                cx.observe_window_activation(window, |this: &mut ContextMenu, window, cx| {
-                    if !window.is_window_active() {
-                        this.cancel(&menu::Cancel, window, cx);
-                    }
-                });
 
             let mut menu = ContextMenu {
                 builder: None,
@@ -1247,7 +1249,6 @@ impl ContextMenu {
                 end_slot_action: None,
                 key_context: "menu".into(),
                 _on_blur_subscription,
-                _on_window_deactivate_subscription,
                 keep_open_on_confirm: false,
                 fixed_width: None,
                 documentation_aside: None,
@@ -1693,7 +1694,7 @@ impl ContextMenu {
             }))
             .child(
                 anchored()
-                    .anchor(Corner::TopLeft)
+                    .anchor(Anchor::TopLeft)
                     .snap_to_window_with_margin(px(8.0))
                     .child(
                         div()
@@ -1978,6 +1979,7 @@ impl ContextMenu {
                             el.end_slot({
                                 let icon_button = IconButton::new("end-slot-icon", *icon)
                                     .shape(IconButtonShape::Square)
+                                    .style(ButtonStyle::Subtle)
                                     .tooltip({
                                         let action_context = self.action_context.clone();
                                         let title = title.clone();
@@ -2058,7 +2060,7 @@ impl ContextMenuItem {
 
 impl Render for ContextMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+        let ui_font_size = theme::theme_settings(cx).ui_font_size(cx);
         let window_size = window.viewport_size();
         let rem_size = window.rem_size();
         let is_wide_window = window_size.width / rem_size > rems_from_px(800.).0;

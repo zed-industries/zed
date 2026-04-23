@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize, de::Error as _};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
 
-use crate::{ExtendingVec, merge_from};
+use crate::{DocumentFoldingRanges, DocumentSymbols, ExtendingVec, SemanticTokens, merge_from};
 
 /// The state of the modifier keys at some point in time
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -34,8 +34,6 @@ pub struct ModifiersContent {
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AllLanguageSettingsContent {
-    /// The settings for enabling/disabling features.
-    pub features: Option<FeaturesContent>,
     /// The edit prediction settings.
     pub edit_predictions: Option<EditPredictionSettingsContent>,
     /// The default language settings.
@@ -52,7 +50,6 @@ pub struct AllLanguageSettingsContent {
 impl merge_from::MergeFrom for AllLanguageSettingsContent {
     fn merge_from(&mut self, other: &Self) {
         self.file_types.merge_from(&other.file_types);
-        self.features.merge_from(&other.features);
         self.edit_predictions.merge_from(&other.edit_predictions);
 
         // A user's global settings override the default global settings and
@@ -77,17 +74,6 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
     }
 }
 
-/// The settings for enabling/disabling features.
-#[with_fallible_options]
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
-#[serde(rename_all = "snake_case")]
-pub struct FeaturesContent {
-    /// Determines which edit prediction provider to use.
-    pub edit_prediction_provider: Option<EditPredictionProvider>,
-    /// Enables the experimental edit prediction context retrieval system.
-    pub experimental_edit_prediction_context_retrieval: Option<bool>,
-}
-
 /// The provider that supplies edit predictions.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
@@ -95,15 +81,15 @@ pub enum EditPredictionProvider {
     None,
     #[default]
     Copilot,
-    Supermaven,
     Zed,
     Codestral,
+    Ollama,
+    OpenAiCompatibleApi,
+    Mercury,
     Experimental(&'static str),
 }
 
-pub const EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME: &str = "sweep";
-pub const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
-pub const EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME: &str = "mercury";
+const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
 
 impl<'de> Deserialize<'de> for EditPredictionProvider {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -115,38 +101,26 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
         pub enum Content {
             None,
             Copilot,
-            Supermaven,
             Zed,
             Codestral,
+            Ollama,
+            OpenAiCompatibleApi,
+            Mercury,
             Experimental(String),
         }
 
         Ok(match Content::deserialize(deserializer)? {
             Content::None => EditPredictionProvider::None,
             Content::Copilot => EditPredictionProvider::Copilot,
-            Content::Supermaven => EditPredictionProvider::Supermaven,
             Content::Zed => EditPredictionProvider::Zed,
             Content::Codestral => EditPredictionProvider::Codestral,
-            Content::Experimental(name)
-                if name == EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME =>
-            {
-                EditPredictionProvider::Experimental(
-                    EXPERIMENTAL_SWEEP_EDIT_PREDICTION_PROVIDER_NAME,
-                )
-            }
-            Content::Experimental(name)
-                if name == EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME =>
-            {
-                EditPredictionProvider::Experimental(
-                    EXPERIMENTAL_MERCURY_EDIT_PREDICTION_PROVIDER_NAME,
-                )
-            }
+            Content::Ollama => EditPredictionProvider::Ollama,
+            Content::OpenAiCompatibleApi => EditPredictionProvider::OpenAiCompatibleApi,
+            Content::Mercury => EditPredictionProvider::Mercury,
             Content::Experimental(name)
                 if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME =>
             {
-                EditPredictionProvider::Experimental(
-                    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-                )
+                EditPredictionProvider::Zed
             }
             Content::Experimental(name) => {
                 return Err(D::Error::custom(format!(
@@ -164,9 +138,23 @@ impl EditPredictionProvider {
             EditPredictionProvider::Zed => true,
             EditPredictionProvider::None
             | EditPredictionProvider::Copilot
-            | EditPredictionProvider::Supermaven
             | EditPredictionProvider::Codestral
+            | EditPredictionProvider::Ollama
+            | EditPredictionProvider::OpenAiCompatibleApi
+            | EditPredictionProvider::Mercury
             | EditPredictionProvider::Experimental(_) => false,
+        }
+    }
+
+    pub fn display_name(&self) -> Option<&'static str> {
+        match self {
+            EditPredictionProvider::Zed => Some("Zed AI"),
+            EditPredictionProvider::Copilot => Some("GitHub Copilot"),
+            EditPredictionProvider::Codestral => Some("Codestral"),
+            EditPredictionProvider::Mercury => Some("Mercury"),
+            EditPredictionProvider::Experimental(_) | EditPredictionProvider::None => None,
+            EditPredictionProvider::Ollama => Some("Ollama"),
+            EditPredictionProvider::OpenAiCompatibleApi => Some("OpenAI-Compatible API"),
         }
     }
 }
@@ -175,6 +163,8 @@ impl EditPredictionProvider {
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct EditPredictionSettingsContent {
+    /// Determines which edit prediction provider to use.
+    pub provider: Option<EditPredictionProvider>,
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
@@ -186,13 +176,62 @@ pub struct EditPredictionSettingsContent {
     pub copilot: Option<CopilotSettingsContent>,
     /// Settings specific to Codestral.
     pub codestral: Option<CodestralSettingsContent>,
-    /// Whether edit predictions are enabled in the assistant prompt editor.
-    /// This has no effect if globally disabled.
-    pub enabled_in_text_threads: Option<bool>,
+    /// Settings specific to Ollama.
+    pub ollama: Option<OllamaEditPredictionSettingsContent>,
+    /// Settings specific to using custom OpenAI-compatible servers for edit prediction.
+    pub open_ai_compatible_api: Option<CustomEditPredictionProviderSettingsContent>,
     /// The directory where manually captured edit prediction examples are stored.
     pub examples_dir: Option<Arc<Path>>,
-    /// The number of edit prediction examples captured per ten thousand predictions.
-    pub example_capture_rate: Option<u16>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct CustomEditPredictionProviderSettingsContent {
+    /// Api URL to use for completions.
+    ///
+    /// Default: ""
+    pub api_url: Option<String>,
+    /// The prompt format to use for completions. Set to `""` to have the format be derived from the model name.
+    ///
+    /// Default: ""
+    pub prompt_format: Option<EditPredictionPromptFormat>,
+    /// The name of the model.
+    ///
+    /// Default: ""
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    ///
+    /// Default: 256
+    pub max_output_tokens: Option<u32>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum EditPredictionPromptFormat {
+    #[default]
+    Infer,
+    Zeta,
+    Zeta2,
+    CodeLlama,
+    StarCoder,
+    DeepseekCoder,
+    Qwen,
+    CodeGemma,
+    Codestral,
+    Glm,
 }
 
 #[with_fallible_options]
@@ -210,6 +249,10 @@ pub struct CopilotSettingsContent {
     ///
     /// Default: none
     pub enterprise_uri: Option<String>,
+    /// Whether the Copilot Next Edit Suggestions feature is enabled.
+    ///
+    /// Default: true
+    pub enable_next_edit_suggestions: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -227,6 +270,52 @@ pub struct CodestralSettingsContent {
     ///
     /// Default: "https://codestral.mistral.ai"
     pub api_url: Option<String>,
+}
+
+/// Ollama model name for edit predictions.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct OllamaModelName(pub String);
+
+impl AsRef<str> for OllamaModelName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for OllamaModelName {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<OllamaModelName> for String {
+    fn from(value: OllamaModelName) -> Self {
+        value.0
+    }
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct OllamaEditPredictionSettingsContent {
+    /// Model to use for completions.
+    ///
+    /// Default: none
+    pub model: Option<OllamaModelName>,
+    /// Maximum tokens to generate for FIM models.
+    ///
+    /// Default: 256
+    pub max_output_tokens: Option<u32>,
+    /// Api URL to use for completions.
+    ///
+    /// Default: "http://localhost:11434"
+    pub api_url: Option<String>,
+
+    /// The prompt format to use for completions. Set to `""` to have the format be derived from the model name.
+    ///
+    /// Default: ""
+    pub prompt_format: Option<EditPredictionPromptFormat>,
 }
 
 /// The mode in which edit predictions should be displayed.
@@ -271,6 +360,32 @@ pub enum EditPredictionsMode {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+pub enum AutoIndentMode {
+    /// Adjusts indentation based on syntax context when typing.
+    /// Uses tree-sitter to analyze code structure and indent accordingly.
+    SyntaxAware,
+    /// Preserve the indentation of the current line when creating new lines,
+    /// but don't adjust based on syntax context.
+    PreserveIndent,
+    /// No automatic indentation. New lines start at column 0.
+    None,
+}
+
+/// Controls the soft-wrapping behavior in the editor.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     /// Prefer a single line generally, unless an overly long line is encountered.
     None,
@@ -279,9 +394,8 @@ pub enum SoftWrap {
     PreferLine,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
-    /// Soft wrap lines at the preferred line length.
-    PreferredLineLength,
     /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
+    #[serde(alias = "preferred_line_length")]
     Bounded,
 }
 
@@ -335,6 +449,23 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub ensure_final_newline_on_save: Option<bool>,
+    /// How line endings should be handled for new files and during format and
+    /// save operations.
+    ///
+    /// - `detect`: Detect existing line endings and otherwise use the platform
+    ///   default (`lf` on Unix, `crlf` on Windows).
+    /// - `prefer_lf`: Prefer LF for new files and files with no existing line
+    ///   ending.
+    /// - `prefer_crlf`: Prefer CRLF for new files and files with no existing
+    ///   line ending.
+    /// - `enforce_lf`: Enforce LF during format and save.
+    /// - `enforce_crlf`: Enforce CRLF during format and save.
+    ///
+    /// The EditorConfig `end_of_line` property overrides this setting and
+    /// behaves like `enforce_lf` or `enforce_crlf`.
+    ///
+    /// Default: detect
+    pub line_ending: Option<LineEndingSetting>,
     /// How to perform a buffer format.
     ///
     /// Default: auto
@@ -360,6 +491,32 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: ["..."]
     pub language_servers: Option<Vec<String>>,
+    /// Controls how semantic tokens from language servers are used for syntax highlighting.
+    ///
+    /// Options:
+    /// - "off": Do not request semantic tokens from language servers.
+    /// - "combined": Use LSP semantic tokens together with tree-sitter highlighting.
+    /// - "full": Use LSP semantic tokens exclusively, replacing tree-sitter highlighting.
+    ///
+    /// Default: "off"
+    pub semantic_tokens: Option<SemanticTokens>,
+    /// Controls whether folding ranges from language servers are used instead of
+    /// tree-sitter and indent-based folding.
+    ///
+    /// Options:
+    /// - "off": Use tree-sitter and indent-based folding (default).
+    /// - "on": Use LSP folding wherever possible, falling back to tree-sitter and indent-based folding when no results were returned by the server.
+    ///
+    /// Default: "off"
+    pub document_folding_ranges: Option<DocumentFoldingRanges>,
+    /// Controls the source of document symbols used for outlines and breadcrumbs.
+    ///
+    /// Options:
+    /// - "off": Use tree-sitter queries to compute document symbols (default).
+    /// - "on": Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols.
+    ///
+    /// Default: "off"
+    pub document_symbols: Option<DocumentSymbols>,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
     /// Note: This setting has no effect in Vim mode, as rewrap is already
@@ -432,10 +589,14 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub linked_edits: Option<bool>,
-    /// Whether indentation should be adjusted based on the context whilst typing.
+    /// Controls automatic indentation behavior when typing.
     ///
-    /// Default: true
-    pub auto_indent: Option<bool>,
+    /// - "syntax_aware": Adjusts indentation based on syntax context (default)
+    /// - "preserve_indent": Preserves current line's indentation on new lines
+    /// - "none": No automatic indentation
+    ///
+    /// Default: syntax_aware
+    pub auto_indent: Option<AutoIndentMode>,
     /// Whether indentation of pasted content should be adjusted based on the context.
     ///
     /// Default: true
@@ -755,6 +916,42 @@ pub enum FormatOnSave {
     Off,
 }
 
+/// Controls how line endings are normalized when a buffer is saved.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LineEndingSetting {
+    /// Preserve the existing line endings of the file. New files use the
+    /// platform default line ending.
+    #[strum(serialize = "Detect")]
+    Detect,
+    /// Use LF for new files and files with no existing line-ending
+    /// convention, while preserving existing LF or CRLF files.
+    #[strum(serialize = "Prefer LF")]
+    PreferLf,
+    /// Use CRLF for new files and files with no existing line-ending
+    /// convention, while preserving existing LF or CRLF files.
+    #[strum(serialize = "Prefer CRLF")]
+    PreferCrlf,
+    /// Normalize line endings to LF (`\n`) during format and save.
+    #[strum(serialize = "Enforce LF")]
+    EnforceLf,
+    /// Normalize line endings to CRLF (`\r\n`) during format and save.
+    #[strum(serialize = "Enforce CRLF")]
+    EnforceCrlf,
+}
+
 /// Controls which formatters should be used when formatting code.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(untagged)]
@@ -786,6 +983,8 @@ pub enum Formatter {
     /// or falling back to formatting via language server.
     #[default]
     Auto,
+    /// Do not format code.
+    None,
     /// Format code using Zed's Prettier integration.
     Prettier,
     /// Format code using an external command.
@@ -978,6 +1177,12 @@ mod test {
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Single(Formatter::Auto))
+        );
+        let raw_none = "{\"formatter\": \"none\"}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw_none).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(FormatterList::Single(Formatter::None))
         );
         let raw = "{\"formatter\": \"language_server\"}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();

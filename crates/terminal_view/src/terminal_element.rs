@@ -4,7 +4,7 @@ use gpui::{
     Element, ElementId, Entity, FocusHandle, Font, FontFeatures, FontStyle, FontWeight,
     GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
     IntoElement, LayoutId, Length, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
-    Point, ShapedLine, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
+    Point, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
     UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, div, fill, point, px, relative,
     size,
 };
@@ -25,7 +25,8 @@ use terminal::{
     },
     terminal_settings::TerminalSettings,
 };
-use theme::{ActiveTheme, Theme, ThemeSettings};
+use theme::{ActiveTheme, Theme};
+use theme_settings::ThemeSettings;
 use ui::utils::ensure_minimum_contrast;
 use ui::{ParentElement, Tooltip};
 use util::ResultExt;
@@ -56,6 +57,7 @@ pub struct LayoutState {
 }
 
 /// Helper struct for converting data between Alacritty's cursor points, and displayed cursor points.
+#[derive(Copy, Clone)]
 struct DisplayCursor {
     line: i32,
     col: usize,
@@ -499,28 +501,13 @@ impl TerminalElement {
         (rects, batched_runs)
     }
 
-    /// Computes the cursor position and expected block width, may return a zero width if x_for_index returns
-    /// the same position for sequential indexes. Use em_width instead
-    fn shape_cursor(
-        cursor_point: DisplayCursor,
-        size: TerminalBounds,
-        text_fragment: &ShapedLine,
-    ) -> Option<(Point<Pixels>, Pixels)> {
+    /// Computes the cursor position based on the cursor point and terminal dimensions.
+    fn cursor_position(cursor_point: DisplayCursor, size: TerminalBounds) -> Option<Point<Pixels>> {
         if cursor_point.line() < size.total_lines() as i32 {
-            let cursor_width = if text_fragment.width == Pixels::ZERO {
-                size.cell_width()
-            } else {
-                text_fragment.width
-            };
-
-            // Cursor should always surround as much of the text as possible,
-            // hence when on pixel boundaries round the origin down and the width up
-            Some((
-                point(
-                    (cursor_point.col() as f32 * size.cell_width()).floor(),
-                    (cursor_point.line() as f32 * size.line_height()).floor(),
-                ),
-                cursor_width.ceil(),
+            // When on pixel boundaries round the origin down
+            Some(point(
+                (cursor_point.col() as f32 * size.cell_width()).floor(),
+                (cursor_point.line() as f32 * size.line_height()).floor(),
             ))
         } else {
             None
@@ -563,11 +550,13 @@ impl TerminalElement {
         minimum_contrast: f32,
     ) -> TextRun {
         let flags = indexed.cell.flags;
+        let is_true_color = matches!(fg, terminal::alacritty_terminal::vte::ansi::Color::Spec(_));
         let mut fg = convert_color(&fg, colors);
         let bg = convert_color(&bg, colors);
 
-        // Only apply contrast adjustment to non-decorative characters
-        if !Self::is_decorative_character(indexed.c) {
+        // Skip contrast adjustment for true-color (24-bit RGB) foregrounds — the
+        // application chose that exact color. Also skip for decorative characters.
+        if !is_true_color && !Self::is_decorative_character(indexed.c) {
             fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
         }
 
@@ -927,7 +916,9 @@ impl Element for TerminalElement {
                     }
                     TerminalMode::Standalone => terminal_settings
                         .font_size
-                        .map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx)),
+                        .map_or(buffer_font_size, |size| {
+                            theme_settings::adjusted_font_size(size, cx)
+                        }),
                 };
 
                 let theme = cx.theme().clone();
@@ -1148,13 +1139,20 @@ impl Element for TerminalElement {
                     )
                 };
 
-                let ime_cursor_bounds =
-                    TerminalElement::shape_cursor(cursor_point, dimensions, &cursor_text).map(
-                        |(cursor_position, block_width)| Bounds {
-                            origin: cursor_position,
-                            size: size(block_width, dimensions.line_height),
-                        },
-                    );
+                // For whitespace, use cell width to avoid cursor stretching.
+                // For other characters, use the larger of shaped width and cell width
+                // to properly cover wide characters like emojis.
+                let cursor_width = if cursor_char.is_whitespace() {
+                    dimensions.cell_width()
+                } else {
+                    cursor_text.width.max(dimensions.cell_width())
+                };
+
+                let ime_cursor_bounds = TerminalElement::cursor_position(cursor_point, dimensions)
+                    .map(|cursor_position| Bounds {
+                        origin: cursor_position,
+                        size: size(cursor_width.ceil(), dimensions.line_height),
+                    });
 
                 let cursor = if let AlacCursorShape::Hidden = cursor.shape {
                     None
@@ -1164,7 +1162,9 @@ impl Element for TerminalElement {
                         let (shape, text) = match cursor.shape {
                             AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
                             AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
+                            AlacCursorShape::Underline if !focused => (CursorShape::Hollow, None),
                             AlacCursorShape::Underline => (CursorShape::Underline, None),
+                            AlacCursorShape::Beam if !focused => (CursorShape::Hollow, None),
                             AlacCursorShape::Beam => (CursorShape::Bar, None),
                             AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
                             AlacCursorShape::Hidden => unreachable!(),
@@ -1850,6 +1850,42 @@ mod tests {
             good_contrast, black_fg,
             "Good contrast should not be adjusted"
         );
+    }
+
+    #[test]
+    fn test_true_color_red_blue_not_washed_out_on_dark_bg() {
+        // Red and blue have inherently low perceptual luminance in APCA.
+        // Pure #ff0000 only achieves Lc ~35 against #1e1e1e — below the
+        // default Lc 45 threshold. ensure_minimum_contrast would lighten
+        // them, washing out the color. This is why cell_style skips the
+        // adjustment for Color::Spec (24-bit true color).
+        let dark_bg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.05,
+            a: 1.0,
+        };
+
+        for (name, r, g, b) in [
+            ("red", 225, 80, 80),
+            ("blue", 80, 80, 225),
+            ("pure red", 255, 0, 0),
+        ] {
+            let color = terminal::rgba_color(r, g, b);
+            let contrast = apca_contrast(color, dark_bg).abs();
+            assert!(
+                contrast < 45.0,
+                "{name} should have APCA < 45 on dark bg, got {contrast}",
+            );
+
+            let adjusted = ensure_minimum_contrast(color, dark_bg, 45.0);
+            assert!(
+                adjusted.l > color.l,
+                "{name} would be lightened by contrast adjustment (l: {} -> {})",
+                color.l,
+                adjusted.l,
+            );
+        }
     }
 
     #[test]

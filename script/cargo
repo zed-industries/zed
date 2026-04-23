@@ -1,0 +1,322 @@
+#!/usr/bin/env node
+
+// ./script/cargo is a transparent wrapper around cargo that:
+// - When running in a clone of `./zed-industries/zed`
+// - outputs build timings to the ZED_DATA_DIR/build_timings
+// When Zed starts for staff-members it uploads the build timings to Snowflake
+// To use it:
+//  ./script/cargo --init
+// This will add a wrapper to your shell configuration files.
+// (Otherwise set up an alias `cargo=PATH_TO_THIS_FILE`)
+
+// We need to ignore SIGINT in this process so that we can continue
+// processing timing files after the child cargo process exits.
+// The signal will still be delivered to the child process.
+process.on("SIGINT", () => {});
+
+const { spawn, spawnSync } = require("child_process");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const readline = require("readline");
+
+const SUBCOMMANDS_WITH_TIMINGS = new Set(["build", "check", "run", "test"]);
+
+// Built-in cargo aliases
+const CARGO_ALIASES = {
+  b: "build",
+  c: "check",
+  t: "test",
+  r: "run",
+  d: "doc",
+};
+
+function expandAlias(subcommand) {
+  return CARGO_ALIASES[subcommand] || subcommand;
+}
+
+function detectShell() {
+  // Check for PowerShell first (works when running from pwsh)
+  if (process.env.PSModulePath && !process.env.BASH_VERSION) {
+    return "powershell";
+  }
+
+  const shell = process.env.SHELL || "";
+  if (shell.endsWith("/zsh")) return "zsh";
+  if (shell.endsWith("/bash")) return "bash";
+  if (shell.endsWith("/fish")) return "fish";
+  if (shell.endsWith("/pwsh") || shell.endsWith("/powershell")) return "powershell";
+  return path.basename(shell) || "unknown";
+}
+
+function getShellConfigPath(shell) {
+  const home = os.homedir();
+  switch (shell) {
+    case "zsh":
+      return path.join(process.env.ZDOTDIR || home, ".zshrc");
+    case "bash":
+      // Prefer .bashrc, fall back to .bash_profile
+      const bashrc = path.join(home, ".bashrc");
+      if (fs.existsSync(bashrc)) return bashrc;
+      return path.join(home, ".bash_profile");
+    case "fish":
+      return path.join(home, ".config", "fish", "config.fish");
+    case "powershell":
+      if (process.platform === "win32") {
+        // Spawn PowerShell to get the real $PROFILE path, since os.homedir() doesn't account
+        // for OneDrive folder redirection, and the subdirectory differs between Windows PowerShell
+        // 5.x ("WindowsPowerShell") and PowerShell Core ("PowerShell").
+        const psModulePath = process.env.PSModulePath || "";
+        const psExe = psModulePath.toLowerCase().includes("\\windowspowershell\\") ? "powershell" : "pwsh";
+        const result = spawnSync(psExe, ["-NoProfile", "-Command", "$PROFILE"], {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          timeout: 5000,
+        });
+        if (result.status === 0 && result.stdout.trim()) {
+          return result.stdout.trim();
+        }
+        // Fallback if spawning fails
+        return path.join(home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1");
+      } else {
+        return path.join(home, ".config", "powershell", "Microsoft.PowerShell_profile.ps1");
+      }
+    default:
+      return null;
+  }
+}
+
+function generateAlias(shell, scriptDir) {
+  const cargoWrapper = path.join(scriptDir, "cargo");
+
+  switch (shell) {
+    case "zsh":
+    case "bash":
+      return `\n# Zed cargo timing wrapper\ncargo() { local w="${cargoWrapper}"; if [[ -x "$w" ]]; then "$w" "$@"; else command cargo "$@"; fi; }\n`;
+    case "fish":
+      return `\n# Zed cargo timing wrapper\nfunction cargo\n    set -l w "${cargoWrapper}"\n    if test -x "$w"\n        "$w" $argv\n        return $status\n    else\n        command cargo $argv\n    end\nend\n`;
+    case "powershell":
+      return `\n# Zed cargo timing wrapper\nfunction cargo {\n    \$wrapper = "${cargoWrapper}"\n    if (Test-Path \$wrapper) {\n        node \$wrapper @args\n    } else {\n        & (Get-Command -Name cargo -CommandType Application | Select-Object -First 1).Source @args\n    }\n}\n`;
+    default:
+      return `cargo() { local w="${cargoWrapper}"; if [[ -x "$w" ]]; then "$w" "$@"; else command cargo "$@"; fi; }`;
+  }
+}
+
+function aliasBlockRegex(shell) {
+  switch (shell) {
+    case "zsh":
+    case "bash":
+      // Comment line + single-line cargo() { ... } function
+      return /\n?# Zed cargo timing wrapper\ncargo\(\) \{[^\n]*\}\n/;
+    case "fish":
+      // Comment line + multi-line function cargo...end block
+      return /\n?# Zed cargo timing wrapper\nfunction cargo\n[\s\S]*?\nend\n/;
+    case "powershell":
+      // Comment line + multi-line function cargo {...} block
+      return /\n?# Zed cargo timing wrapper\nfunction cargo \{[\s\S]*?\n\}\n/;
+    default:
+      return null;
+  }
+}
+
+function initShellAlias() {
+  const scriptDir = __dirname;
+  const shell = detectShell();
+  const configPath = getShellConfigPath(shell);
+  const alias = generateAlias(shell, scriptDir);
+
+  if (!configPath) {
+    console.log(`Unsupported shell: ${shell}`);
+    console.log("\nAdd the following to your shell configuration:\n");
+    console.log(alias);
+    return;
+  }
+
+  // Check if alias already exists; if so, replace it in-place
+  if (fs.existsSync(configPath)) {
+    const content = fs.readFileSync(configPath, "utf-8");
+    if (content.includes("Zed cargo timing wrapper")) {
+      const blockRegex = aliasBlockRegex(shell);
+      const updated = blockRegex ? content.replace(blockRegex, "") : content;
+      fs.writeFileSync(configPath, updated + alias);
+      console.log(`Updated cargo timing alias in ${configPath}`);
+      if (shell === "powershell") {
+        console.log(`\nRestart PowerShell or run: . "${configPath}"`);
+      } else {
+        console.log(`\nRestart your shell or run: source ${configPath}`);
+      }
+      return;
+    }
+  }
+
+  // Create parent directory if needed (for PowerShell on Linux/macOS)
+  const configDir = path.dirname(configPath);
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
+  }
+
+  // Append alias to config file
+  fs.appendFileSync(configPath, alias);
+  console.log(`Added cargo timing alias to ${configPath}`);
+
+  if (shell === "powershell") {
+    console.log(`\nRestart PowerShell or run: . "${configPath}"`);
+  } else {
+    console.log(`\nRestart your shell or run: source ${configPath}`);
+  }
+}
+
+function isZedRepo() {
+  try {
+    const result = spawnSync("git", ["remote", "-v"], {
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 5000,
+    });
+    if (result.status !== 0 || !result.stdout) {
+      return false;
+    }
+    return result.stdout.includes("zed-industries/zed");
+  } catch {
+    return false;
+  }
+}
+
+function findSubcommand(args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    // Skip flags and their values
+    if (arg.startsWith("-")) {
+      // If this flag takes a value and it's not using = syntax, skip the next arg too
+      if (!arg.includes("=") && i + 1 < args.length && !args[i + 1].startsWith("-")) {
+        i++;
+      }
+      continue;
+    }
+    // First non-flag argument is the subcommand
+    return { subcommand: arg, index: i };
+  }
+  return null;
+}
+
+function findLatestTimingFile(targetDir) {
+  const timingsDir = path.join(targetDir, "cargo-timings");
+  if (!fs.existsSync(timingsDir)) {
+    return null;
+  }
+
+  const files = fs
+    .readdirSync(timingsDir)
+    .filter((f) => f.startsWith("cargo-timing-") && f.endsWith(".html") && f !== "cargo-timing.html")
+    .map((f) => ({
+      name: f,
+      path: path.join(timingsDir, f),
+      mtime: fs.statSync(path.join(timingsDir, f)).mtime.getTime(),
+    }))
+    .sort((a, b) => b.mtime - a.mtime);
+
+  return files.length > 0 ? files[0].path : null;
+}
+
+function getTargetDir(args) {
+  // Check for --target-dir flag
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--target-dir" && i + 1 < args.length) {
+      return args[i + 1];
+    }
+    if (args[i].startsWith("--target-dir=")) {
+      return args[i].substring("--target-dir=".length);
+    }
+  }
+  // Default target directory
+  return "target";
+}
+
+function runCargoPassthrough(args) {
+  const cargoCmd = process.env.CARGO || "cargo";
+  const result = spawnSync(cargoCmd, args, {
+    stdio: "inherit",
+    shell: false,
+  });
+  process.exit(result.status ?? 1);
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+
+  // Handle --init flag
+  if (args[0] === "--init") {
+    if (process.env.NIX_WRAPPER === "1") {
+      console.error("`--init` not supported when going through the nix wrapper");
+      process.exit(1);
+    }
+    initShellAlias();
+    return;
+  }
+
+  // If not in zed repo, just pass through to cargo
+  if (!isZedRepo()) {
+    runCargoPassthrough(args);
+    return;
+  }
+
+  const cargoCmd = process.env.CARGO || "cargo";
+  const subcommandInfo = findSubcommand(args);
+  const expandedSubcommand = subcommandInfo ? expandAlias(subcommandInfo.subcommand) : null;
+  const shouldAddTimings = expandedSubcommand && SUBCOMMANDS_WITH_TIMINGS.has(expandedSubcommand);
+
+  // Build the final args array
+  let finalArgs = [...args];
+  if (shouldAddTimings) {
+    // Check if --timings is already present
+    const hasTimings = args.some((arg) => arg === "--timings" || arg.startsWith("--timings="));
+    if (!hasTimings) {
+      // Insert --timings after the subcommand
+      finalArgs.splice(subcommandInfo.index + 1, 0, "--timings");
+    }
+  }
+
+  // Run cargo asynchronously so we can handle signals properly
+  const child = spawn(cargoCmd, finalArgs, {
+    stdio: "inherit",
+    shell: false,
+  });
+
+  // Wait for the child to exit
+  const result = await new Promise((resolve) => {
+    child.on("exit", (code, signal) => {
+      resolve({ status: code, signal });
+    });
+  });
+
+  // If we added timings, try to process the timing file (regardless of cargo's exit status)
+  if (shouldAddTimings) {
+    const targetDir = getTargetDir(args);
+    const timingFile = findLatestTimingFile(targetDir);
+
+    if (timingFile) {
+      // Run cargo-timing-info.js in the background
+      const scriptDir = __dirname;
+      const timingScript = path.join(scriptDir, "cargo-timing-info.js");
+
+      if (fs.existsSync(timingScript)) {
+        const timingChild = spawn(process.execPath, [timingScript, timingFile, `cargo ${expandedSubcommand}`], {
+          detached: true,
+          stdio: "ignore",
+        });
+        timingChild.unref();
+      }
+    }
+  }
+
+  // Exit with cargo's exit code, or re-raise the signal if it was killed
+  if (result.signal) {
+    // Reset signal handler and re-raise so parent sees the signal
+    process.removeAllListeners(result.signal);
+    process.kill(process.pid, result.signal);
+  } else {
+    process.exit(result.status ?? 1);
+  }
+}
+
+main();

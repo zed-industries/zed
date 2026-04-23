@@ -2,7 +2,7 @@ use collections::VecDeque;
 use edit_prediction::EditPredictionStore;
 use editor::{Editor, EditorEvent, MultiBufferOffset, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
-    App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
+    Anchor, App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement,
     Render, Styled, Subscription, Task, WeakEntity, Window, actions, div,
 };
 use itertools::Itertools as _;
@@ -18,12 +18,12 @@ use project::{
 };
 use proto::toggle_lsp_logs::LogType;
 use std::{any::TypeId, borrow::Cow, sync::Arc};
-use ui::{Button, Checkbox, ContextMenu, Label, PopoverMenu, ToggleState, prelude::*};
+use ui::{Checkbox, ContextMenu, PopoverMenu, ToggleState, prelude::*};
 use util::ResultExt as _;
 use workspace::{
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
     item::{Item, ItemHandle},
-    searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
+    searchable::{Direction, SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
 
 use crate::get_or_create_tool;
@@ -739,7 +739,7 @@ impl Focusable for LspLogView {
 impl Item for LspLogView {
     type Event = EditorEvent;
 
-    fn to_item_events(event: &Self::Event, f: impl FnMut(workspace::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
@@ -813,38 +813,47 @@ impl SearchableItem for LspLogView {
         &mut self,
         matches: &[Self::Match],
         active_match_index: Option<usize>,
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |e, cx| {
-            e.update_matches(matches, active_match_index, window, cx)
+            e.update_matches(matches, active_match_index, token, window, cx)
         })
     }
 
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
+    fn query_suggestion(
+        &mut self,
+        ignore_settings: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
         self.editor
-            .update(cx, |e, cx| e.query_suggestion(window, cx))
+            .update(cx, |e, cx| e.query_suggestion(ignore_settings, window, cx))
     }
 
     fn activate_match(
         &mut self,
         index: usize,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editor
-            .update(cx, |e, cx| e.activate_match(index, matches, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.activate_match(index, matches, token, window, cx)
+        })
     }
 
     fn select_matches(
         &mut self,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editor
-            .update(cx, |e, cx| e.select_matches(matches, window, cx))
+            .update(cx, |e, cx| e.select_matches(matches, token, window, cx))
     }
 
     fn find_matches(
@@ -861,6 +870,7 @@ impl SearchableItem for LspLogView {
         &mut self,
         _: &Self::Match,
         _: &SearchQuery,
+        _token: SearchToken,
         _window: &mut Window,
         _: &mut Context<Self>,
     ) {
@@ -875,17 +885,19 @@ impl SearchableItem for LspLogView {
             // LSP log is read-only.
             replacement: false,
             selection: false,
+            select_all: true,
         }
     }
     fn active_match_index(
         &mut self,
         direction: Direction,
         matches: &[Self::Match],
+        token: SearchToken,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
         self.editor.update(cx, |e, cx| {
-            e.active_match_index(direction, matches, window, cx)
+            e.active_match_index(direction, matches, token, window, cx)
         })
     }
 }
@@ -949,7 +961,7 @@ impl Render for LspLogToolbarItemView {
         let log_toolbar_view = cx.weak_entity();
 
         let lsp_menu = PopoverMenu::new("LspLogView")
-            .anchor(Corner::TopLeft)
+            .anchor(Anchor::TopLeft)
             .trigger(
                 Button::new(
                     "language_server_menu_header",
@@ -963,9 +975,11 @@ impl Render for LspLogToolbarItemView {
                         })
                         .unwrap_or_else(|| "No server selected".into()),
                 )
-                .icon(IconName::ChevronDown)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted),
+                .end_icon(
+                    Icon::new(IconName::ChevronDown)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                ),
             )
             .menu({
                 let log_view = log_view.clone();
@@ -1022,12 +1036,13 @@ impl Render for LspLogToolbarItemView {
                 LogKind::ServerInfo => SERVER_INFO,
             };
             PopoverMenu::new("LspViewSelector")
-                .anchor(Corner::TopLeft)
+                .anchor(Anchor::TopLeft)
                 .trigger(
-                    Button::new("language_server_menu_header", label)
-                        .icon(IconName::ChevronDown)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted),
+                    Button::new("language_server_menu_header", label).end_icon(
+                        Icon::new(IconName::ChevronDown)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    ),
                 )
                 .menu(move |window, cx| {
                     let log_toolbar_view = log_toolbar_view.upgrade()?;
@@ -1113,15 +1128,17 @@ impl Render for LspLogToolbarItemView {
                                 let log_view = log_view.clone();
                                 div().child(
                                     PopoverMenu::new("lsp-trace-level-menu")
-                                        .anchor(Corner::TopLeft)
+                                        .anchor(Anchor::TopLeft)
                                         .trigger(
                                             Button::new(
                                                 "language_server_trace_level_selector",
                                                 "Trace level",
                                             )
-                                            .icon(IconName::ChevronDown)
-                                            .icon_size(IconSize::Small)
-                                            .icon_color(Color::Muted),
+                                            .end_icon(
+                                                Icon::new(IconName::ChevronDown)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Muted),
+                                            ),
                                         )
                                         .menu({
                                             let log_view = log_view;
@@ -1181,15 +1198,17 @@ impl Render for LspLogToolbarItemView {
                                 let log_view = log_view.clone();
                                 div().child(
                                     PopoverMenu::new("lsp-log-level-menu")
-                                        .anchor(Corner::TopLeft)
+                                        .anchor(Anchor::TopLeft)
                                         .trigger(
                                             Button::new(
                                                 "language_server_log_level_selector",
                                                 "Log level",
                                             )
-                                            .icon(IconName::ChevronDown)
-                                            .icon_size(IconSize::Small)
-                                            .icon_color(Color::Muted),
+                                            .end_icon(
+                                                Icon::new(IconName::ChevronDown)
+                                                    .size(IconSize::Small)
+                                                    .color(Color::Muted),
+                                            ),
                                         )
                                         .menu({
                                             let log_view = log_view;
@@ -1280,6 +1299,7 @@ fn initialize_new_editor(
         editor.set_text(content, window, cx);
         editor.set_show_git_diff_gutter(false, cx);
         editor.set_show_runnables(false, cx);
+        editor.set_show_bookmarks(false, cx);
         editor.set_show_breakpoints(false, cx);
         editor.set_read_only(true);
         editor.set_show_edit_predictions(Some(false), window, cx);
@@ -1342,6 +1362,7 @@ impl ServerInfo {
             status: LanguageServerStatus {
                 name: server.name(),
                 server_version: server.version(),
+                server_readable_version: server.readable_version(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
@@ -1349,6 +1370,7 @@ impl ServerInfo {
                 binary: Some(server.binary().clone()),
                 configuration: Some(server.configuration().clone()),
                 workspace_folders: server.workspace_folders(),
+                process_id: server.process_id(),
             },
         }
     }

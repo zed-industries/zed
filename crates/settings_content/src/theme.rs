@@ -1033,6 +1033,9 @@ pub struct ThemeColorsContent {
     /// Background color for Vim Visual Block mode indicator.
     #[serde(rename = "vim.visual_block.background")]
     pub vim_visual_block_background: Option<String>,
+    /// Background color for Vim yank highlight.
+    #[serde(rename = "vim.yank.background")]
+    pub vim_yank_background: Option<String>,
     /// Background color for Vim Helix Normal mode indicator.
     #[serde(rename = "vim.helix_normal.background")]
     pub vim_helix_normal_background: Option<String>,
@@ -1270,9 +1273,31 @@ pub enum FontStyleContent {
     Oblique,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize, MergeFrom)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    MergeFrom,
+    derive_more::FromStr,
+)]
 #[serde(transparent)]
 pub struct FontWeightContent(pub f32);
+
+impl Display for FontWeightContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<f32> for FontWeightContent {
+    fn from(weight: f32) -> Self {
+        FontWeightContent(weight)
+    }
+}
 
 impl Default for FontWeightContent {
     fn default() -> Self {

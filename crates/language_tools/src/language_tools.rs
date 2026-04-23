@@ -1,3 +1,4 @@
+mod highlights_tree_view;
 mod key_context_view;
 pub mod lsp_button;
 pub mod lsp_log_view;
@@ -8,12 +9,14 @@ mod lsp_log_view_tests;
 
 use gpui::{App, AppContext, Entity};
 
+pub use highlights_tree_view::{HighlightsTreeToolbarItemView, HighlightsTreeView};
 pub use lsp_log_view::LspLogView;
 pub use syntax_tree_view::{SyntaxTreeToolbarItemView, SyntaxTreeView};
 use ui::{Context, Window};
 use workspace::{Item, ItemHandle, SplitDirection, Workspace};
 
 pub fn init(cx: &mut App) {
+    highlights_tree_view::init(cx);
     lsp_log_view::init(false, cx);
     syntax_tree_view::init(cx);
     key_context_view::init(cx);

@@ -29,6 +29,8 @@ self-hosted-runner:
     # Namespace Limited Preview
     - namespace-profile-8x16-ubuntu-2004-arm-m4
     - namespace-profile-8x32-ubuntu-2004-arm-m4
+    # Namespace mac
+    - namespace-profile-mac-large
     # Self Hosted Runners
     - self-mini-macos
     - self-32vcpu-windows-2022

@@ -1,11 +1,10 @@
 use crate::notification_window_options;
-use crate::notifications::collab_notification::CollabNotification;
 use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
 use gpui::{App, WindowHandle, prelude::*};
 
 use std::sync::{Arc, Weak};
-use ui::{Button, Label, prelude::*};
+use ui::{CollabNotification, prelude::*};
 use util::ResultExt;
 use workspace::AppState;
 
@@ -42,6 +41,14 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
                     }
                 }
             }
+        }
+
+        for window in notification_windows.drain(..) {
+            window
+                .update(cx, |_, window, _| {
+                    window.remove_window();
+                })
+                .log_err();
         }
     })
     .detach();
@@ -104,7 +111,7 @@ impl IncomingCallNotification {
 
 impl Render for IncomingCallNotification {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
 
         div().size_full().font(ui_font).child(
             CollabNotification::new(
@@ -118,10 +125,10 @@ impl Render for IncomingCallNotification {
                     move |_, _, cx| state.respond(false, cx)
                 }),
             )
-            .child(v_flex().overflow_hidden().child(Label::new(format!(
+            .child(Label::new(format!(
                 "{} is sharing a project in Zed",
                 self.state.call.calling_user.github_login
-            )))),
+            ))),
         )
     }
 }

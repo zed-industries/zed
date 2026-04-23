@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""Run the background crash-agent MVP pipeline locally.
+
+Default mode is dry-run: generate branch + agent output without commit/push/PR.
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from datetime import datetime
+from pathlib import Path
+
+
+CRASH_ID_PATTERN = re.compile(r"^[A-Za-z0-9]+-[A-Za-z0-9]+$")
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def run(command: list[str], check: bool = True, capture_output: bool = False) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        text=True,
+        check=check,
+        capture_output=capture_output,
+    )
+
+
+def validate_crash_ids(ids: list[str]) -> list[str]:
+    valid = []
+    for crash_id in ids:
+        if not CRASH_ID_PATTERN.match(crash_id):
+            print(f"WARNING: Skipping invalid crash ID format: '{crash_id}'", file=sys.stderr)
+            continue
+        valid.append(crash_id)
+    return valid
+
+
+MAX_TOP = 100
+
+
+def prefetch_crash_data(crashes: list[dict[str, str]], output_dir: str) -> None:
+    """Fetch crash reports and save to output_dir/crash-{ID}.md.
+
+    Each crash item must contain:
+    - crash_id: short ID used by the pipeline (e.g. ZED-202)
+    - fetch_id: identifier passed to script/sentry-fetch (short or numeric)
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    for crash in crashes:
+        crash_id = crash["crash_id"]
+        fetch_id = crash["fetch_id"]
+        output_path = os.path.join(output_dir, f"crash-{crash_id}.md")
+        result = run(
+            ["python3", "script/sentry-fetch", fetch_id],
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            print(
+                f"WARNING: Failed to fetch crash data for {crash_id} "
+                f"(fetch id: {fetch_id}): {result.stderr.strip()}",
+                file=sys.stderr,
+            )
+            continue
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(result.stdout)
+        print(
+            f"Fetched crash data for {crash_id} (fetch id: {fetch_id}) -> {output_path}",
+            file=sys.stderr,
+        )
+
+
+def resolve_crashes(args) -> list[dict[str, str]]:
+    if args.crash_ids:
+        raw = [item.strip() for item in args.crash_ids.split(",") if item.strip()]
+        crash_ids = validate_crash_ids(raw)
+        return [{"crash_id": crash_id, "fetch_id": crash_id} for crash_id in crash_ids]
+
+    top = min(args.top, MAX_TOP)
+    if args.top > MAX_TOP:
+        print(f"Capping --top from {args.top} to {MAX_TOP}", file=sys.stderr)
+
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".json", delete=False) as file:
+        output_path = file.name
+
+    try:
+        run(
+            [
+                "python3",
+                "script/select-sentry-crash-candidates",
+                "--org",
+                args.org,
+                "--top",
+                str(top),
+                "--sample-size",
+                str(args.sample_size),
+                "--output",
+                output_path,
+            ],
+            capture_output=True,
+        )
+        with open(output_path, "r", encoding="utf-8") as file:
+            payload = json.load(file)
+        crashes = []
+        for item in payload.get("selected", []):
+            crash_id = item.get("short_id")
+            issue_id = item.get("issue_id")
+            if not crash_id:
+                continue
+            crashes.append(
+                {
+                    "crash_id": crash_id,
+                    "fetch_id": str(issue_id) if issue_id else crash_id,
+                }
+            )
+
+        valid_crash_ids = set(validate_crash_ids([item["crash_id"] for item in crashes]))
+        return [item for item in crashes if item["crash_id"] in valid_crash_ids]
+    finally:
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+
+
+def write_prompt(crash_id: str, crash_data_file: str | None = None) -> Path:
+    if crash_data_file:
+        fetch_step = (
+            f"The crash report has been pre-fetched and is available at: {crash_data_file}\n"
+            f"Read this file to get the crash data. Do not call script/sentry-fetch.\n"
+            f"\n"
+            f"1. Read the crash report from {crash_data_file}"
+        )
+    else:
+        fetch_step = f"1. Fetch crash data with: script/sentry-fetch {crash_id}"
+
+    prompt = f"""You are running the weekly background crash-fix MVP pipeline for crash {crash_id}.
+
+Required workflow:
+{fetch_step}
+2. Read and follow `.rules`.
+3. Follow .factory/prompts/crash/investigate.md and write ANALYSIS.md
+4. Follow .factory/prompts/crash/link-issues.md and write LINKED_ISSUES.md
+5. Follow .factory/prompts/crash/fix.md to implement a minimal fix with tests
+6. Run validators required by the fix prompt for the affected code paths
+7. Write PR_BODY.md with sections:
+   - Crash Summary
+   - Root Cause
+   - Fix
+   - Validation
+   - Potentially Related Issues (High/Medium/Low from LINKED_ISSUES.md)
+   - Reviewer Checklist
+   - Release Notes (final section, formatted as "Release Notes:", blank line, then one bullet like "- N/A" when not user-facing)
+
+Constraints:
+- Keep changes narrowly scoped to this crash.
+- If the crash is not solvable with available context, write a clear blocker summary to PR_BODY.md.
+"""
+
+    file_path = Path(tempfile.gettempdir()) / f"background-agent-{crash_id}.md"
+    file_path.write_text(prompt, encoding="utf-8")
+    return file_path
+
+
+def run_pipeline_for_crash(args, crash_id: str) -> dict:
+    branch = f"background-agent/mvp-{crash_id.lower()}-{datetime.utcnow().strftime('%Y%m%d')}"
+
+    if args.reset_branch:
+        run(["git", "fetch", "origin", "main"], check=False)
+        run(["git", "checkout", "-B", branch, "origin/main"])
+
+    prompt_file = write_prompt(crash_id)
+    try:
+        droid_command = [
+            args.droid_bin,
+            "exec",
+            "--auto",
+            "medium",
+            "-m",
+            args.model,
+            "-f",
+            str(prompt_file),
+        ]
+        completed = run(droid_command, check=False)
+
+        has_changes = run(["git", "diff", "--quiet"], check=False).returncode != 0
+        return {
+            "crash_id": crash_id,
+            "branch": branch,
+            "droid_exit_code": completed.returncode,
+            "has_changes": has_changes,
+        }
+    finally:
+        try:
+            prompt_file.unlink()
+        except OSError:
+            pass
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run local background-agent MVP dry-run workflow")
+    parser.add_argument("--crash-ids", help="Comma-separated crash IDs (e.g. ZED-4VS,ZED-123)")
+    parser.add_argument("--top", type=int, default=3, help="Top N crashes when --crash-ids is omitted (max 100)")
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=100,
+        help="Number of unresolved issues to consider for candidate selection",
+    )
+    parser.add_argument("--org", default="zed-dev", help="Sentry org slug")
+    parser.add_argument(
+        "--select-only",
+        action="store_true",
+        help="Resolve crash IDs and print them comma-separated, then exit. No agent execution.",
+    )
+    parser.add_argument(
+        "--prefetch-dir",
+        help="When used with --select-only, also fetch crash data via script/sentry-fetch "
+        "and save reports to DIR/crash-{ID}.md for each resolved ID.",
+    )
+    parser.add_argument("--model", default=os.environ.get("DROID_MODEL", "claude-opus-4-5-20251101"))
+    parser.add_argument("--droid-bin", default=os.environ.get("DROID_BIN", "droid"))
+    parser.add_argument(
+        "--reset-branch",
+        action="store_true",
+        help="For each crash, checkout a fresh local branch from origin/main",
+    )
+    args = parser.parse_args()
+
+    crashes = resolve_crashes(args)
+    if not crashes:
+        print("No crash IDs were selected.", file=sys.stderr)
+        return 1
+
+    crash_ids = [item["crash_id"] for item in crashes]
+
+    if args.select_only:
+        if args.prefetch_dir:
+            prefetch_crash_data(crashes, args.prefetch_dir)
+        print(",".join(crash_ids))
+        return 0
+
+    print(f"Running local dry-run for crashes: {', '.join(crash_ids)}")
+    results = [run_pipeline_for_crash(args, crash_id) for crash_id in crash_ids]
+
+    print("\nRun summary:")
+    for result in results:
+        print(
+            f"- {result['crash_id']}: droid_exit={result['droid_exit_code']} "
+            f"changes={result['has_changes']} branch={result['branch']}"
+        )
+
+    failures = [result for result in results if result["droid_exit_code"] != 0]
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

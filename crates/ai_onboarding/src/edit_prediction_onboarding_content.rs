@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use client::{Client, UserStore};
-use cloud_llm_client::{Plan, PlanV2};
+use cloud_api_types::Plan;
 use gpui::{Entity, IntoElement, ParentElement};
 use ui::prelude::*;
 
@@ -40,7 +40,7 @@ impl Render for EditPredictionOnboarding {
             .user_store
             .read(cx)
             .plan()
-            .is_some_and(|plan| plan == Plan::V2(PlanV2::ZedFree));
+            .is_some_and(|plan| plan == Plan::ZedFree);
 
         let github_copilot = v_flex()
             .gap_1()

@@ -11,7 +11,7 @@ use editor::actions::{
 use editor::code_context_menus::{CodeContextMenu, ContextMenuOrigin};
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Action, AnchoredPositionMode, ClickEvent, Context, Corner, ElementId, Entity, EventEmitter,
+    Action, Anchor, AnchoredPositionMode, ClickEvent, Context, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
     WeakEntity, Window, anchored, deferred, point,
 };
@@ -110,11 +110,16 @@ impl Render for QuickActionBar {
         };
 
         let supports_inlay_hints = editor.update(cx, |editor, cx| editor.supports_inlay_hints(cx));
+        let supports_semantic_tokens =
+            editor.update(cx, |editor, cx| editor.supports_semantic_tokens(cx));
+        let supports_code_lens = editor.update(cx, |editor, cx| editor.supports_code_lens(cx));
         let editor_value = editor.read(cx);
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
         let inline_values_enabled = editor_value.inline_values_enabled();
-        let supports_diagnostics = editor_value.mode().is_full();
+        let semantic_highlights_enabled = editor_value.semantic_highlights_enabled();
+        let code_lens_enabled = editor_value.code_lens_enabled();
+        let is_full = editor_value.mode().is_full();
         let diagnostics_enabled = editor_value.diagnostics_max_severity != DiagnosticSeverity::Off;
         let supports_inline_diagnostics = editor_value.inline_diagnostics_enabled();
         let inline_diagnostics_enabled = editor_value.show_inline_diagnostics();
@@ -128,7 +133,7 @@ impl Render for QuickActionBar {
             editor_value.edit_predictions_enabled_at_cursor(cx);
         let supports_minimap = editor_value.supports_minimap(cx);
         let minimap_enabled = supports_minimap && editor_value.minimap().is_some();
-        let has_available_code_actions = editor_value.has_available_code_actions();
+        let has_available_code_actions = editor_value.has_available_code_actions_for_selection();
         let code_action_enabled = editor_value.code_actions_enabled_for_toolbar(cx);
         let focus_handle = editor_value.focus_handle(cx);
 
@@ -164,7 +169,6 @@ impl Render for QuickActionBar {
         );
 
         let code_actions_dropdown = code_action_enabled.then(|| {
-            let focus = editor.focus_handle(cx);
             let is_deployed = {
                 let menu_ref = editor.read(cx).context_menu().borrow();
                 let code_action_menu = menu_ref
@@ -206,16 +210,18 @@ impl Render for QuickActionBar {
                             )
                         })
                         .on_click({
-                            let focus = focus;
+                            let editor = editor.clone();
                             move |_, window, cx| {
-                                focus.dispatch_action(
-                                    &ToggleCodeActions {
-                                        deployed_from: Some(CodeActionSource::QuickActionBar),
-                                        quick_launch: false,
-                                    },
-                                    window,
-                                    cx,
-                                );
+                                editor.update(cx, |editor, cx| {
+                                    editor.toggle_code_actions(
+                                        &ToggleCodeActions {
+                                            deployed_from: Some(CodeActionSource::QuickActionBar),
+                                            quick_launch: false,
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                })
                             }
                         }),
                 )
@@ -224,7 +230,7 @@ impl Render for QuickActionBar {
                         anchored()
                             .position_mode(AnchoredPositionMode::Local)
                             .position(point(px(20.), px(20.)))
-                            .anchor(Corner::TopRight)
+                            .anchor(Anchor::TopRight)
                             .child(menu),
                     )
                 }))
@@ -254,7 +260,7 @@ impl Render for QuickActionBar {
                     Tooltip::text("Selection Controls"),
                 )
                 .with_handle(self.toggle_selections_handle.clone())
-                .anchor(Corner::TopRight)
+                .anchor(Anchor::TopRight)
                 .menu(move |window, cx| {
                     let focus = focus.clone();
                     let menu = ContextMenu::build(window, cx, move |menu, _, _| {
@@ -326,7 +332,7 @@ impl Render for QuickActionBar {
                         .toggle_state(self.toggle_settings_handle.is_deployed()),
                     Tooltip::text("Editor Controls"),
                 )
-                .anchor(Corner::TopRight)
+                .anchor(Anchor::TopRight)
                 .with_handle(self.toggle_settings_handle.clone())
                 .menu(move |window, cx| {
                     let menu = ContextMenu::build(window, cx, {
@@ -378,6 +384,52 @@ impl Render for QuickActionBar {
                                 );
                             }
 
+                            if supports_semantic_tokens {
+                                menu = menu.toggleable_entry(
+                                    "Semantic Highlights",
+                                    semantic_highlights_enabled,
+                                    IconPosition::Start,
+                                    Some(editor::actions::ToggleSemanticHighlights.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_semantic_highlights(
+                                                        &editor::actions::ToggleSemanticHighlights,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    },
+                                );
+                            }
+
+                            if supports_code_lens {
+                                menu = menu.toggleable_entry(
+                                    "Code Lens",
+                                    code_lens_enabled,
+                                    IconPosition::Start,
+                                    Some(editor::actions::ToggleCodeLens.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_code_lens_action(
+                                                        &editor::actions::ToggleCodeLens,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    },
+                                );
+                            }
+
                             if supports_minimap {
                                 menu = menu.toggleable_entry("Minimap", minimap_enabled, IconPosition::Start, Some(editor::actions::ToggleMinimap.boxed_clone()), {
                                     let editor = editor.clone();
@@ -426,7 +478,7 @@ impl Render for QuickActionBar {
 
                             menu = menu.separator();
 
-                            if supports_diagnostics {
+                            if is_full {
                                 menu = menu.toggleable_entry(
                                     "Diagnostics",
                                     diagnostics_enabled,
@@ -699,26 +751,36 @@ impl ToolbarItemView for QuickActionBar {
             self._inlay_hints_enabled_subscription.take();
 
             if let Some(editor) = active_item.downcast::<Editor>() {
-                let (mut inlay_hints_enabled, mut supports_inlay_hints) =
-                    editor.update(cx, |editor, cx| {
-                        (
-                            editor.inlay_hints_enabled(),
-                            editor.supports_inlay_hints(cx),
-                        )
-                    });
+                let (
+                    mut inlay_hints_enabled,
+                    mut supports_inlay_hints,
+                    mut supports_semantic_tokens,
+                ) = editor.update(cx, |editor, cx| {
+                    (
+                        editor.inlay_hints_enabled(),
+                        editor.supports_inlay_hints(cx),
+                        editor.supports_semantic_tokens(cx),
+                    )
+                });
                 self._inlay_hints_enabled_subscription =
                     Some(cx.observe(&editor, move |_, editor, cx| {
-                        let (new_inlay_hints_enabled, new_supports_inlay_hints) =
-                            editor.update(cx, |editor, cx| {
-                                (
-                                    editor.inlay_hints_enabled(),
-                                    editor.supports_inlay_hints(cx),
-                                )
-                            });
+                        let (
+                            new_inlay_hints_enabled,
+                            new_supports_inlay_hints,
+                            new_supports_semantic_tokens,
+                        ) = editor.update(cx, |editor, cx| {
+                            (
+                                editor.inlay_hints_enabled(),
+                                editor.supports_inlay_hints(cx),
+                                editor.supports_semantic_tokens(cx),
+                            )
+                        });
                         let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
-                            || supports_inlay_hints != new_supports_inlay_hints;
+                            || supports_inlay_hints != new_supports_inlay_hints
+                            || supports_semantic_tokens != new_supports_semantic_tokens;
                         inlay_hints_enabled = new_inlay_hints_enabled;
                         supports_inlay_hints = new_supports_inlay_hints;
+                        supports_semantic_tokens = new_supports_semantic_tokens;
                         if should_notify {
                             cx.notify()
                         }

@@ -1,3 +1,8 @@
+---
+title: Markdown
+description: "Configure Markdown language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Markdown
 
 Markdown support is available natively in Zed.
@@ -23,7 +28,9 @@ def fib(n):
 
 ### Format
 
-Zed supports using Prettier to automatically re-format Markdown documents. You can trigger this manually via the {#action editor::Format} action or via the {#kb editor::Format} keyboard shortcut. Alternately, you can automatically format by enabling [`format_on_save`](../reference/all-settings.md#format-on-save) in your settings.json:
+Zed supports using Prettier to automatically re-format Markdown documents. You can trigger this manually via the {#action editor::Format} action or via the {#kb editor::Format} keyboard shortcut. Alternately, you can enable format on save.
+
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > Markdown, or add to your settings file:
 
 ```json [settings]
   "languages": {
@@ -43,7 +50,7 @@ Zed automatically continues lists when you press Enter at the end of a list item
 
 Pressing Enter on an empty list item removes the marker and exits the list.
 
-To disable this behavior:
+To disable this behavior, configure in Settings ({#kb zed::OpenSettings}) under Languages > Markdown, or add to your settings file:
 
 ```json [settings]
   "languages": {
@@ -57,7 +64,7 @@ To disable this behavior:
 
 Zed indents list items when you press Tab while the cursor is on a line containing only a list marker. This allows you to quickly create nested lists.
 
-To disable this behavior:
+To disable this behavior, configure in Settings ({#kb zed::OpenSettings}) under Languages > Markdown, or add to your settings file:
 
 ```json [settings]
   "languages": {
@@ -69,7 +76,9 @@ To disable this behavior:
 
 ### Trailing Whitespace
 
-By default Zed will remove trailing whitespace on save. If you rely on invisible trailing whitespace being converted to `<br />` in Markdown files you can disable this behavior with:
+By default Zed will remove trailing whitespace on save. If you rely on invisible trailing whitespace being converted to `<br />` in Markdown files you can disable this behavior.
+
+Configure in Settings ({#kb zed::OpenSettings}) under Languages > Markdown, or add to your settings file:
 
 ```json [settings]
   "languages": {
