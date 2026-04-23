@@ -16,10 +16,10 @@ pub use uuid;
 
 pub use release_channel::RELEASE_CHANNEL;
 use release_channel::ReleaseChannel;
+use smol::lock::Mutex;
 use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
-use smol::lock::Mutex;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -141,6 +141,23 @@ const DB_FILE_NAME: &str = "db.sqlite";
 
 pub static ALL_FILE_DB_FAILED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
+/// Directories that `recover_corrupt_db` renamed aside this process's lifetime.
+/// Append-only; one entry per successful recovery. Read via [`recovered_db_backups`].
+static RECOVERED_DB_BACKUPS: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Serializes concurrent recovery attempts so simultaneous callers (e.g. multiple
+/// domain initializations during startup) only produce one backup dir per scope.
+static RECOVERY_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+/// Returns every directory that has been renamed aside by corrupt-database
+/// recovery during this process's lifetime. Empty when no recovery ran.
+pub fn recovered_db_backups() -> Vec<PathBuf> {
+    RECOVERED_DB_BACKUPS
+        .lock()
+        .map(|guard| guard.clone())
+        .unwrap_or_default()
+}
+
 /// A type that can be used as a database scope for path construction.
 pub trait DbScope {
     fn scope_name(&self) -> &str;
@@ -236,6 +253,9 @@ async fn recover_corrupt_db<M: Migrator>(
     let db_dir = scope_dir.parent()?;
     let timestamp_millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
+        .inspect_err(|err| {
+            log::warn!("Skipping database recovery: system clock is before UNIX_EPOCH ({err})")
+        })
         .ok()?
         .as_millis();
     let backup_dir = db_dir.join(format!("{timestamp_millis}-{scope_name}"));
@@ -255,10 +275,12 @@ async fn recover_corrupt_db<M: Migrator>(
         .context("Could not recreate database directory after backup")
         .log_err()?;
 
-    open_main_db::<M>(db_path).await
+    let connection = open_main_db::<M>(db_path).await?;
+    if let Ok(mut backups) = RECOVERED_DB_BACKUPS.lock() {
+        backups.push(backup_dir);
+    }
+    Some(connection)
 }
-
-static RECOVERY_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 async fn open_fallback_db<M: Migrator>() -> ThreadSafeConnection {
     log::warn!("Opening fallback in-memory database");
@@ -523,6 +545,13 @@ mod tests {
         assert!(
             scope_dirs.iter().any(|n| n != "0-dev" && n.ends_with("-dev")),
             "expected a timestamped backup directory, got {scope_dirs:?}"
+        );
+
+        let backups = crate::recovered_db_backups();
+        assert!(
+            backups.iter().any(|p| p.starts_with(tempdir.path())),
+            "recovery should publish a backup path under {:?}, got {backups:?}",
+            tempdir.path(),
         );
     }
 
