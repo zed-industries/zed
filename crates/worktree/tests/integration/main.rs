@@ -2845,7 +2845,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
 }
 
 #[gpui::test]
-async fn test_repo_exclude_in_worktree( executor: BackgroundExecutor, cx: &mut TestAppContext) {
+async fn test_repo_exclude_in_worktree(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
 
     let fs = FakeFs::new(executor);
