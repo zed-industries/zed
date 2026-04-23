@@ -2718,11 +2718,17 @@ impl ConversationView {
 
     /// Inserts the selected text into the message editor or the message being
     /// edited, if any.
-    pub(crate) fn insert_selections(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn insert_selections(
+        &self,
+        editor_selections: Vec<(Entity<Buffer>, std::ops::Range<text::Anchor>)>,
+        terminal_selections: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(active_thread) = self.active_thread() {
             active_thread.update(cx, |thread, cx| {
                 thread.active_editor(cx).update(cx, |editor, cx| {
-                    editor.insert_selections(window, cx);
+                    editor.insert_selections(editor_selections, terminal_selections, window, cx);
                 })
             });
         }
@@ -5772,7 +5778,10 @@ pub(crate) mod tests {
                     .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
-            view.insert_selections(window, cx);
+            let workspace = view.workspace.upgrade().unwrap();
+            let (editor_selections, terminal_selections) =
+                crate::completion_provider::gather_focused_content(None, &workspace, cx);
+            view.insert_selections(editor_selections, terminal_selections, window, cx);
         });
 
         user_message_editor.read_with(cx, |editor, cx| {
@@ -5835,7 +5844,10 @@ pub(crate) mod tests {
                     .and_then(|active| active.read(cx).editing_message),
                 None
             );
-            view.insert_selections(window, cx);
+            let workspace = view.workspace.upgrade().unwrap();
+            let (editor_selections, terminal_selections) =
+                crate::completion_provider::gather_focused_content(None, &workspace, cx);
+            view.insert_selections(editor_selections, terminal_selections, window, cx);
         });
 
         message_editor.read_with(cx, |editor, cx| {

@@ -1375,7 +1375,13 @@ impl MessageEditor {
             .detach_and_log_err(cx);
     }
 
-    pub fn insert_selections(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn insert_selections(
+        &mut self,
+        editor_selections: Vec<(Entity<Buffer>, Range<text::Anchor>)>,
+        terminal_selections: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let editor = self.editor.read(cx);
         let editor_buffer = editor.buffer().read(cx);
         let Some(buffer) = editor_buffer.as_singleton() else {
@@ -1386,16 +1392,14 @@ impl MessageEditor {
         let anchor = buffer.update(cx, |buffer, _cx| {
             buffer.anchor_before(cursor_offset.0.min(buffer.len()))
         });
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
         let Some(completion) =
             PromptCompletionProvider::<MessageEditorCompletionDelegate>::completion_for_action(
                 PromptContextAction::AddSelections,
                 anchor..anchor,
                 self.editor.downgrade(),
                 self.mention_set.downgrade(),
-                &workspace,
+                editor_selections,
+                terminal_selections,
                 cx,
             )
         else {
@@ -3659,7 +3663,10 @@ mod tests {
         // confirm that, after the insertion, the cursor is now in the visible
         // range.
         message_editor.update_in(&mut cx, |message_editor, window, cx| {
-            message_editor.insert_selections(window, cx);
+            let workspace = message_editor.workspace.upgrade().unwrap();
+            let (editor_selections, terminal_selections) =
+                crate::completion_provider::gather_focused_content(None, &workspace, cx);
+            message_editor.insert_selections(editor_selections, terminal_selections, window, cx);
         });
 
         cx.run_until_parked();
