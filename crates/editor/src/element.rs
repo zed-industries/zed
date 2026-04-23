@@ -895,7 +895,8 @@ impl EditorElement {
             let hitbox = &position_map.gutter_hitbox;
 
             if event.position.x <= hitbox.bounds.right() - gutter_right_padding
-                && editor.collaboration_hub.is_none()
+                // Don't show the gutter_context_menu in collab notes
+                && editor.project.is_some()
             {
                 let point_for_position = position_map.point_for_position(event.position);
                 editor.set_gutter_context_menu(
@@ -1394,7 +1395,7 @@ impl EditorElement {
             indicator.is_active && start_row == valid_point.row()
         });
 
-        let breakpoint_indicator = if gutter_hovered
+        let gutter_hover_button = if gutter_hovered
             && !is_on_diff_review_button_row
             && split_side != Some(SplitSide::Left)
         {
@@ -1444,8 +1445,8 @@ impl EditorElement {
             None
         };
 
-        if &breakpoint_indicator != &editor.gutter_hover_button.0 {
-            editor.gutter_hover_button.0 = breakpoint_indicator;
+        if &gutter_hover_button != &editor.gutter_hover_button.0 {
+            editor.gutter_hover_button.0 = gutter_hover_button;
             cx.notify();
         }
 
