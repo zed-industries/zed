@@ -9255,9 +9255,9 @@ impl Editor {
             }))
             .tooltip(move |_window, cx| {
                 Tooltip::with_meta_in(
-                    "Remove bookmark",
+                    "Remove Bookmark",
                     Some(&ToggleBookmark),
-                    SharedString::from("Right-click for more options."),
+                    SharedString::from("Right-click for more options"),
                     &focus_handle,
                     cx,
                 )
@@ -9549,10 +9549,10 @@ impl Editor {
             SharedString::from("No executable code is associated with this line.")
         } else if !breakpoint.is_disabled() {
             SharedString::from(format!(
-                "{alt_as_text}click to disable,\nright-click for more options."
+                "{alt_as_text}-click to disable\nright-click for more options"
             ))
         } else {
-            SharedString::from("Right-click for more options.")
+            SharedString::from("Right-click for more options")
         };
         IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
             .icon_size(IconSize::XSmall)
@@ -9637,10 +9637,10 @@ impl Editor {
                 };
                 match self {
                     Intent::SetBookmark => format!(
-                        "{alt_as_text}click to add a breakpoint,\nright-click for more options."
+                        "{alt_as_text}-click to add a breakpoint\nright-click for more options"
                     ),
                     Intent::SetBreakpoint => format!(
-                        "{alt_as_text}click to add a bookmark,\nright-click for more options."
+                        "{alt_as_text}-click to add a bookmark\nright-click for more options"
                     ),
                 }
             }
