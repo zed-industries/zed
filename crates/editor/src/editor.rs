@@ -9543,6 +9543,7 @@ impl Editor {
         };
         let primary_action_text = "Unset breakpoint";
         let focus_handle = self.focus_handle.clone();
+        let has_context_menu = self.has_mouse_context_menu();
 
         let meta = if is_rejected {
             SharedString::from("No executable code is associated with this line.")
@@ -9581,14 +9582,16 @@ impl Editor {
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
                 editor.set_gutter_context_menu(row, Some(position), event.position(), window, cx);
             }))
-            .tooltip(move |_window, cx| {
-                Tooltip::with_meta_in(
-                    primary_action_text,
-                    Some(&ToggleBreakpoint),
-                    meta.clone(),
-                    &focus_handle,
-                    cx,
-                )
+            .when(!has_context_menu, |button| {
+                button.tooltip(move |_window, cx| {
+                    Tooltip::with_meta_in(
+                        primary_action_text,
+                        Some(&ToggleBreakpoint),
+                        meta.clone(),
+                        &focus_handle,
+                        cx,
+                    )
+                })
             })
     }
 
@@ -9664,6 +9667,7 @@ impl Editor {
         };
 
         let focus_handle = self.focus_handle.clone();
+        let has_context_menu = self.has_mouse_context_menu();
         IconButton::new(("add_breakpoint_button", row.0 as usize), intent.icon())
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
@@ -9692,14 +9696,16 @@ impl Editor {
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
                 editor.set_gutter_context_menu(row, Some(position), event.position(), window, cx);
             }))
-            .tooltip(move |_window, cx| {
-                Tooltip::with_meta_in(
-                    intent.as_str(),
-                    Some(&ToggleBreakpoint),
-                    intent.secondary_and_options(),
-                    &focus_handle,
-                    cx,
-                )
+            .when(!has_context_menu, |button| {
+                button.tooltip(move |_window, cx| {
+                    Tooltip::with_meta_in(
+                        intent.as_str(),
+                        Some(&ToggleBreakpoint),
+                        intent.secondary_and_options(),
+                        &focus_handle,
+                        cx,
+                    )
+                })
             })
     }
 
