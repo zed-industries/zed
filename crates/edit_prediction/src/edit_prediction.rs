@@ -2748,6 +2748,10 @@ impl EditPredictionStore {
     }
 
     pub(crate) fn is_data_collection_enabled(&self, cx: &App) -> bool {
+        if !self.is_data_collection_allowed_by_organization(cx) {
+            return false;
+        }
+
         if cx.is_staff() {
             return true;
         }
@@ -2769,6 +2773,15 @@ impl EditPredictionStore {
                     == Some("true")
             }
         }
+    }
+
+    pub(crate) fn is_data_collection_allowed_by_organization(&self, cx: &App) -> bool {
+        self.user_store
+            .read(cx)
+            .current_organization_configuration()
+            .is_none_or(|organization_configuration| {
+                organization_configuration.edit_prediction.is_feedback_enabled
+            })
     }
 
     pub fn shown_predictions(&self) -> impl DoubleEndedIterator<Item = &EditPrediction> {

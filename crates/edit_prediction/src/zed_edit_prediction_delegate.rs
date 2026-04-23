@@ -77,23 +77,6 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                     .read(cx)
                     .is_file_open_source(&self.project, file, cx);
 
-            if let Some(organization_configuration) = self
-                .store
-                .read(cx)
-                .user_store
-                .read(cx)
-                .current_organization_configuration()
-            {
-                if !organization_configuration
-                    .edit_prediction
-                    .is_feedback_enabled
-                {
-                    return DataCollectionState::Disabled {
-                        is_project_open_source,
-                    };
-                }
-            }
-
             if self.store.read(cx).is_data_collection_enabled(cx) {
                 DataCollectionState::Enabled {
                     is_project_open_source,
@@ -115,22 +98,9 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
             return false;
         }
 
-        if let Some(organization_configuration) = self
-            .store
+        self.store
             .read(cx)
-            .user_store
-            .read(cx)
-            .current_organization_configuration()
-        {
-            if !organization_configuration
-                .edit_prediction
-                .is_feedback_enabled
-            {
-                return false;
-            }
-        }
-
-        true
+            .is_data_collection_allowed_by_organization(cx)
     }
 
     fn toggle_data_collection(&mut self, cx: &mut App) {
