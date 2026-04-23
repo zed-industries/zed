@@ -1,26 +1,26 @@
 use std::{fmt, ops::Not as _, rc::Rc};
 
-use futures::StreamExt;
 use itertools::Itertools as _;
 
 use crate::{
-    git::{AutomatedChangeKind, CommitDetails, CommitList, ZED_ZIPPY_LOGIN},
+    git::{CommitDetails, CommitList, ZED_ZIPPY_LOGIN},
     github::{
-        Approvable, CommitAuthor, CommitFileChange, CommitMetadata, GithubApiClient, GithubLogin,
-        PullRequestComment, PullRequestData, PullRequestReview, Repository, ReviewState,
+        Approvable, CommitAuthor, GithubApiClient, GithubLogin, PullRequestComment,
+        PullRequestData, PullRequestReview, Repository, ReviewState,
     },
-    report::{Report, ReportEntry},
+    report::Report,
 };
 
 const ZED_ZIPPY_COMMENT_APPROVAL_PATTERN: &str = "@zed-zippy approve";
 const ZED_ZIPPY_GROUP_APPROVAL: &str = "@zed-industries/approved";
+const EXPECTED_VERSION_BUMP_LOC: u64 = 2;
 
 #[derive(Debug)]
 pub enum ReviewSuccess {
     ApprovingComment(Vec<PullRequestComment>),
     CoAuthored(Vec<CommitAuthor>),
     PullRequestReviewed(Vec<PullRequestReview>),
-    ZedZippyCommit(AutomatedChangeKind, GithubLogin),
+    ZedZippyCommit(GithubLogin),
 }
 
 impl ReviewSuccess {
@@ -36,7 +36,7 @@ impl ReviewSuccess {
                 .iter()
                 .map(|comment| format!("@{}", comment.user.login))
                 .collect_vec(),
-            Self::ZedZippyCommit(_, login) => vec![login.to_string()],
+            Self::ZedZippyCommit(login) => vec![login.to_string()],
         };
 
         let reviewers = reviewers.into_iter().unique().collect_vec();
@@ -59,8 +59,8 @@ impl fmt::Display for ReviewSuccess {
             Self::ApprovingComment(_) => {
                 formatter.write_str("Approved by an organization approval comment")
             }
-            Self::ZedZippyCommit(kind, _) => {
-                write!(formatter, "Fully untampered automated {kind}")
+            Self::ZedZippyCommit(_) => {
+                formatter.write_str("Fully untampered automated version bump commit")
             }
         }
     }
@@ -71,7 +71,7 @@ pub enum ReviewFailure {
     // todo: We could still query the GitHub API here to search for one
     NoPullRequestFound,
     Unreviewed,
-    UnexpectedZippyAction(AutomatedChangeFailure),
+    UnexpectedZippyAction(VersionBumpFailure),
     Other(anyhow::Error),
 }
 
@@ -90,25 +90,17 @@ impl fmt::Display for ReviewFailure {
 }
 
 #[derive(Debug)]
-pub enum AutomatedChangeFailure {
+pub enum VersionBumpFailure {
     NoMentionInTitle,
     MissingCommitData,
     AuthorMismatch,
     UnexpectedCoAuthors,
     NotSigned,
     InvalidSignature,
-    UnexpectedLineChanges {
-        kind: AutomatedChangeKind,
-        additions: u64,
-        deletions: u64,
-    },
-    UnexpectedFiles {
-        kind: AutomatedChangeKind,
-        found: Vec<String>,
-    },
+    UnexpectedLineChanges { additions: u64, deletions: u64 },
 }
 
-impl fmt::Display for AutomatedChangeFailure {
+impl fmt::Display for VersionBumpFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoMentionInTitle => formatter.write_str("No @-mention found in commit title"),
@@ -120,59 +112,16 @@ impl fmt::Display for AutomatedChangeFailure {
             Self::NotSigned => formatter.write_str("Commit is not signed"),
             Self::InvalidSignature => formatter.write_str("Commit signature is invalid"),
             Self::UnexpectedLineChanges {
-                kind,
                 additions,
                 deletions,
             } => {
                 write!(
                     formatter,
-                    "Unexpected line changes for {kind} \
-                     ({additions} additions, {deletions} deletions, \
-                     expected {} each)",
-                    kind.expected_loc()
-                )
-            }
-            Self::UnexpectedFiles { kind, found } => {
-                let expected = kind.expected_files().join(", ");
-                let actual = found.join(", ");
-                write!(
-                    formatter,
-                    "Unexpected files changed for {kind} \
-                     (expected [{expected}], found [{actual}])"
+                    "Unexpected line changes ({additions} additions, {deletions} deletions, \
+                     expected {EXPECTED_VERSION_BUMP_LOC} each)"
                 )
             }
         }
-    }
-}
-
-impl AutomatedChangeKind {
-    fn validate_changes(
-        self,
-        metadata: &CommitMetadata,
-        files: &[CommitFileChange],
-    ) -> Result<(), AutomatedChangeFailure> {
-        let expected_loc = self.expected_loc();
-        if metadata.additions() != expected_loc || metadata.deletions() != expected_loc {
-            return Err(AutomatedChangeFailure::UnexpectedLineChanges {
-                kind: self,
-                additions: metadata.additions(),
-                deletions: metadata.deletions(),
-            });
-        }
-
-        let files_differ = files.len() != self.expected_files().len()
-            || files
-                .iter()
-                .any(|f| self.expected_files().contains(&f.filename.as_str()).not());
-
-        if files_differ {
-            return Err(AutomatedChangeFailure::UnexpectedFiles {
-                kind: self,
-                found: files.into_iter().map(|f| f.filename.clone()).collect(),
-            });
-        }
-
-        Ok(())
     }
 }
 
@@ -213,7 +162,7 @@ impl Reporter {
     ) -> Result<ReviewSuccess, ReviewFailure> {
         let Some(pr_number) = commit.pr_number() else {
             if commit.author().is_zed_zippy() {
-                return self.check_zippy_automated_change(commit).await;
+                return self.check_zippy_version_bump(commit).await;
             } else {
                 return Err(ReviewFailure::NoPullRequestFound);
             }
@@ -245,15 +194,15 @@ impl Reporter {
         Err(ReviewFailure::Unreviewed)
     }
 
-    async fn check_zippy_automated_change(
+    async fn check_zippy_version_bump(
         &self,
         commit: &CommitDetails,
     ) -> Result<ReviewSuccess, ReviewFailure> {
-        let (change_kind, responsible_actor) =
+        let responsible_actor =
             commit
-                .detect_automated_change()
+                .version_bump_mention()
                 .ok_or(ReviewFailure::UnexpectedZippyAction(
-                    AutomatedChangeFailure::NoMentionInTitle,
+                    VersionBumpFailure::NoMentionInTitle,
                 ))?;
 
         let commit_data = self
@@ -261,54 +210,54 @@ impl Reporter {
             .get_commit_metadata(&Repository::ZED, &[commit.sha()])
             .await?;
 
-        let metadata =
-            commit_data
-                .get(commit.sha())
-                .ok_or(ReviewFailure::UnexpectedZippyAction(
-                    AutomatedChangeFailure::MissingCommitData,
-                ))?;
+        let authors = commit_data
+            .get(commit.sha())
+            .ok_or(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::MissingCommitData,
+            ))?;
 
-        if !metadata
+        if !authors
             .primary_author()
             .user()
             .is_some_and(|login| login.as_str() == ZED_ZIPPY_LOGIN)
         {
             return Err(ReviewFailure::UnexpectedZippyAction(
-                AutomatedChangeFailure::AuthorMismatch,
+                VersionBumpFailure::AuthorMismatch,
             ));
         }
 
-        if metadata.co_authors().is_some() {
+        if authors.co_authors().is_some() {
             return Err(ReviewFailure::UnexpectedZippyAction(
-                AutomatedChangeFailure::UnexpectedCoAuthors,
+                VersionBumpFailure::UnexpectedCoAuthors,
             ));
         }
 
-        let signature = metadata
+        let signature = authors
             .signature()
             .ok_or(ReviewFailure::UnexpectedZippyAction(
-                AutomatedChangeFailure::NotSigned,
+                VersionBumpFailure::NotSigned,
             ))?;
 
         if !signature.is_valid() {
             return Err(ReviewFailure::UnexpectedZippyAction(
-                AutomatedChangeFailure::InvalidSignature,
+                VersionBumpFailure::InvalidSignature,
             ));
         }
 
-        let files = self
-            .github_client
-            .get_commit_files(&Repository::ZED, commit.sha())
-            .await?;
+        if authors.additions() != EXPECTED_VERSION_BUMP_LOC
+            || authors.deletions() != EXPECTED_VERSION_BUMP_LOC
+        {
+            return Err(ReviewFailure::UnexpectedZippyAction(
+                VersionBumpFailure::UnexpectedLineChanges {
+                    additions: authors.additions(),
+                    deletions: authors.deletions(),
+                },
+            ));
+        }
 
-        change_kind
-            .validate_changes(metadata, &files)
-            .map_err(ReviewFailure::UnexpectedZippyAction)?;
-
-        Ok(ReviewSuccess::ZedZippyCommit(
-            change_kind,
-            GithubLogin::new(responsible_actor.to_owned()),
-        ))
+        Ok(ReviewSuccess::ZedZippyCommit(GithubLogin::new(
+            responsible_actor.to_owned(),
+        )))
     }
 
     async fn check_commit_co_authors(
@@ -410,37 +359,30 @@ impl Reporter {
         body.contains(ZED_ZIPPY_COMMENT_APPROVAL_PATTERN) || body.contains(ZED_ZIPPY_GROUP_APPROVAL)
     }
 
-    pub async fn generate_report(mut self, max_concurrent_checks: usize) -> Report {
+    pub async fn generate_report(mut self) -> anyhow::Result<Report> {
+        let mut report = Report::new();
+
         let commits_to_check = std::mem::take(&mut self.commits);
         let total_commits = commits_to_check.len();
 
-        let reports = futures::stream::iter(commits_to_check.into_iter().enumerate().map(
-            async |(i, commit)| {
-                println!(
-                    "Checking commit {:?} ({current}/{total})",
-                    commit.sha().short(),
-                    current = i + 1,
-                    total = total_commits
-                );
+        for (i, commit) in commits_to_check.into_iter().enumerate() {
+            println!(
+                "Checking commit {:?} ({current}/{total})",
+                commit.sha().short(),
+                current = i + 1,
+                total = total_commits
+            );
 
-                let review_result = self.check_commit(&commit).await;
+            let review_result = self.check_commit(&commit).await;
 
-                if let Err(err) = &review_result {
-                    println!("Commit {:?} failed review: {:?}", commit.sha().short(), err);
-                }
+            if let Err(err) = &review_result {
+                println!("Commit {:?} failed review: {:?}", commit.sha().short(), err);
+            }
 
-                (commit, review_result)
-            },
-        ))
-        .buffered(max_concurrent_checks)
-        .collect::<Vec<_>>()
-        .await;
+            report.add(commit, review_result);
+        }
 
-        Report::from_entries(
-            reports
-                .into_iter()
-                .map(|(commit, result)| ReportEntry::new(commit, result)),
-        )
+        Ok(report)
     }
 }
 
@@ -449,23 +391,19 @@ mod tests {
     use std::rc::Rc;
     use std::str::FromStr;
 
-    use crate::git::{
-        AutomatedChangeKind, CommitDetails, CommitList, CommitSha, ZED_ZIPPY_EMAIL, ZED_ZIPPY_LOGIN,
-    };
+    use crate::git::{CommitDetails, CommitList, CommitSha, ZED_ZIPPY_EMAIL, ZED_ZIPPY_LOGIN};
     use crate::github::{
-        AuthorAssociation, CommitFileChange, CommitMetadataBySha, GithubApiClient, GithubLogin,
-        GithubUser, PullRequestComment, PullRequestData, PullRequestReview, Repository,
-        ReviewState,
+        AuthorAssociation, CommitMetadataBySha, GithubApiClient, GithubLogin, GithubUser,
+        PullRequestComment, PullRequestData, PullRequestReview, Repository, ReviewState,
     };
 
-    use super::{AutomatedChangeFailure, Reporter, ReviewFailure, ReviewSuccess};
+    use super::{Reporter, ReviewFailure, ReviewSuccess, VersionBumpFailure};
 
     struct MockGithubApi {
         pull_request: PullRequestData,
         reviews: Vec<PullRequestReview>,
         comments: Vec<PullRequestComment>,
         commit_metadata_json: serde_json::Value,
-        commit_files: Vec<CommitFileChange>,
         org_members: Vec<String>,
     }
 
@@ -501,14 +439,6 @@ mod tests {
             _commit_shas: &[&CommitSha],
         ) -> anyhow::Result<CommitMetadataBySha> {
             serde_json::from_value(self.commit_metadata_json.clone()).map_err(Into::into)
-        }
-
-        async fn get_commit_files(
-            &self,
-            _repo: &Repository<'_>,
-            _sha: &CommitSha,
-        ) -> anyhow::Result<Vec<CommitFileChange>> {
-            Ok(self.commit_files.clone())
         }
 
         async fn check_repo_write_permission(
@@ -616,7 +546,6 @@ mod tests {
         reviews: Vec<PullRequestReview>,
         comments: Vec<PullRequestComment>,
         commit_metadata_json: serde_json::Value,
-        commit_files: Vec<CommitFileChange>,
         org_members: Vec<String>,
         commit: CommitDetails,
     }
@@ -635,7 +564,6 @@ mod tests {
                 reviews: vec![],
                 comments: vec![],
                 commit_metadata_json: serde_json::json!({}),
-                commit_files: vec![],
                 org_members: vec![],
                 commit: make_commit(
                     "abc12345abc12345",
@@ -672,16 +600,6 @@ mod tests {
             self
         }
 
-        fn with_commit_files(mut self, filenames: Vec<&str>) -> Self {
-            self.commit_files = filenames
-                .into_iter()
-                .map(|f| CommitFileChange {
-                    filename: f.to_owned(),
-                })
-                .collect();
-            self
-        }
-
         fn zippy_version_bump() -> Self {
             Self {
                 pull_request: PullRequestData {
@@ -704,14 +622,6 @@ mod tests {
                         "deletions": 2
                     }
                 }),
-                commit_files: vec![
-                    CommitFileChange {
-                        filename: "Cargo.lock".to_owned(),
-                    },
-                    CommitFileChange {
-                        filename: "crates/zed/Cargo.toml".to_owned(),
-                    },
-                ],
                 org_members: vec![],
                 commit: make_commit(
                     "abc12345abc12345",
@@ -723,49 +633,12 @@ mod tests {
             }
         }
 
-        fn zippy_release_channel_update() -> Self {
-            Self {
-                pull_request: PullRequestData {
-                    number: 0,
-                    user: None,
-                    merged_by: None,
-                    labels: None,
-                },
-                reviews: vec![],
-                comments: vec![],
-                commit_metadata_json: serde_json::json!({
-                    "abc12345abc12345": {
-                        "author": zippy_author(),
-                        "authors": { "nodes": [] },
-                        "signature": {
-                            "isValid": true,
-                            "signer": { "login": ZED_ZIPPY_LOGIN }
-                        },
-                        "additions": 1,
-                        "deletions": 1
-                    }
-                }),
-                commit_files: vec![CommitFileChange {
-                    filename: "crates/zed/RELEASE_CHANNEL".to_owned(),
-                }],
-                org_members: vec![],
-                commit: make_commit(
-                    "abc12345abc12345",
-                    "Zed Zippy",
-                    ZED_ZIPPY_EMAIL,
-                    "v0.233.x stable for @cole-miller",
-                    "",
-                ),
-            }
-        }
-
         async fn run_scenario(self) -> Result<ReviewSuccess, ReviewFailure> {
             let mock = MockGithubApi {
                 pull_request: self.pull_request,
                 reviews: self.reviews,
                 comments: self.comments,
                 commit_metadata_json: self.commit_metadata_json,
-                commit_files: self.commit_files,
                 org_members: self.org_members,
             };
             let client = Rc::new(mock);
@@ -1028,14 +901,8 @@ mod tests {
     #[tokio::test]
     async fn zippy_version_bump_with_valid_signature_succeeds() {
         let result = TestScenario::zippy_version_bump().run_scenario().await;
-        assert!(matches!(
-            result,
-            Ok(ReviewSuccess::ZedZippyCommit(
-                AutomatedChangeKind::VersionBump,
-                _
-            ))
-        ));
-        if let Ok(ReviewSuccess::ZedZippyCommit(_, login)) = &result {
+        assert!(matches!(result, Ok(ReviewSuccess::ZedZippyCommit(_))));
+        if let Ok(ReviewSuccess::ZedZippyCommit(login)) = &result {
             assert_eq!(login.as_str(), "cole-miller");
         }
     }
@@ -1055,7 +922,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(ReviewFailure::UnexpectedZippyAction(
-                AutomatedChangeFailure::NoMentionInTitle
+                VersionBumpFailure::NoMentionInTitle
             ))
         ));
     }
@@ -1076,7 +943,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(ReviewFailure::UnexpectedZippyAction(
-                AutomatedChangeFailure::NotSigned
+                VersionBumpFailure::NotSigned
             ))
         ));
     }
@@ -1101,7 +968,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(ReviewFailure::UnexpectedZippyAction(
-                AutomatedChangeFailure::InvalidSignature
+                VersionBumpFailure::InvalidSignature
             ))
         ));
     }
@@ -1126,7 +993,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(ReviewFailure::UnexpectedZippyAction(
-                AutomatedChangeFailure::UnexpectedLineChanges { .. }
+                VersionBumpFailure::UnexpectedLineChanges { .. }
             ))
         ));
     }
@@ -1151,7 +1018,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(ReviewFailure::UnexpectedZippyAction(
-                AutomatedChangeFailure::AuthorMismatch
+                VersionBumpFailure::AuthorMismatch
             ))
         ));
     }
@@ -1176,40 +1043,9 @@ mod tests {
         assert!(matches!(
             result,
             Err(ReviewFailure::UnexpectedZippyAction(
-                AutomatedChangeFailure::UnexpectedCoAuthors
+                VersionBumpFailure::UnexpectedCoAuthors
             ))
         ));
-    }
-
-    #[tokio::test]
-    async fn zippy_version_bump_with_wrong_files_fails() {
-        let result = TestScenario::zippy_version_bump()
-            .with_commit_files(vec!["crates/zed/RELEASE_CHANNEL"])
-            .run_scenario()
-            .await;
-        assert!(matches!(
-            result,
-            Err(ReviewFailure::UnexpectedZippyAction(
-                AutomatedChangeFailure::UnexpectedFiles { .. }
-            ))
-        ));
-    }
-
-    #[tokio::test]
-    async fn zippy_release_channel_update_succeeds() {
-        let result = TestScenario::zippy_release_channel_update()
-            .run_scenario()
-            .await;
-        assert!(matches!(
-            result,
-            Ok(ReviewSuccess::ZedZippyCommit(
-                AutomatedChangeKind::ReleaseChannelUpdate,
-                _
-            ))
-        ));
-        if let Ok(ReviewSuccess::ZedZippyCommit(_, login)) = &result {
-            assert_eq!(login.as_str(), "cole-miller");
-        }
     }
 
     #[tokio::test]

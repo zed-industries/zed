@@ -5,7 +5,7 @@ use edit_prediction::{
     open_ai_compatible::{open_ai_compatible_api_token, open_ai_compatible_api_url},
 };
 use edit_prediction_ui::{get_available_providers, set_completion_provider};
-use gpui::{App, Entity, ScrollHandle, prelude::*};
+use gpui::{Entity, ScrollHandle, prelude::*};
 use language::language_settings::AllLanguageSettings;
 
 use settings::Settings as _;
@@ -373,7 +373,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .api_url
                         .as_ref()
                 },
-                write: |settings, value, _app: &App| {
+                write: |settings, value| {
                     settings
                         .project
                         .all_languages
@@ -406,7 +406,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .model
                         .as_ref()
                 },
-                write: |settings, value, _app: &App| {
+                write: |settings, value| {
                     settings
                         .project
                         .all_languages
@@ -439,7 +439,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .prompt_format
                         .as_ref()
                 },
-                write: |settings, value, _app: &App| {
+                write: |settings, value| {
                     settings
                         .project
                         .all_languages
@@ -469,7 +469,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .max_output_tokens
                         .as_ref()
                 },
-                write: |settings, value, _app: &App| {
+                write: |settings, value| {
                     settings
                         .project
                         .all_languages
@@ -504,7 +504,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                         .api_url
                         .as_ref()
                 },
-                write: |settings, value, _app: &App| {
+                write: |settings, value| {
                     settings
                         .project
                         .all_languages
@@ -537,7 +537,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                         .model
                         .as_ref()
                 },
-                write: |settings, value, _app: &App| {
+                write: |settings, value| {
                     settings
                         .project
                         .all_languages
@@ -570,7 +570,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                         .prompt_format
                         .as_ref()
                 },
-                write: |settings, value, _app: &App| {
+                write: |settings, value| {
                     settings
                         .project
                         .all_languages
@@ -600,7 +600,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                         .max_output_tokens
                         .as_ref()
                 },
-                write: |settings, value, _app: &App| {
+                write: |settings, value| {
                     settings
                         .project
                         .all_languages
@@ -635,7 +635,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                         .api_url
                         .as_ref()
                 },
-                write: |settings, value, _app: &App| {
+                write: |settings, value| {
                     settings
                         .project
                         .all_languages
@@ -668,7 +668,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                         .max_tokens
                         .as_ref()
                 },
-                write: |settings, value, _app: &App| {
+                write: |settings, value| {
                     settings
                         .project
                         .all_languages
@@ -698,7 +698,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                         .model
                         .as_ref()
                 },
-                write: |settings, value, _app: &App| {
+                write: |settings, value| {
                     settings
                         .project
                         .all_languages

@@ -72,133 +72,6 @@ pub trait Watcher: Send + Sync {
     fn remove(&self, path: &Path) -> Result<()>;
 }
 
-/// Detect whether a path requires polling instead of native file watching.
-///
-/// Returns `true` for filesystem types where inotify/FSEvents/ReadDirectoryChanges
-/// silently fail to deliver events: 9P (WSL drvfs), NFS, CIFS/SMB, FUSE (sshfs), etc.
-///
-/// Can be overridden with the `ZED_FILE_WATCHER_MODE` environment variable:
-/// - `native` — always use native OS watcher
-/// - `poll` — always use polling
-/// - `auto` (default) — auto-detect based on filesystem type
-pub fn requires_poll_watcher(path: &Path) -> bool {
-    match std::env::var("ZED_FILE_WATCHER_MODE")
-        .as_deref()
-        .unwrap_or("auto")
-    {
-        "native" => return false,
-        "poll" => return true,
-        _ => {}
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let path = effective_watch_path(path);
-        return detect_requires_poll_watcher_linux(&path);
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = path;
-        false
-    }
-}
-
-pub fn effective_watch_path(path: &Path) -> PathBuf {
-    if path.exists() {
-        return path.to_path_buf();
-    }
-
-    for ancestor in path.ancestors() {
-        if ancestor.exists() {
-            return ancestor.to_path_buf();
-        }
-    }
-
-    path.to_path_buf()
-}
-
-#[cfg(target_os = "linux")]
-fn detect_requires_poll_watcher_linux(path: &Path) -> bool {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
-    // Check filesystem type via statfs
-    let c_path = match CString::new(path.as_os_str().as_bytes()) {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
-
-    let mut stat: libc::statfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statfs(c_path.as_ptr(), &mut stat) } != 0 {
-        return false;
-    }
-
-    // Filesystem magic numbers where inotify does not deliver events.
-    // These are defined in linux/magic.h and statfs(2).
-    const V9FS_MAGIC: i64 = 0x01021997; // Plan 9 / WSL2 interop (drvfs)
-    const NFS_SUPER_MAGIC: i64 = 0x6969;
-    const CIFS_MAGIC: i64 = 0xFF534D42u32 as i64; // CIFS/SMB
-    const SMB_SUPER_MAGIC: i64 = 0x517B;
-    const SMB2_MAGIC: i64 = 0xFE534D42u32 as i64;
-    const FUSE_SUPER_MAGIC: i64 = 0x65735546; // FUSE (includes sshfs)
-
-    let fs_type = stat.f_type;
-    if fs_type == V9FS_MAGIC
-        || fs_type == NFS_SUPER_MAGIC
-        || fs_type == CIFS_MAGIC
-        || fs_type == SMB_SUPER_MAGIC
-        || fs_type == SMB2_MAGIC
-        || fs_type == FUSE_SUPER_MAGIC
-    {
-        log::info!(
-            "Detected network/virtual filesystem (type 0x{:x}) at {}, using poll watcher",
-            fs_type,
-            path.display()
-        );
-        return true;
-    }
-
-    // Also check for WSL + /mnt/<drive>/ pattern as a fallback
-    // in case statfs returns an unexpected type for drvfs
-    if is_wsl_drvfs_path(path) {
-        log::info!(
-            "Detected WSL drvfs mount at {}, using poll watcher",
-            path.display()
-        );
-        return true;
-    }
-
-    false
-}
-
-#[cfg(target_os = "linux")]
-fn is_wsl_drvfs_path(path: &Path) -> bool {
-    // Only relevant inside WSL
-    if std::env::var_os("WSL_DISTRO_NAME").is_none() {
-        if let Ok(version) = std::fs::read_to_string("/proc/version") {
-            let v = version.to_lowercase();
-            if !v.contains("microsoft") && !v.contains("wsl") {
-                return false;
-            }
-        } else {
-            return false;
-        }
-    }
-
-    // Windows drives are mounted at /mnt/c, /mnt/d, etc.
-    let path_str = match path.to_str() {
-        Some(s) => s,
-        None => return false,
-    };
-    if !path_str.starts_with("/mnt/") || path_str.len() < 6 {
-        return false;
-    }
-    let after_mnt = &path_str[5..];
-    after_mnt.starts_with(|c: char| c.is_ascii_alphabetic())
-        && (after_mnt.len() == 1 || after_mnt.as_bytes()[1] == b'/')
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum PathEventKind {
     Removed,
@@ -1197,34 +1070,19 @@ impl Fs for RealFs {
         use util::{ResultExt as _, paths::SanitizedPath};
         let executor = self.executor.clone();
 
-        let use_poll = requires_poll_watcher(path);
-        let watch_path = effective_watch_path(path);
-
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
+        let watcher = Arc::new(fs_watcher::FsWatcher::new(tx, pending_paths.clone()));
 
-        let mode = if use_poll {
-            log::info!(
-                "Using poll watcher ({}ms interval) for {}",
-                fs_watcher::poll_interval().as_millis(),
-                path.display()
-            );
-            telemetry::event!("fs_watcher_poll", path = path.display().to_string());
-            fs_watcher::WatcherMode::Poll
-        } else {
-            fs_watcher::WatcherMode::Native
-        };
-        let watcher: Arc<dyn Watcher> = Arc::new(fs_watcher::FsWatcher::new(
-            tx.clone(),
-            pending_paths.clone(),
-            mode,
-        ));
-
-        if let Err(e) = watcher.add(&watch_path) {
+        // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
+        if let Err(e) = watcher.add(path)
+            && let Some(parent) = path.parent()
+            && let Err(parent_e) = watcher.add(parent)
+        {
             log::warn!(
-                "Failed to watch {} using {}:\n{e}",
+                "Failed to watch {} and its parent directory {}:\n{e}\n{parent_e}",
                 path.display(),
-                watch_path.display()
+                parent.display()
             );
         }
 
