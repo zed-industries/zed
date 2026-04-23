@@ -15,8 +15,9 @@ use gpui::{App, Context, Font, Hsla, Pixels, Window, WindowTextSystem};
 use language::{CharClassifier, CharKind, Point, Selection};
 use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
-use settings::{RegisterSetting, Settings};
+use settings::Settings;
 use text::{Bias, SelectionGoal};
+use theme::ActiveTheme as _;
 use ui::px;
 use workspace::searchable::{self, Direction, FilteredSearchRange};
 
@@ -27,13 +28,6 @@ use crate::{
     motion::{Motion, right},
 };
 use std::ops::Range;
-
-pub(crate) const HELIX_JUMP_ACCENT: Hsla = Hsla {
-    h: 0.0,
-    s: 0.78,
-    l: 0.55,
-    a: 1.0,
-};
 
 actions!(
     vim,
@@ -1055,14 +1049,14 @@ impl Vim {
             let style = editor.style(cx);
             let font = style.text.font();
             let font_size = style.text.font_size.to_pixels(window.rem_size());
-            let accent = HelixSettings::get_global(cx).jump_label_accent;
+            let label_color = cx.theme().colors().vim_helix_jump_label_foreground;
 
             Self::build_helix_jump_ui_data(
                 buffer_snapshot,
                 start_offset,
                 end_offset,
                 cursor_offset,
-                accent,
+                label_color,
                 &skip_data,
                 window.text_system(),
                 font,
@@ -1103,7 +1097,7 @@ impl Vim {
         start_offset: MultiBufferOffset,
         end_offset: MultiBufferOffset,
         cursor_offset: MultiBufferOffset,
-        accent: Hsla,
+        label_color: Hsla,
         skip_data: &HelixJumpSkipData,
         text_system: &WindowTextSystem,
         font: Font,
@@ -1179,7 +1173,7 @@ impl Vim {
                 target_range: start_anchor..end_anchor,
                 label: NavigationOverlayLabel {
                     text: label_text.into(),
-                    text_color: accent,
+                    text_color: label_color,
                     x_offset: -fit.left_shift,
                     scale_factor: fit.scale_factor,
                 },
@@ -1580,20 +1574,6 @@ impl Vim {
     }
 }
 
-#[derive(RegisterSetting)]
-struct HelixSettings {
-    jump_label_accent: Hsla,
-}
-
-impl Settings for HelixSettings {
-    fn from_settings(content: &settings::SettingsContent) -> Self {
-        let helix = content.helix.clone().unwrap_or_default();
-        Self {
-            jump_label_accent: helix.jump_label_accent.unwrap_or(HELIX_JUMP_ACCENT),
-        }
-    }
-}
-
 const HELIX_JUMP_ALPHABET: &[char; 26] = &[
     'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
     't', 'u', 'v', 'w', 'x', 'y', 'z',
@@ -1725,20 +1705,21 @@ struct HelixJumpUiData {
 
 #[cfg(test)]
 mod test {
-    use std::fmt::Write;
+    use std::{fmt::Write, time::Duration};
 
     use editor::{HighlightKey, MultiBufferOffset};
-    use gpui::{KeyBinding, UpdateGlobal, VisualTestContext, hsla};
+    use gpui::{KeyBinding, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use language::Point;
     use project::FakeFs;
     use search::{ProjectSearchView, project_search};
     use serde_json::json;
-    use settings::{HelixSettingsContent, Settings, SettingsStore};
+    use settings::{SettingsStore, ThemeColorsContent, ThemeStyleContent};
+    use theme::ActiveTheme as _;
     use util::path;
     use workspace::{DeploySearch, MultiWorkspace};
 
-    use super::{HELIX_JUMP_ACCENT, HELIX_JUMP_LABEL_LIMIT, HelixSettings};
+    use super::HELIX_JUMP_LABEL_LIMIT;
     use crate::{
         HELIX_JUMP_OVERLAY_KEY, Vim, VimAddon,
         state::{Mode, Operator},
@@ -1841,13 +1822,13 @@ mod test {
             let style = editor.style(cx);
             let font = style.text.font();
             let font_size = style.text.font_size.to_pixels(window.rem_size());
-            let accent = HelixSettings::get_global(cx).jump_label_accent;
+            let label_color = cx.theme().colors().vim_helix_jump_label_foreground;
             let data = Vim::build_helix_jump_ui_data(
                 buffer_snapshot,
                 MultiBufferOffset(0),
                 buffer_snapshot.len(),
                 cursor_offset,
-                accent,
+                label_color,
                 &skip_data,
                 window.text_system(),
                 font,
@@ -3532,21 +3513,31 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_helix_jump_uses_configured_label_accent(cx: &mut gpui::TestAppContext) {
+    async fn test_helix_jump_uses_theme_label_color(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
-        let accent = hsla(0.36, 0.76, 0.48, 1.0);
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.helix = Some(HelixSettingsContent {
-                        jump_label_accent: Some(accent),
+                    settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
+                        colors: ThemeColorsContent {
+                            vim_helix_jump_label_foreground: Some("#00ff00".to_string()),
+                            ..Default::default()
+                        },
+                        ..Default::default()
                     });
                 });
             });
         });
-        let configured_accent = cx.update(|_, cx| HelixSettings::get_global(cx).jump_label_accent);
-        assert_ne!(configured_accent, HELIX_JUMP_ACCENT);
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+
+        let configured_label_color =
+            cx.update(|_, cx| cx.theme().colors().vim_helix_jump_label_foreground);
+        assert_ne!(
+            configured_label_color,
+            cx.update(|_, cx| cx.theme().status().error)
+        );
         cx.set_state("ˇalpha beta gamma", Mode::HelixNormal);
 
         let label_colors = cx.update_editor(|editor, window, cx| {
@@ -3567,7 +3558,7 @@ mod test {
                 MultiBufferOffset(0),
                 buffer_snapshot.len(),
                 cursor_offset,
-                configured_accent,
+                configured_label_color,
                 &skip_data,
                 window.text_system(),
                 font,
@@ -3584,7 +3575,7 @@ mod test {
         assert!(
             label_colors
                 .into_iter()
-                .all(|color| color == configured_accent)
+                .all(|color| color == configured_label_color)
         );
     }
 

@@ -57,7 +57,6 @@ merge_from_overwrites!(
     std::path::PathBuf,
     std::sync::Arc<std::path::Path>,
     language_model_core::Speed,
-    gpui::Hsla
 );
 
 impl<T: Clone + MergeFrom> MergeFrom for Option<T> {
