@@ -40,8 +40,7 @@ use release_channel::AppVersion;
 use semver::Version;
 use serde::de::DeserializeOwned;
 use settings::{
-    EditPredictionDataCollectionChoice, EditPredictionPromptFormat, EditPredictionProvider,
-    Settings as _, update_settings_file,
+    EditPredictionPromptFormat, EditPredictionProvider, Settings as _, update_settings_file,
 };
 use std::collections::{VecDeque, hash_map};
 use std::env;
@@ -152,7 +151,7 @@ pub struct EditPredictionStore {
     preferred_experiment: Option<String>,
     available_experiments: Vec<String>,
     pub mercury: Mercury,
-    legacy_data_collection_enabled: bool,
+    data_collection_choice: DataCollectionChoice,
     reject_predictions_tx: mpsc::UnboundedSender<EditPredictionRejectionPayload>,
     settled_predictions_tx: mpsc::UnboundedSender<Instant>,
     shown_predictions: VecDeque<EditPrediction>,
@@ -758,8 +757,9 @@ impl EditPredictionStore {
     }
 
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
+        let data_collection_choice = Self::load_data_collection_choice(cx);
+
         let llm_token = global_llm_token(cx);
-        let legacy_data_collection_enabled = Self::load_legacy_data_collection_enabled(cx);
 
         let (reject_tx, reject_rx) = mpsc::unbounded();
         cx.background_spawn({
@@ -814,8 +814,8 @@ impl EditPredictionStore {
             preferred_experiment: None,
             available_experiments: Vec::new(),
             mercury: Mercury::new(cx),
-            legacy_data_collection_enabled,
 
+            data_collection_choice,
             reject_predictions_tx: reject_tx,
             settled_predictions_tx,
             rated_predictions: Default::default(),
@@ -2770,45 +2770,38 @@ impl EditPredictionStore {
     }
 
     pub(crate) fn is_data_collection_enabled(&self, cx: &App) -> bool {
-        if !self.is_data_collection_allowed_by_organization(cx) {
-            return false;
-        }
-
-        if cx.is_staff() {
-            return true;
-        }
-
-        match all_language_settings(None, cx)
-            .edit_predictions
-            .allow_data_collection
-        {
-            EditPredictionDataCollectionChoice::Yes => true,
-            EditPredictionDataCollectionChoice::No => false,
-            // Fall back to the legacy KV entry captured when the store was
-            // created, preserving existing users' choices without per-request
-            // database reads.
-            EditPredictionDataCollectionChoice::Default => self.legacy_data_collection_enabled,
-        }
+        self.data_collection_choice.is_enabled(cx)
     }
 
-    fn load_legacy_data_collection_enabled(cx: &App) -> bool {
-        KeyValueStore::global(cx)
+    fn load_data_collection_choice(cx: &App) -> DataCollectionChoice {
+        let choice = KeyValueStore::global(cx)
             .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
             .log_err()
-            .flatten()
-            .as_deref()
-            == Some("true")
+            .flatten();
+
+        match choice.as_deref() {
+            Some("true") => DataCollectionChoice::Enabled,
+            Some("false") => DataCollectionChoice::Disabled,
+            Some(_) => {
+                log::error!("unknown value in '{ZED_PREDICT_DATA_COLLECTION_CHOICE}'");
+                DataCollectionChoice::NotAnswered
+            }
+            None => DataCollectionChoice::NotAnswered,
+        }
     }
 
-    pub(crate) fn is_data_collection_allowed_by_organization(&self, cx: &App) -> bool {
-        self.user_store
-            .read(cx)
-            .current_organization_configuration()
-            .is_none_or(|organization_configuration| {
-                organization_configuration
-                    .edit_prediction
-                    .is_feedback_enabled
-            })
+    fn toggle_data_collection_choice(&mut self, cx: &mut Context<Self>) {
+        self.data_collection_choice = self.data_collection_choice.toggle();
+        let new_choice = self.data_collection_choice;
+        let is_enabled = new_choice.is_enabled(cx);
+        let kvp = KeyValueStore::global(cx);
+        db::write_and_log(cx, move || async move {
+            kvp.write_kvp(
+                ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
+                is_enabled.to_string(),
+            )
+            .await
+        });
     }
 
     pub fn shown_predictions(&self) -> impl DoubleEndedIterator<Item = &EditPrediction> {
@@ -3001,37 +2994,70 @@ pub struct ZedUpdateRequiredError {
     minimum_version: Version,
 }
 
-struct ZedPredictUpsell;
+#[derive(Debug, Clone, Copy)]
+pub enum DataCollectionChoice {
+    NotAnswered,
+    Enabled,
+    Disabled,
+}
 
-fn is_upsell_dismissed(cx: &App) -> bool {
-    // To make this backwards compatible with older versions of Zed, we
-    // check if the user has seen the previous Edit Prediction Onboarding
-    // before, by checking the data collection choice which was written to
-    // the database once the user clicked on "Accept and Enable"
-    let kvp = KeyValueStore::global(cx);
-    if kvp
-        .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
-        .log_err()
-        .is_some_and(|s| s.is_some())
-    {
-        return true;
+impl DataCollectionChoice {
+    pub fn is_enabled(self, cx: &App) -> bool {
+        if cx.is_staff() {
+            return true;
+        }
+        match self {
+            Self::Enabled => true,
+            Self::NotAnswered | Self::Disabled => false,
+        }
     }
 
-    kvp.read_kvp(ZedPredictUpsell::KEY)
-        .log_err()
-        .is_some_and(|s| s.is_some())
+    #[must_use]
+    pub fn toggle(&self) -> DataCollectionChoice {
+        match self {
+            Self::Enabled => Self::Disabled,
+            Self::Disabled => Self::Enabled,
+            Self::NotAnswered => Self::Enabled,
+        }
+    }
 }
+
+impl From<bool> for DataCollectionChoice {
+    fn from(value: bool) -> Self {
+        match value {
+            true => DataCollectionChoice::Enabled,
+            false => DataCollectionChoice::Disabled,
+        }
+    }
+}
+
+struct ZedPredictUpsell;
 
 impl Dismissable for ZedPredictUpsell {
     const KEY: &'static str = "dismissed-edit-predict-upsell";
 
     fn dismissed(cx: &App) -> bool {
-        is_upsell_dismissed(cx)
+        // To make this backwards compatible with older versions of Zed, we
+        // check if the user has seen the previous Edit Prediction Onboarding
+        // before, by checking the data collection choice which was written to
+        // the database once the user clicked on "Accept and Enable"
+        let kvp = KeyValueStore::global(cx);
+        if kvp
+            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
+            .log_err()
+            .is_some_and(|s| s.is_some())
+        {
+            return true;
+        }
+
+        kvp.read_kvp(Self::KEY)
+            .log_err()
+            .is_some_and(|s| s.is_some())
     }
 }
 
 pub fn should_show_upsell_modal(cx: &App) -> bool {
-    !is_upsell_dismissed(cx)
+    !ZedPredictUpsell::dismissed(cx)
 }
 
 pub fn init(cx: &mut App) {

@@ -6688,6 +6688,9 @@ impl LspStore {
             .into_response()
             .context("resolve completion")?;
 
+        // We must not use any data such as sortText, filterText, insertText and textEdit to edit `Completion` since they are not suppose change during resolve.
+        // Refer: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_completion
+
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
         if let CompletionSource::Lsp {
@@ -6706,40 +6709,6 @@ impl LspStore {
             );
             **lsp_completion = resolved_completion;
             *resolved = true;
-
-            // We must not use any data such as sortText, filterText, insertText and textEdit to edit `Completion` since they are not supposed to change during resolve.
-            // Refer: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_completion
-            //
-            // We still re-derive new_text here as a workaround for the specific
-            // VS Code TypeScript completion resolve flow that vtsls wraps:
-            // https://github.com/microsoft/vscode/blob/838b48504cd9a2338e2ca9e854da9cec990c4d57/extensions/typescript-language-features/src/languageFeatures/completions.ts#L218
-            //
-            // Some servers (e.g. vtsls with completeFunctionCalls) update
-            // insertText/textEdit during resolve to add snippet content like
-            // function call parentheses.
-            //
-            // vtsls resolve flow:
-            //   https://github.com/yioneko/vtsls/blob/fecf52324a30e72dfab1537047556076720c1a5f/packages/service/src/service/completion.ts#L228-L244
-            // vtsls converter (isSnippet / insertTextFormat):
-            //   https://github.com/yioneko/vtsls/blob/28e075105d7711d635ebf8aefc971bb8e1d2fe65/packages/service/src/utils/converter.ts#L149-L200
-            //
-            // NB: We only update the text content here, NOT the replace/insert
-            // ranges on `Completion`. Those ranges were converted to anchors from
-            // the original response and stay valid across buffer edits. The LSP
-            // ranges in the resolved text_edit are stale when completions are
-            // cached across keystrokes (see #34094).
-            let resolved_new_text = lsp_completion
-                .text_edit
-                .as_ref()
-                .map(|edit| match edit {
-                    lsp::CompletionTextEdit::Edit(e) => e.new_text.clone(),
-                    lsp::CompletionTextEdit::InsertAndReplace(e) => e.new_text.clone(),
-                })
-                .or_else(|| lsp_completion.insert_text.clone());
-            if let Some(mut resolved_new_text) = resolved_new_text {
-                LineEnding::normalize(&mut resolved_new_text);
-                completion.new_text = resolved_new_text;
-            }
         }
         Ok(())
     }

@@ -740,21 +740,6 @@ impl UserStore {
             .get(&current_organization.id)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn set_current_organization_configuration_for_test(
-        &mut self,
-        organization: Arc<Organization>,
-        configuration: OrganizationConfiguration,
-        cx: &mut Context<Self>,
-    ) {
-        self.current_organization = Some(organization.clone());
-        self.organizations = vec![organization.clone()];
-        self.configuration_by_organization
-            .insert(organization.id.clone(), configuration);
-        cx.emit(Event::OrganizationChanged);
-        cx.notify();
-    }
-
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {

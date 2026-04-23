@@ -130,7 +130,7 @@ impl TaskStore {
                         .payload
                         .task_variables
                         .into_iter()
-                        .filter_map(|(k, v)| Some((k.parse().ok()?, v))),
+                        .filter_map(|(k, v)| Some((k.parse().log_err()?, v))),
                 );
 
                 let snapshot = location.buffer.read(cx).snapshot();
