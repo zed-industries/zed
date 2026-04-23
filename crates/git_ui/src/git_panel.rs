@@ -6113,10 +6113,6 @@ impl RenderOnce for PanelRepoFooter {
             util::truncate_and_trailoff(branch_name.trim_ascii(), branch_display_len)
         };
 
-        let repo_selector_trigger = Button::new("repo-selector", truncated_repo_name)
-            .size(ButtonSize::None)
-            .label_size(LabelSize::Small);
-
         let repo_selector = PopoverMenu::new("repository-switcher")
             .menu({
                 let project = project;
@@ -6126,8 +6122,9 @@ impl RenderOnce for PanelRepoFooter {
                 }
             })
             .trigger_with_tooltip(
-                repo_selector_trigger
-                    .when(single_repo, |this| this.disabled(true).color(Color::Muted))
+                Button::new("repo-selector", truncated_repo_name)
+                    .size(ButtonSize::None)
+                    .label_size(LabelSize::Small)
                     .truncate(true),
                 move |_, cx| {
                     if single_repo {
@@ -6169,7 +6166,7 @@ impl RenderOnce for PanelRepoFooter {
             });
 
         h_flex()
-            .h(px(36.))
+            .h_9()
             .w_full()
             .px_2()
             .justify_between()
@@ -6186,14 +6183,14 @@ impl RenderOnce for PanelRepoFooter {
                             Color::Muted
                         },
                     ))
-                    .child(repo_selector)
-                    .when(show_separator, |this| {
-                        this.child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().colors().icon_muted.opacity(0.5))
-                                .child("/"),
-                        )
+                    .when(!single_repo, |this| {
+                        this.child(repo_selector).when(show_separator, |this| {
+                            this.child(
+                                Label::new("/").size(LabelSize::Small).color(Color::Custom(
+                                    cx.theme().colors().text_muted.opacity(0.4),
+                                )),
+                            )
+                        })
                     })
                     .child(branch_selector),
             )
