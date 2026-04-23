@@ -1529,6 +1529,21 @@ impl WorkspaceDb {
                     .context("clearing out old locations")?;
                 }
 
+                // If there are no paths in the workspace, make sure to save
+                // paths as NULL in the database, not as an empty string.
+                // Otherwise, the workspace may fail to restore, potentially
+                // losing any unsaved buffers.
+                let maybe_paths = if !paths.paths.is_empty() {
+                    Some(paths.paths.clone())
+                } else {
+                    None
+                };
+                let maybe_order = if !paths.order.is_empty() {
+                    Some(paths.order.clone())
+                } else {
+                    None
+                };
+
                 // Upsert
                 let query = sql!(
                     INSERT INTO workspaces(
@@ -1571,8 +1586,8 @@ impl WorkspaceDb {
                 let mut prepared_query = conn.exec_bound(query)?;
                 let args = (
                     workspace.id,
-                    paths.paths.clone(),
-                    paths.order.clone(),
+                    maybe_paths,
+                    maybe_order,
                     remote_connection_id,
                     workspace.docks,
                     workspace.session_id,

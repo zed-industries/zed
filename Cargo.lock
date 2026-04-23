@@ -6306,6 +6306,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui",
+ "ui_input",
  "util",
  "workspace",
  "zed_actions",
