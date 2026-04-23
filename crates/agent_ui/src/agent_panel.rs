@@ -33,7 +33,7 @@ use crate::DEFAULT_THREAD_TITLE;
 use crate::ExpandMessageEditor;
 use crate::ManageProfiles;
 use crate::agent_connection_store::AgentConnectionStore;
-use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore};
+use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow,
     InlineAssistant, LoadThreadFromClipboard, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
@@ -708,6 +708,7 @@ pub struct AgentPanel {
     show_trust_workspace_message: bool,
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
+    _thread_metadata_store_subscription: Subscription,
 }
 
 impl AgentPanel {
@@ -1022,6 +1023,17 @@ impl AgentPanel {
                 }
                 _ => {}
             });
+
+        let _thread_metadata_store_subscription = cx.subscribe(
+            &ThreadMetadataStore::global(cx),
+            |this, _store, event, cx| {
+                let ThreadMetadataStoreEvent::ThreadArchived(thread_id) = event;
+                if this.retained_threads.remove(thread_id).is_some() {
+                    cx.notify();
+                }
+            },
+        );
+
         let mut panel = Self {
             workspace_id,
             base_view,
@@ -1055,6 +1067,7 @@ impl AgentPanel {
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
             _base_view_observation: None,
             _draft_editor_observation: None,
+            _thread_metadata_store_subscription,
         };
 
         // Initial sync of agent servers from extensions
