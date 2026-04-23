@@ -1400,11 +1400,6 @@ impl AgentPanel {
             return;
         };
 
-        let Some(parent_session_id) = thread.parent_session_id else {
-            log::error!("Session {} has no parent session", session_id);
-            return;
-        };
-
         cx.spawn_in(window, async move |this, cx| {
             this.update_in(cx, |this, window, cx| {
                 this.external_thread(
@@ -1413,7 +1408,7 @@ impl AgentPanel {
                     None,
                     None,
                     Some(AgentInitialContent::ThreadSummary {
-                        session_id: parent_session_id,
+                        session_id: thread.id,
                         title: Some(thread.title),
                     }),
                     true,
@@ -5046,6 +5041,104 @@ mod tests {
                 "reopening an already-visible session should keep the thread usable"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_new_native_agent_thread_from_summary_works_for_root_thread(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.run_until_parked();
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.connection_store.update(cx, |store, cx| {
+                store.restart_connection(
+                    Agent::NativeAgent,
+                    Rc::new(StubAgentServer::new(SessionTrackingConnection::new())),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        let source_session_id = acp::SessionId::new("source-thread-session");
+        let db_thread = agent::DbThread {
+            title: "Source Thread Title".into(),
+            messages: Vec::new(),
+            updated_at: Utc::now(),
+            detailed_summary: None,
+            initial_project_snapshot: None,
+            cumulative_token_usage: Default::default(),
+            request_token_usage: HashMap::default(),
+            model: None,
+            profile: None,
+            imported: false,
+            subagent_context: None,
+            speed: None,
+            thinking_enabled: false,
+            thinking_effort: None,
+            draft_prompt: None,
+            ui_scroll_position: None,
+        };
+        let thread_store = cx.update(|_, cx| ThreadStore::global(cx));
+        let save_task = thread_store.update(&mut cx, |store, cx| {
+            store.save_thread(
+                source_session_id.clone(),
+                db_thread,
+                PathList::default(),
+                cx,
+            )
+        });
+        save_task
+            .await
+            .expect("saving source thread should succeed");
+        cx.run_until_parked();
+
+        thread_store.read_with(&cx, |store, _cx| {
+            let entry = store
+                .thread_from_session_id(&source_session_id)
+                .expect("saved thread should be listed in the store");
+            assert!(
+                entry.parent_session_id.is_none(),
+                "saved thread is a root thread with no parent session"
+            );
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.new_native_agent_thread_from_summary(
+                &NewNativeAgentThreadFromSummary {
+                    from_session_id: source_session_id.clone(),
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                panel.active_thread_view(cx).is_some(),
+                "a new native-agent thread should have been created from the summary"
+            );
+        });
+
+        let new_session_id = panel.read_with(&cx, |panel, cx| {
+            panel
+                .active_agent_thread(cx)
+                .unwrap()
+                .read(cx)
+                .session_id()
+                .clone()
+        });
+        assert_ne!(
+            new_session_id, source_session_id,
+            "new thread should have its own session id, distinct from the source"
+        );
+        assert_eq!(
+            panel.read_with(&cx, |panel, _cx| panel.selected_agent.clone()),
+            Agent::NativeAgent,
+            "creating a thread from summary should select the native agent"
+        );
     }
 
     #[gpui::test]
