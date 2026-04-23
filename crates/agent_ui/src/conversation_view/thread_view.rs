@@ -15,10 +15,10 @@ use crate::message_editor::SharedSessionCapabilities;
 use gpui::List;
 use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
-use settings::{SidebarSide, update_settings_file};
-use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
 use search::BufferSearchBar;
 use search::buffer_search::DivRegistrar;
+use settings::{SidebarSide, update_settings_file};
+use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
 use workspace::{SERIALIZATION_THROTTLE_TIME, ToolbarItemView};
 use zed_actions::buffer_search::Deploy;
 
@@ -297,7 +297,9 @@ pub struct ThreadView {
     pub expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
     auto_expanded_thinking_block: Option<(usize, usize)>,
-    user_toggled_thinking_blocks: HashSet<(usize, usize)>,
+    pub(crate) user_toggled_thinking_blocks: HashSet<(usize, usize)>,
+    pub(crate) search_auto_expanded_tool_calls: HashSet<acp::ToolCallId>,
+    pub(crate) search_auto_expanded_thinking_blocks: HashSet<(usize, usize)>,
     pub subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -534,6 +536,8 @@ impl ThreadView {
             expanded_thinking_blocks: HashSet::default(),
             auto_expanded_thinking_block: None,
             user_toggled_thinking_blocks: HashSet::default(),
+            search_auto_expanded_tool_calls: HashSet::default(),
+            search_auto_expanded_thinking_blocks: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -6049,6 +6053,7 @@ impl ThreadView {
                 .on_click(cx.listener({
                     let id = tool_call.id.clone();
                     move |this, _event, _window, cx| {
+                        this.search_auto_expanded_tool_calls.remove(&id);
                         if is_expanded {
                             this.expanded_tool_calls.remove(&id);
                         } else {
@@ -6611,6 +6616,8 @@ impl ThreadView {
                                                                   _,
                                                                   _,
                                                                   cx: &mut Context<Self>| {
+                                                                this.search_auto_expanded_tool_calls
+                                                                    .remove(&id);
                                                                 if is_open {
                                                                     this.expanded_tool_calls
                                                                         .remove(&id);
@@ -7691,6 +7698,7 @@ impl ThreadView {
                         .icon_color(Color::Muted)
                         .on_click(cx.listener({
                             move |this: &mut Self, _, _, cx: &mut Context<Self>| {
+                                this.search_auto_expanded_tool_calls.remove(&tool_call_id);
                                 this.expanded_tool_calls.remove(&tool_call_id);
                                 cx.notify();
                             }
@@ -8015,6 +8023,8 @@ impl ThreadView {
                                     .on_click(cx.listener({
                                         let tool_call_id = tool_call.id.clone();
                                         move |this, _, _, cx| {
+                                            this.search_auto_expanded_tool_calls
+                                                .remove(&tool_call_id);
                                             if this.expanded_tool_calls.contains(&tool_call_id) {
                                                 this.expanded_tool_calls.remove(&tool_call_id);
                                             } else {
@@ -9029,204 +9039,206 @@ impl Render for ThreadView {
             .cloned();
 
         search_actions.size_full().child(
-        v_flex()
-            .key_context("AcpThread")
-            .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::deploy_search))
-            .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
-                if this.parent_session_id.is_none() {
-                    this.cancel_generation(cx);
-                }
-            }))
-            .on_action(cx.listener(|this, _: &workspace::GoBack, window, cx| {
-                if let Some(parent_session_id) = this.thread.read(cx).parent_session_id().cloned() {
-                    this.server_view
-                        .update(cx, |view, cx| {
-                            view.navigate_to_thread(parent_session_id, window, cx);
-                        })
-                        .ok();
-                }
-            }))
-            .on_action(cx.listener(Self::keep_all))
-            .on_action(cx.listener(Self::reject_all))
-            .on_action(cx.listener(Self::undo_last_reject))
-            .on_action(cx.listener(Self::allow_always))
-            .on_action(cx.listener(Self::allow_once))
-            .on_action(cx.listener(Self::reject_once))
-            .on_action(cx.listener(Self::handle_authorize_tool_call))
-            .on_action(cx.listener(Self::handle_select_permission_granularity))
-            .on_action(cx.listener(Self::handle_toggle_command_pattern))
-            .on_action(cx.listener(Self::open_permission_dropdown))
-            .on_action(cx.listener(Self::open_add_context_menu))
-            .on_action(cx.listener(Self::scroll_output_page_up))
-            .on_action(cx.listener(Self::scroll_output_page_down))
-            .on_action(cx.listener(Self::scroll_output_line_up))
-            .on_action(cx.listener(Self::scroll_output_line_down))
-            .on_action(cx.listener(Self::scroll_output_to_top))
-            .on_action(cx.listener(Self::scroll_output_to_bottom))
-            .on_action(cx.listener(Self::scroll_output_to_previous_message))
-            .on_action(cx.listener(Self::scroll_output_to_next_message))
-            .on_action(cx.listener(|this, _: &ToggleFastMode, _window, cx| {
-                this.toggle_fast_mode(cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleThinkingMode, _window, cx| {
-                if this.thread.read(cx).status() != ThreadStatus::Idle {
-                    return;
-                }
-                if let Some(thread) = this.as_native_thread(cx) {
-                    thread.update(cx, |thread, cx| {
-                        thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
-                    });
-                }
-            }))
-            .on_action(cx.listener(|this, _: &CycleThinkingEffort, _window, cx| {
-                if this.thread.read(cx).status() != ThreadStatus::Idle {
-                    return;
-                }
-                this.cycle_thinking_effort(cx);
-            }))
-            .on_action(
-                cx.listener(|this, action: &ToggleThinkingEffortMenu, window, cx| {
+            v_flex()
+                .key_context("AcpThread")
+                .track_focus(&self.focus_handle)
+                .on_action(cx.listener(Self::deploy_search))
+                .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
+                    if this.parent_session_id.is_none() {
+                        this.cancel_generation(cx);
+                    }
+                }))
+                .on_action(cx.listener(|this, _: &workspace::GoBack, window, cx| {
+                    if let Some(parent_session_id) =
+                        this.thread.read(cx).parent_session_id().cloned()
+                    {
+                        this.server_view
+                            .update(cx, |view, cx| {
+                                view.navigate_to_thread(parent_session_id, window, cx);
+                            })
+                            .ok();
+                    }
+                }))
+                .on_action(cx.listener(Self::keep_all))
+                .on_action(cx.listener(Self::reject_all))
+                .on_action(cx.listener(Self::undo_last_reject))
+                .on_action(cx.listener(Self::allow_always))
+                .on_action(cx.listener(Self::allow_once))
+                .on_action(cx.listener(Self::reject_once))
+                .on_action(cx.listener(Self::handle_authorize_tool_call))
+                .on_action(cx.listener(Self::handle_select_permission_granularity))
+                .on_action(cx.listener(Self::handle_toggle_command_pattern))
+                .on_action(cx.listener(Self::open_permission_dropdown))
+                .on_action(cx.listener(Self::open_add_context_menu))
+                .on_action(cx.listener(Self::scroll_output_page_up))
+                .on_action(cx.listener(Self::scroll_output_page_down))
+                .on_action(cx.listener(Self::scroll_output_line_up))
+                .on_action(cx.listener(Self::scroll_output_line_down))
+                .on_action(cx.listener(Self::scroll_output_to_top))
+                .on_action(cx.listener(Self::scroll_output_to_bottom))
+                .on_action(cx.listener(Self::scroll_output_to_previous_message))
+                .on_action(cx.listener(Self::scroll_output_to_next_message))
+                .on_action(cx.listener(|this, _: &ToggleFastMode, _window, cx| {
+                    this.toggle_fast_mode(cx);
+                }))
+                .on_action(cx.listener(|this, _: &ToggleThinkingMode, _window, cx| {
                     if this.thread.read(cx).status() != ThreadStatus::Idle {
                         return;
                     }
-                    this.toggle_thinking_effort_menu(action, window, cx);
-                }),
-            )
-            .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
-                this.send_queued_message_at_index(0, true, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &RemoveFirstQueuedMessage, _, cx| {
-                this.remove_from_queue(0, cx);
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &EditFirstQueuedMessage, window, cx| {
-                this.move_queued_message_to_main_editor(0, None, None, window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
-                this.local_queued_messages.clear();
-                this.sync_queue_flag_to_native_thread(cx);
-                this.can_fast_track_queue = false;
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
-                if this.thread.read(cx).status() != ThreadStatus::Idle {
-                    return;
-                }
-                if let Some(config_options_view) = this.config_options_view.clone() {
-                    let handled = config_options_view.update(cx, |view, cx| {
-                        view.toggle_category_picker(
-                            acp::SessionConfigOptionCategory::Mode,
-                            window,
-                            cx,
-                        )
-                    });
-                    if handled {
+                    if let Some(thread) = this.as_native_thread(cx) {
+                        thread.update(cx, |thread, cx| {
+                            thread.set_thinking_enabled(!thread.thinking_enabled(), cx);
+                        });
+                    }
+                }))
+                .on_action(cx.listener(|this, _: &CycleThinkingEffort, _window, cx| {
+                    if this.thread.read(cx).status() != ThreadStatus::Idle {
                         return;
                     }
-                }
-
-                if let Some(profile_selector) = this.profile_selector.clone() {
-                    profile_selector.read(cx).menu_handle().toggle(window, cx);
-                } else if let Some(mode_selector) = this.mode_selector.clone() {
-                    mode_selector.read(cx).menu_handle().toggle(window, cx);
-                }
-            }))
-            .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
-                if this.thread.read(cx).status() != ThreadStatus::Idle {
-                    return;
-                }
-                if let Some(config_options_view) = this.config_options_view.clone() {
-                    let handled = config_options_view.update(cx, |view, cx| {
-                        view.cycle_category_option(
-                            acp::SessionConfigOptionCategory::Mode,
-                            false,
-                            cx,
-                        )
-                    });
-                    if handled {
+                    this.cycle_thinking_effort(cx);
+                }))
+                .on_action(
+                    cx.listener(|this, action: &ToggleThinkingEffortMenu, window, cx| {
+                        if this.thread.read(cx).status() != ThreadStatus::Idle {
+                            return;
+                        }
+                        this.toggle_thinking_effort_menu(action, window, cx);
+                    }),
+                )
+                .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
+                    this.send_queued_message_at_index(0, true, window, cx);
+                }))
+                .on_action(cx.listener(|this, _: &RemoveFirstQueuedMessage, _, cx| {
+                    this.remove_from_queue(0, cx);
+                    cx.notify();
+                }))
+                .on_action(cx.listener(|this, _: &EditFirstQueuedMessage, window, cx| {
+                    this.move_queued_message_to_main_editor(0, None, None, window, cx);
+                }))
+                .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
+                    this.local_queued_messages.clear();
+                    this.sync_queue_flag_to_native_thread(cx);
+                    this.can_fast_track_queue = false;
+                    cx.notify();
+                }))
+                .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
+                    if this.thread.read(cx).status() != ThreadStatus::Idle {
                         return;
                     }
-                }
+                    if let Some(config_options_view) = this.config_options_view.clone() {
+                        let handled = config_options_view.update(cx, |view, cx| {
+                            view.toggle_category_picker(
+                                acp::SessionConfigOptionCategory::Mode,
+                                window,
+                                cx,
+                            )
+                        });
+                        if handled {
+                            return;
+                        }
+                    }
 
-                if let Some(profile_selector) = this.profile_selector.clone() {
-                    profile_selector.update(cx, |profile_selector, cx| {
-                        profile_selector.cycle_profile(cx);
-                    });
-                } else if let Some(mode_selector) = this.mode_selector.clone() {
-                    mode_selector.update(cx, |mode_selector, cx| {
-                        mode_selector.cycle_mode(window, cx);
-                    });
-                }
-            }))
-            .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
-                if this.thread.read(cx).status() != ThreadStatus::Idle {
-                    return;
-                }
-                if let Some(config_options_view) = this.config_options_view.clone() {
-                    let handled = config_options_view.update(cx, |view, cx| {
-                        view.toggle_category_picker(
-                            acp::SessionConfigOptionCategory::Model,
-                            window,
-                            cx,
-                        )
-                    });
-                    if handled {
+                    if let Some(profile_selector) = this.profile_selector.clone() {
+                        profile_selector.read(cx).menu_handle().toggle(window, cx);
+                    } else if let Some(mode_selector) = this.mode_selector.clone() {
+                        mode_selector.read(cx).menu_handle().toggle(window, cx);
+                    }
+                }))
+                .on_action(cx.listener(|this, _: &CycleModeSelector, window, cx| {
+                    if this.thread.read(cx).status() != ThreadStatus::Idle {
                         return;
                     }
-                }
+                    if let Some(config_options_view) = this.config_options_view.clone() {
+                        let handled = config_options_view.update(cx, |view, cx| {
+                            view.cycle_category_option(
+                                acp::SessionConfigOptionCategory::Mode,
+                                false,
+                                cx,
+                            )
+                        });
+                        if handled {
+                            return;
+                        }
+                    }
 
-                if let Some(model_selector) = this.model_selector.clone() {
-                    model_selector
-                        .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
-                }
-            }))
-            .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
-                if this.thread.read(cx).status() != ThreadStatus::Idle {
-                    return;
-                }
-                if let Some(config_options_view) = this.config_options_view.clone() {
-                    let handled = config_options_view.update(cx, |view, cx| {
-                        view.cycle_category_option(
-                            acp::SessionConfigOptionCategory::Model,
-                            true,
-                            cx,
-                        )
-                    });
-                    if handled {
+                    if let Some(profile_selector) = this.profile_selector.clone() {
+                        profile_selector.update(cx, |profile_selector, cx| {
+                            profile_selector.cycle_profile(cx);
+                        });
+                    } else if let Some(mode_selector) = this.mode_selector.clone() {
+                        mode_selector.update(cx, |mode_selector, cx| {
+                            mode_selector.cycle_mode(window, cx);
+                        });
+                    }
+                }))
+                .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                    if this.thread.read(cx).status() != ThreadStatus::Idle {
                         return;
                     }
-                }
+                    if let Some(config_options_view) = this.config_options_view.clone() {
+                        let handled = config_options_view.update(cx, |view, cx| {
+                            view.toggle_category_picker(
+                                acp::SessionConfigOptionCategory::Model,
+                                window,
+                                cx,
+                            )
+                        });
+                        if handled {
+                            return;
+                        }
+                    }
 
-                if let Some(model_selector) = this.model_selector.clone() {
-                    model_selector.update(cx, |model_selector, cx| {
-                        model_selector.cycle_favorite_models(window, cx);
-                    });
-                }
-            }))
-            .size_full()
-            .children(self.render_subagent_titlebar(cx))
-            .when_some(visible_search_bar, |this, bar| this.child(bar))
-            .child(conversation)
-            .children(self.render_multi_root_callout(cx))
-            .children(self.render_activity_bar(window, cx))
-            .when(self.show_external_source_prompt_warning, |this| {
-                this.child(self.render_external_source_prompt_warning(cx))
-            })
-            .when(self.show_codex_windows_warning, |this| {
-                this.child(self.render_codex_windows_warning(cx))
-            })
-            .children(self.render_thread_retry_status_callout())
-            .children(self.render_thread_error(window, cx))
-            .when_some(
-                match has_messages {
-                    true => None,
-                    false => self.new_server_version_available.clone(),
-                },
-                |this, version| this.child(self.render_new_version_callout(&version, cx)),
-            )
-            .children(self.render_token_limit_callout(cx))
-            .child(self.render_message_editor(window, cx)),
+                    if let Some(model_selector) = this.model_selector.clone() {
+                        model_selector
+                            .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+                    }
+                }))
+                .on_action(cx.listener(|this, _: &CycleFavoriteModels, window, cx| {
+                    if this.thread.read(cx).status() != ThreadStatus::Idle {
+                        return;
+                    }
+                    if let Some(config_options_view) = this.config_options_view.clone() {
+                        let handled = config_options_view.update(cx, |view, cx| {
+                            view.cycle_category_option(
+                                acp::SessionConfigOptionCategory::Model,
+                                true,
+                                cx,
+                            )
+                        });
+                        if handled {
+                            return;
+                        }
+                    }
+
+                    if let Some(model_selector) = this.model_selector.clone() {
+                        model_selector.update(cx, |model_selector, cx| {
+                            model_selector.cycle_favorite_models(window, cx);
+                        });
+                    }
+                }))
+                .size_full()
+                .children(self.render_subagent_titlebar(cx))
+                .when_some(visible_search_bar, |this, bar| this.child(bar))
+                .child(conversation)
+                .children(self.render_multi_root_callout(cx))
+                .children(self.render_activity_bar(window, cx))
+                .when(self.show_external_source_prompt_warning, |this| {
+                    this.child(self.render_external_source_prompt_warning(cx))
+                })
+                .when(self.show_codex_windows_warning, |this| {
+                    this.child(self.render_codex_windows_warning(cx))
+                })
+                .children(self.render_thread_retry_status_callout())
+                .children(self.render_thread_error(window, cx))
+                .when_some(
+                    match has_messages {
+                        true => None,
+                        false => self.new_server_version_available.clone(),
+                    },
+                    |this, version| this.child(self.render_new_version_callout(&version, cx)),
+                )
+                .children(self.render_token_limit_callout(cx))
+                .child(self.render_message_editor(window, cx)),
         )
     }
 }

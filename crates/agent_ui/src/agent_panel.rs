@@ -6447,6 +6447,101 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_collapse_search_auto_expanded_sections_preserves_user_ownership(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({})).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+
+        let thread_view = panel
+            .read_with(&mut cx, |panel, cx| panel.active_thread_view(cx))
+            .expect("agent panel should have an active thread view");
+
+        let tool_tracked = acp::ToolCallId::new("tool-tracked");
+        let tool_user_owned = acp::ToolCallId::new("tool-user-owned");
+        let think_tracked = (1usize, 0usize);
+        let think_user_owned = (2usize, 0usize);
+
+        thread_view.update(&mut cx, |view, _cx| {
+            // Search auto-expanded this tool call and the tracker still holds
+            // it → collapse should roll it back.
+            view.expanded_tool_calls.insert(tool_tracked.clone());
+            view.search_auto_expanded_tool_calls
+                .insert(tool_tracked.clone());
+
+            // Search auto-expanded this tool call, but a later user click
+            // cleared the tracker (what the chevron handlers now do).
+            // Collapse must leave the user's expansion alone.
+            view.expanded_tool_calls.insert(tool_user_owned.clone());
+
+            // Same pair for thinking blocks: the tracked one gets rolled back,
+            // while the user-toggled one is protected by
+            // `user_toggled_thinking_blocks`.
+            view.expanded_thinking_blocks.insert(think_tracked);
+            view.search_auto_expanded_thinking_blocks
+                .insert(think_tracked);
+
+            view.expanded_thinking_blocks.insert(think_user_owned);
+            view.search_auto_expanded_thinking_blocks
+                .insert(think_user_owned);
+            view.user_toggled_thinking_blocks.insert(think_user_owned);
+        });
+
+        thread_view.update(&mut cx, |view, cx| {
+            view.collapse_search_auto_expanded_sections(cx);
+        });
+
+        thread_view.read_with(&mut cx, |view, _cx| {
+            assert!(
+                !view.expanded_tool_calls.contains(&tool_tracked),
+                "tracked tool call should be collapsed"
+            );
+            assert!(
+                view.expanded_tool_calls.contains(&tool_user_owned),
+                "user-owned tool call must survive search cleanup"
+            );
+            assert!(
+                !view.expanded_thinking_blocks.contains(&think_tracked),
+                "tracked thinking block should be collapsed"
+            );
+            assert!(
+                view.expanded_thinking_blocks.contains(&think_user_owned),
+                "user-toggled thinking block must survive search cleanup"
+            );
+            assert!(
+                view.search_auto_expanded_tool_calls.is_empty(),
+                "tool-call tracker should be drained"
+            );
+            assert!(
+                view.search_auto_expanded_thinking_blocks.is_empty(),
+                "thinking-block tracker should be drained"
+            );
+        });
+    }
+
     /// Connection that tracks closed sessions and detects prompts against
     /// sessions that no longer exist, used to reproduce session disassociation.
     #[derive(Clone, Default)]
