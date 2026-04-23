@@ -613,6 +613,7 @@ If a provider exposes models that only work with the Responses API, set `chat_co
 
 If your gateway requires extra HTTP headers, add `custom_headers` to the provider configuration.
 
+> Warning: `custom_headers` values are stored directly in `settings.json`. Use them only for non-sensitive headers. Do **not** put secrets such as `Authorization`, `X-API-Key`, or other credentials in `custom_headers`; continue to provide secrets via environment variables or Zed's keychain-backed API key support.
 ```json [settings]
 {
   "language_models": {
