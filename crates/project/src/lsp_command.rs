@@ -6,7 +6,7 @@ use crate::{
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
     LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse,
     ProjectTransaction, PulledDiagnostics, ResolveState,
-    lsp_store::{LocalLspStore, LspStore},
+    lsp_store::{LocalLspStore, LspFoldingRange, LspStore},
 };
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -18,9 +18,12 @@ use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::FluentBuilder};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
-    language_settings::{InlayHintKind, LanguageSettings, language_settings},
+    language_settings::{InlayHintKind, LanguageSettings},
     point_from_lsp, point_to_lsp,
-    proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
+    proto::{
+        deserialize_anchor, deserialize_anchor_range, deserialize_version, serialize_anchor,
+        serialize_anchor_range, serialize_version,
+    },
     range_from_lsp, range_to_lsp,
 };
 use lsp::{
@@ -30,6 +33,7 @@ use lsp::{
     OneOf, RenameOptions, ServerCapabilities,
 };
 use serde_json::Value;
+
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{
     cmp::Reverse, collections::hash_map, mem, ops::Range, path::Path, str::FromStr, sync::Arc,
@@ -295,6 +299,9 @@ pub(crate) struct GetCodeLens;
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct GetDocumentColor;
 
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct GetFoldingRanges;
+
 impl GetCodeLens {
     pub(crate) fn can_resolve_lens(capabilities: &ServerCapabilities) -> bool {
         capabilities
@@ -527,7 +534,7 @@ impl LspCommand for PerformRename {
             .rename_provider
             .is_some_and(|capability| match capability {
                 OneOf::Left(enabled) => enabled,
-                OneOf::Right(_options) => true,
+                OneOf::Right(_) => true,
             })
     }
 
@@ -1700,7 +1707,7 @@ impl LspCommand for GetDocumentSymbols {
             return Ok(Vec::new());
         };
 
-        let symbols: Vec<_> = match lsp_symbols {
+        let symbols = match lsp_symbols {
             lsp::DocumentSymbolResponse::Flat(symbol_information) => symbol_information
                 .into_iter()
                 .map(|lsp_symbol| DocumentSymbol {
@@ -2630,11 +2637,10 @@ impl LspCommand for GetCodeActions {
             relevant_diagnostics.push(entry.to_lsp_diagnostic_stub()?);
         }
 
-        let supported =
-            Self::supported_code_action_kinds(language_server.adapter_server_capabilities());
-
         let only = if let Some(requested) = &self.kinds {
-            if let Some(supported_kinds) = supported {
+            if let Some(supported_kinds) =
+                Self::supported_code_action_kinds(language_server.adapter_server_capabilities())
+            {
                 let filtered = requested
                     .iter()
                     .filter(|requested_kind| {
@@ -2649,7 +2655,7 @@ impl LspCommand for GetCodeActions {
                 Some(requested.clone())
             }
         } else {
-            supported
+            None
         };
 
         Ok(lsp::CodeActionParams {
@@ -2931,9 +2937,7 @@ impl LspCommand for OnTypeFormatting {
             .await?;
 
         let options = buffer.update(&mut cx, |buffer, cx| {
-            lsp_formatting_options(
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx).as_ref(),
-            )
+            lsp_formatting_options(LanguageSettings::for_buffer(buffer, cx).as_ref())
         });
 
         Ok(Self {
@@ -3212,8 +3216,9 @@ impl InlayHints {
                                     Some(((uri, range), server_id)) => Some((
                                         LanguageServerId(server_id as usize),
                                         lsp::Location {
-                                            uri: lsp::Uri::from_str(&uri)
-                                                .context("invalid uri in hint part {part:?}")?,
+                                            uri: lsp::Uri::from_str(&uri).with_context(|| {
+                                                format!("invalid uri in hint part {uri:?}")
+                                            })?,
                                             range: lsp::Range::new(
                                                 point_to_lsp(PointUtf16::new(
                                                     range.start.row,
@@ -3847,45 +3852,27 @@ impl LspCommand for GetCodeLens {
     async fn response_from_lsp(
         self,
         message: Option<Vec<lsp::CodeLens>>,
-        lsp_store: Entity<LspStore>,
+        _lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> anyhow::Result<Vec<CodeAction>> {
         let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-        let language_server = cx.update(|cx| {
-            lsp_store
-                .read(cx)
-                .language_server_for_id(server_id)
-                .with_context(|| {
-                    format!("Missing the language server that just returned a response {server_id}")
-                })
-        })?;
-        let server_capabilities = language_server.capabilities();
-        let available_commands = server_capabilities
-            .execute_command_provider
-            .as_ref()
-            .map(|options| options.commands.as_slice())
-            .unwrap_or_default();
-        Ok(message
-            .unwrap_or_default()
+        let code_lenses = message.unwrap_or_default();
+
+        Ok(code_lenses
             .into_iter()
-            .filter(|code_lens| {
-                code_lens
-                    .command
-                    .as_ref()
-                    .is_none_or(|command| available_commands.contains(&command.command))
-            })
             .map(|code_lens| {
                 let code_lens_range = range_from_lsp(code_lens.range);
                 let start = snapshot.clip_point_utf16(code_lens_range.start, Bias::Left);
                 let end = snapshot.clip_point_utf16(code_lens_range.end, Bias::Right);
                 let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                let resolved = code_lens.command.is_some();
                 CodeAction {
                     server_id,
                     range,
                     lsp_action: LspAction::CodeLens(code_lens),
-                    resolved: false,
+                    resolved,
                 }
             })
             .collect())
@@ -4722,6 +4709,162 @@ impl LspCommand for GetDocumentColor {
                 })
             })
             .collect())
+    }
+
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetFoldingRanges {
+    type Response = Vec<LspFoldingRange>;
+    type LspRequest = lsp::request::FoldingRangeRequest;
+    type ProtoRequest = proto::GetFoldingRanges;
+
+    fn display_name(&self) -> &str {
+        "Folding ranges"
+    }
+
+    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities) -> bool {
+        server_capabilities
+            .server_capabilities
+            .folding_range_provider
+            .as_ref()
+            .is_some_and(|capability| match capability {
+                lsp::FoldingRangeProviderCapability::Simple(supported) => *supported,
+                lsp::FoldingRangeProviderCapability::FoldingProvider(..)
+                | lsp::FoldingRangeProviderCapability::Options(..) => true,
+            })
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::FoldingRangeParams> {
+        Ok(lsp::FoldingRangeParams {
+            text_document: make_text_document_identifier(path)?,
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<Vec<lsp::FoldingRange>>,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        _: LanguageServerId,
+        cx: AsyncApp,
+    ) -> Result<Self::Response> {
+        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+        let max_point = snapshot.max_point_utf16();
+        Ok(message
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|range| range.start_line < range.end_line)
+            .filter(|range| range.start_line <= max_point.row && range.end_line <= max_point.row)
+            .map(|folding_range| {
+                let start_col = folding_range.start_character.unwrap_or(u32::MAX);
+                let end_col = folding_range.end_character.unwrap_or(u32::MAX);
+                let start = snapshot.clip_point_utf16(
+                    Unclipped(PointUtf16::new(folding_range.start_line, start_col)),
+                    Bias::Right,
+                );
+                let end = snapshot.clip_point_utf16(
+                    Unclipped(PointUtf16::new(folding_range.end_line, end_col)),
+                    Bias::Left,
+                );
+                let start = snapshot.anchor_after(start);
+                let end = snapshot.anchor_before(end);
+                let collapsed_text = folding_range
+                    .collapsed_text
+                    .filter(|t| !t.is_empty())
+                    .map(|t| SharedString::from(crate::lsp_store::collapse_newlines(&t, " ")));
+                LspFoldingRange {
+                    range: start..end,
+                    collapsed_text,
+                }
+            })
+            .collect())
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
+        proto::GetFoldingRanges {
+            project_id,
+            buffer_id: buffer.remote_id().to_proto(),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        _: Self::ProtoRequest,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> Result<Self> {
+        Ok(Self)
+    }
+
+    fn response_to_proto(
+        response: Self::Response,
+        _: &mut LspStore,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut App,
+    ) -> proto::GetFoldingRangesResponse {
+        let mut ranges = Vec::with_capacity(response.len());
+        let mut collapsed_texts = Vec::with_capacity(response.len());
+        for folding_range in response {
+            ranges.push(serialize_anchor_range(folding_range.range));
+            collapsed_texts.push(
+                folding_range
+                    .collapsed_text
+                    .map(|t| t.to_string())
+                    .unwrap_or_default(),
+            );
+        }
+        proto::GetFoldingRangesResponse {
+            ranges,
+            collapsed_texts,
+            version: serialize_version(buffer_version),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::GetFoldingRangesResponse,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> Result<Self::Response> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
+        message
+            .ranges
+            .into_iter()
+            .zip(
+                message
+                    .collapsed_texts
+                    .into_iter()
+                    .map(Some)
+                    .chain(std::iter::repeat(None)),
+            )
+            .map(|(range, collapsed_text)| {
+                Ok(LspFoldingRange {
+                    range: deserialize_anchor_range(range)?,
+                    collapsed_text: collapsed_text
+                        .filter(|t| !t.is_empty())
+                        .map(SharedString::from),
+                })
+            })
+            .collect()
     }
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {

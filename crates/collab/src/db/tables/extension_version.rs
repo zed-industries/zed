@@ -1,6 +1,6 @@
 use crate::db::ExtensionId;
+use cloud_api_types::ExtensionProvides;
 use collections::BTreeSet;
-use rpc::ExtensionProvides;
 use sea_orm::entity::prelude::*;
 use time::PrimitiveDateTime;
 

@@ -1,3 +1,8 @@
+---
+title: Semantic Tokens and Syntax Highlighting - Zed
+description: Enable and configure semantic token highlighting in Zed for richer, language-server-aware syntax coloring.
+---
+
 # Semantic Tokens
 
 Semantic tokens provide richer syntax highlighting by using information from language servers. Unlike tree-sitter highlighting, which is based purely on syntax, semantic tokens understand the meaning of your code—distinguishing between local variables and parameters, or between a class definition and a class reference.
@@ -43,7 +48,7 @@ You can configure this globally or per-language:
 Semantic tokens are styled using rules that map LSP token types and modifiers to theme styles or custom colors. Zed provides sensible defaults, but you can customize these in your settings.json: add rules under `global_lsp_settings.semantic_token_rules` key.
 
 Rules are matched in order, and the first matching rule wins.
-User-defined rules take precedence over defaults.
+User-defined rules take highest precedence, followed by extension-provided language rules, then Zed defaults.
 
 ### Rule Structure
 
@@ -134,7 +139,7 @@ To disable highlighting for a specific token type, add an empty rule that matche
 }
 ```
 
-Since user rules are prepended to defaults and the first match wins, this empty rule prevents any styling from being applied to comment tokens.
+Since user rules take highest precedence and the first match wins, this empty rule prevents any styling from being applied to comment tokens.
 
 ## Default Rules
 

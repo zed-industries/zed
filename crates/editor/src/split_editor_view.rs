@@ -7,7 +7,7 @@ use gpui::{
     ParentElement, Pixels, StatefulInteractiveElement, Styled, TextStyleRefinement, Window, div,
     linear_color_stop, linear_gradient, point, px, size,
 };
-use multi_buffer::{Anchor, ExcerptId};
+use multi_buffer::{Anchor, ExcerptBoundaryInfo};
 use settings::Settings;
 use smallvec::smallvec;
 use text::BufferId;
@@ -429,7 +429,7 @@ impl SplitBufferHeadersElement {
 
         let sticky_header_excerpt_id = snapshot
             .sticky_header_excerpt(scroll_position.y)
-            .map(|e| e.excerpt.id);
+            .map(|e| e.excerpt);
 
         let non_sticky_headers = self.build_non_sticky_headers(
             &snapshot,
@@ -476,9 +476,10 @@ impl SplitBufferHeadersElement {
         let mut anchors_by_buffer: HashMap<BufferId, (usize, Anchor)> = HashMap::default();
         for selection in all_anchor_selections.iter() {
             let head = selection.head();
-            if let Some(buffer_id) = head.text_anchor.buffer_id {
+            if let Some((text_anchor, _)) = snapshot.buffer_snapshot().anchor_to_buffer_anchor(head)
+            {
                 anchors_by_buffer
-                    .entry(buffer_id)
+                    .entry(text_anchor.buffer_id)
                     .and_modify(|(latest_id, latest_anchor)| {
                         if selection.id > *latest_id {
                             *latest_id = selection.id;
@@ -520,7 +521,7 @@ impl SplitBufferHeadersElement {
         );
 
         let editor_bg_color = cx.theme().colors().editor_background;
-        let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
+        let selected = selected_buffer_ids.contains(&excerpt.buffer_id());
 
         let mut header = v_flex()
             .id("sticky-buffer-header")
@@ -594,7 +595,7 @@ impl SplitBufferHeadersElement {
         end_row: DisplayRow,
         selected_buffer_ids: &HashSet<BufferId>,
         latest_selection_anchors: &HashMap<BufferId, Anchor>,
-        sticky_header_excerpt_id: Option<ExcerptId>,
+        sticky_header: Option<&ExcerptBoundaryInfo>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<BufferHeaderLayout> {
@@ -603,7 +604,7 @@ impl SplitBufferHeadersElement {
         for (block_row, block) in snapshot.blocks_in_range(start_row..end_row) {
             let (excerpt, is_folded) = match block {
                 Block::BufferHeader { excerpt, .. } => {
-                    if sticky_header_excerpt_id == Some(excerpt.id) {
+                    if sticky_header == Some(excerpt) {
                         continue;
                     }
                     (excerpt, false)
@@ -613,7 +614,7 @@ impl SplitBufferHeadersElement {
                 Block::ExcerptBoundary { .. } | Block::Custom(_) | Block::Spacer { .. } => continue,
             };
 
-            let selected = selected_buffer_ids.contains(&excerpt.buffer_id);
+            let selected = selected_buffer_ids.contains(&excerpt.buffer_id());
             let jump_data = header_jump_data(
                 snapshot,
                 block_row,

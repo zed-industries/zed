@@ -1012,4 +1012,40 @@ mod tests {
             "uname".to_string()
         );
     }
+
+    #[test]
+    fn test_try_quote_single_quote_paths() {
+        let path_with_quote = r"C:\Temp\O'Brien\repo";
+        let shlex_shells = [
+            ShellKind::Posix,
+            ShellKind::Fish,
+            ShellKind::Csh,
+            ShellKind::Tcsh,
+            ShellKind::Rc,
+            ShellKind::Xonsh,
+            ShellKind::Elvish,
+            ShellKind::Nushell,
+        ];
+
+        for shell_kind in shlex_shells {
+            let quoted = shell_kind.try_quote(path_with_quote).unwrap().into_owned();
+            assert_ne!(quoted, path_with_quote);
+            assert_eq!(
+                shlex::split(&quoted),
+                Some(vec![path_with_quote.to_string()])
+            );
+
+            if shell_kind == ShellKind::Nushell {
+                let prefixed = shell_kind.prepend_command_prefix(&quoted);
+                assert!(prefixed.starts_with('^'));
+            }
+        }
+
+        for shell_kind in [ShellKind::PowerShell, ShellKind::Pwsh] {
+            let quoted = shell_kind.try_quote(path_with_quote).unwrap().into_owned();
+            assert!(quoted.starts_with('\''));
+            assert!(quoted.ends_with('\''));
+            assert!(quoted.contains("O''Brien"));
+        }
+    }
 }
