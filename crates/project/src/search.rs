@@ -105,12 +105,11 @@ impl SearchQuery {
             // AhoCorasickBuilder doesn't support case-insensitive search with unicode characters
             // Fallback to regex search as recommended by
             // https://docs.rs/aho-corasick/1.1/aho_corasick/struct.AhoCorasickBuilder.html#method.ascii_case_insensitive
-            return Self::regex(
-                regex::escape(&query),
+            return Self::escaped_regex(
+                query,
                 whole_word,
                 case_sensitive,
                 include_ignored,
-                false,
                 files_to_include,
                 files_to_exclude,
                 false,
@@ -145,7 +144,7 @@ impl SearchQuery {
     pub fn regex(
         query: impl ToString,
         whole_word: bool,
-        mut case_sensitive: bool,
+        case_sensitive: bool,
         include_ignored: bool,
         one_match_per_line: bool,
         files_to_include: PathMatcher,
@@ -153,47 +152,96 @@ impl SearchQuery {
         match_full_paths: bool,
         buffers: Option<Vec<Entity<Buffer>>>,
     ) -> Result<Self> {
-        let mut query = query.to_string();
-        let initial_query = Arc::from(query.as_str());
-
-        if let Some((case_sensitive_from_pattern, new_query)) =
-            Self::case_sensitive_from_pattern(&query)
-        {
-            case_sensitive = case_sensitive_from_pattern;
-            query = new_query
-        }
-
-        if whole_word {
-            let mut word_query = String::new();
-            if let Some(first) = query.get(0..1)
-                && WORD_MATCH_TEST.is_match(first).is_ok_and(|x| !x)
-            {
-                word_query.push_str("\\b");
-            }
-            word_query.push_str(&query);
-            if let Some(last) = query.get(query.len() - 1..)
-                && WORD_MATCH_TEST.is_match(last).is_ok_and(|x| !x)
-            {
-                word_query.push_str("\\b");
-            }
-            query = word_query
-        }
-
-        let multiline = query.contains('\n') || query.contains("\\n");
-        if multiline {
-            query.insert_str(0, "(?m)");
-        }
-
-        let regex = RegexBuilder::new(&query)
-            .case_insensitive(!case_sensitive)
-            .build()?;
+        let query = query.to_string();
         let inner = SearchInputs {
-            query: initial_query,
-            files_to_exclude,
+            query: Arc::from(query.as_str()),
             files_to_include,
+            files_to_exclude,
             match_full_paths,
             buffers,
         };
+        Self::build_regex(
+            query,
+            whole_word,
+            case_sensitive,
+            include_ignored,
+            one_match_per_line,
+            inner,
+        )
+    }
+
+    /// Create a regex query from a literal string, escaping any regex
+    /// metacharacters so that the resulting query matches the literal text.
+    ///
+    /// Unlike `regex`, the query stored on the resulting `SearchQuery` is the
+    /// original unescaped text, so `as_str` returns what the user typed.
+    pub fn escaped_regex(
+        query: impl ToString,
+        whole_word: bool,
+        case_sensitive: bool,
+        include_ignored: bool,
+        files_to_include: PathMatcher,
+        files_to_exclude: PathMatcher,
+        match_full_paths: bool,
+        buffers: Option<Vec<Entity<Buffer>>>,
+    ) -> Result<Self> {
+        let query = query.to_string();
+        let inner = SearchInputs {
+            query: Arc::from(query.as_str()),
+            files_to_include,
+            files_to_exclude,
+            match_full_paths,
+            buffers,
+        };
+        Self::build_regex(
+            regex::escape(&query),
+            whole_word,
+            case_sensitive,
+            include_ignored,
+            false,
+            inner,
+        )
+    }
+
+    fn build_regex(
+        mut pattern: String,
+        whole_word: bool,
+        mut case_sensitive: bool,
+        include_ignored: bool,
+        one_match_per_line: bool,
+        inner: SearchInputs,
+    ) -> Result<Self> {
+        if let Some((case_sensitive_from_pattern, new_pattern)) =
+            Self::case_sensitive_from_pattern(&pattern)
+        {
+            case_sensitive = case_sensitive_from_pattern;
+            pattern = new_pattern
+        }
+
+        if whole_word {
+            let mut word_pattern = String::new();
+            if let Some(first) = pattern.get(0..1)
+                && WORD_MATCH_TEST.is_match(first).is_ok_and(|x| !x)
+            {
+                word_pattern.push_str("\\b");
+            }
+            word_pattern.push_str(&pattern);
+            if let Some(last) = pattern.get(pattern.len() - 1..)
+                && WORD_MATCH_TEST.is_match(last).is_ok_and(|x| !x)
+            {
+                word_pattern.push_str("\\b");
+            }
+            pattern = word_pattern
+        }
+
+        let multiline = pattern.contains('\n') || pattern.contains("\\n");
+        if multiline {
+            pattern.insert_str(0, "(?m)");
+        }
+
+        let regex = RegexBuilder::new(&pattern)
+            .case_insensitive(!case_sensitive)
+            .build()?;
         Ok(Self::Regex {
             regex,
             replacement: None,

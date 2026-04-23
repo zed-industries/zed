@@ -1203,6 +1203,13 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     cx_b.update(editor::init);
+    cx_b.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.code_lens = Some(settings::CodeLens::Menu);
+            });
+        });
+    });
 
     let command_name = "test_command";
     let capabilities = lsp::ServerCapabilities {

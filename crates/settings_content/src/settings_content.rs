@@ -1,3 +1,4 @@
+mod action;
 mod agent;
 mod editor;
 mod extension;
@@ -12,6 +13,7 @@ mod theme;
 mod title_bar;
 mod workspace;
 
+pub use action::{ActionName, ActionWithArguments};
 pub use agent::*;
 pub use editor::*;
 pub use extension::*;
@@ -180,6 +182,13 @@ pub struct SettingsContent {
 
     /// The URL of the Zed server to connect to.
     pub server_url: Option<String>,
+
+    /// The URL used as the key for credential storage.
+    ///
+    /// When set, credentials are stored under this URL instead of `server_url`.
+    /// This allows running multiple Zed instances side by side without them
+    /// overwriting each other's keychain entries.
+    pub credentials_url: Option<String>,
 
     /// Configuration for session-related features
     pub session: Option<SessionSettingsContent>,

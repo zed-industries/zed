@@ -79,6 +79,11 @@ pub enum DevContainerError {
     FilesystemError,
     ResourceFetchFailed,
     NotInValidProject,
+    /// Multiple existing containers match this project's identifying labels
+    /// (`devcontainer.local_folder` + `devcontainer.config_file`). The spec
+    /// expects those labels to be unique per project, so Zed can't choose
+    /// which one to connect to. The user must remove the duplicate(s).
+    MultipleMatchingContainers(Vec<String>),
 }
 
 impl Display for DevContainerError {
@@ -112,6 +117,12 @@ impl Display for DevContainerError {
                 DevContainerError::ResourceFetchFailed =>
                     "Failed to fetch resources from template or feature repository".to_string(),
                 DevContainerError::DevContainerValidationFailed(failure) => failure.to_string(),
+                DevContainerError::MultipleMatchingContainers(ids) => format!(
+                    "Multiple containers match this project's dev container labels ({}). \
+                     Zed can't decide which to connect to. Stop and remove the stale one(s) with \
+                     `docker stop <id>` and `docker rm <id>`, then try again.",
+                    ids.join(", ")
+                ),
             }
         )
     }
@@ -285,6 +296,7 @@ pub async fn start_dev_container_with_config(
 
             Ok((connection, remote_workspace_folder))
         }
+        Err(err @ DevContainerError::MultipleMatchingContainers(_)) => Err(err),
         Err(err) => {
             let message = format!("Failed with nested error: {:?}", err);
             Err(DevContainerError::DevContainerUpFailed(message))

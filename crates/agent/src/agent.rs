@@ -28,7 +28,7 @@ use acp_thread::{
     AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
     AgentSessionListResponse, TokenUsageRatio, UserMessageId,
 };
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
@@ -760,10 +760,9 @@ impl NativeAgent {
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
-                let should_update_model = thread.model().is_none()
-                    || (thread.is_empty()
-                        && matches!(event, language_model::Event::DefaultModelChanged));
-                if should_update_model && let Some(model) = default_model.clone() {
+                if thread.model().is_none()
+                    && let Some(model) = default_model.clone()
+                {
                     thread.set_model(model, cx);
                     cx.notify();
                 }
