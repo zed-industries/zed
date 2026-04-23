@@ -296,6 +296,20 @@ impl Conversation {
         self.threads.insert(session_id, thread);
     }
 
+    pub fn permission_options_for_tool_call<'a>(
+        &'a self,
+        session_id: &acp::SessionId,
+        tool_call_id: acp::ToolCallId,
+        cx: &'a App,
+    ) -> Option<&'a PermissionOptions> {
+        let thread = self.threads.get(session_id)?;
+        let (_, tool_call) = thread.read(cx).tool_call(&tool_call_id)?;
+        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
+            return None;
+        };
+        Some(options)
+    }
+
     pub fn pending_tool_call<'a>(
         &'a self,
         session_id: &acp::SessionId,

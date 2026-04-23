@@ -1884,13 +1884,21 @@ impl ThreadView {
         let choices = match options {
             PermissionOptions::Dropdown(choices) => choices.as_slice(),
             PermissionOptions::DropdownWithPatterns { choices, .. } => choices.as_slice(),
-            _ => {
+            PermissionOptions::Flat(_) => {
                 let kind = if is_allow {
                     acp::PermissionOptionKind::AllowOnce
                 } else {
                     acp::PermissionOptionKind::RejectOnce
                 };
-                return self.authorize_pending_tool_call(kind, window, cx);
+                let option = options.first_option_of_kind(kind)?;
+                self.authorize_tool_call(
+                    session_id,
+                    tool_call_id,
+                    SelectedPermissionOutcome::new(option.option_id.clone(), option.kind),
+                    window,
+                    cx,
+                );
+                return Some(());
             }
         };
 
@@ -6884,11 +6892,7 @@ impl ThreadView {
                                     .map(|kb| kb.size(rems_from_px(12.))),
                                 )
                             })
-                            .on_click(cx.listener({
-                                move |this, _, window, cx| {
-                                    this.authorize_pending_with_granularity(true, window, cx);
-                                }
-                            })),
+                            .on_click(cx.listener({ move |_this, _, _window, _cx| {} })),
                     )
                     .child(
                         Button::new(("deny-btn", entry_ix), "Deny")
