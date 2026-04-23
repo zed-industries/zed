@@ -19,11 +19,13 @@ use release_channel::ReleaseChannel;
 use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
+use smol::lock::Mutex;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{LazyLock, atomic::Ordering};
-use util::{ResultExt, maybe};
+use std::time::{SystemTime, UNIX_EPOCH};
+use util::ResultExt;
 use zed_env_vars::ZED_STATELESS;
 
 /// A migration registered via `static_connection!` and collected at link time.
@@ -168,9 +170,13 @@ pub fn db_path(db_dir: &Path, scope: impl DbScope) -> PathBuf {
 }
 
 /// Open or create a database at the given directory path.
-/// This will retry a couple times if there are failures. If opening fails once, the db directory
-/// is moved to a backup folder and a new one is created. If that fails, a shared in memory db is created.
-/// In either case, static variables are set so that the user can be notified.
+///
+/// If the persistent database fails to open (e.g. corruption after a crash, a
+/// stray `-wal` file locked by another process, or a migration that left the
+/// file in an inconsistent state), the scope directory is renamed aside as
+/// `{unix_ms}-{scope}/` and a fresh one is created in its place. Only if that
+/// recovery attempt also fails do we fall back to a shared in-memory database
+/// and set `ALL_FILE_DB_FAILED` so the UI can notify the user.
 pub async fn open_db<M: Migrator + 'static>(
     db_dir: &Path,
     scope: impl DbScope,
@@ -179,27 +185,25 @@ pub async fn open_db<M: Migrator + 'static>(
         return open_fallback_db::<M>().await;
     }
 
+    let scope_name = scope.scope_name().to_owned();
     let db_path = db_path(db_dir, scope);
 
-    let connection = maybe!(async {
-        if let Some(parent) = db_path.parent() {
-            smol::fs::create_dir_all(parent)
-                .await
-                .context("Could not create db directory")
-                .log_err()?;
-        }
-        open_main_db::<M>(&db_path).await
-    })
-    .await;
+    if let Some(parent) = db_path.parent() {
+        smol::fs::create_dir_all(parent)
+            .await
+            .context("Could not create db directory")
+            .log_err();
+    }
 
-    if let Some(connection) = connection {
+    if let Some(connection) = open_main_db::<M>(&db_path).await {
         return connection;
     }
 
-    // Set another static ref so that we can escalate the notification
-    ALL_FILE_DB_FAILED.store(true, Ordering::Release);
+    if let Some(connection) = recover_corrupt_db::<M>(&db_path, &scope_name).await {
+        return connection;
+    }
 
-    // If still failed, create an in memory db with a known name
+    ALL_FILE_DB_FAILED.store(true, Ordering::Release);
     open_fallback_db::<M>().await
 }
 
@@ -212,6 +216,49 @@ async fn open_main_db<M: Migrator>(db_path: &Path) -> Option<ThreadSafeConnectio
         .await
         .log_err()
 }
+
+/// Move a failed scope directory aside and try once more on a clean one.
+///
+/// Serialized by `RECOVERY_LOCK` so simultaneous callers (e.g. multiple
+/// domain initializations during startup) only produce one backup dir.
+async fn recover_corrupt_db<M: Migrator>(
+    db_path: &Path,
+    scope_name: &str,
+) -> Option<ThreadSafeConnection> {
+    let _guard = RECOVERY_LOCK.lock().await;
+
+    // Another caller may have already recovered while we were waiting.
+    if let Some(connection) = open_main_db::<M>(db_path).await {
+        return Some(connection);
+    }
+
+    let scope_dir = db_path.parent()?;
+    let db_dir = scope_dir.parent()?;
+    let timestamp_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    let backup_dir = db_dir.join(format!("{timestamp_millis}-{scope_name}"));
+
+    smol::fs::rename(scope_dir, &backup_dir)
+        .await
+        .with_context(|| format!("Failed to move corrupt database to {}", backup_dir.display()))
+        .log_err()?;
+    log::warn!(
+        "Database at {} failed to open; moved to {} and retrying with a fresh file.",
+        db_path.display(),
+        backup_dir.display(),
+    );
+
+    smol::fs::create_dir_all(scope_dir)
+        .await
+        .context("Could not recreate database directory after backup")
+        .log_err()?;
+
+    open_main_db::<M>(db_path).await
+}
+
+static RECOVERY_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 async fn open_fallback_db<M: Migrator>() -> ThreadSafeConnection {
     log::warn!("Opening fallback in-memory database");
@@ -414,5 +461,130 @@ mod tests {
         for guard in guards.into_iter() {
             assert!(guard.join().is_ok());
         }
+    }
+
+    /// When `open_main_db` fails, the scope directory should be renamed to a
+    /// timestamped backup and a fresh persistent DB should be opened in its
+    /// place — not the shared in-memory fallback.
+    #[gpui::test]
+    async fn test_corrupt_db_is_backed_up_and_recovered(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+
+        enum OldSchema {}
+        impl Domain for OldSchema {
+            const NAME: &str = "recovery_tests";
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE test(value);)];
+        }
+
+        enum NewSchema {}
+        impl Domain for NewSchema {
+            const NAME: &str = "recovery_tests"; // same domain name, different migration
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE test2(value);)];
+        }
+
+        let tempdir = tempfile::Builder::new()
+            .prefix("DbRecoveryTests")
+            .tempdir()
+            .unwrap();
+
+        {
+            let old_db =
+                open_db::<OldSchema>(tempdir.path(), release_channel::ReleaseChannel::Dev).await;
+            assert!(old_db.persistent());
+        }
+
+        let recovered =
+            open_db::<NewSchema>(tempdir.path(), release_channel::ReleaseChannel::Dev).await;
+
+        assert!(
+            recovered.persistent(),
+            "recovery should reopen an on-disk db, not fall back to memory"
+        );
+        assert!(
+            recovered.select_row::<usize>("SELECT * FROM test2").unwrap()()
+                .unwrap()
+                .is_none(),
+            "the fresh db should have run NewSchema's migrations"
+        );
+
+        let mut scope_dirs: Vec<_> = std::fs::read_dir(tempdir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with("-dev"))
+            .collect();
+        scope_dirs.sort();
+        assert_eq!(
+            scope_dirs.len(),
+            2,
+            "expected `0-dev/` alongside a single `{{ts}}-dev/` backup, got {scope_dirs:?}"
+        );
+        assert!(scope_dirs.iter().any(|n| n == "0-dev"));
+        assert!(
+            scope_dirs.iter().any(|n| n != "0-dev" && n.ends_with("-dev")),
+            "expected a timestamped backup directory, got {scope_dirs:?}"
+        );
+    }
+
+    /// Reopening the scope after recovery should find the fresh db and return
+    /// a persistent connection without producing a second backup — what a user
+    /// experiences on the startup *after* the corrupt one.
+    #[gpui::test]
+    async fn test_reopen_after_recovery_is_clean(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+
+        enum OldSchema {}
+        impl Domain for OldSchema {
+            const NAME: &str = "reopen_after_recovery_tests";
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE test(value);)];
+        }
+
+        enum NewSchema {}
+        impl Domain for NewSchema {
+            const NAME: &str = "reopen_after_recovery_tests";
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE test2(value);)];
+        }
+
+        let tempdir = tempfile::Builder::new()
+            .prefix("DbReopenAfterRecoveryTests")
+            .tempdir()
+            .unwrap();
+
+        {
+            let old_db =
+                open_db::<OldSchema>(tempdir.path(), release_channel::ReleaseChannel::Dev).await;
+            assert!(old_db.persistent());
+        }
+        {
+            let recovered =
+                open_db::<NewSchema>(tempdir.path(), release_channel::ReleaseChannel::Dev).await;
+            assert!(recovered.persistent());
+        }
+
+        let backups_before = count_backup_dirs(tempdir.path());
+
+        {
+            let reopened =
+                open_db::<NewSchema>(tempdir.path(), release_channel::ReleaseChannel::Dev).await;
+            assert!(reopened.persistent());
+        }
+
+        assert_eq!(
+            count_backup_dirs(tempdir.path()),
+            backups_before,
+            "a clean reopen must not create another backup"
+        );
+    }
+
+    fn count_backup_dirs(dir: &std::path::Path) -> usize {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| {
+                let name = e.file_name();
+                let name = name.to_string_lossy();
+                name.ends_with("-dev") && name != "0-dev"
+            })
+            .count()
     }
 }
