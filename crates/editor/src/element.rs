@@ -8229,21 +8229,34 @@ pub(crate) fn header_jump_data(
 ) -> JumpData {
     let multibuffer_snapshot = editor_snapshot.buffer_snapshot();
     let buffer = first_excerpt.buffer(multibuffer_snapshot);
-    let (jump_anchor, jump_buffer) = if let Some(anchor) =
+    let (jump_anchor, jump_buffer, excerpt_start) = if let Some(anchor) =
         latest_selection_anchors.get(&first_excerpt.buffer_id())
         && let Some((jump_anchor, selection_buffer)) =
             multibuffer_snapshot.anchor_to_buffer_anchor(*anchor)
     {
-        (jump_anchor, selection_buffer)
+        let jump_offset = text::ToOffset::to_offset(&jump_anchor, selection_buffer);
+        let selection_excerpt_start = multibuffer_snapshot
+            .excerpts_for_buffer(jump_anchor.buffer_id)
+            .find(|excerpt| {
+                let start = text::ToOffset::to_offset(&excerpt.context.start, selection_buffer);
+                let end = text::ToOffset::to_offset(&excerpt.context.end, selection_buffer);
+                start <= jump_offset && jump_offset <= end
+            })
+            .map(|excerpt| excerpt.context.start)
+            .unwrap_or(first_excerpt.range.context.start);
+        (jump_anchor, selection_buffer, selection_excerpt_start)
     } else {
-        (first_excerpt.range.primary.start, buffer)
+        (
+            first_excerpt.range.primary.start,
+            buffer,
+            first_excerpt.range.context.start,
+        )
     };
-    let excerpt_start = first_excerpt.range.context.start;
     let jump_position = language::ToPoint::to_point(&jump_anchor, jump_buffer);
     let rows_from_excerpt_start = if jump_anchor == excerpt_start {
         0
     } else {
-        let excerpt_start_point = language::ToPoint::to_point(&excerpt_start, buffer);
+        let excerpt_start_point = language::ToPoint::to_point(&excerpt_start, jump_buffer);
         jump_position.row.saturating_sub(excerpt_start_point.row)
     };
 
