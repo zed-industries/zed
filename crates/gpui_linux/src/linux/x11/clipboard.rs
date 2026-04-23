@@ -48,6 +48,7 @@ use x11rb::{
 };
 
 use gpui::{ClipboardItem, Image, ImageFormat, hash};
+use strum::IntoEnumIterator;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -87,7 +88,7 @@ x11rb::atom_manager! {
         BMP__MIME: ImageFormat::mime_type(ImageFormat::Bmp ).as_bytes(),
         TIFF_MIME: ImageFormat::mime_type(ImageFormat::Tiff).as_bytes(),
         ICO__MIME: ImageFormat::mime_type(ImageFormat::Ico ).as_bytes(),
-
+        PNM__MIME: ImageFormat::mime_type(ImageFormat::Pnm ).as_bytes(),
         // This is just some random name for the property on our window, into which
         // the clipboard owner writes the data we requested.
         ARBOARD_CLIPBOARD,
@@ -989,14 +990,8 @@ impl Clipboard {
         self.inner.write(data, selection, wait)
     }
 
-    #[allow(unused)]
-    pub(crate) fn set_image(
-        &self,
-        image: Image,
-        selection: ClipboardKind,
-        wait: WaitConfig,
-    ) -> Result<()> {
-        let format = match image.format {
+    fn image_format_atom(&self, format: ImageFormat) -> Atom {
+        match format {
             ImageFormat::Png => self.inner.atoms.PNG__MIME,
             ImageFormat::Jpeg => self.inner.atoms.JPEG_MIME,
             ImageFormat::Webp => self.inner.atoms.WEBP_MIME,
@@ -1005,7 +1000,18 @@ impl Clipboard {
             ImageFormat::Bmp => self.inner.atoms.BMP__MIME,
             ImageFormat::Tiff => self.inner.atoms.TIFF_MIME,
             ImageFormat::Ico => self.inner.atoms.ICO__MIME,
-        };
+            ImageFormat::Pnm => self.inner.atoms.PNM__MIME,
+        }
+    }
+
+    #[allow(unused)]
+    pub(crate) fn set_image(
+        &self,
+        image: Image,
+        selection: ClipboardKind,
+        wait: WaitConfig,
+    ) -> Result<()> {
+        let format = self.image_format_atom(image.format);
         let data = vec![ClipboardData {
             bytes: image.bytes,
             format: self.inner.atoms.PNG__MIME,
@@ -1014,28 +1020,11 @@ impl Clipboard {
     }
 
     pub(crate) fn get_any(&self, selection: ClipboardKind) -> Result<ClipboardItem> {
-        const IMAGE_FORMAT_COUNT: usize = 7;
-        let image_format_atoms: [Atom; IMAGE_FORMAT_COUNT] = [
-            self.inner.atoms.PNG__MIME,
-            self.inner.atoms.JPEG_MIME,
-            self.inner.atoms.WEBP_MIME,
-            self.inner.atoms.GIF__MIME,
-            self.inner.atoms.SVG__MIME,
-            self.inner.atoms.BMP__MIME,
-            self.inner.atoms.TIFF_MIME,
-        ];
-        let image_formats: [ImageFormat; IMAGE_FORMAT_COUNT] = [
-            ImageFormat::Png,
-            ImageFormat::Jpeg,
-            ImageFormat::Webp,
-            ImageFormat::Gif,
-            ImageFormat::Svg,
-            ImageFormat::Bmp,
-            ImageFormat::Tiff,
-        ];
+        let image_entries = ImageFormat::iter()
+            .map(|format| (self.image_format_atom(format), format))
+            .collect::<Vec<_>>();
 
-        const TEXT_FORMAT_COUNT: usize = 6;
-        let text_format_atoms: [Atom; TEXT_FORMAT_COUNT] = [
+        let text_format_atoms: &[Atom] = &[
             self.inner.atoms.UTF8_STRING,
             self.inner.atoms.UTF8_MIME_0,
             self.inner.atoms.UTF8_MIME_1,
@@ -1044,17 +1033,11 @@ impl Clipboard {
             self.inner.atoms.TEXT_MIME_UNKNOWN,
         ];
 
-        let atom_none: Atom = AtomEnum::NONE.into();
-
-        const FORMAT_ATOM_COUNT: usize = TEXT_FORMAT_COUNT + IMAGE_FORMAT_COUNT;
-
-        let mut format_atoms: [Atom; FORMAT_ATOM_COUNT] = [atom_none; FORMAT_ATOM_COUNT];
-
         // image formats first, as they are more specific, and read will return the first
         // format that the contents can be converted to
-        format_atoms[0..IMAGE_FORMAT_COUNT].copy_from_slice(&image_format_atoms);
-        format_atoms[IMAGE_FORMAT_COUNT..].copy_from_slice(&text_format_atoms);
-        debug_assert!(!format_atoms.contains(&atom_none));
+        let mut format_atoms = Vec::with_capacity(image_entries.len() + text_format_atoms.len());
+        format_atoms.extend(image_entries.iter().map(|(atom, _)| *atom));
+        format_atoms.extend_from_slice(text_format_atoms);
 
         let result = self.inner.read(&format_atoms, selection)?;
 
@@ -1063,7 +1046,7 @@ impl Clipboard {
             self.inner.atom_name(result.format)
         );
 
-        for (format_atom, image_format) in image_format_atoms.into_iter().zip(image_formats) {
+        for (format_atom, image_format) in image_entries {
             if result.format == format_atom {
                 let bytes = result.bytes;
                 let id = hash(&bytes);

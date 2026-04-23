@@ -203,7 +203,7 @@ pub fn render_ollama_model_picker(
                     .max_height(Some(rems(18.).into()))
             }))
         })
-        .anchor(gpui::Corner::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),

@@ -547,15 +547,16 @@ fn build_code_label(
                 text.push_str(code_span);
             }
             extension::CodeLabelSpan::Literal(span) => {
-                let highlight_id = language
+                if let Some(highlight_id) = language
                     .grammar()
                     .zip(span.highlight_name.as_ref())
                     .and_then(|(grammar, highlight_name)| {
                         grammar.highlight_id_for_name(highlight_name)
                     })
-                    .unwrap_or_default();
-                let ix = text.len();
-                runs.push((ix..ix + span.text.len(), highlight_id));
+                {
+                    let ix = text.len();
+                    runs.push((ix..ix + span.text.len(), highlight_id));
+                }
                 text.push_str(&span.text);
             }
         }
@@ -683,7 +684,7 @@ fn test_build_code_label() {
     );
     let code_runs = code_ranges
         .into_iter()
-        .map(|range| (range, HighlightId(0)))
+        .map(|range| (range, HighlightId::new(0)))
         .collect::<Vec<_>>();
 
     let label = build_code_label(
@@ -706,7 +707,7 @@ fn test_build_code_label() {
         marked_text_ranges("pqrs.tuv: «fn»(«Bcd»(«Efgh»)) -> «Ijklm»", false);
     let label_runs = label_ranges
         .into_iter()
-        .map(|range| (range, HighlightId(0)))
+        .map(|range| (range, HighlightId::new(0)))
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -722,7 +723,7 @@ fn test_build_code_label_with_invalid_ranges() {
     let (code, code_ranges) = marked_text_ranges("const «a»: «B» = '🏀'", false);
     let code_runs = code_ranges
         .into_iter()
-        .map(|range| (range, HighlightId(0)))
+        .map(|range| (range, HighlightId::new(0)))
         .collect::<Vec<_>>();
 
     // A span uses a code range that is invalid because it starts inside of

@@ -547,3 +547,43 @@ fn to_any_envelope<T: EnvelopedMessage>(
         payload: response,
     }) as Box<_>
 }
+
+#[cfg(any(test, feature = "test-support"))]
+pub struct NoopProtoClient {
+    handler_set: parking_lot::Mutex<ProtoMessageHandlerSet>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl NoopProtoClient {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            handler_set: parking_lot::Mutex::new(ProtoMessageHandlerSet::default()),
+        })
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl ProtoClient for NoopProtoClient {
+    fn request(
+        &self,
+        _: proto::Envelope,
+        _: &'static str,
+    ) -> futures::future::BoxFuture<'static, Result<proto::Envelope>> {
+        unimplemented!()
+    }
+    fn send(&self, _: proto::Envelope, _: &'static str) -> Result<()> {
+        Ok(())
+    }
+    fn send_response(&self, _: proto::Envelope, _: &'static str) -> Result<()> {
+        Ok(())
+    }
+    fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet> {
+        &self.handler_set
+    }
+    fn is_via_collab(&self) -> bool {
+        false
+    }
+    fn has_wsl_interop(&self) -> bool {
+        false
+    }
+}

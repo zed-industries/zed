@@ -1,11 +1,7 @@
 use gpui::{App, actions};
 use workspace::Workspace;
 
-pub mod markdown_elements;
-mod markdown_minifier;
-pub mod markdown_parser;
 pub mod markdown_preview_view;
-pub mod markdown_renderer;
 
 pub use zed_actions::preview::markdown::{OpenPreview, OpenPreviewToTheSide};
 

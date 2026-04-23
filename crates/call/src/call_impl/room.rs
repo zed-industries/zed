@@ -21,7 +21,7 @@ use language::LanguageRegistry;
 use livekit::{LocalTrackPublication, ParticipantIdentity, RoomEvent};
 use livekit_client::{self as livekit, AudioStream, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
-use project::Project;
+use project::{CURRENT_PROJECT_FEATURES, Project};
 use settings::Settings as _;
 use std::sync::atomic::AtomicU64;
 use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration, time::Instant};
@@ -1237,6 +1237,10 @@ impl Room {
             worktrees: project.read(cx).worktree_metadata_protos(cx),
             is_ssh_project: project.read(cx).is_via_remote_server(),
             windows_paths: Some(project.read(cx).path_style(cx) == PathStyle::Windows),
+            features: CURRENT_PROJECT_FEATURES
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
         });
 
         cx.spawn(async move |this, cx| {
@@ -1529,6 +1533,84 @@ impl Room {
         })
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn share_screen_wayland(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        log::info!("will screenshare on wayland");
+        if self.status.is_offline() {
+            return Task::ready(Err(anyhow!("room is offline")));
+        }
+        if self.is_sharing_screen() {
+            return Task::ready(Err(anyhow!("screen was already shared")));
+        }
+
+        let (participant, publish_id) = if let Some(live_kit) = self.live_kit.as_mut() {
+            let publish_id = post_inc(&mut live_kit.next_publish_id);
+            live_kit.screen_track = LocalTrack::Pending { publish_id };
+            cx.notify();
+            (live_kit.room.local_participant(), publish_id)
+        } else {
+            return Task::ready(Err(anyhow!("live-kit was not initialized")));
+        };
+
+        cx.spawn(async move |this, cx| {
+            let publication = participant.publish_screenshare_track_wayland(cx).await;
+
+            this.update(cx, |this, cx| {
+                let live_kit = this
+                    .live_kit
+                    .as_mut()
+                    .context("live-kit was not initialized")?;
+
+                let canceled = if let LocalTrack::Pending {
+                    publish_id: cur_publish_id,
+                } = &live_kit.screen_track
+                {
+                    *cur_publish_id != publish_id
+                } else {
+                    true
+                };
+
+                match publication {
+                    Ok((publication, stream, failure_rx)) => {
+                        if canceled {
+                            cx.spawn(async move |_, cx| {
+                                participant.unpublish_track(publication.sid(), cx).await
+                            })
+                            .detach()
+                        } else {
+                            cx.spawn(async move |this, cx| {
+                                if failure_rx.await.is_ok() {
+                                    log::warn!("Wayland capture died, auto-unsharing screen");
+                                    let _ =
+                                        this.update(cx, |this, cx| this.unshare_screen(false, cx));
+                                }
+                            })
+                            .detach();
+
+                            live_kit.screen_track = LocalTrack::Published {
+                                track_publication: publication,
+                                _stream: stream,
+                            };
+                            cx.notify();
+                        }
+
+                        Audio::play_sound(Sound::StartScreenshare, cx);
+                        Ok(())
+                    }
+                    Err(error) => {
+                        if canceled {
+                            Ok(())
+                        } else {
+                            live_kit.screen_track = LocalTrack::None;
+                            cx.notify();
+                            Err(error)
+                        }
+                    }
+                }
+            })?
+        })
+    }
+
     pub fn toggle_mute(&mut self, cx: &mut Context<Self>) {
         if let Some(live_kit) = self.live_kit.as_mut() {
             // When unmuting, undeafen if the user was deafened before.
@@ -1695,7 +1777,15 @@ fn spawn_room_connection(
                 });
                 this.diagnostics = Some(cx.new(|cx| CallDiagnostics::new(weak_room, cx)));
 
-                if !muted_by_user && this.can_use_microphone() {
+                // Always open the microphone track on join, even when
+                // `muted_by_user` is set. Note that the microphone will still
+                // be muted, as it is still gated in `share_microphone` by
+                // `muted_by_user`. For users that have `mute_on_join` enabled,
+                // this moves the Bluetooth profile switch (A2DP -> HFP) (which
+                // can cause 1-2 seconds of audio silence on some Bluetooth
+                // headphones) from first unmute to channel join, where
+                // instability is expected.
+                if this.can_use_microphone() {
                     this.share_microphone(cx)
                 } else {
                     Task::ready(Ok(()))

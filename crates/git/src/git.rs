@@ -102,8 +102,11 @@ actions!(
         OpenModifiedFiles,
         /// Clones a repository.
         Clone,
+        ViewCommit,
         /// Adds a file to .gitignore.
         AddToGitignore,
+        /// Copies the current branch name to the clipboard.
+        CopyBranchName,
     ]
 );
 
@@ -158,6 +161,14 @@ impl Oid {
     /// Returns this [`Oid`] as a short SHA.
     pub fn display_short(&self) -> String {
         self.to_string().chars().take(SHORT_SHA_LENGTH).collect()
+    }
+}
+
+impl TryFrom<&str> for Oid {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> std::prelude::v1::Result<Self, Self::Error> {
+        Oid::from_str(value)
     }
 }
 
