@@ -1020,8 +1020,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .collect()
             };
 
-            for (index, positions) in matched_folders {
-                entries.push(ProjectPickerEntry::OpenFolder { index, positions });
+            if !matched_folders.is_empty() {
+                entries.push(ProjectPickerEntry::Header("Current Project".into()));
+                for (index, positions) in matched_folders {
+                    entries.push(ProjectPickerEntry::OpenFolder { index, positions });
+                }
             }
         }
 
