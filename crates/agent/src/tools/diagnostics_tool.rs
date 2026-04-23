@@ -178,3 +178,277 @@ impl AgentTool for DiagnosticsTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ToolCallEventStream;
+    use gpui::TestAppContext;
+    use language::{DiagnosticSourceKind, LanguageServerId};
+    use lsp::Uri;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::sync::Arc;
+    use util::path;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+    }
+
+    async fn run_diagnostics(
+        input: DiagnosticsToolInput,
+        project: gpui::Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> Result<String, String> {
+        let tool = Arc::new(DiagnosticsTool::new(project));
+        let (event_stream, _) = ToolCallEventStream::test();
+        cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx))
+            .await
+    }
+
+    // ── initial_title ──────────────────────────────────────────────────────
+
+    #[gpui::test]
+    async fn test_initial_title_no_path(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let tool = DiagnosticsTool::new(project);
+
+        let title = cx.update(|cx| {
+            tool.initial_title(Ok(DiagnosticsToolInput { path: None }), cx)
+        });
+        assert_eq!(title, "Check project diagnostics");
+    }
+
+    #[gpui::test]
+    async fn test_initial_title_with_path(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let tool = DiagnosticsTool::new(project);
+
+        let title = cx.update(|cx| {
+            tool.initial_title(
+                Ok(DiagnosticsToolInput {
+                    path: Some("root/src/main.rs".to_string()),
+                }),
+                cx,
+            )
+        });
+        assert_eq!(title, "Check diagnostics for `root/src/main.rs`");
+    }
+
+    #[gpui::test]
+    async fn test_initial_title_empty_path_falls_back(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let tool = DiagnosticsTool::new(project);
+
+        // An empty string path should fall back to the project-wide title.
+        let title = cx.update(|cx| {
+            tool.initial_title(
+                Ok(DiagnosticsToolInput {
+                    path: Some(String::new()),
+                }),
+                cx,
+            )
+        });
+        assert_eq!(title, "Check project diagnostics");
+    }
+
+    // ── project-wide summary ───────────────────────────────────────────────
+
+    #[gpui::test]
+    async fn test_project_wide_no_diagnostics(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let result = run_diagnostics(DiagnosticsToolInput { path: None }, project, cx).await;
+        assert_eq!(result, Ok("No errors or warnings found in the project.".into()));
+    }
+
+    #[gpui::test]
+    async fn test_project_wide_with_errors_and_warnings(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "a.rs": "fn foo() {}", "b.rs": "fn bar() {}" }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let lsp_store = project.read_with(cx, |p, _| p.lsp_store());
+        lsp_store.update(cx, |store, cx| {
+            store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: Uri::from_file_path(path!("/root/a.rs")).unwrap(),
+                        version: None,
+                        diagnostics: vec![lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 0),
+                                lsp::Position::new(0, 3),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: "unused import".to_string(),
+                            ..Default::default()
+                        }],
+                    },
+                    None,
+                    DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap();
+            store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: Uri::from_file_path(path!("/root/b.rs")).unwrap(),
+                        version: None,
+                        diagnostics: vec![lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 0),
+                                lsp::Position::new(1, 3),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::WARNING),
+                            message: "dead code".to_string(),
+                            ..Default::default()
+                        }],
+                    },
+                    None,
+                    DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let result = run_diagnostics(DiagnosticsToolInput { path: None }, project, cx)
+            .await
+            .unwrap();
+
+        assert!(result.contains("1 error(s)"), "should report 1 error: {result}");
+        assert!(result.contains("a.rs"), "should mention a.rs: {result}");
+        assert!(result.contains("1 warning(s)"), "should report 1 warning: {result}");
+        assert!(result.contains("b.rs"), "should mention b.rs: {result}");
+    }
+
+    // ── per-file diagnostics ───────────────────────────────────────────────
+
+    #[gpui::test]
+    async fn test_per_file_no_diagnostics(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "clean.rs": "fn main() {}" }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let result = run_diagnostics(
+            DiagnosticsToolInput {
+                path: Some("root/clean.rs".to_string()),
+            },
+            project,
+            cx,
+        )
+        .await;
+        assert_eq!(result, Ok("File doesn't have errors or warnings!".into()));
+    }
+
+    #[gpui::test]
+    async fn test_per_file_unknown_path_returns_error(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let result = run_diagnostics(
+            DiagnosticsToolInput {
+                path: Some("root/does_not_exist.rs".to_string()),
+            },
+            project,
+            cx,
+        )
+        .await;
+        assert!(result.is_err(), "should error for unknown path");
+    }
+
+    #[gpui::test]
+    async fn test_per_file_reports_error_and_warning(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "lib.rs": "fn unused() {}\nlet x = 1;" }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let lsp_store = project.read_with(cx, |p, _| p.lsp_store());
+        lsp_store.update(cx, |store, cx| {
+            store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: Uri::from_file_path(path!("/root/lib.rs")).unwrap(),
+                        version: None,
+                        diagnostics: vec![
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 3),
+                                    lsp::Position::new(0, 9),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::WARNING),
+                                message: "function is never used".to_string(),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(1, 0),
+                                    lsp::Position::new(1, 3),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                message: "expected expression".to_string(),
+                                ..Default::default()
+                            },
+                        ],
+                    },
+                    None,
+                    DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let result = run_diagnostics(
+            DiagnosticsToolInput {
+                path: Some("root/lib.rs".to_string()),
+            },
+            project,
+            cx,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.contains("warning at line 1"), "missing warning: {result}");
+        assert!(result.contains("function is never used"), "missing warning msg: {result}");
+        assert!(result.contains("error at line 2"), "missing error: {result}");
+        assert!(result.contains("expected expression"), "missing error msg: {result}");
+    }
+}
