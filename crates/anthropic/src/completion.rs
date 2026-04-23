@@ -11,9 +11,9 @@ use std::pin::Pin;
 use std::str::FromStr;
 
 use crate::{
-    AnthropicError, AnthropicModelMode, CacheControl, CacheControlType, ContentDelta, Event,
-    ImageSource, Message, RequestContent, ResponseContent, StringOrContents, Thinking, Tool,
-    ToolChoice, ToolResultContent, ToolResultPart, Usage,
+    AdaptiveThinkingDisplay, AnthropicError, AnthropicModelMode, CacheControl, CacheControlType,
+    ContentDelta, Event, ImageSource, Message, RequestContent, ResponseContent, StringOrContents,
+    Thinking, Tool, ToolChoice, ToolResultContent, ToolResultPart, Usage,
 };
 
 fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
@@ -180,7 +180,9 @@ pub fn into_anthropic(
                 AnthropicModelMode::Thinking { budget_tokens } => {
                     Some(Thinking::Enabled { budget_tokens })
                 }
-                AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive),
+                AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive {
+                    display: Some(AdaptiveThinkingDisplay::Summarized),
+                }),
                 AnthropicModelMode::Default => None,
             }
         } else {

@@ -764,8 +764,20 @@ pub enum ToolChoice {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Thinking {
-    Enabled { budget_tokens: Option<u32> },
-    Adaptive,
+    Enabled {
+        budget_tokens: Option<u32>,
+    },
+    Adaptive {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display: Option<AdaptiveThinkingDisplay>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AdaptiveThinkingDisplay {
+    Omitted,
+    Summarized,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, EnumString)]
