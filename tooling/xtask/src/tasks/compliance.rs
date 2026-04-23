@@ -10,8 +10,6 @@ use compliance::{
     report::ReportReviewSummary,
 };
 
-const MAX_CONCURRENT_REQUESTS: usize = 5;
-
 #[derive(Parser)]
 pub(crate) struct ComplianceArgs {
     #[clap(subcommand)]
@@ -118,8 +116,8 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
     println!("Checking commit range {range}, {} total", commits.len());
 
     let report = Reporter::new(commits, client.clone())
-        .generate_report(MAX_CONCURRENT_REQUESTS)
-        .await;
+        .generate_report()
+        .await?;
 
     println!(
         "Generated report for version {}",

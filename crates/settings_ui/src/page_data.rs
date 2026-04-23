@@ -100,6 +100,31 @@ fn developer_page() -> SettingsPage {
                 files: USER,
                 render: crate::pages::render_feature_flags_page,
             }),
+            SettingsPageItem::SectionHeader("Instrumentation"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Performance Profiler",
+                description: "Collect timing data for foreground and background executor tasks so they can be inspected via `zed: open performance profiler`. May lead to increased memory usage.",
+                field: Box::new(SettingField {
+                    json_path: Some("instrumentation.performance_profiler.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .instrumentation
+                            .as_ref()
+                            .and_then(|i| i.performance_profiler.as_ref())
+                            .and_then(|p| p.enabled.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .instrumentation
+                            .get_or_insert_default()
+                            .performance_profiler
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
         ]),
     }
 }
