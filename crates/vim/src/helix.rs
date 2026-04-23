@@ -1749,7 +1749,7 @@ mod test {
                 .map(|label| {
                     let jump_label = label.label.iter().collect::<String>();
                     let word = buffer_snapshot
-                        .text_for_range(label.range.clone())
+                        .text_for_range(label.range)
                         .collect::<String>();
                     (jump_label, word)
                 })
@@ -1840,7 +1840,7 @@ mod test {
                 .map(|label| {
                     let jump_label = label.label.iter().collect::<String>();
                     let word = buffer_snapshot
-                        .text_for_range(label.range.clone())
+                        .text_for_range(label.range)
                         .collect::<String>();
                     (jump_label, word)
                 })
