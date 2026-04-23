@@ -5239,27 +5239,45 @@ impl Repository {
         };
 
         loop {
-            let timeout = background_executor.timer(std::time::Duration::from_secs(10));
-
-            futures::select_biased! {
+            let timeout = background_executor.timer(Duration::from_secs(10));
+            let first_sha = futures::select_biased! {
                 sha = futures::FutureExt::fuse(request_rx.recv()) => {
                     let Ok(sha) = sha else {
                         break;
                     };
-
-                    match reader.read(sha).await {
-                        Ok(commit_data) => {
-                            if result_tx.send((sha, commit_data)).await.is_err() {
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            log::error!("failed to read commit data for {sha}: {error:?}");
-                        }
-                    }
+                    sha
                 }
                 _ = futures::FutureExt::fuse(timeout) => {
                     break;
+                }
+            };
+
+            let mut queued_shas = Vec::with_capacity(64);
+            queued_shas.push(first_sha);
+
+            while queued_shas.len() < 64 {
+                match request_rx.try_recv() {
+                    Ok(sha) => queued_shas.push(sha),
+                    Err(_) => break,
+                }
+            }
+
+            match reader.read(queued_shas).await {
+                Ok(commit_data_batch) => {
+                    for commit_data in commit_data_batch {
+                        if result_tx
+                            .send((commit_data.sha, commit_data))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::error!(
+                        "failed to read commit data batch for [{first_sha}]: {error:?}"
+                    );
                 }
             }
         }

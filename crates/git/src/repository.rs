@@ -128,15 +128,30 @@ pub struct CommitDataReader {
 }
 
 impl CommitDataReader {
-    pub async fn read(&self, sha: Oid) -> Result<CommitData> {
-        let (response_tx, response_rx) = oneshot::channel();
-        self.request_tx
-            .send(CommitDataRequest { sha, response_tx })
-            .await
-            .map_err(|_| anyhow!("commit data reader task closed"))?;
-        response_rx
-            .await
-            .map_err(|_| anyhow!("commit data reader task dropped response"))?
+    pub async fn read(&self, shas: Vec<Oid>) -> Result<Vec<CommitData>> {
+        if shas.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut response_receivers = Vec::with_capacity(shas.len());
+        for sha in shas {
+            let (response_tx, response_rx) = oneshot::channel();
+            self.request_tx
+                .send(CommitDataRequest { sha, response_tx })
+                .await
+                .map_err(|_| anyhow!("commit data reader task closed"))?;
+            response_receivers.push(response_rx);
+        }
+
+        let mut commits = Vec::with_capacity(response_receivers.len());
+        for response_rx in response_receivers {
+            commits.push(
+                response_rx
+                    .await
+                    .map_err(|_| anyhow!("commit data reader task dropped response"))??,
+            );
+        }
+
+        Ok(commits)
     }
 
     #[cfg(any(test, feature = "test-support"))]
