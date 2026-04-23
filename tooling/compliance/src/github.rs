@@ -27,11 +27,37 @@ pub enum ReviewState {
     Other,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorAssociation {
+    Owner,
+    Member,
+    Collaborator,
+    Contributor,
+    FirstTimeContributor,
+    FirstTimer,
+    Mannequin,
+    None,
+}
+
+impl AuthorAssociation {
+    pub fn has_write_access(&self) -> bool {
+        matches!(self, Self::Owner | Self::Member | Self::Collaborator)
+    }
+}
+
+pub trait Approvable {
+    fn author_login(&self) -> Option<&str>;
+    fn review_state(&self) -> Option<ReviewState>;
+    fn body(&self) -> Option<&str>;
+    fn author_association(&self) -> Option<AuthorAssociation>;
+}
+
 #[derive(Debug, Clone)]
 pub struct PullRequestReview {
     pub user: Option<GithubUser>,
     pub state: Option<ReviewState>,
     pub body: Option<String>,
+    pub author_association: Option<AuthorAssociation>,
 }
 
 impl PullRequestReview {
@@ -43,10 +69,47 @@ impl PullRequestReview {
     }
 }
 
+impl Approvable for PullRequestReview {
+    fn author_login(&self) -> Option<&str> {
+        self.user.as_ref().map(|user| user.login.as_str())
+    }
+
+    fn review_state(&self) -> Option<ReviewState> {
+        self.state
+    }
+
+    fn body(&self) -> Option<&str> {
+        self.body.as_deref()
+    }
+
+    fn author_association(&self) -> Option<AuthorAssociation> {
+        self.author_association
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PullRequestComment {
     pub user: GithubUser,
     pub body: Option<String>,
+    pub author_association: Option<AuthorAssociation>,
+}
+
+impl Approvable for PullRequestComment {
+    fn author_login(&self) -> Option<&str> {
+        Some(&self.user.login)
+    }
+
+    fn review_state(&self) -> Option<ReviewState> {
+        None
+    }
+
+    fn body(&self) -> Option<&str> {
+        self.body.as_deref()
+    }
+
+    fn author_association(&self) -> Option<AuthorAssociation> {
+        self.author_association
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Deref, PartialEq, Eq)]
@@ -351,7 +414,11 @@ mod octo_client {
     use futures::TryStreamExt as _;
     use jsonwebtoken::EncodingKey;
     use octocrab::{
-        Octocrab, Page, models::pulls::ReviewState as OctocrabReviewState,
+        Octocrab, Page,
+        models::{
+            AuthorAssociation as OctocrabAuthorAssociation,
+            pulls::ReviewState as OctocrabReviewState,
+        },
         service::middleware::cache::mem::InMemoryCache,
     };
     use serde::de::DeserializeOwned;
@@ -363,9 +430,25 @@ mod octo_client {
     };
 
     use super::{
-        CommitMetadataBySha, GithubApiClient, GithubLogin, GithubUser, PullRequestComment,
-        PullRequestData, PullRequestReview, ReviewState,
+        AuthorAssociation, CommitMetadataBySha, GithubApiClient, GithubLogin, GithubUser,
+        PullRequestComment, PullRequestData, PullRequestReview, ReviewState,
     };
+
+    fn convert_author_association(association: OctocrabAuthorAssociation) -> AuthorAssociation {
+        match association {
+            OctocrabAuthorAssociation::Owner => AuthorAssociation::Owner,
+            OctocrabAuthorAssociation::Member => AuthorAssociation::Member,
+            OctocrabAuthorAssociation::Collaborator => AuthorAssociation::Collaborator,
+            OctocrabAuthorAssociation::Contributor => AuthorAssociation::Contributor,
+            OctocrabAuthorAssociation::FirstTimeContributor => {
+                AuthorAssociation::FirstTimeContributor
+            }
+            OctocrabAuthorAssociation::FirstTimer => AuthorAssociation::FirstTimer,
+            OctocrabAuthorAssociation::Mannequin => AuthorAssociation::Mannequin,
+            OctocrabAuthorAssociation::None => AuthorAssociation::None,
+            _ => AuthorAssociation::None,
+        }
+    }
 
     const PAGE_SIZE: u8 = 100;
 
@@ -481,6 +564,7 @@ mod octo_client {
                         _ => ReviewState::Other,
                     }),
                     body: review.body,
+                    author_association: review.author_association.map(convert_author_association),
                 })
                 .collect())
         }
@@ -507,6 +591,7 @@ mod octo_client {
                         login: comment.user.login,
                     },
                     body: comment.body,
+                    author_association: comment.author_association.map(convert_author_association),
                 })
                 .collect())
         }
