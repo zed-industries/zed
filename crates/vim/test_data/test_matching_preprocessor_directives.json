@@ -1,0 +1,18 @@
+{"Put":{"state":"#ˇif\n\n#else\n\n#endif\n"}}
+{"Key":"%"}
+{"Get":{"state":"#if\n\nˇ#else\n\n#endif\n","mode":"Normal"}}
+{"Key":"%"}
+{"Get":{"state":"#if\n\n#else\n\nˇ#endif\n","mode":"Normal"}}
+{"Key":"%"}
+{"Get":{"state":"ˇ#if\n\n#else\n\n#endif\n","mode":"Normal"}}
+{"Put":{"state":"#ˇif\n  #if\n\n  #else\n\n  #endif\n\n#else\n#endif\n"}}
+{"Key":"%"}
+{"Get":{"state":"#if\n  #if\n\n  #else\n\n  #endif\n\nˇ#else\n#endif\n","mode":"Normal"}}
+{"Key":"%"}
+{"Key":"%"}
+{"Get":{"state":"ˇ#if\n  #if\n\n  #else\n\n  #endif\n\n#else\n#endif\n","mode":"Normal"}}
+{"Key":"j"}
+{"Key":"%"}
+{"Key":"%"}
+{"Key":"%"}
+{"Get":{"state":"#if\n  ˇ#if\n\n  #else\n\n  #endif\n\n#else\n#endif\n","mode":"Normal"}}

@@ -1,22 +1,33 @@
 use crate::components::KernelListItem;
-use crate::kernels::RemoteRunningKernel;
 use crate::setup_editor_session_actions;
 use crate::{
     KernelStatus,
-    kernels::{Kernel, KernelSpecification, NativeRunningKernel},
-    outputs::{ExecutionStatus, ExecutionView},
+    kernels::{
+        Kernel, KernelSession, KernelSpecification, NativeRunningKernel, RemoteRunningKernel,
+        SshRunningKernel, WslRunningKernel,
+    },
+    outputs::{
+        ExecutionStatus, ExecutionView, ExecutionViewFinishedEmpty, ExecutionViewFinishedSmall,
+        InputReplyEvent,
+    },
+    repl_settings::ReplSettings,
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use editor::SelectionEffects;
 use editor::{
-    Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
+    Anchor, AnchorRangeExt as _, Editor, Inlay, MultiBuffer, ToOffset, ToPoint,
     display_map::{
         BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId,
         RenderBlock,
     },
     scroll::Autoscroll,
 };
+use project::InlayId;
+
+/// Marker types
+enum ReplExecutedRange {}
+
 use futures::FutureExt as _;
 use gpui::{
     Context, Entity, EventEmitter, Render, Subscription, Task, WeakEntity, Window, div, prelude::*,
@@ -24,9 +35,10 @@ use gpui::{
 use language::Point;
 use project::Fs;
 use runtimelib::{
-    ExecuteRequest, ExecutionState, InterruptRequest, JupyterMessage, JupyterMessageContent,
-    ShutdownRequest,
+    ExecuteRequest, ExecutionState, InputReply, InterruptRequest, JupyterMessage,
+    JupyterMessageContent, KernelInfoRequest, ReplyStatus, ShutdownRequest,
 };
+use settings::Settings as _;
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
 use ui::{IconButtonShape, Tooltip, prelude::*};
@@ -36,9 +48,13 @@ pub struct Session {
     fs: Arc<dyn Fs>,
     editor: WeakEntity<Editor>,
     pub kernel: Kernel,
-    blocks: HashMap<String, EditorBlock>,
     pub kernel_specification: KernelSpecification,
-    _buffer_subscription: Subscription,
+
+    blocks: HashMap<String, EditorBlock>,
+    result_inlays: HashMap<String, (InlayId, Range<Anchor>, usize)>,
+    next_inlay_id: usize,
+
+    _subscriptions: Vec<Subscription>,
 }
 
 struct EditorBlock {
@@ -82,9 +98,14 @@ impl EditorBlock {
                 });
             }
 
-            let invalidation_anchor = buffer.read(cx).read(cx).anchor_before(next_row_start);
+            // Re-read snapshot after potential buffer edit and create a fresh anchor for
+            // block placement. Using anchor_before (Bias::Left) ensures the anchor stays
+            // at the end of the code line regardless of whether we inserted a newline.
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let block_placement_anchor = buffer_snapshot.anchor_before(end_point);
+            let invalidation_anchor = buffer_snapshot.anchor_before(next_row_start);
             let block = BlockProperties {
-                placement: BlockPlacement::Below(code_range.end),
+                placement: BlockPlacement::Below(block_placement_anchor),
                 // Take up at least one height for status, allow the editor to determine the real height based on the content from render
                 height: Some(1),
                 style: BlockStyle::Sticky,
@@ -111,7 +132,11 @@ impl EditorBlock {
         cx: &mut Context<Session>,
     ) {
         self.execution_view.update(cx, |execution_view, cx| {
-            execution_view.push_message(&message.content, window, cx);
+            if matches!(&message.content, JupyterMessageContent::InputRequest(_)) {
+                execution_view.handle_input_request(message, window, cx);
+            } else {
+                execution_view.push_message(&message.content, window, cx);
+            }
         });
     }
 
@@ -132,6 +157,12 @@ impl EditorBlock {
             let rem_size = cx.window.rem_size();
 
             let text_line_height = text_style.line_height_in_pixels(rem_size);
+            let output_settings = ReplSettings::get_global(cx.app);
+            let output_max_height = if output_settings.output_max_height_lines > 0 {
+                Some(text_line_height * output_settings.output_max_height_lines as f32)
+            } else {
+                None
+            };
 
             let close_button = h_flex()
                 .flex_none()
@@ -179,11 +210,15 @@ impl EditorBlock {
                 )
                 .child(
                     div()
+                        .id((ElementId::from(cx.block_id), "output-scroll"))
                         .flex_1()
-                        .size_full()
+                        .overflow_x_hidden()
                         .py(text_line_height / 2.)
                         .mr(editor_margins.right)
                         .pr_2()
+                        .when_some(output_max_height, |div, max_h| {
+                            div.max_h(max_h).overflow_y_scroll()
+                        })
                         .child(execution_view),
                 )
                 .into_any_element()
@@ -220,8 +255,10 @@ impl Session {
             editor,
             kernel: Kernel::StartingKernel(Task::ready(()).shared()),
             blocks: HashMap::default(),
+            result_inlays: HashMap::default(),
+            next_inlay_id: 0,
             kernel_specification,
-            _buffer_subscription: subscription,
+            _subscriptions: vec![subscription],
         };
 
         session.start_kernel(window, cx);
@@ -231,11 +268,34 @@ impl Session {
     fn start_kernel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let kernel_language = self.kernel_specification.language();
         let entity_id = self.editor.entity_id();
-        let working_directory = self
-            .editor
-            .upgrade()
-            .and_then(|editor| editor.read(cx).working_directory(cx))
-            .unwrap_or_else(temp_dir);
+
+        // For WSL Remote kernels, use project root instead of potentially temporary working directory
+        // which causes .venv/bin/python checks to fail
+        let is_remote_execution = matches!(
+            self.kernel_specification,
+            crate::KernelSpecification::WslRemote(_) | crate::KernelSpecification::SshRemote(_)
+        );
+
+        let working_directory = if is_remote_execution {
+            // For WSL Remote kernels, use project root instead of potentially temporary working directory
+            // which causes .venv/bin/python checks to fail
+            self.editor
+                .upgrade()
+                .and_then(|editor| editor.read(cx).project().cloned())
+                .and_then(|project| {
+                    project
+                        .read(cx)
+                        .worktrees(cx)
+                        .next()
+                        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                })
+                .unwrap_or_else(temp_dir)
+        } else {
+            self.editor
+                .upgrade()
+                .and_then(|editor| editor.read(cx).working_directory(cx))
+                .unwrap_or_else(temp_dir)
+        };
 
         telemetry::event!(
             "Kernel Status Changed",
@@ -247,8 +307,7 @@ impl Session {
         let session_view = cx.entity();
 
         let kernel = match self.kernel_specification.clone() {
-            KernelSpecification::Jupyter(kernel_specification)
-            | KernelSpecification::PythonEnv(kernel_specification) => NativeRunningKernel::new(
+            KernelSpecification::Jupyter(kernel_specification) => NativeRunningKernel::new(
                 kernel_specification,
                 entity_id,
                 working_directory,
@@ -257,9 +316,47 @@ impl Session {
                 window,
                 cx,
             ),
-            KernelSpecification::Remote(remote_kernel_specification) => RemoteRunningKernel::new(
-                remote_kernel_specification,
+            KernelSpecification::PythonEnv(env_specification) => NativeRunningKernel::new(
+                env_specification.as_local_spec(),
+                entity_id,
                 working_directory,
+                self.fs.clone(),
+                session_view,
+                window,
+                cx,
+            ),
+            KernelSpecification::JupyterServer(remote_kernel_specification) => {
+                RemoteRunningKernel::new(
+                    remote_kernel_specification,
+                    working_directory,
+                    session_view,
+                    window,
+                    cx,
+                )
+            }
+            KernelSpecification::SshRemote(spec) => {
+                let project = self
+                    .editor
+                    .upgrade()
+                    .and_then(|editor| editor.read(cx).project().cloned());
+                if let Some(project) = project {
+                    SshRunningKernel::new(
+                        spec,
+                        working_directory,
+                        project,
+                        session_view,
+                        window,
+                        cx,
+                    )
+                } else {
+                    Task::ready(Err(anyhow::anyhow!("No project associated with editor")))
+                }
+            }
+            KernelSpecification::WslRemote(spec) => WslRunningKernel::new(
+                spec,
+                entity_id,
+                working_directory,
+                self.fs.clone(),
                 session_view,
                 window,
                 cx,
@@ -268,12 +365,15 @@ impl Session {
 
         let pending_kernel = cx
             .spawn(async move |this, cx| {
-                let kernel = kernel.await;
+                let kernel: anyhow::Result<Box<dyn crate::kernels::RunningKernel>> = kernel.await;
 
                 match kernel {
                     Ok(kernel) => {
                         this.update(cx, |session, cx| {
                             session.kernel(Kernel::RunningKernel(kernel), cx);
+                            let request =
+                                JupyterMessageContent::KernelInfoRequest(KernelInfoRequest {});
+                            session.send(request.into(), cx).log_err();
                         })
                         .ok();
                     }
@@ -321,20 +421,56 @@ impl Session {
             let snapshot = buffer.read(cx).snapshot(cx);
 
             let mut blocks_to_remove: HashSet<CustomBlockId> = HashSet::default();
+            let mut gutter_ranges_to_remove: Vec<Range<Anchor>> = Vec::new();
+            let mut keys_to_remove: Vec<String> = Vec::new();
 
-            self.blocks.retain(|_id, block| {
+            self.blocks.retain(|id, block| {
                 if block.invalidation_anchor.is_valid(&snapshot) {
                     true
                 } else {
                     blocks_to_remove.insert(block.block_id);
+                    gutter_ranges_to_remove.push(block.code_range.clone());
+                    keys_to_remove.push(id.clone());
                     false
                 }
             });
 
-            if !blocks_to_remove.is_empty() {
+            let mut inlays_to_remove: Vec<InlayId> = Vec::new();
+
+            self.result_inlays
+                .retain(|id, (inlay_id, code_range, original_len)| {
+                    let start_offset = code_range.start.to_offset(&snapshot);
+                    let end_offset = code_range.end.to_offset(&snapshot);
+                    let current_len = end_offset.saturating_sub(start_offset);
+
+                    if current_len != *original_len {
+                        inlays_to_remove.push(*inlay_id);
+                        gutter_ranges_to_remove.push(code_range.clone());
+                        keys_to_remove.push(id.clone());
+                        false
+                    } else {
+                        true
+                    }
+                });
+
+            if !blocks_to_remove.is_empty()
+                || !inlays_to_remove.is_empty()
+                || !gutter_ranges_to_remove.is_empty()
+            {
                 self.editor
                     .update(cx, |editor, cx| {
-                        editor.remove_blocks(blocks_to_remove, None, cx);
+                        if !blocks_to_remove.is_empty() {
+                            editor.remove_blocks(blocks_to_remove, None, cx);
+                        }
+                        if !inlays_to_remove.is_empty() {
+                            editor.splice_inlays(&inlays_to_remove, vec![], cx);
+                        }
+                        if !gutter_ranges_to_remove.is_empty() {
+                            editor.remove_gutter_highlights::<ReplExecutedRange>(
+                                gutter_ranges_to_remove,
+                                cx,
+                            );
+                        }
                     })
                     .ok();
                 cx.notify();
@@ -350,17 +486,134 @@ impl Session {
         anyhow::Ok(())
     }
 
+    fn send_stdin_reply(
+        &mut self,
+        value: String,
+        parent_message: &JupyterMessage,
+        _cx: &mut Context<Self>,
+    ) {
+        if let Kernel::RunningKernel(kernel) = &mut self.kernel {
+            let reply = InputReply {
+                value,
+                status: ReplyStatus::Ok,
+                error: None,
+            };
+            let message = reply.as_child_of(parent_message);
+            kernel.stdin_tx().try_send(message).log_err();
+        }
+    }
+
+    fn replace_block_with_inlay(&mut self, message_id: &str, text: &str, cx: &mut Context<Self>) {
+        let Some(block) = self.blocks.remove(message_id) else {
+            return;
+        };
+
+        let Some(editor) = self.editor.upgrade() else {
+            return;
+        };
+
+        let code_range = block.code_range.clone();
+
+        editor.update(cx, |editor, cx| {
+            let mut block_ids = HashSet::default();
+            block_ids.insert(block.block_id);
+            editor.remove_blocks(block_ids, None, cx);
+
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let start_offset = code_range.start.to_offset(&buffer);
+            let end_offset = code_range.end.to_offset(&buffer);
+            let original_len = end_offset.saturating_sub(start_offset);
+
+            let end_point = code_range.end.to_point(&buffer);
+            let inlay_position = buffer.anchor_after(end_point);
+
+            let inlay_id = self.next_inlay_id;
+            self.next_inlay_id += 1;
+
+            let inlay = Inlay::repl_result(inlay_id, inlay_position, format!("    {}", text));
+
+            editor.splice_inlays(&[], vec![inlay], cx);
+            self.result_inlays.insert(
+                message_id.to_string(),
+                (
+                    InlayId::ReplResult(inlay_id),
+                    code_range.clone(),
+                    original_len,
+                ),
+            );
+
+            editor.insert_gutter_highlight::<ReplExecutedRange>(
+                code_range,
+                |cx| cx.theme().status().success,
+                cx,
+            );
+        });
+
+        cx.notify();
+    }
+
     pub fn clear_outputs(&mut self, cx: &mut Context<Self>) {
         let blocks_to_remove: HashSet<CustomBlockId> =
             self.blocks.values().map(|block| block.block_id).collect();
 
+        let inlays_to_remove: Vec<InlayId> =
+            self.result_inlays.values().map(|(id, _, _)| *id).collect();
+
         self.editor
             .update(cx, |editor, cx| {
                 editor.remove_blocks(blocks_to_remove, None, cx);
+                editor.splice_inlays(&inlays_to_remove, vec![], cx);
+                editor.clear_gutter_highlights::<ReplExecutedRange>(cx);
             })
             .ok();
 
         self.blocks.clear();
+        self.result_inlays.clear();
+    }
+
+    pub fn clear_output_at_position(&mut self, position: Anchor, cx: &mut Context<Self>) {
+        let Some(editor) = self.editor.upgrade() else {
+            return;
+        };
+
+        let (block_id, code_range, msg_id) = {
+            let snapshot = editor.read(cx).buffer().read(cx).read(cx);
+            let pos_range = position..position;
+
+            let block_to_remove = self
+                .blocks
+                .iter()
+                .find(|(_, block)| block.code_range.includes(&pos_range, &snapshot));
+
+            let Some((msg_id, block)) = block_to_remove else {
+                return;
+            };
+
+            (block.block_id, block.code_range.clone(), msg_id.clone())
+        };
+
+        let inlay_to_remove = self.result_inlays.get(&msg_id).map(|(id, _, _)| *id);
+
+        self.blocks.remove(&msg_id);
+        if inlay_to_remove.is_some() {
+            self.result_inlays.remove(&msg_id);
+        }
+
+        self.editor
+            .update(cx, |editor, cx| {
+                let mut block_ids = HashSet::default();
+                block_ids.insert(block_id);
+                editor.remove_blocks(block_ids, None, cx);
+
+                if let Some(inlay_id) = inlay_to_remove {
+                    editor.splice_inlays(&[inlay_id], vec![], cx);
+                }
+
+                editor.remove_gutter_highlights::<ReplExecutedRange>(vec![code_range], cx);
+            })
+            .ok();
+
+        cx.notify();
     }
 
     pub fn execute(
@@ -382,12 +635,15 @@ impl Session {
 
         let execute_request = ExecuteRequest {
             code,
+            allow_stdin: true,
             ..ExecuteRequest::default()
         };
 
         let message: JupyterMessage = execute_request.into();
 
         let mut blocks_to_remove: HashSet<CustomBlockId> = HashSet::default();
+        let mut inlays_to_remove: Vec<InlayId> = Vec::new();
+        let mut gutter_ranges_to_remove: Vec<Range<Anchor>> = Vec::new();
 
         let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
 
@@ -400,9 +656,27 @@ impl Session {
             }
         });
 
+        self.result_inlays
+            .retain(|_key, (inlay_id, inlay_range, _)| {
+                if anchor_range.overlaps(inlay_range, &buffer) {
+                    inlays_to_remove.push(*inlay_id);
+                    gutter_ranges_to_remove.push(inlay_range.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+
         self.editor
             .update(cx, |editor, cx| {
                 editor.remove_blocks(blocks_to_remove, None, cx);
+                if !inlays_to_remove.is_empty() {
+                    editor.splice_inlays(&inlays_to_remove, vec![], cx);
+                }
+                if !gutter_ranges_to_remove.is_empty() {
+                    editor
+                        .remove_gutter_highlights::<ReplExecutedRange>(gutter_ranges_to_remove, cx);
+                }
             })
             .ok();
 
@@ -418,6 +692,7 @@ impl Session {
         let parent_message_id = message.header.msg_id.clone();
         let session_view = cx.entity().downgrade();
         let weak_editor = self.editor.clone();
+        let code_range_for_close = anchor_range.clone();
 
         let on_close: CloseBlockFn = Arc::new(
             move |block_id: CustomBlockId, _: &mut Window, cx: &mut App| {
@@ -433,22 +708,66 @@ impl Session {
                         let mut block_ids = HashSet::default();
                         block_ids.insert(block_id);
                         editor.remove_blocks(block_ids, None, cx);
+                        editor.remove_gutter_highlights::<ReplExecutedRange>(
+                            vec![code_range_for_close.clone()],
+                            cx,
+                        );
                     });
                 }
             },
         );
 
-        let Ok(editor_block) =
-            EditorBlock::new(self.editor.clone(), anchor_range, status, on_close, cx)
-        else {
+        let Ok(editor_block) = EditorBlock::new(
+            self.editor.clone(),
+            anchor_range.clone(),
+            status,
+            on_close,
+            cx,
+        ) else {
             return;
         };
+
+        self.editor
+            .update(cx, |editor, cx| {
+                editor.insert_gutter_highlight::<ReplExecutedRange>(
+                    anchor_range.clone(),
+                    |cx| cx.theme().status().success,
+                    cx,
+                );
+            })
+            .ok();
 
         let new_cursor_pos = if let Some(next_cursor) = next_cell {
             next_cursor
         } else {
             editor_block.invalidation_anchor
         };
+
+        let msg_id = message.header.msg_id.clone();
+        let subscription = cx.subscribe(
+            &editor_block.execution_view,
+            move |session, _execution_view, _event: &ExecutionViewFinishedEmpty, cx| {
+                session.replace_block_with_inlay(&msg_id, "✓", cx);
+            },
+        );
+        self._subscriptions.push(subscription);
+
+        let msg_id = message.header.msg_id.clone();
+        let subscription = cx.subscribe(
+            &editor_block.execution_view,
+            move |session, _execution_view, event: &ExecutionViewFinishedSmall, cx| {
+                session.replace_block_with_inlay(&msg_id, &event.0, cx);
+            },
+        );
+        self._subscriptions.push(subscription);
+
+        let subscription = cx.subscribe(
+            &editor_block.execution_view,
+            |session, _execution_view, event: &InputReplyEvent, cx| {
+                session.send_stdin_reply(event.value.clone(), &event.parent_message, cx);
+            },
+        );
+        self._subscriptions.push(subscription);
 
         self.blocks
             .insert(message.header.msg_id.clone(), editor_block);
@@ -484,51 +803,6 @@ impl Session {
                     },
                 );
             });
-        }
-    }
-
-    pub fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>) {
-        let parent_message_id = match message.parent_header.as_ref() {
-            Some(header) => &header.msg_id,
-            None => return,
-        };
-
-        match &message.content {
-            JupyterMessageContent::Status(status) => {
-                self.kernel.set_execution_state(&status.execution_state);
-
-                telemetry::event!(
-                    "Kernel Status Changed",
-                    kernel_language = self.kernel_specification.language(),
-                    kernel_status = KernelStatus::from(&self.kernel).to_string(),
-                    repl_session_id = cx.entity_id().to_string(),
-                );
-
-                cx.notify();
-            }
-            JupyterMessageContent::KernelInfoReply(reply) => {
-                self.kernel.set_kernel_info(reply);
-                cx.notify();
-            }
-            JupyterMessageContent::UpdateDisplayData(update) => {
-                let display_id = if let Some(display_id) = update.transient.display_id.clone() {
-                    display_id
-                } else {
-                    return;
-                };
-
-                self.blocks.iter_mut().for_each(|(_, block)| {
-                    block.execution_view.update(cx, |execution_view, cx| {
-                        execution_view.update_display_data(&update.data, &display_id, window, cx);
-                    });
-                });
-                return;
-            }
-            _ => {}
-        }
-
-        if let Some(block) = self.blocks.get_mut(parent_message_id) {
-            block.handle_message(message, window, cx);
         }
     }
 
@@ -698,5 +972,56 @@ impl Render for Session {
                     })),
             )
             .buttons(interrupt_button)
+    }
+}
+
+impl KernelSession for Session {
+    fn route(&mut self, message: &JupyterMessage, window: &mut Window, cx: &mut Context<Self>) {
+        let parent_message_id = match message.parent_header.as_ref() {
+            Some(header) => &header.msg_id,
+            None => return,
+        };
+
+        match &message.content {
+            JupyterMessageContent::Status(status) => {
+                self.kernel.set_execution_state(&status.execution_state);
+
+                telemetry::event!(
+                    "Kernel Status Changed",
+                    kernel_language = self.kernel_specification.language(),
+                    kernel_status = KernelStatus::from(&self.kernel).to_string(),
+                    repl_session_id = cx.entity_id().to_string(),
+                );
+
+                cx.notify();
+            }
+            JupyterMessageContent::KernelInfoReply(reply) => {
+                self.kernel.set_kernel_info(reply);
+                cx.notify();
+            }
+            JupyterMessageContent::UpdateDisplayData(update) => {
+                let display_id = if let Some(display_id) = update.transient.display_id.clone() {
+                    display_id
+                } else {
+                    return;
+                };
+
+                self.blocks.iter_mut().for_each(|(_, block)| {
+                    block.execution_view.update(cx, |execution_view, cx| {
+                        execution_view.update_display_data(&update.data, &display_id, window, cx);
+                    });
+                });
+                return;
+            }
+            _ => {}
+        }
+
+        if let Some(block) = self.blocks.get_mut(parent_message_id) {
+            block.handle_message(message, window, cx);
+        }
+    }
+
+    fn kernel_errored(&mut self, error_message: String, cx: &mut Context<Self>) {
+        self.kernel_errored(error_message, cx);
     }
 }

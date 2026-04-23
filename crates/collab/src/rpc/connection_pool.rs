@@ -168,7 +168,7 @@ impl ConnectionPool {
             .is_empty()
     }
 
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     pub fn check_invariants(&self) {
         for (connection_id, connection) in &self.connections {
             assert!(

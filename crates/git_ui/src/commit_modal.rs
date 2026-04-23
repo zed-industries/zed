@@ -1,8 +1,8 @@
 use crate::branch_picker::{self, BranchList};
-use crate::git_panel::{GitPanel, commit_message_editor};
+use crate::git_panel::{GitPanel, commit_message_editor, panel_editor_style};
 use git::repository::CommitOptions;
 use git::{Amend, Commit, GenerateCommitMessage, Signoff};
-use panel::{panel_button, panel_editor_style};
+use panel::panel_button;
 use project::DisableAiSettings;
 use settings::Settings;
 use ui::{
@@ -324,7 +324,7 @@ impl CommitModal {
                 }
             })
             .with_handle(self.commit_menu_handle.clone())
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
     }
 
     pub fn render_footer(&self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -366,11 +366,12 @@ impl CommitModal {
             .unwrap_or_else(|| "<no branch>".to_owned());
 
         let branch_picker_button = panel_button(branch)
-            .icon(IconName::GitBranch)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Placeholder)
+            .start_icon(
+                Icon::new(IconName::GitBranch)
+                    .size(IconSize::Small)
+                    .color(Color::Placeholder),
+            )
             .color(Color::Muted)
-            .icon_position(IconPosition::Start)
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             }))
@@ -380,6 +381,7 @@ impl CommitModal {
             .menu(move |window, cx| {
                 Some(branch_picker::popover(
                     workspace.clone(),
+                    false,
                     active_repo.clone(),
                     window,
                     cx,
@@ -390,7 +392,7 @@ impl CommitModal {
                 branch_picker_button,
                 Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
             )
-            .anchor(Corner::BottomLeft)
+            .anchor(Anchor::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),
@@ -451,6 +453,7 @@ impl CommitModal {
                                     CommitOptions {
                                         amend: is_amend_pending,
                                         signoff: is_signoff_enabled,
+                                        allow_empty: false,
                                     },
                                     window,
                                     cx,

@@ -1,7 +1,6 @@
 use anyhow::{Result, anyhow};
 use editor::{
-    Bias, CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MinimapVisibility,
-    MultiBuffer,
+    Bias, CompletionProvider, Editor, EditorEvent, EditorMode, MinimapVisibility, MultiBuffer,
 };
 use fuzzy::StringMatch;
 use gpui::{
@@ -86,7 +85,7 @@ impl DivInspector {
                 // Create Rust style buffer without adding it to the project / buffer_store, so that
                 // Rust Analyzer doesn't get started for it.
                 let rust_language_result = languages.language_for_name("Rust").await;
-                let rust_style_buffer = rust_language_result.and_then(|rust_language| {
+                let rust_style_buffer = rust_language_result.map(|rust_language| {
                     cx.new(|cx| Buffer::local("", cx).with_language_async(rust_language, cx))
                 });
 
@@ -401,19 +400,19 @@ impl DivInspector {
                         ..snapshot.clip_offset(usize::MAX, Bias::Left),
                 )
                 .collect::<String>();
-            let mut method_names = split_str_with_ranges(&before_text, is_not_identifier_char)
+            let mut method_names = split_str_with_ranges(&before_text, &is_not_identifier_char)
                 .into_iter()
                 .map(|(range, name)| (Some(range), name.to_string()))
                 .collect::<Vec<_>>();
             method_names.push((None, completion.clone()));
             method_names.extend(
-                split_str_with_ranges(&after_text, is_not_identifier_char)
+                split_str_with_ranges(&after_text, &is_not_identifier_char)
                     .into_iter()
                     .map(|(range, name)| (Some(range), name.to_string())),
             );
             method_names
         } else {
-            split_str_with_ranges(&snapshot.text(), is_not_identifier_char)
+            split_str_with_ranges(&snapshot.text(), &is_not_identifier_char)
                 .into_iter()
                 .map(|(range, name)| (Some(range), name.to_string()))
                 .collect::<Vec<_>>()
@@ -462,16 +461,16 @@ impl DivInspector {
         cx: &mut AsyncWindowContext,
     ) -> Result<Entity<Buffer>> {
         let worktree = project
-            .update(cx, |project, cx| project.create_worktree(path, false, cx))?
+            .update(cx, |project, cx| project.create_worktree(path, false, cx))
             .await?;
 
         let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
             worktree_id: worktree.id(),
             path: RelPath::empty().into(),
-        })?;
+        });
 
         let buffer = project
-            .update(cx, |project, cx| project.open_path(project_path, cx))?
+            .update(cx, |project, cx| project.open_path(project_path, cx))
             .await?
             .1;
 
@@ -496,9 +495,11 @@ impl DivInspector {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_line_numbers(false, cx);
             editor.set_show_code_actions(false, cx);
+            editor.set_show_bookmarks(false, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_runnables(false, cx);
+            editor.disable_mouse_wheel_zoom();
             editor.set_show_edit_predictions(Some(false), window, cx);
             editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
             editor
@@ -641,7 +642,6 @@ struct RustStyleCompletionProvider {
 impl CompletionProvider for RustStyleCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         position: Anchor,
         _: editor::CompletionContext,

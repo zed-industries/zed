@@ -116,13 +116,13 @@ fn editor_render(bencher: &mut Bencher<'_>, cx: &TestAppContext) {
 }
 
 pub fn benches() {
-    let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(1));
+    let dispatcher = TestDispatcher::new(1);
     let cx = gpui::TestAppContext::build(dispatcher, None);
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
         assets::Assets.load_test_fonts(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         // release_channel::init(semver::Version::new(0,0,0), cx);
         editor::init(cx);
     });

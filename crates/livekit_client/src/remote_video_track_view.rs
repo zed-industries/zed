@@ -22,7 +22,7 @@ pub enum RemoteVideoTrackViewEvent {
 impl RemoteVideoTrackView {
     pub fn new(track: RemoteVideoTrack, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.focus_handle();
-        let frames = crate::play_remote_video_track(&track);
+        let frames = crate::play_remote_video_track(&track, cx.background_executor());
 
         #[cfg(not(target_os = "macos"))]
         {

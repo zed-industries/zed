@@ -134,6 +134,7 @@ impl LspAdapter for CssLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
             "provideFormatter": true
@@ -162,7 +163,7 @@ impl LspAdapter for CssLspAdapter {
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &self.name(), cx)
                 .and_then(|s| s.settings.clone())
-        })?;
+        });
 
         if let Some(override_options) = project_options {
             merge_json_value_into(override_options, &mut default_config);

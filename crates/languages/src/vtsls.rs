@@ -269,6 +269,15 @@ impl LspAdapter for VtslsLspAdapter {
                     "enabled": true
                 }
             },
+            "implementationsCodeLens": {
+                "enabled": true,
+                "showOnAllClassMethods": true,
+                "showOnInterfaceMethods": true
+            },
+            "referencesCodeLens": {
+                "enabled": true,
+                "showOnAllFunctions": true
+            },
             "tsserver": {
                 "maxTsServerMemory": 8092
             },
@@ -291,7 +300,7 @@ impl LspAdapter for VtslsLspAdapter {
         let override_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
-        })?;
+        });
 
         if let Some(override_options) = override_options {
             merge_json_value_into(override_options, &mut default_workspace_configuration)
@@ -345,6 +354,7 @@ impl LspAdapter for VtslsLspAdapter {
                     let lsp_settings = content
                         .project
                         .lsp
+                        .0
                         .entry(VTSLS_SERVER_NAME.into())
                         .or_default();
 

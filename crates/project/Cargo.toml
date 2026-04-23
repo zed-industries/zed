@@ -11,12 +11,19 @@ workspace = true
 [lib]
 path = "src/project.rs"
 doctest = false
+test = false
+
+[[test]]
+name = "integration"
+required-features = ["test-support"]
+path = "tests/integration/project_tests.rs"
 
 [features]
 test-support = [
     "buffer_diff/test-support",
     "client/test-support",
     "language/test-support",
+    "remote/test-support",
     "settings/test-support",
     "snippet_provider/test-support",
     "text/test-support",
@@ -24,7 +31,6 @@ test-support = [
     "worktree/test-support",
     "gpui/test-support",
     "dap/test-support",
-    "dap_adapters/test-support",
 ]
 
 [dependencies]
@@ -39,13 +45,14 @@ client.workspace = true
 clock.workspace = true
 collections.workspace = true
 context_server.workspace = true
+credentials_provider.workspace = true
 dap.workspace = true
-encoding_rs.workspace = true
 extension.workspace = true
 fancy-regex.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
+fuzzy_nucleo.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
 globset.workspace = true
@@ -65,6 +72,7 @@ postage.workspace = true
 prettier.workspace = true
 rand.workspace = true
 regex.workspace = true
+release_channel.workspace = true
 remote.workspace = true
 rpc.workspace = true
 schemars.workspace = true
@@ -85,11 +93,13 @@ terminal.workspace = true
 text.workspace = true
 toml.workspace = true
 url.workspace = true
+percent-encoding.workspace = true
 util.workspace = true
 watch.workspace = true
 wax.workspace = true
 which.workspace = true
 worktree.workspace = true
+zed_credentials_provider.workspace = true
 zeroize.workspace = true
 zlog.workspace = true
 ztracing.workspace = true
@@ -97,12 +107,11 @@ tracing.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
-db = { workspace = true, features = ["test-support"] }
+encoding_rs.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 context_server = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
 dap = { workspace = true, features = ["test-support"] }
-dap_adapters = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 git2.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
@@ -110,13 +119,14 @@ language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 prettier = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
-release_channel.workspace = true
+project = {workspace = true, features = ["test-support"]}
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 snippet_provider = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+remote = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-machete]
 ignored = ["tracing"]

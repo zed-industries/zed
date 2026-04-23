@@ -8,11 +8,10 @@ use futures::{
     AsyncBufReadExt as _, AsyncRead, AsyncWrite, AsyncWriteExt as _, Stream, StreamExt as _,
 };
 use gpui::AsyncApp;
-use settings::Settings as _;
 use smol::channel;
 use smol::process::Child;
-use terminal::terminal_settings::TerminalSettings;
 use util::TryFutureExt as _;
+use util::shell::Shell;
 use util::shell_builder::ShellBuilder;
 
 use crate::client::ModelContextServerBinary;
@@ -31,10 +30,9 @@ impl StdioTransport {
         working_directory: &Option<PathBuf>,
         cx: &AsyncApp,
     ) -> Result<Self> {
-        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone())?;
-        let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
+        let builder = ShellBuilder::new(&Shell::System, cfg!(windows)).non_interactive();
         let mut command =
-            builder.build_command(Some(binary.executable.display().to_string()), &binary.args);
+            builder.build_smol_command(Some(binary.executable.display().to_string()), &binary.args);
 
         command
             .envs(binary.env.unwrap_or_default())

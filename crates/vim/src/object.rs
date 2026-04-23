@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::{
     Vim,
-    motion::right,
+    motion::{is_subword_end, is_subword_start, right},
     state::{Mode, Operator},
 };
 use editor::{
@@ -85,7 +85,7 @@ pub struct CandidateWithRanges {
     close_range: Range<MultiBufferOffset>,
 }
 
-/// Selects text at the same indentation level.
+/// Operates on text within or around parentheses `()`.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -94,7 +94,7 @@ struct Parentheses {
     opening: bool,
 }
 
-/// Selects text at the same indentation level.
+/// Operates on text within or around square brackets `[]`.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -103,7 +103,7 @@ struct SquareBrackets {
     opening: bool,
 }
 
-/// Selects text at the same indentation level.
+/// Operates on text within or around angle brackets `<>`.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -111,7 +111,8 @@ struct AngleBrackets {
     #[serde(default)]
     opening: bool,
 }
-/// Selects text at the same indentation level.
+
+/// Operates on text within or around curly brackets `{}`.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -202,33 +203,24 @@ fn find_mini_delimiters(
     is_valid_delimiter: &DelimiterPredicate,
 ) -> Option<Range<DisplayPoint>> {
     let point = map.clip_at_line_end(display_point).to_point(map);
-    let offset = point.to_offset(&map.buffer_snapshot());
+    let offset = map.buffer_snapshot().point_to_offset(point);
 
     let line_range = get_line_range(map, point);
     let visible_line_range = get_visible_line_range(&line_range);
 
     let snapshot = &map.buffer_snapshot();
-    let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
-    let buffer = excerpt.buffer();
-    let buffer_offset = excerpt.map_offset_to_buffer(offset);
 
-    let bracket_filter = |open: Range<usize>, close: Range<usize>| {
-        is_valid_delimiter(buffer, open.start, close.start)
-    };
-
-    // Try to find delimiters in visible range first
     let ranges = map
         .buffer_snapshot()
         .bracket_ranges(visible_line_range)
         .map(|ranges| {
             ranges.filter_map(|(open, close)| {
-                // Convert the ranges from multibuffer space to buffer space as
-                // that is what `is_valid_delimiter` expects, otherwise it might
-                // panic as the values might be out of bounds.
-                let buffer_open = excerpt.map_range_to_buffer(open.clone());
-                let buffer_close = excerpt.map_range_to_buffer(close.clone());
+                let (buffer, buffer_open) =
+                    snapshot.range_to_buffer_range::<MultiBufferOffset>(open.clone())?;
+                let (_, buffer_close) =
+                    snapshot.range_to_buffer_range::<MultiBufferOffset>(close.clone())?;
 
-                if is_valid_delimiter(buffer, buffer_open.start.0, buffer_close.start.0) {
+                if is_valid_delimiter(buffer, buffer_open.start, buffer_close.start) {
                     Some((open, close))
                 } else {
                     None
@@ -246,18 +238,31 @@ fn find_mini_delimiters(
         );
     }
 
-    // Fall back to innermost enclosing brackets
-    let (open_bracket, close_bracket) = buffer
-        .innermost_enclosing_bracket_ranges(buffer_offset..buffer_offset, Some(&bracket_filter))?;
+    let results = snapshot.map_excerpt_ranges(offset..offset, |buffer, _, input_range| {
+        let buffer_offset = input_range.start.0;
+        let bracket_filter = |open: Range<usize>, close: Range<usize>| {
+            is_valid_delimiter(buffer, open.start, close.start)
+        };
+        let Some((open, close)) = buffer.innermost_enclosing_bracket_ranges(
+            buffer_offset..buffer_offset,
+            Some(&bracket_filter),
+        ) else {
+            return vec![];
+        };
+        vec![
+            (BufferOffset(open.start)..BufferOffset(open.end), ()),
+            (BufferOffset(close.start)..BufferOffset(close.end), ()),
+        ]
+    })?;
+
+    if results.len() < 2 {
+        return None;
+    }
 
     Some(
         DelimiterRange {
-            open: excerpt.map_range_from_buffer(
-                BufferOffset(open_bracket.start)..BufferOffset(open_bracket.end),
-            ),
-            close: excerpt.map_range_from_buffer(
-                BufferOffset(close_bracket.start)..BufferOffset(close_bracket.end),
-            ),
+            open: results[0].0.clone(),
+            close: results[1].0.clone(),
         }
         .to_display_range(map, around),
     )
@@ -569,10 +574,19 @@ impl Object {
         let relative_to = selection.head();
         match self {
             Object::Word { ignore_punctuation } => {
+                let count = times.unwrap_or(1);
                 if around {
-                    around_word(map, relative_to, ignore_punctuation)
+                    around_word(map, relative_to, ignore_punctuation, count)
                 } else {
-                    in_word(map, relative_to, ignore_punctuation)
+                    in_word(map, relative_to, ignore_punctuation, count).map(|range| {
+                        // For iw with count > 1, vim includes trailing whitespace
+                        if count > 1 {
+                            let spans_multiple_lines = range.start.row() != range.end.row();
+                            expand_to_include_whitespace(map, range, !spans_multiple_lines)
+                        } else {
+                            range
+                        }
+                    })
                 }
             }
             Object::Subword { ignore_punctuation } => {
@@ -789,10 +803,12 @@ impl Object {
 ///
 /// If `relative_to` is at the start of a word, return the word.
 /// If `relative_to` is between words, return the space between.
+/// If `times` > 1, extend to include additional words.
 fn in_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
     // Use motion::right so that we consider the character under the cursor when looking for the start
     let classifier = map
@@ -803,12 +819,42 @@ fn in_word(
         map,
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
-        |left, right| classifier.kind(left) != classifier.kind(right),
+        &mut |left, right| classifier.kind(left) != classifier.kind(right),
     );
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        classifier.kind(left) != classifier.kind(right)
-    });
+    let mut end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::SingleLine,
+        &mut |left, right| classifier.kind(left) != classifier.kind(right),
+    );
+
+    let mut is_boundary = |left: char, right: char| classifier.kind(left) != classifier.kind(right);
+
+    for _ in 1..times {
+        let kind_at_end = map
+            .buffer_chars_at(end.to_offset(map, Bias::Right))
+            .next()
+            .map(|(c, _)| classifier.kind(c));
+
+        // Skip whitespace but not punctuation (punctuation is its own word unit).
+        let next_end = if kind_at_end == Some(CharKind::Whitespace) {
+            let after_whitespace =
+                movement::find_boundary(map, end, FindRange::MultiLine, &mut is_boundary);
+            movement::find_boundary(
+                map,
+                after_whitespace,
+                FindRange::MultiLine,
+                &mut is_boundary,
+            )
+        } else {
+            movement::find_boundary(map, end, FindRange::MultiLine, &mut is_boundary)
+        };
+        if next_end == end {
+            break;
+        }
+        end = next_end;
+    }
 
     Some(start..end)
 }
@@ -828,11 +874,8 @@ fn in_subword(
         .buffer_chars_at(offset)
         .next()
         .map(|(c, _)| {
-            if classifier.is_word('-') {
-                !classifier.is_whitespace(c) && c != '_' && c != '-'
-            } else {
-                !classifier.is_whitespace(c) && c != '_'
-            }
+            let is_separator = "._-".contains(c);
+            !classifier.is_whitespace(c) && !is_separator
         })
         .unwrap_or(false);
 
@@ -841,31 +884,32 @@ fn in_subword(
             map,
             right(map, relative_to, 1),
             movement::FindRange::SingleLine,
-            |left, right| {
+            &mut |left, right| {
                 let is_word_start = classifier.kind(left) != classifier.kind(right);
-                let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
-                    || left == '_' && right != '_'
-                    || left.is_lowercase() && right.is_uppercase();
-                is_word_start || is_subword_start
+                is_word_start || is_subword_start(left, right, "._-")
             },
         )
     } else {
-        movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-            let is_word_start = classifier.kind(left) != classifier.kind(right);
-            let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
-                || left == '_' && right != '_'
-                || left.is_lowercase() && right.is_uppercase();
-            is_word_start || is_subword_start
-        })
+        movement::find_boundary(
+            map,
+            relative_to,
+            FindRange::SingleLine,
+            &mut |left, right| {
+                let is_word_start = classifier.kind(left) != classifier.kind(right);
+                is_word_start || is_subword_start(left, right, "._-")
+            },
+        )
     };
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        let is_word_end = classifier.kind(left) != classifier.kind(right);
-        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
-            || left != '_' && right == '_'
-            || left.is_lowercase() && right.is_uppercase();
-        is_word_end || is_subword_end
-    });
+    let end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::SingleLine,
+        &mut |left, right| {
+            let is_word_end = classifier.kind(left) != classifier.kind(right);
+            is_word_end || is_subword_end(left, right, "._-")
+        },
+    );
 
     Some(start..end)
 }
@@ -895,61 +939,64 @@ pub fn surrounding_html_tag(
     }
 
     let snapshot = &map.buffer_snapshot();
-    let offset = head.to_offset(map, Bias::Left);
-    let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
-    let buffer = excerpt.buffer();
-    let offset = excerpt.map_offset_to_buffer(offset);
+    let head_offset = head.to_offset(map, Bias::Left);
+    let range_start = range.start.to_offset(map, Bias::Left);
+    let range_end = range.end.to_offset(map, Bias::Left);
+    let head_is_start = head_offset <= range_start;
 
-    // Find the most closest to current offset
-    let mut cursor = buffer.syntax_layer_at(offset)?.node().walk();
-    let mut last_child_node = cursor.node();
-    while cursor.goto_first_child_for_byte(offset.0).is_some() {
-        last_child_node = cursor.node();
-    }
+    let results = snapshot.map_excerpt_ranges(
+        range_start..range_end,
+        |buffer, _excerpt_range, input_buffer_range| {
+            let buffer_offset = if head_is_start {
+                input_buffer_range.start
+            } else {
+                input_buffer_range.end
+            };
 
-    let mut last_child_node = Some(last_child_node);
-    while let Some(cur_node) = last_child_node {
-        if cur_node.child_count() >= 2 {
-            let first_child = cur_node.child(0);
-            let last_child = cur_node.child(cur_node.child_count() as u32 - 1);
-            if let (Some(first_child), Some(last_child)) = (first_child, last_child) {
-                let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
-                let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));
-                // It needs to be handled differently according to the selection length
-                let is_valid = if range.end.to_offset(map, Bias::Left)
-                    - range.start.to_offset(map, Bias::Left)
-                    <= 1
-                {
-                    offset.0 <= last_child.end_byte()
-                } else {
-                    excerpt
-                        .map_offset_to_buffer(range.start.to_offset(map, Bias::Left))
-                        .0
-                        >= first_child.start_byte()
-                        && excerpt
-                            .map_offset_to_buffer(range.end.to_offset(map, Bias::Left))
-                            .0
-                            <= last_child.start_byte() + 1
-                };
-                if open_tag.is_some() && open_tag == close_tag && is_valid {
-                    let range = if around {
-                        first_child.byte_range().start..last_child.byte_range().end
-                    } else {
-                        first_child.byte_range().end..last_child.byte_range().start
-                    };
-                    let range = BufferOffset(range.start)..BufferOffset(range.end);
-                    if excerpt.contains_buffer_range(range.clone()) {
-                        let result = excerpt.map_range_from_buffer(range);
-                        return Some(
-                            result.start.to_display_point(map)..result.end.to_display_point(map),
-                        );
+            let Some(layer) = buffer.syntax_layer_at(buffer_offset) else {
+                return Vec::new();
+            };
+            let mut cursor = layer.node().walk();
+            let mut last_child_node = cursor.node();
+            while cursor.goto_first_child_for_byte(buffer_offset.0).is_some() {
+                last_child_node = cursor.node();
+            }
+
+            let mut last_child_node = Some(last_child_node);
+            while let Some(cur_node) = last_child_node {
+                if cur_node.child_count() >= 2 {
+                    let first_child = cur_node.child(0);
+                    let last_child = cur_node.child(cur_node.child_count() as u32 - 1);
+                    if let (Some(first_child), Some(last_child)) = (first_child, last_child) {
+                        let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
+                        let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));
+                        let is_valid = if range_end.saturating_sub(range_start) <= 1 {
+                            buffer_offset.0 <= last_child.end_byte()
+                        } else {
+                            input_buffer_range.start.0 >= first_child.start_byte()
+                                && input_buffer_range.end.0 <= last_child.start_byte() + 1
+                        };
+                        if open_tag.is_some() && open_tag == close_tag && is_valid {
+                            let buffer_range = if around {
+                                first_child.byte_range().start..last_child.byte_range().end
+                            } else {
+                                first_child.byte_range().end..last_child.byte_range().start
+                            };
+                            return vec![(
+                                BufferOffset(buffer_range.start)..BufferOffset(buffer_range.end),
+                                (),
+                            )];
+                        }
                     }
                 }
+                last_child_node = cur_node.parent();
             }
-        }
-        last_child_node = cur_node.parent();
-    }
-    None
+            Vec::new()
+        },
+    )?;
+
+    let (result, ()) = results.into_iter().next()?;
+    Some(result.start.to_display_point(map)..result.end.to_display_point(map))
 }
 
 /// Returns a range that surrounds the word and following whitespace
@@ -965,10 +1012,12 @@ pub fn surrounding_html_tag(
 /// otherwise
 ///   delete whitespace around cursor
 ///   delete word following the cursor
+/// If `times` > 1, extend to include additional words.
 fn around_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
     let offset = relative_to.to_offset(map, Bias::Left);
     let classifier = map
@@ -982,9 +1031,9 @@ fn around_word(
         .unwrap_or(false);
 
     if in_word {
-        around_containing_word(map, relative_to, ignore_punctuation)
+        around_containing_word(map, relative_to, ignore_punctuation, times)
     } else {
-        around_next_word(map, relative_to, ignore_punctuation)
+        around_next_word(map, relative_to, ignore_punctuation, times)
     }
 }
 
@@ -1002,22 +1051,25 @@ fn around_subword(
         map,
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
-        |left, right| {
-            let is_word_start = classifier.kind(left) != classifier.kind(right);
-            let is_subword_start = classifier.is_word('-') && left != '-' && right == '-'
-                || left != '_' && right == '_'
-                || left.is_lowercase() && right.is_uppercase();
-            is_word_start || is_subword_start
+        &mut |left, right| {
+            let is_separator = |c: char| "._-".contains(c);
+            let is_word_start =
+                classifier.kind(left) != classifier.kind(right) && !is_separator(left);
+            is_word_start || is_subword_start(left, right, "._-")
         },
     );
 
-    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
-        let is_word_end = classifier.kind(left) != classifier.kind(right);
-        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
-            || left != '_' && right == '_'
-            || left.is_lowercase() && right.is_uppercase();
-        is_word_end || is_subword_end
-    });
+    let end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::SingleLine,
+        &mut |left, right| {
+            let is_separator = |c: char| "._-".contains(c);
+            let is_word_end =
+                classifier.kind(left) != classifier.kind(right) && !is_separator(right);
+            is_word_end || is_subword_end(left, right, "._-")
+        },
+    );
 
     Some(start..end).map(|range| expand_to_include_whitespace(map, range, true))
 }
@@ -1026,8 +1078,12 @@ fn around_containing_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
-    in_word(map, relative_to, ignore_punctuation).map(|range| {
+    in_word(map, relative_to, ignore_punctuation, times).map(|range| {
+        let spans_multiple_lines = range.start.row() != range.end.row();
+        let stop_at_newline = !spans_multiple_lines;
+
         let line_start = DisplayPoint::new(range.start.row(), 0);
         let is_first_word = map
             .buffer_chars_at(line_start.to_offset(map, Bias::Left))
@@ -1039,11 +1095,11 @@ fn around_containing_word(
 
         if is_first_word {
             // For first word on line, trim indentation
-            let mut expanded = expand_to_include_whitespace(map, range.clone(), true);
+            let mut expanded = expand_to_include_whitespace(map, range.clone(), stop_at_newline);
             expanded.start = range.start;
             expanded
         } else {
-            expand_to_include_whitespace(map, range, true)
+            expand_to_include_whitespace(map, range, stop_at_newline)
         }
     })
 }
@@ -1052,32 +1108,52 @@ fn around_next_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     ignore_punctuation: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
     let classifier = map
         .buffer_snapshot()
         .char_classifier_at(relative_to.to_point(map))
         .ignore_punctuation(ignore_punctuation);
-    // Get the start of the word
     let start = movement::find_preceding_boundary_display_point(
         map,
         right(map, relative_to, 1),
         FindRange::SingleLine,
-        |left, right| classifier.kind(left) != classifier.kind(right),
+        &mut |left, right| classifier.kind(left) != classifier.kind(right),
     );
 
     let mut word_found = false;
-    let end = movement::find_boundary(map, relative_to, FindRange::MultiLine, |left, right| {
-        let left_kind = classifier.kind(left);
-        let right_kind = classifier.kind(right);
+    let mut end = movement::find_boundary(
+        map,
+        relative_to,
+        FindRange::MultiLine,
+        &mut |left, right| {
+            let left_kind = classifier.kind(left);
+            let right_kind = classifier.kind(right);
 
-        let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
+            let found = (word_found && left_kind != right_kind) || right == '\n' && left == '\n';
 
-        if right_kind != CharKind::Whitespace {
-            word_found = true;
+            if right_kind != CharKind::Whitespace {
+                word_found = true;
+            }
+
+            found
+        },
+    );
+
+    for _ in 1..times {
+        let next_end =
+            movement::find_boundary(map, end, FindRange::MultiLine, &mut |left, right| {
+                let left_kind = classifier.kind(left);
+                let right_kind = classifier.kind(right);
+
+                let in_word_unit = left_kind != CharKind::Whitespace;
+                (in_word_unit && left_kind != right_kind) || right == '\n' && left == '\n'
+            });
+        if next_end == end {
+            break;
         }
-
-        found
-    });
+        end = next_end;
+    }
 
     Some(start..end)
 }
@@ -1094,44 +1170,55 @@ fn text_object(
     let snapshot = &map.buffer_snapshot();
     let offset = relative_to.to_offset(map, Bias::Left);
 
-    let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
-    let buffer = excerpt.buffer();
-    let offset = excerpt.map_offset_to_buffer(offset);
+    let results =
+        snapshot.map_excerpt_ranges(offset..offset, |buffer, _excerpt_range, buffer_range| {
+            let buffer_offset = buffer_range.start;
 
-    let mut matches: Vec<Range<usize>> = buffer
-        .text_object_ranges(offset..offset, TreeSitterOptions::default())
-        .filter_map(|(r, m)| if m == target { Some(r) } else { None })
-        .collect();
-    matches.sort_by_key(|r| r.end - r.start);
-    if let Some(buffer_range) = matches.first() {
-        let buffer_range = BufferOffset(buffer_range.start)..BufferOffset(buffer_range.end);
-        let range = excerpt.map_range_from_buffer(buffer_range);
-        return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
-    }
+            let mut matches: Vec<Range<usize>> = buffer
+                .text_object_ranges(buffer_offset..buffer_offset, TreeSitterOptions::default())
+                .filter_map(|(r, m)| if m == target { Some(r) } else { None })
+                .collect();
+            matches.sort_by_key(|r| r.end - r.start);
+            if let Some(buffer_range) = matches.first() {
+                return vec![(
+                    BufferOffset(buffer_range.start)..BufferOffset(buffer_range.end),
+                    (),
+                )];
+            }
 
-    let around = target.around()?;
-    let mut matches: Vec<Range<usize>> = buffer
-        .text_object_ranges(offset..offset, TreeSitterOptions::default())
-        .filter_map(|(r, m)| if m == around { Some(r) } else { None })
-        .collect();
-    matches.sort_by_key(|r| r.end - r.start);
-    let around_range = matches.first()?;
+            let Some(around) = target.around() else {
+                return vec![];
+            };
+            let mut matches: Vec<Range<usize>> = buffer
+                .text_object_ranges(buffer_offset..buffer_offset, TreeSitterOptions::default())
+                .filter_map(|(r, m)| if m == around { Some(r) } else { None })
+                .collect();
+            matches.sort_by_key(|r| r.end - r.start);
+            let Some(around_range) = matches.first() else {
+                return vec![];
+            };
 
-    let mut matches: Vec<Range<usize>> = buffer
-        .text_object_ranges(around_range.clone(), TreeSitterOptions::default())
-        .filter_map(|(r, m)| if m == target { Some(r) } else { None })
-        .collect();
-    matches.sort_by_key(|r| r.start);
-    if let Some(buffer_range) = matches.first()
-        && !buffer_range.is_empty()
-    {
-        let buffer_range = BufferOffset(buffer_range.start)..BufferOffset(buffer_range.end);
-        let range = excerpt.map_range_from_buffer(buffer_range);
-        return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
-    }
-    let around_range = BufferOffset(around_range.start)..BufferOffset(around_range.end);
-    let buffer_range = excerpt.map_range_from_buffer(around_range);
-    return Some(buffer_range.start.to_display_point(map)..buffer_range.end.to_display_point(map));
+            let mut matches: Vec<Range<usize>> = buffer
+                .text_object_ranges(around_range.clone(), TreeSitterOptions::default())
+                .filter_map(|(r, m)| if m == target { Some(r) } else { None })
+                .collect();
+            matches.sort_by_key(|r| r.start);
+            if let Some(buffer_range) = matches.first()
+                && !buffer_range.is_empty()
+            {
+                return vec![(
+                    BufferOffset(buffer_range.start)..BufferOffset(buffer_range.end),
+                    (),
+                )];
+            }
+            vec![(
+                BufferOffset(around_range.start)..BufferOffset(around_range.end),
+                (),
+            )]
+        })?;
+
+    let (range, ()) = results.into_iter().next()?;
+    Some(range.start.to_display_point(map)..range.end.to_display_point(map))
 }
 
 fn argument(
@@ -1142,16 +1229,11 @@ fn argument(
     let snapshot = &map.buffer_snapshot();
     let offset = relative_to.to_offset(map, Bias::Left);
 
-    // The `argument` vim text object uses the syntax tree, so we operate at the buffer level and map back to the display level
-    let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
-    let buffer = excerpt.buffer();
-
     fn comma_delimited_range_at(
         buffer: &BufferSnapshot,
         mut offset: BufferOffset,
         include_comma: bool,
     ) -> Option<Range<BufferOffset>> {
-        // Seek to the first non-whitespace character
         offset += buffer
             .chars_at(offset)
             .take_while(|c| c.is_whitespace())
@@ -1159,25 +1241,20 @@ fn argument(
             .sum::<usize>();
 
         let bracket_filter = |open: Range<usize>, close: Range<usize>| {
-            // Filter out empty ranges
             if open.end == close.start {
                 return false;
             }
 
-            // If the cursor is outside the brackets, ignore them
             if open.start == offset.0 || close.end == offset.0 {
                 return false;
             }
 
-            // TODO: Is there any better way to filter out string brackets?
-            // Used to filter out string brackets
             matches!(
                 buffer.chars_at(open.start).next(),
                 Some('(' | '[' | '{' | '<' | '|')
             )
         };
 
-        // Find the brackets containing the cursor
         let (open_bracket, close_bracket) =
             buffer.innermost_enclosing_bracket_ranges(offset..offset, Some(&bracket_filter))?;
 
@@ -1187,7 +1264,6 @@ fn argument(
         let node = layer.node();
         let mut cursor = node.walk();
 
-        // Loop until we find the smallest node whose parent covers the bracket range. This node is the argument in the parent argument list
         let mut parent_covers_bracket_range = false;
         loop {
             let node = cursor.node();
@@ -1199,20 +1275,17 @@ fn argument(
             }
             parent_covers_bracket_range = covers_bracket_range;
 
-            // Unable to find a child node with a parent that covers the bracket range, so no argument to select
             cursor.goto_first_child_for_byte(offset.0)?;
         }
 
         let mut argument_node = cursor.node();
 
-        // If the child node is the open bracket, move to the next sibling.
         if argument_node.byte_range() == open_bracket {
             if !cursor.goto_next_sibling() {
                 return Some(inner_bracket_range);
             }
             argument_node = cursor.node();
         }
-        // While the child node is the close bracket or a comma, move to the previous sibling
         while argument_node.byte_range() == close_bracket || argument_node.kind() == "," {
             if !cursor.goto_previous_sibling() {
                 return Some(inner_bracket_range);
@@ -1223,14 +1296,11 @@ fn argument(
             }
         }
 
-        // The start and end of the argument range, defaulting to the start and end of the argument node
         let mut start = argument_node.start_byte();
         let mut end = argument_node.end_byte();
 
         let mut needs_surrounding_comma = include_comma;
 
-        // Seek backwards to find the start of the argument - either the previous comma or the opening bracket.
-        // We do this because multiple nodes can represent a single argument, such as with rust `vec![a.b.c, d.e.f]`
         while cursor.goto_previous_sibling() {
             let prev = cursor.node();
 
@@ -1248,7 +1318,6 @@ fn argument(
             }
         }
 
-        // Do the same for the end of the argument, extending to next comma or the end of the argument list
         while cursor.goto_next_sibling() {
             let next = cursor.node();
 
@@ -1257,7 +1326,6 @@ fn argument(
                 break;
             } else if next.kind() == "," {
                 if needs_surrounding_comma {
-                    // Select up to the beginning of the next argument if there is one, otherwise to the end of the comma
                     if let Some(next_arg) = next.next_sibling() {
                         end = next_arg.start_byte();
                     } else {
@@ -1273,14 +1341,17 @@ fn argument(
         Some(BufferOffset(start)..BufferOffset(end))
     }
 
-    let result = comma_delimited_range_at(buffer, excerpt.map_offset_to_buffer(offset), around)?;
+    let results =
+        snapshot.map_excerpt_ranges(offset..offset, |buffer, _excerpt_range, buffer_range| {
+            let buffer_offset = buffer_range.start;
+            match comma_delimited_range_at(buffer, buffer_offset, around) {
+                Some(result) => vec![(result, ())],
+                None => vec![],
+            }
+        })?;
 
-    if excerpt.contains_buffer_range(result.clone()) {
-        let result = excerpt.map_range_from_buffer(result);
-        Some(result.start.to_display_point(map)..result.end.to_display_point(map))
-    } else {
-        None
-    }
+    let (range, ()) = results.into_iter().next()?;
+    Some(range.start.to_display_point(map)..range.end.to_display_point(map))
 }
 
 fn indent(
@@ -1445,7 +1516,7 @@ pub fn expand_to_include_whitespace(
         }
 
         if char.is_whitespace() {
-            if char != '\n' {
+            if char != '\n' || !stop_at_newline {
                 range.end = offset + char.len_utf8();
                 whitespace_included = true;
             }
@@ -1853,6 +1924,68 @@ mod test {
         cx.simulate_at_each_offset("v i shift-w", WORD_LOCATIONS)
             .await
             .assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_word_object_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes("2 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes("d 2 a w").await;
+        cx.shared_state().await.assert_matches();
+
+        // WORD (shift-w) ignores punctuation
+        cx.set_shared_state("ˇone-two three-four five").await;
+        cx.simulate_shared_keystrokes("2 d a shift-w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone two three four five").await;
+        cx.simulate_shared_keystrokes("3 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        // Multiplied counts: 2d2aw deletes 4 words (2*2)
+        cx.set_shared_state("ˇone two three four five six").await;
+        cx.simulate_shared_keystrokes("2 d 2 a w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes("2 c a w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone two three four").await;
+        cx.simulate_shared_keystrokes("2 y a w p").await;
+        cx.shared_state().await.assert_matches();
+
+        // Punctuation: foo-bar is 3 word units (foo, -, bar), so 2aw selects "foo-"
+        cx.set_shared_state("  ˇfoo-bar baz").await;
+        cx.simulate_shared_keystrokes("2 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        // Trailing whitespace counts as a word unit for iw
+        cx.set_shared_state("ˇfoo   ").await;
+        cx.simulate_shared_keystrokes("2 d i w").await;
+        cx.shared_state().await.assert_matches();
+
+        // Multi-line: count > 1 crosses line boundaries
+        cx.set_shared_state("ˇone\ntwo\nthree").await;
+        cx.simulate_shared_keystrokes("2 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone\ntwo\nthree\nfour").await;
+        cx.simulate_shared_keystrokes("3 d a w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("ˇone\ntwo\nthree").await;
+        cx.simulate_shared_keystrokes("2 d i w").await;
+        cx.shared_state().await.assert_matches();
+
+        cx.set_shared_state("one ˇtwo\nthree four").await;
+        cx.simulate_shared_keystrokes("2 d a w").await;
+        cx.shared_state().await.assert_matches();
     }
 
     const PARAGRAPH_EXAMPLES: &[&str] = &[
@@ -3238,7 +3371,12 @@ mod test {
             // but, since this is being set manually, the language isn't
             // automatically set.
             let editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
-            let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
+            let buffer_ids = multi_buffer
+                .read(cx)
+                .snapshot(cx)
+                .excerpts()
+                .map(|excerpt| excerpt.context.start.buffer_id)
+                .collect::<Vec<_>>();
             if let Some(buffer) = multi_buffer.read(cx).buffer(buffer_ids[1]) {
                 buffer.update(cx, |buffer, cx| {
                     buffer.set_language(Some(language::rust_lang()), cx);
@@ -3792,5 +3930,74 @@ mod test {
             "#},
             Mode::VisualLine,
         );
+    }
+
+    #[gpui::test]
+    async fn test_subword_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Setup custom keybindings for subword object so we can use the
+        // bindings in `simulate_keystrokes`.
+        cx.update(|_window, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "w",
+                super::Subword {
+                    ignore_punctuation: false,
+                },
+                Some("vim_operator"),
+            )]);
+        });
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("foo_ˇ_baz", Mode::Insert);
+
+        cx.set_state("ˇfoo_bar_baz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("ˇ_bar_baz", Mode::Insert);
+
+        cx.set_state("foo_bar_baˇz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("foo_bar_ˇ", Mode::Insert);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("fooˇBaz", Mode::Insert);
+
+        cx.set_state("ˇfooBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("ˇBarBaz", Mode::Insert);
+
+        cx.set_state("fooBarBaˇz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("fooBarˇ", Mode::Insert);
+
+        cx.set_state("foo.ˇbar.baz", Mode::Normal);
+        cx.simulate_keystrokes("c i w");
+        cx.assert_state("foo.ˇ.baz", Mode::Insert);
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("d i w");
+        cx.assert_state("foo_ˇ_baz", Mode::Normal);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("d i w");
+        cx.assert_state("fooˇBaz", Mode::Normal);
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("c a w");
+        cx.assert_state("foo_ˇ_baz", Mode::Insert);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("c a w");
+        cx.assert_state("fooˇBaz", Mode::Insert);
+
+        cx.set_state("foo_ˇbar_baz", Mode::Normal);
+        cx.simulate_keystrokes("d a w");
+        cx.assert_state("foo_ˇ_baz", Mode::Normal);
+
+        cx.set_state("fooˇBarBaz", Mode::Normal);
+        cx.simulate_keystrokes("d a w");
+        cx.assert_state("fooˇBaz", Mode::Normal);
     }
 }

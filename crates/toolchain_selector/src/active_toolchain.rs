@@ -117,7 +117,7 @@ impl ActiveToolchain {
         cx: &mut Context<Self>,
     ) {
         let editor = editor.read(cx);
-        if let Some((_, buffer, _)) = editor.active_excerpt(cx)
+        if let Some(buffer) = editor.active_buffer(cx)
             && let Some(worktree_id) = buffer.read(cx).file().map(|file| file.worktree_id(cx))
         {
             let subscription = cx.subscribe_in(
@@ -198,15 +198,19 @@ impl ActiveToolchain {
                     .or_else(|| toolchains.toolchains.first())
                     .cloned();
                 if let Some(toolchain) = &default_choice {
-                    workspace::WORKSPACE_DB
-                        .set_toolchain(
-                            workspace_id,
-                            worktree_id,
-                            relative_path.clone(),
-                            toolchain.clone(),
-                        )
-                        .await
-                        .ok()?;
+                    let worktree_root_path = project.read_with(cx, |this, cx| {
+                        this.worktree_for_id(worktree_id, cx)
+                            .map(|worktree| worktree.read(cx).abs_path())
+                    })?;
+                    let db = cx.update(|_, cx| workspace::WorkspaceDb::global(cx)).ok()?;
+                    db.set_toolchain(
+                        workspace_id,
+                        worktree_root_path,
+                        relative_path.clone(),
+                        toolchain.clone(),
+                    )
+                    .await
+                    .ok()?;
                     project
                         .update(cx, |this, cx| {
                             this.activate_toolchain(
@@ -218,7 +222,6 @@ impl ActiveToolchain {
                                 cx,
                             )
                         })
-                        .ok()?
                         .await;
                 }
 

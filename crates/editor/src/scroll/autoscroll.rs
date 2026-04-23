@@ -1,12 +1,15 @@
 use crate::{
-    DisplayRow, Editor, EditorMode, LineWithInvisibles, RowExt, SelectionEffects,
-    display_map::ToDisplayPoint,
+    DisplayPoint, DisplayRow, Editor, EditorMode, EditorSettings, LineWithInvisibles, RowExt,
+    SelectionEffects,
+    display_map::{DisplaySnapshot, ToDisplayPoint},
     scroll::{ScrollOffset, WasScrolled},
 };
-use gpui::{Bounds, Context, Pixels, Window};
+use gpui::{App, Bounds, Context, Pixels, Window};
 use language::Point;
 use multi_buffer::Anchor;
+use settings::Settings;
 use std::cmp;
+use text::Bias;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Autoscroll {
@@ -115,7 +118,7 @@ impl Editor {
         let viewport_height = bounds.size.height;
         let visible_lines = ScrollOffset::from(viewport_height / line_height);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
+        let mut scroll_position = self.scroll_manager.scroll_position(&display_map, cx);
         let original_y = scroll_position.y;
         if let Some(last_bounds) = self.expect_bounds_change.take()
             && scroll_position.y != 0.
@@ -140,23 +143,24 @@ impl Editor {
             return (NeedsHorizontalAutoscroll(false), editor_was_scrolled);
         };
 
+        let mut target_point;
         let mut target_top;
         let mut target_bottom;
         if let Some(first_highlighted_row) =
             self.highlighted_display_row_for_autoscroll(&display_map)
         {
-            target_top = first_highlighted_row.as_f64();
+            target_point = DisplayPoint::new(first_highlighted_row, 0);
+            target_top = target_point.row().as_f64();
             target_bottom = target_top + 1.;
         } else {
             let selections = self.selections.all::<Point>(&display_map);
 
-            target_top = selections
+            target_point = selections
                 .first()
                 .unwrap()
                 .head()
-                .to_display_point(&display_map)
-                .row()
-                .as_f64();
+                .to_display_point(&display_map);
+            target_top = target_point.row().as_f64();
             target_bottom = selections
                 .last()
                 .unwrap()
@@ -173,16 +177,14 @@ impl Editor {
             ) || (matches!(autoscroll, Autoscroll::Strategy(AutoscrollStrategy::Fit, _))
                 && !selections_fit)
             {
-                let newest_selection_top = selections
+                target_point = selections
                     .iter()
                     .max_by_key(|s| s.id)
                     .unwrap()
                     .head()
-                    .to_display_point(&display_map)
-                    .row()
-                    .as_f64();
-                target_top = newest_selection_top;
-                target_bottom = newest_selection_top + 1.;
+                    .to_display_point(&display_map);
+                target_top = target_point.row().as_f64();
+                target_bottom = target_top + 1.;
             }
         }
 
@@ -194,31 +196,31 @@ impl Editor {
 
         let strategy = match autoscroll {
             Autoscroll::Strategy(strategy, _) => strategy,
-            Autoscroll::Next => {
-                let last_autoscroll = &self.scroll_manager.last_autoscroll;
-                if let Some(last_autoscroll) = last_autoscroll {
-                    if self.scroll_manager.anchor.offset == last_autoscroll.0
-                        && target_top == last_autoscroll.1
-                        && target_bottom == last_autoscroll.2
-                    {
-                        last_autoscroll.3.next()
-                    } else {
-                        AutoscrollStrategy::default()
-                    }
-                } else {
-                    AutoscrollStrategy::default()
-                }
-            }
+            Autoscroll::Next => self
+                .scroll_manager
+                .last_autoscroll
+                .as_ref()
+                .filter(|(offset, last_target_top, last_target_bottom, _)| {
+                    self.scroll_manager.offset(cx) == *offset
+                        && target_top == *last_target_top
+                        && target_bottom == *last_target_bottom
+                })
+                .map(|(_, _, _, strategy)| strategy.next())
+                .unwrap_or_default(),
         };
         if let Autoscroll::Strategy(_, Some(anchor)) = autoscroll {
-            target_top = anchor.to_display_point(&display_map).row().as_f64();
+            target_point = anchor.to_display_point(&display_map);
+            target_top = target_point.row().as_f64();
             target_bottom = target_top + 1.;
         }
+
+        let visible_sticky_headers =
+            self.visible_sticky_header_count_for_point(&display_map, target_point, cx);
 
         let was_autoscrolled = match strategy {
             AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
                 let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
-                let target_top = (target_top - margin).max(0.0);
+                let target_top = (target_top - margin - visible_sticky_headers as f64).max(0.0);
                 let target_bottom = target_bottom + margin;
                 let start_row = scroll_position.y;
                 let end_row = start_row + visible_lines;
@@ -266,7 +268,7 @@ impl Editor {
         };
 
         self.scroll_manager.last_autoscroll = Some((
-            self.scroll_manager.anchor.offset,
+            self.scroll_manager.offset(cx),
             target_top,
             target_bottom,
             strategy,
@@ -274,6 +276,54 @@ impl Editor {
 
         let was_scrolled = WasScrolled(editor_was_scrolled.0 || was_autoscrolled.0);
         (NeedsHorizontalAutoscroll(true), was_scrolled)
+    }
+
+    pub(crate) fn visible_sticky_header_count_for_point(
+        &self,
+        display_map: &DisplaySnapshot,
+        target_point: DisplayPoint,
+        cx: &App,
+    ) -> usize {
+        let sticky_scroll = EditorSettings::get_global(cx).sticky_scroll;
+        if !sticky_scroll.enabled {
+            return 0;
+        }
+
+        let Some(buffer_snapshot) = display_map.buffer_snapshot().as_singleton() else {
+            return 0;
+        };
+
+        let point = target_point.to_point(display_map);
+        let mut item_ranges = buffer_snapshot
+            .outline_ranges_containing(point..point)
+            .collect::<Vec<_>>();
+        item_ranges.sort_by_key(|item_range| item_range.start);
+
+        let mut previous_sticky_row = None;
+        let mut num_visible_sticky_headers = 0;
+
+        for item_range in item_ranges {
+            let sticky_row = display_map
+                .point_to_display_point(item_range.start, Bias::Left)
+                .row();
+            if sticky_row >= target_point.row() {
+                break;
+            }
+            if previous_sticky_row.replace(sticky_row) == Some(sticky_row) {
+                continue;
+            }
+
+            let end_row = display_map
+                .point_to_display_point(item_range.end, Bias::Left)
+                .row();
+            if end_row <= target_point.row() {
+                continue;
+            }
+
+            num_visible_sticky_headers += 1;
+        }
+
+        num_visible_sticky_headers
     }
 
     pub(crate) fn autoscroll_horizontally(
@@ -294,7 +344,7 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(&display_map);
-        let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
+        let mut scroll_position = self.scroll_manager.scroll_position(&display_map, cx);
 
         let mut target_left;
         let mut target_right: f64;
@@ -336,7 +386,7 @@ impl Editor {
             return None;
         }
 
-        let scroll_left = self.scroll_manager.anchor.offset.x * em_advance;
+        let scroll_left = self.scroll_manager.offset(cx).x * em_advance;
         let scroll_right = scroll_left + viewport_width;
 
         let was_scrolled = if target_left < scroll_left {

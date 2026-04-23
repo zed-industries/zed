@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct AnyProtoClient(Arc<State>);
 
 type RequestIds = Arc<
@@ -43,6 +43,15 @@ struct State {
     client: Arc<dyn ProtoClient>,
     next_lsp_request_id: Arc<AtomicU64>,
     request_ids: RequestIds,
+}
+
+impl std::fmt::Debug for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("State")
+            .field("next_lsp_request_id", &self.next_lsp_request_id)
+            .field("request_ids", &self.request_ids)
+            .finish_non_exhaustive()
+    }
 }
 
 pub trait ProtoClient: Send + Sync {
@@ -367,6 +376,15 @@ impl AnyProtoClient {
                             Response::InlayHintsResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
+                            Response::SemanticTokensResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetFoldingRangesResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetDocumentSymbolsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
                         };
                         Some(proto::ProtoLspResponse {
                             server_id,
@@ -528,4 +546,44 @@ fn to_any_envelope<T: EnvelopedMessage>(
         received_at: envelope.received_at,
         payload: response,
     }) as Box<_>
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub struct NoopProtoClient {
+    handler_set: parking_lot::Mutex<ProtoMessageHandlerSet>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl NoopProtoClient {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            handler_set: parking_lot::Mutex::new(ProtoMessageHandlerSet::default()),
+        })
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl ProtoClient for NoopProtoClient {
+    fn request(
+        &self,
+        _: proto::Envelope,
+        _: &'static str,
+    ) -> futures::future::BoxFuture<'static, Result<proto::Envelope>> {
+        unimplemented!()
+    }
+    fn send(&self, _: proto::Envelope, _: &'static str) -> Result<()> {
+        Ok(())
+    }
+    fn send_response(&self, _: proto::Envelope, _: &'static str) -> Result<()> {
+        Ok(())
+    }
+    fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet> {
+        &self.handler_set
+    }
+    fn is_via_collab(&self) -> bool {
+        false
+    }
+    fn has_wsl_interop(&self) -> bool {
+        false
+    }
 }

@@ -12,7 +12,7 @@ use buffer_diagnostics::BufferDiagnosticsEditor;
 use collections::{BTreeSet, HashMap, HashSet};
 use diagnostic_renderer::DiagnosticBlock;
 use editor::{
-    Editor, EditorEvent, EditorSettings, ExcerptRange, MultiBuffer, PathKey,
+    Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
     multibuffer_context_lines,
 };
@@ -45,8 +45,8 @@ pub use toolbar_controls::ToolbarControls;
 use ui::{Icon, IconName, Label, h_flex, prelude::*};
 use util::ResultExt;
 use workspace::{
-    ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
+    ItemNavHistory, Workspace,
+    item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
@@ -301,17 +301,21 @@ impl ProjectDiagnosticsEditor {
         let snapshot = self
             .editor
             .update(cx, |editor, cx| editor.display_snapshot(cx));
-        let buffer = self.multibuffer.read(cx);
-        let buffer_ids = buffer.all_buffer_ids();
         let selected_buffers = self.editor.update(cx, |editor, _| {
             editor
                 .selections
                 .all_anchors(&snapshot)
                 .iter()
-                .filter_map(|anchor| anchor.start.text_anchor.buffer_id)
+                .filter_map(|anchor| {
+                    Some(snapshot.anchor_to_buffer_anchor(anchor.start)?.0.buffer_id)
+                })
                 .collect::<HashSet<_>>()
         });
-        for buffer_id in buffer_ids {
+        for buffer_id in snapshot
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .dedup()
+        {
             if retain_selections && selected_buffers.contains(&buffer_id) {
                 continue;
             }
@@ -322,16 +326,14 @@ impl ProjectDiagnosticsEditor {
             if !has_no_blocks {
                 continue;
             }
-            let is_dirty = self
-                .multibuffer
-                .read(cx)
-                .buffer(buffer_id)
-                .is_none_or(|buffer| buffer.read(cx).is_dirty());
-            if is_dirty {
+            let Some(buffer) = self.multibuffer.read(cx).buffer(buffer_id) else {
+                continue;
+            };
+            if buffer.read(cx).is_dirty() {
                 continue;
             }
             self.multibuffer.update(cx, |b, cx| {
-                b.remove_excerpts_for_buffer(buffer_id, cx);
+                b.remove_excerpts(PathKey::for_buffer(&buffer, cx), cx);
             });
         }
     }
@@ -360,7 +362,7 @@ impl ProjectDiagnosticsEditor {
                 };
 
                 if let Some(buffer) = project_handle
-                    .update(cx, |project, cx| project.open_buffer(path.clone(), cx))?
+                    .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
                     .await
                     .log_err()
                 {
@@ -583,9 +585,8 @@ impl ProjectDiagnosticsEditor {
                     match retain_excerpts {
                         RetainExcerpts::Dirty if !is_dirty => Vec::new(),
                         RetainExcerpts::All | RetainExcerpts::Dirty => multi_buffer
-                            .excerpts_for_buffer(buffer_id, cx)
-                            .into_iter()
-                            .map(|(_, range)| range)
+                            .snapshot(cx)
+                            .excerpts_for_buffer(buffer_id)
                             .sorted_by(|a, b| cmp_excerpts(&buffer_snapshot, a, b))
                             .collect(),
                     }
@@ -623,22 +624,34 @@ impl ProjectDiagnosticsEditor {
                         });
                     })
                 }
-                let (anchor_ranges, _) = this.multibuffer.update(cx, |multi_buffer, cx| {
-                    let excerpt_ranges = excerpt_ranges
-                        .into_iter()
-                        .map(|range| ExcerptRange {
-                            context: range.context.to_point(&buffer_snapshot),
-                            primary: range.primary.to_point(&buffer_snapshot),
-                        })
-                        .collect();
+                let buffer_snapshot = buffer.read(cx).snapshot();
+                let excerpt_ranges: Vec<_> = excerpt_ranges
+                    .into_iter()
+                    .map(|range| ExcerptRange {
+                        context: range.context.to_point(&buffer_snapshot),
+                        primary: range.primary.to_point(&buffer_snapshot),
+                    })
+                    .collect();
+                // TODO(cole): maybe should use the nonshrinking API?
+                this.multibuffer.update(cx, |multi_buffer, cx| {
                     multi_buffer.set_excerpt_ranges_for_path(
                         PathKey::for_buffer(&buffer, cx),
                         buffer.clone(),
                         &buffer_snapshot,
-                        excerpt_ranges,
+                        excerpt_ranges.clone(),
                         cx,
                     )
                 });
+                let multibuffer_snapshot = this.multibuffer.read(cx).snapshot(cx);
+                let anchor_ranges: Vec<Range<Anchor>> = excerpt_ranges
+                    .into_iter()
+                    .filter_map(|range| {
+                        let text_range = buffer_snapshot.anchor_range_inside(range.primary);
+                        let start = multibuffer_snapshot.anchor_in_buffer(text_range.start)?;
+                        let end = multibuffer_snapshot.anchor_in_buffer(text_range.end)?;
+                        Some(start..end)
+                    })
+                    .collect();
                 #[cfg(test)]
                 let cloned_blocks = result_blocks.clone();
 
@@ -717,7 +730,7 @@ impl Focusable for ProjectDiagnosticsEditor {
 impl Item for ProjectDiagnosticsEditor {
     type Event = EditorEvent;
 
-    fn to_item_events(event: &EditorEvent, f: impl FnMut(ItemEvent)) {
+    fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {
         Editor::to_item_events(event, f)
     }
 
@@ -728,7 +741,7 @@ impl Item for ProjectDiagnosticsEditor {
 
     fn navigate(
         &mut self,
-        data: Box<dyn Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
@@ -894,18 +907,6 @@ impl Item for ProjectDiagnosticsEditor {
         Some(Box::new(self.editor.clone()))
     }
 
-    fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
-        if EditorSettings::get_global(cx).toolbar.breadcrumbs {
-            ToolbarItemLocation::PrimaryLeft
-        } else {
-            ToolbarItemLocation::Hidden
-        }
-    }
-
-    fn breadcrumbs(&self, theme: &theme::Theme, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        self.editor.breadcrumbs(theme, cx)
-    }
-
     fn added_to_workspace(
         &mut self,
         workspace: &mut Workspace,
@@ -988,6 +989,7 @@ async fn context_range_for_entry(
         cx,
     )
     .await
+    .filter(|rows| rows.start() != rows.end())
     {
         Range {
             start: Point::new(*rows.start(), 0),
@@ -1100,9 +1102,8 @@ async fn heuristic_syntactic_expand(
             return Some(node_row_range);
         } else if node_name.ends_with("statement") || node_name.ends_with("declaration") {
             // Expand to the nearest dedent or blank line for statements and declarations.
-            let tab_size = cx
-                .update(|cx| snapshot.settings_at(node_range.start, cx).tab_size.get())
-                .ok()?;
+            let tab_size =
+                cx.update(|cx| snapshot.settings_at(node_range.start, cx).tab_size.get());
             let indent_level = snapshot
                 .line_indent_for_row(node_range.start.row)
                 .len(tab_size);
