@@ -115,6 +115,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
             "xlsx",
         ],
     ),
+    ("editorconfig", &["editorconfig"]),
     ("elixir", &["eex", "ex", "exs", "heex", "leex", "neex"]),
     ("elm", &["elm"]),
     (
@@ -191,7 +192,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
     ("metal", &["metal"]),
     ("nim", &["nim", "nims", "nimble"]),
     ("nix", &["nix"]),
-    ("ocaml", &["ml", "mli"]),
+    ("ocaml", &["ml", "mli", "mlx"]),
     ("odin", &["odin"]),
     ("php", &["php"]),
     (
@@ -328,6 +329,7 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("diff", "icons/file_icons/diff.svg"),
     ("docker", "icons/file_icons/docker.svg"),
     ("document", "icons/file_icons/book.svg"),
+    ("editorconfig", "icons/file_icons/editorconfig.svg"),
     ("elixir", "icons/file_icons/elixir.svg"),
     ("elm", "icons/file_icons/elm.svg"),
     ("erlang", "icons/file_icons/erlang.svg"),

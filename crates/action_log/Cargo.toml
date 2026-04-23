@@ -33,6 +33,7 @@ watch.workspace = true
 
 [dev-dependencies]
 buffer_diff = { workspace = true, features = ["test-support"] }
+git.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 ctor.workspace = true

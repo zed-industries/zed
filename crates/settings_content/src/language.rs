@@ -180,9 +180,6 @@ pub struct EditPredictionSettingsContent {
     pub ollama: Option<OllamaEditPredictionSettingsContent>,
     /// Settings specific to using custom OpenAI-compatible servers for edit prediction.
     pub open_ai_compatible_api: Option<CustomEditPredictionProviderSettingsContent>,
-    /// Whether edit predictions are enabled in the assistant prompt editor.
-    /// This has no effect if globally disabled.
-    pub enabled_in_text_threads: Option<bool>,
     /// The directory where manually captured edit prediction examples are stored.
     pub examples_dir: Option<Arc<Path>>,
 }
@@ -397,9 +394,8 @@ pub enum SoftWrap {
     PreferLine,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
-    /// Soft wrap lines at the preferred line length.
-    PreferredLineLength,
     /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
+    #[serde(alias = "preferred_line_length")]
     Bounded,
 }
 
@@ -453,6 +449,23 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub ensure_final_newline_on_save: Option<bool>,
+    /// How line endings should be handled for new files and during format and
+    /// save operations.
+    ///
+    /// - `detect`: Detect existing line endings and otherwise use the platform
+    ///   default (`lf` on Unix, `crlf` on Windows).
+    /// - `prefer_lf`: Prefer LF for new files and files with no existing line
+    ///   ending.
+    /// - `prefer_crlf`: Prefer CRLF for new files and files with no existing
+    ///   line ending.
+    /// - `enforce_lf`: Enforce LF during format and save.
+    /// - `enforce_crlf`: Enforce CRLF during format and save.
+    ///
+    /// The EditorConfig `end_of_line` property overrides this setting and
+    /// behaves like `enforce_lf` or `enforce_crlf`.
+    ///
+    /// Default: detect
+    pub line_ending: Option<LineEndingSetting>,
     /// How to perform a buffer format.
     ///
     /// Default: auto
@@ -901,6 +914,42 @@ pub enum FormatOnSave {
     On,
     /// Files should not be formatted on save.
     Off,
+}
+
+/// Controls how line endings are normalized when a buffer is saved.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LineEndingSetting {
+    /// Preserve the existing line endings of the file. New files use the
+    /// platform default line ending.
+    #[strum(serialize = "Detect")]
+    Detect,
+    /// Use LF for new files and files with no existing line-ending
+    /// convention, while preserving existing LF or CRLF files.
+    #[strum(serialize = "Prefer LF")]
+    PreferLf,
+    /// Use CRLF for new files and files with no existing line-ending
+    /// convention, while preserving existing LF or CRLF files.
+    #[strum(serialize = "Prefer CRLF")]
+    PreferCrlf,
+    /// Normalize line endings to LF (`\n`) during format and save.
+    #[strum(serialize = "Enforce LF")]
+    EnforceLf,
+    /// Normalize line endings to CRLF (`\r\n`) during format and save.
+    #[strum(serialize = "Enforce CRLF")]
+    EnforceCrlf,
 }
 
 /// Controls which formatters should be used when formatting code.

@@ -12,7 +12,6 @@ use editor::{
 };
 use gpui::actions;
 use gpui::{Context, Window};
-use itertools::Itertools as _;
 use language::{CharClassifier, CharKind, Point};
 use search::{BufferSearchBar, SearchOptions};
 use settings::Settings;
@@ -158,6 +157,23 @@ impl Vim {
                     }
 
                     let (new_head, goal) = match motion {
+                        // EndOfLine positions after the last character, but in
+                        // helix visual mode we want the selection to end ON the
+                        // last character. Adjust left here so the subsequent
+                        // right-expansion (below) includes the last char without
+                        // spilling into the newline.
+                        Motion::EndOfLine { .. } => {
+                            let (point, goal) = motion
+                                .move_point(
+                                    map,
+                                    current_head,
+                                    selection.goal,
+                                    times,
+                                    &text_layout_details,
+                                )
+                                .unwrap_or((current_head, selection.goal));
+                            (movement::saturating_left(map, point), goal)
+                        }
                         // Going to next word start is special cased
                         // since Vim differs from Helix in that motion
                         // Vim: `w` goes to the first character of a word
@@ -648,6 +664,7 @@ impl Vim {
                     self.search = SearchState {
                         direction: searchable::Direction::Next,
                         count: 1,
+                        cmd_f_search: false,
                         prior_selections,
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode: self.mode,
@@ -940,19 +957,15 @@ impl Vim {
                 editor.change_selections(SelectionEffects::default(), window, cx, |s| {
                     let buffer = snapshot.buffer_snapshot();
 
-                    s.select_anchor_ranges(
+                    s.select_ranges(
                         prior_selections
                             .iter()
                             .cloned()
                             .chain(s.all_anchors(&snapshot).iter().map(|s| s.range()))
-                            .sorted_by(|a, b| {
-                                a.start
-                                    .cmp(&b.start, buffer)
-                                    .then_with(|| a.end.cmp(&b.end, buffer))
-                            })
-                            .dedup_by(|a, b| {
-                                a.start.cmp(&b.start, buffer).is_eq()
-                                    && a.end.cmp(&b.end, buffer).is_eq()
+                            .map(|range| {
+                                let start = range.start.to_offset(buffer);
+                                let end = range.end.to_offset(buffer);
+                                start..end
                             }),
                     );
                 })
@@ -1996,6 +2009,23 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_helix_select_end_of_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // v g l d should delete to end of line without consuming the newline
+        cx.set_state("ˇThe quick brown\nfox jumps over", Mode::HelixNormal);
+        cx.simulate_keystrokes("v g l d");
+        cx.assert_state("ˇ\nfox jumps over", Mode::HelixNormal);
+
+        // same from the middle of a line — cursor lands on the last
+        // remaining character (the space) after delete
+        cx.set_state("The ˇquick brown\nfox jumps over", Mode::HelixNormal);
+        cx.simulate_keystrokes("v g l d");
+        cx.assert_state("Theˇ \nfox jumps over", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
     async fn test_helix_select_mode_motion_multiple_cursors(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
@@ -2149,6 +2179,93 @@ mod test {
         cx.simulate_keystrokes("n n n");
         // Should not panic; all three occurrences should remain selected.
         cx.assert_state("hello two «oneˇ» two «oneˇ» two «oneˇ»", Mode::HelixSelect);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_next_match_wrapping_from_normal(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Exact repro for #51573: start in HelixNormal, search, then `v` to
+        // enter HelixSelect, then `n` past last match.
+        //
+        // In HelixNormal, search collapses the cursor to the match start.
+        // Pressing `v` expands by only one character, creating a partial
+        // selection that overlaps the full match range when the search wraps.
+        // The overlapping ranges must be merged (not just deduped) to avoid
+        // a backward-seeking rope cursor panic.
+        cx.set_state(
+            indoc! {"
+                searˇch term
+                stuff
+                search term
+                other stuff
+            "},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("/ t e r m");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_keystrokes("v");
+        cx.simulate_keystrokes("n");
+        cx.simulate_keystrokes("n");
+        // Should not panic when wrapping past last match.
+        cx.assert_state(
+            indoc! {"
+                search «termˇ»
+                stuff
+                search «termˇ»
+                other stuff
+            "},
+            Mode::HelixSelect,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_star_then_match(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Repro attempts for #52852: `*` searches for word under cursor,
+        // `v` enters select, `n` accumulates matches, `m` triggers match mode.
+        // Try multiple cursor positions and match counts.
+
+        // Cursor on first occurrence, 3 more occurrences to select through
+        cx.set_state(
+            indoc! {"
+                ˇone two one three one four one
+            "},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("*");
+        cx.simulate_keystrokes("v");
+        cx.simulate_keystrokes("n n n");
+        // Should not panic on wrapping `n`.
+
+        // Cursor in the middle of text before matches
+        cx.set_state(
+            indoc! {"
+                heˇllo one two one three one
+            "},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("*");
+        cx.simulate_keystrokes("v");
+        cx.simulate_keystrokes("n");
+        // Should not panic.
+
+        // The original #52852 sequence: * v n n n then m m
+        cx.set_state(
+            indoc! {"
+                fn ˇfoo() { bar(foo()) }
+                fn baz() { foo() }
+            "},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("*");
+        cx.simulate_keystrokes("v");
+        cx.simulate_keystrokes("n n n");
+        cx.simulate_keystrokes("m m");
+        // Should not panic.
     }
 
     #[gpui::test]

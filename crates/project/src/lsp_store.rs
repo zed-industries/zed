@@ -72,11 +72,13 @@ use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff,
-    File as _, Language, LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate,
-    LspInstaller, ManifestDelegate, ManifestName, ModelineSettings, Patch, PointUtf16,
-    TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain, Transaction, Unclipped,
+    File as _, Language, LanguageAwareStyling, LanguageName, LanguageRegistry, LocalFile,
+    LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate, ManifestName, ModelineSettings,
+    OffsetUtf16, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16,
+    Toolchain, Transaction, Unclipped,
     language_settings::{
-        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, all_language_settings,
+        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, LineEndingSetting,
+        all_language_settings,
     },
     modeline, point_to_lsp,
     proto::{
@@ -149,6 +151,8 @@ pub use language::Location;
 pub use lsp_store::inlay_hints::{CacheInlayHints, InvalidationStrategy};
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
+#[cfg(any(test, feature = "test-support"))]
+pub use prettier::RANGE_FORMAT_SUFFIX as TEST_PRETTIER_RANGE_FORMAT_SUFFIX;
 pub use semantic_tokens::{
     BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer, TokenType,
 };
@@ -1083,6 +1087,7 @@ impl LocalLspStore {
                     let mut cx = cx.clone();
                     async move {
                         this.update(&mut cx, |this, cx| {
+                            this.invalidate_code_lens();
                             cx.emit(LspStoreEvent::RefreshCodeLens);
                             this.downstream_client.as_ref().map(|(client, project_id)| {
                                 client.send(proto::RefreshCodeLens {
@@ -1599,6 +1604,9 @@ impl LocalLspStore {
                     (adapters_and_servers, settings, request_timeout)
                 })
             })?;
+        let had_existing_line_endings = buffer
+            .handle
+            .read_with(cx, |buffer, _| buffer.max_point().row > 0);
 
         // handle whitespace formatting
         if settings.remove_trailing_whitespace_on_save {
@@ -1617,6 +1625,30 @@ impl LocalLspStore {
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.ensure_final_newline(cx);
             })?;
+        }
+
+        let line_ending_policy = match settings.line_ending {
+            LineEndingSetting::Detect => None,
+            LineEndingSetting::PreferLf => Some((LineEnding::Unix, true)),
+            LineEndingSetting::PreferCrlf => Some((LineEnding::Windows, true)),
+            LineEndingSetting::EnforceLf => Some((LineEnding::Unix, false)),
+            LineEndingSetting::EnforceCrlf => Some((LineEnding::Windows, false)),
+        };
+        if let Some((desired_line_ending, preserve_existing)) = line_ending_policy {
+            buffer.handle.update(cx, |buffer, cx| {
+                if buffer.line_ending() == desired_line_ending {
+                    return;
+                }
+                if preserve_existing && had_existing_line_endings {
+                    zlog::trace!(
+                        logger => "preserving existing line endings ({}) on save",
+                        buffer.line_ending().label()
+                    );
+                    return;
+                }
+                zlog::trace!(logger => "normalizing line endings to {}", desired_line_ending.label());
+                buffer.set_line_ending(desired_line_ending, cx);
+            });
         }
 
         // Formatter for `code_actions_on_format` that runs before
@@ -1714,16 +1746,63 @@ impl LocalLspStore {
                 zlog::trace!(logger => "formatting");
                 let _timer = zlog::time!(logger => "Formatting buffer via prettier");
 
+                // When selection ranges are provided (via FormatSelections), we pass the
+                // encompassing UTF-16 range to Prettier so it can scope its formatting.
+                // After diffing, we filter the resulting edits to only keep those that
+                // overlap with the original byte-level selection ranges.
+                let (range_utf16, byte_ranges) = match buffer.ranges.as_ref() {
+                    Some(ranges) if !ranges.is_empty() => {
+                        let (utf16_range, byte_ranges) =
+                            buffer.handle.read_with(cx, |buffer, _cx| {
+                                let snapshot = buffer.snapshot();
+                                let mut min_start_utf16 = OffsetUtf16(usize::MAX);
+                                let mut max_end_utf16 = OffsetUtf16(0);
+                                let mut byte_ranges = Vec::with_capacity(ranges.len());
+                                for range in ranges {
+                                    let start_utf16 = range.start.to_offset_utf16(&snapshot);
+                                    let end_utf16 = range.end.to_offset_utf16(&snapshot);
+                                    min_start_utf16.0 = min_start_utf16.0.min(start_utf16.0);
+                                    max_end_utf16.0 = max_end_utf16.0.max(end_utf16.0);
+
+                                    let start_byte = range.start.to_offset(&snapshot);
+                                    let end_byte = range.end.to_offset(&snapshot);
+                                    byte_ranges.push(start_byte..end_byte);
+                                }
+                                (min_start_utf16..max_end_utf16, byte_ranges)
+                            });
+                        (Some(utf16_range), Some(byte_ranges))
+                    }
+                    _ => (None, None),
+                };
+
                 let prettier = lsp_store.read_with(cx, |lsp_store, _cx| {
                     lsp_store.prettier_store().unwrap().downgrade()
                 })?;
-                let diff = prettier_store::format_with_prettier(&prettier, &buffer.handle, cx)
-                    .await
-                    .transpose()?;
-                let Some(diff) = diff else {
+                let diff = prettier_store::format_with_prettier(
+                    &prettier,
+                    &buffer.handle,
+                    range_utf16,
+                    cx,
+                )
+                .await
+                .transpose()?;
+                let Some(mut diff) = diff else {
                     zlog::trace!(logger => "No changes");
                     return Ok(());
                 };
+
+                if let Some(byte_ranges) = byte_ranges {
+                    diff.edits.retain(|(edit_range, _)| {
+                        byte_ranges.iter().any(|selection_range| {
+                            edit_range.start < selection_range.end
+                                && edit_range.end > selection_range.start
+                        })
+                    });
+                    if diff.edits.is_empty() {
+                        zlog::trace!(logger => "No changes within selection");
+                        return Ok(());
+                    }
+                }
 
                 extend_formatting_transaction(
                     buffer,
@@ -1736,6 +1815,12 @@ impl LocalLspStore {
             }
             Formatter::External { command, arguments } => {
                 let logger = zlog::scoped!(logger => "command");
+
+                if buffer.ranges.is_some() {
+                    zlog::debug!(logger => "External formatter does not support range formatting; skipping");
+                    return Ok(());
+                }
+
                 zlog::trace!(logger => "formatting");
                 let _timer = zlog::time!(logger => "Formatting buffer via external command");
 
@@ -2284,9 +2369,8 @@ impl LocalLspStore {
     fn server_supports_formatting(server: &Arc<LanguageServer>) -> bool {
         let capabilities = server.capabilities();
         let formatting = capabilities.document_formatting_provider.as_ref();
-        let range_formatting = capabilities.document_range_formatting_provider.as_ref();
         matches!(formatting, Some(p) if *p != OneOf::Left(false))
-            || matches!(range_formatting, Some(p) if *p != OneOf::Left(false))
+            || server_capabilities_support_range_formatting(&capabilities)
     }
 
     async fn format_via_lsp(
@@ -2931,7 +3015,6 @@ impl LocalLspStore {
         };
 
         let Ok(file_url) = lsp::Uri::from_file_path(old_path.as_path()) else {
-            debug_panic!("{old_path:?} is not parseable as an URI");
             return;
         };
         self.unregister_buffer_from_language_servers(buffer, &file_url, cx);
@@ -4358,7 +4441,9 @@ impl LspStore {
                         this.update_local_worktree_language_servers(&worktree, changes, cx);
                     }
                     worktree::Event::UpdatedGitRepositories(_)
-                    | worktree::Event::DeletedEntry(_) => {}
+                    | worktree::Event::DeletedEntry(_)
+                    | worktree::Event::Deleted
+                    | worktree::Event::UpdatedRootRepoCommonDir { .. } => {}
                 })
                 .detach()
             }
@@ -4372,7 +4457,8 @@ impl LspStore {
             WorktreeStoreEvent::WorktreeReleased(..)
             | WorktreeStoreEvent::WorktreeOrderChanged
             | WorktreeStoreEvent::WorktreeUpdatedGitRepositories(..)
-            | WorktreeStoreEvent::WorktreeDeletedEntry(..) => {}
+            | WorktreeStoreEvent::WorktreeDeletedEntry(..)
+            | WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(..) => {}
         }
     }
 
@@ -4689,6 +4775,7 @@ impl LspStore {
 
                     this.update(cx, |this, cx| {
                         let mut plain_text_buffers = Vec::new();
+                        let mut buffers_with_language = Vec::new();
                         let mut buffers_with_unknown_injections = Vec::new();
                         for handle in this.buffer_store.read(cx).buffers() {
                             let buffer = handle.read(cx);
@@ -4696,8 +4783,11 @@ impl LspStore {
                                 || buffer.language() == Some(&*language::PLAIN_TEXT)
                             {
                                 plain_text_buffers.push(handle);
-                            } else if buffer.contains_unknown_injections() {
-                                buffers_with_unknown_injections.push(handle);
+                            } else {
+                                if buffer.contains_unknown_injections() {
+                                    buffers_with_unknown_injections.push(handle.clone());
+                                }
+                                buffers_with_language.push(handle);
                             }
                         }
 
@@ -4714,6 +4804,24 @@ impl LspStore {
                             this.detect_language_for_buffer(&buffer, cx);
                             if let Some(local) = this.as_local_mut() {
                                 local.initialize_buffer(&buffer, cx);
+                                if local
+                                    .registered_buffers
+                                    .contains_key(&buffer.read(cx).remote_id())
+                                {
+                                    local.register_buffer_with_language_servers(
+                                        &buffer,
+                                        HashSet::default(),
+                                        cx,
+                                    );
+                                }
+                            }
+                        }
+
+                        // Also register buffers that already have a language with
+                        // any newly-available language servers (e.g., from extensions
+                        // that finished loading after buffers were restored).
+                        if let Some(local) = this.as_local_mut() {
+                            for buffer in buffers_with_language {
                                 if local
                                     .registered_buffers
                                     .contains_key(&buffer.read(cx).remote_id())
@@ -4944,48 +5052,22 @@ impl LspStore {
         )
     }
 
-    fn check_if_capable_for_proto_request<F>(
+    fn relevant_server_ids_for_capability_check(
         &self,
         buffer: &Entity<Buffer>,
-        check: F,
         cx: &App,
-    ) -> bool
-    where
-        F: FnMut(&lsp::ServerCapabilities) -> bool,
-    {
-        let Some(language) = buffer.read(cx).language().cloned() else {
-            return false;
-        };
-        let registered_language_servers = self
-            .languages
-            .lsp_adapters(&language.name())
-            .into_iter()
-            .map(|lsp_adapter| lsp_adapter.name())
-            .collect::<HashSet<_>>();
-        self.language_server_statuses
-            .iter()
-            .filter_map(|(server_id, server_status)| {
-                // Include servers that are either registered for this language OR
-                // available to be loaded (for SSH remote mode where adapters like
-                // ty/pylsp/pyright are registered via register_available_lsp_adapter
-                // but only loaded on the server side)
-                let is_relevant = registered_language_servers.contains(&server_status.name)
-                    || self.languages.is_lsp_adapter_available(&server_status.name);
-                is_relevant.then_some(server_id)
-            })
-            .filter_map(|server_id| self.lsp_server_capabilities.get(server_id))
-            .any(check)
-    }
+    ) -> Vec<LanguageServerId> {
+        let buffer_id = buffer.read(cx).remote_id();
+        if let Some(local) = self.as_local() {
+            return local
+                .buffers_opened_in_servers
+                .get(&buffer_id)
+                .into_iter()
+                .flatten()
+                .copied()
+                .collect();
+        }
 
-    fn all_capable_for_proto_request<F>(
-        &self,
-        buffer: &Entity<Buffer>,
-        mut check: F,
-        cx: &App,
-    ) -> Vec<(lsp::LanguageServerId, lsp::LanguageServerName)>
-    where
-        F: FnMut(&lsp::LanguageServerName, &lsp::ServerCapabilities) -> bool,
-    {
         let Some(language) = buffer.read(cx).language().cloned() else {
             return Vec::default();
         };
@@ -5004,15 +5086,103 @@ impl LspStore {
                 // but only loaded on the server side)
                 let is_relevant = registered_language_servers.contains(&server_status.name)
                     || self.languages.is_lsp_adapter_available(&server_status.name);
-                is_relevant.then_some((server_id, &server_status.name))
+                is_relevant.then_some(*server_id)
             })
-            .filter_map(|(server_id, server_name)| {
-                self.lsp_server_capabilities
-                    .get(server_id)
-                    .map(|c| (server_id, server_name, c))
+            .collect()
+    }
+
+    fn check_if_any_relevant_server_matches<F>(
+        &self,
+        buffer: &Entity<Buffer>,
+        mut check: F,
+        cx: &App,
+    ) -> bool
+    where
+        F: FnMut(&LanguageServerStatus, &lsp::ServerCapabilities) -> bool,
+    {
+        self.relevant_server_ids_for_capability_check(buffer, cx)
+            .into_iter()
+            .filter_map(|server_id| {
+                Some((
+                    self.language_server_statuses.get(&server_id)?,
+                    self.lsp_server_capabilities.get(&server_id)?,
+                ))
+            })
+            .any(|(server_status, capabilities)| check(server_status, capabilities))
+    }
+
+    fn check_if_capable_for_proto_request<F>(
+        &self,
+        buffer: &Entity<Buffer>,
+        mut check: F,
+        cx: &App,
+    ) -> bool
+    where
+        F: FnMut(&lsp::ServerCapabilities) -> bool,
+    {
+        self.check_if_any_relevant_server_matches(buffer, |_, capabilities| check(capabilities), cx)
+    }
+
+    pub fn supports_range_formatting(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
+        let settings = LanguageSettings::for_buffer(buffer.read(cx), cx);
+        settings.formatter.as_ref().iter().any(|formatter| {
+            match formatter {
+                Formatter::None => false,
+                Formatter::Auto => {
+                    settings.prettier.allowed
+                        || self.check_if_capable_for_proto_request(
+                            buffer,
+                            server_capabilities_support_range_formatting,
+                            cx,
+                        )
+                }
+                Formatter::Prettier => true,
+                Formatter::External { .. } => false,
+                Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current) => {
+                    self.check_if_capable_for_proto_request(
+                        buffer,
+                        server_capabilities_support_range_formatting,
+                        cx,
+                    )
+                }
+                Formatter::LanguageServer(
+                    settings::LanguageServerFormatterSpecifier::Specific { name },
+                ) => self.check_if_any_relevant_server_matches(
+                    buffer,
+                    |server_status, capabilities| {
+                        server_status.name.0.as_ref() == name
+                            && server_capabilities_support_range_formatting(capabilities)
+                    },
+                    cx,
+                ),
+                // `FormatSelections` should only surface when a formatter can honor the
+                // selected ranges. Code actions can still run as part of formatting, but
+                // they operate on the whole buffer rather than the selected text.
+                Formatter::CodeAction(_) => false,
+            }
+        })
+    }
+
+    fn all_capable_for_proto_request<F>(
+        &self,
+        buffer: &Entity<Buffer>,
+        mut check: F,
+        cx: &App,
+    ) -> Vec<(lsp::LanguageServerId, lsp::LanguageServerName)>
+    where
+        F: FnMut(&lsp::LanguageServerName, &lsp::ServerCapabilities) -> bool,
+    {
+        self.relevant_server_ids_for_capability_check(buffer, cx)
+            .into_iter()
+            .filter_map(|server_id| {
+                Some((
+                    server_id,
+                    &self.language_server_statuses.get(&server_id)?.name,
+                    self.lsp_server_capabilities.get(&server_id)?,
+                ))
             })
             .filter(|(_, server_name, capabilities)| check(server_name, capabilities))
-            .map(|(server_id, server_name, _)| (*server_id, server_name.clone()))
+            .map(|(server_id, server_name, _)| (server_id, server_name.clone()))
             .collect()
     }
 
@@ -5402,20 +5572,20 @@ impl LspStore {
                     .await
                     .context("resolving a code action")?;
                 if let Some(edit) = action.lsp_action.edit()
-                    && (edit.changes.is_some() || edit.document_changes.is_some()) {
-                        return LocalLspStore::deserialize_workspace_edit(
-                            this.upgrade().context("no app present")?,
-                            edit.clone(),
-                            push_to_history,
-
-                            lang_server.clone(),
-                            cx,
-                        )
-                        .await;
-                    }
+                    && (edit.changes.is_some() || edit.document_changes.is_some())
+                {
+                    return LocalLspStore::deserialize_workspace_edit(
+                        this.upgrade().context("no app present")?,
+                        edit.clone(),
+                        push_to_history,
+                        lang_server.clone(),
+                        cx,
+                    )
+                    .await;
+                }
 
                 let Some(command) = action.lsp_action.command() else {
-                    return Ok(ProjectTransaction::default())
+                    return Ok(ProjectTransaction::default());
                 };
 
                 let server_capabilities = lang_server.capabilities();
@@ -5426,15 +5596,18 @@ impl LspStore {
                     .unwrap_or_default();
 
                 if !available_commands.contains(&command.command) {
-                    log::warn!("Cannot execute a command {} not listed in the language server capabilities", command.command);
-                    return Ok(ProjectTransaction::default())
+                    log::warn!(
+                        "Skipping executeCommand for {}, not listed in language server capabilities",
+                        command.command
+                    );
+                    return Ok(ProjectTransaction::default());
                 }
 
-                let request_timeout = cx.update(|app|
+                let request_timeout = cx.update(|app| {
                     ProjectSettings::get_global(app)
-                    .global_lsp_settings
-                    .get_request_timeout()
-                );
+                        .global_lsp_settings
+                        .get_request_timeout()
+                });
 
                 this.update(cx, |this, _| {
                     this.as_local_mut()
@@ -5444,12 +5617,16 @@ impl LspStore {
                 })?;
 
                 let _result = lang_server
-                    .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
-                        command: command.command.clone(),
-                        arguments: command.arguments.clone().unwrap_or_default(),
-                        ..lsp::ExecuteCommandParams::default()
-                    }, request_timeout)
-                    .await.into_response()
+                    .request::<lsp::request::ExecuteCommand>(
+                        lsp::ExecuteCommandParams {
+                            command: command.command.clone(),
+                            arguments: command.arguments.clone().unwrap_or_default(),
+                            ..lsp::ExecuteCommandParams::default()
+                        },
+                        request_timeout,
+                    )
+                    .await
+                    .into_response()
                     .context("execute command")?;
 
                 return this.update(cx, |this, _| {
@@ -11776,12 +11953,17 @@ impl LspStore {
         &self,
         id: LanguageServerId,
     ) -> Option<Arc<CachedLspAdapter>> {
-        self.as_local()
-            .and_then(|local| local.language_servers.get(&id))
-            .and_then(|language_server_state| match language_server_state {
-                LanguageServerState::Running { adapter, .. } => Some(adapter.clone()),
-                _ => None,
-            })
+        if let Some(local) = self.as_local()
+            && let Some(LanguageServerState::Running { adapter, .. }) =
+                local.language_servers.get(&id)
+        {
+            return Some(adapter.clone());
+        }
+        // In remote (SSH/collab) mode there are no local `language_servers`, but
+        // `language_server_statuses` is kept in sync with the upstream and carries each
+        // server's registered name, which is enough to look the adapter up in the registry.
+        let name = &self.language_server_statuses.get(&id)?.name;
+        self.languages.adapter_for_name(name)
     }
 
     pub(super) fn update_local_worktree_language_servers(
@@ -13228,6 +13410,13 @@ fn parse_register_capabilities<T: serde::de::DeserializeOwned>(
     })
 }
 
+fn server_capabilities_support_range_formatting(capabilities: &lsp::ServerCapabilities) -> bool {
+    matches!(
+        capabilities.document_range_formatting_provider.as_ref(),
+        Some(provider) if *provider != OneOf::Left(false)
+    )
+}
+
 fn subscribe_to_binary_statuses(
     languages: &Arc<LanguageRegistry>,
     cx: &mut Context<'_, LspStore>,
@@ -13470,7 +13659,13 @@ fn resolve_word_completion(snapshot: &BufferSnapshot, completion: &mut Completio
     }
 
     let mut offset = 0;
-    for chunk in snapshot.chunks(word_range.clone(), true) {
+    for chunk in snapshot.chunks(
+        word_range.clone(),
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: true,
+        },
+    ) {
         let end_offset = offset + chunk.text.len();
         if let Some(highlight_id) = chunk.syntax_highlight_id {
             completion

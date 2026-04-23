@@ -11,7 +11,7 @@ use collections::HashMap;
 use db::kvp::KeyValueStore;
 use futures::{channel::oneshot, future::join_all};
 use gpui::{
-    Action, AnyView, App, AsyncApp, AsyncWindowContext, Context, Corner, Entity, EventEmitter,
+    Action, Anchor, AnyView, App, AsyncApp, AsyncWindowContext, Context, Entity, EventEmitter,
     FocusHandle, Focusable, IntoElement, ParentElement, Pixels, Render, Styled, Task, WeakEntity,
     Window, actions,
 };
@@ -160,7 +160,7 @@ impl TerminalPanel {
                                 IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
                                 Tooltip::text("New…"),
                             )
-                            .anchor(Corner::TopRight)
+                            .anchor(Anchor::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
                             .menu(move |window, cx| {
                                 let focus_handle = focus_handle.clone();
@@ -190,7 +190,7 @@ impl TerminalPanel {
                                     .icon_size(IconSize::Small),
                                 Tooltip::text("Split Pane"),
                             )
-                            .anchor(Corner::TopRight)
+                            .anchor(Anchor::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
                             .menu({
                                 move |window, cx| {
@@ -1314,7 +1314,7 @@ impl Render for FailedToSpawnTerminal {
                         )
                 }))
             })
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(2.0),
@@ -1572,6 +1572,20 @@ impl Panel for TerminalPanel {
             DockPosition::Left | DockPosition::Right => settings.default_width,
             DockPosition::Bottom => settings.default_height,
         }
+    }
+
+    fn supports_flexible_size(&self) -> bool {
+        true
+    }
+
+    fn has_flexible_size(&self, _window: &Window, cx: &App) -> bool {
+        TerminalSettings::get_global(cx).flexible
+    }
+
+    fn set_flexible_size(&mut self, flexible: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings.terminal.get_or_insert_default().flexible = Some(flexible);
+        });
     }
 
     fn is_zoomed(&self, _window: &Window, cx: &App) -> bool {

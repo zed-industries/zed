@@ -65,7 +65,7 @@ fn main() {
             node_runtime,
             session,
         });
-        AppState::set_global(Arc::downgrade(&app_state), cx);
+        AppState::set_global(app_state.clone(), cx);
 
         workspace::init(app_state.clone(), cx);
         init(app_state.clone(), cx);

@@ -5,41 +5,13 @@ use ui::{Tooltip, prelude::*};
 use workspace::{ToastAction, ToastView};
 use zed_actions::toast;
 
-#[derive(Clone, Copy)]
-pub struct ToastIcon {
-    icon: IconName,
-    color: Color,
-}
-
-impl ToastIcon {
-    pub fn new(icon: IconName) -> Self {
-        Self {
-            icon,
-            color: Color::default(),
-        }
-    }
-
-    pub fn color(mut self, color: Color) -> Self {
-        self.color = color;
-        self
-    }
-}
-
-impl From<IconName> for ToastIcon {
-    fn from(icon: IconName) -> Self {
-        Self {
-            icon,
-            color: Color::default(),
-        }
-    }
-}
-
 #[derive(RegisterComponent)]
 pub struct StatusToast {
-    icon: Option<ToastIcon>,
+    icon: Option<Icon>,
     text: SharedString,
     action: Option<ToastAction>,
     show_dismiss: bool,
+    auto_dismiss: bool,
     this_handle: Entity<Self>,
     focus_handle: FocusHandle,
 }
@@ -59,6 +31,7 @@ impl StatusToast {
                     icon: None,
                     action: None,
                     show_dismiss: false,
+                    auto_dismiss: true,
                     this_handle: cx.entity(),
                     focus_handle,
                 },
@@ -67,8 +40,13 @@ impl StatusToast {
         })
     }
 
-    pub fn icon(mut self, icon: ToastIcon) -> Self {
+    pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    pub fn auto_dismiss(mut self, auto_dismiss: bool) -> Self {
+        self.auto_dismiss = auto_dismiss;
         self
     }
 
@@ -116,9 +94,7 @@ impl Render for StatusToast {
             .flex_none()
             .bg(cx.theme().colors().surface_background)
             .shadow_lg()
-            .when_some(self.icon.as_ref(), |this, icon| {
-                this.child(Icon::new(icon.icon).color(icon.color))
-            })
+            .when_some(self.icon.clone(), |this, icon| this.child(icon))
             .child(Label::new(self.text.clone()).color(Color::Default))
             .when_some(self.action.as_ref(), |this, action| {
                 this.child(
@@ -155,6 +131,10 @@ impl ToastView for StatusToast {
     fn action(&self) -> Option<ToastAction> {
         self.action.clone()
     }
+
+    fn auto_dismiss(&self) -> bool {
+        self.auto_dismiss
+    }
 }
 
 impl Focusable for StatusToast {
@@ -183,33 +163,55 @@ impl Component for StatusToast {
         let icon_example = StatusToast::new(
             "Nathan Sobo accepted your contact request",
             cx,
-            |this, _| this.icon(ToastIcon::new(IconName::Check).color(Color::Muted)),
+            |this, _| {
+                this.icon(
+                    Icon::new(IconName::Check)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+            },
         );
 
         let success_example = StatusToast::new("Pushed 4 changes to `zed/main`", cx, |this, _| {
-            this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+            this.icon(
+                Icon::new(IconName::Check)
+                    .size(IconSize::Small)
+                    .color(Color::Success),
+            )
         });
 
         let error_example = StatusToast::new(
             "git push: Couldn't find remote origin `iamnbutler/zed`",
             cx,
             |this, _cx| {
-                this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                    .action("More Info", |_, _| {})
+                this.icon(
+                    Icon::new(IconName::XCircle)
+                        .size(IconSize::Small)
+                        .color(Color::Error),
+                )
+                .action("More Info", |_, _| {})
             },
         );
 
         let warning_example = StatusToast::new("You have outdated settings", cx, |this, _cx| {
-            this.icon(ToastIcon::new(IconName::Warning).color(Color::Warning))
-                .action("More Info", |_, _| {})
+            this.icon(
+                Icon::new(IconName::Warning)
+                    .size(IconSize::Small)
+                    .color(Color::Warning),
+            )
+            .action("More Info", |_, _| {})
         });
 
         let pr_example =
             StatusToast::new("`zed/new-notification-system` created!", cx, |this, _cx| {
-                this.icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
-                    .action("Open Pull Request", |_, cx| {
-                        cx.open_url("https://github.com/")
-                    })
+                this.icon(
+                    Icon::new(IconName::GitBranch)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .action("Open Pull Request", |_, cx| {
+                    cx.open_url("https://github.com/")
+                })
             });
 
         Some(

@@ -3,7 +3,7 @@ use mdbook::BookItem;
 use mdbook::book::{Book, Chapter};
 use mdbook::preprocess::CmdPreprocessor;
 use regex::Regex;
-use settings::{KeymapFile, SettingsStore};
+use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read};
@@ -369,7 +369,18 @@ fn find_binding_with_overlay(
 }
 
 fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
-    let settings_schema = SettingsStore::json_schema(&Default::default());
+    let params = SettingsJsonSchemaParams {
+        language_names: &[],
+        font_names: &[],
+        theme_names: &[],
+        icon_theme_names: &[],
+        lsp_adapter_names: &[],
+        action_names: &[],
+        action_documentation: &HashMap::default(),
+        deprecations: &HashMap::default(),
+        deprecation_messages: &HashMap::default(),
+    };
+    let settings_schema = SettingsStore::json_schema(&params);
     let settings_validator = jsonschema::validator_for(&settings_schema)
         .expect("failed to compile settings JSON schema");
 
@@ -543,9 +554,9 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
 /// This will return the action name unmodified.
 ///
 /// ```
-/// let action_as_str = "assistant::Assist";
+/// let action_as_str = "workspace::Save";
 /// let action_name = name_for_action(action_as_str);
-/// assert_eq!(action_name, "assistant::Assist");
+/// assert_eq!(action_name, "workspace::Save");
 /// ```
 ///
 /// This will return the action name with any trailing options removed.

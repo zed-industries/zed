@@ -6,7 +6,9 @@ use crate::{
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
     Properties as EditorconfigProperties,
-    property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
+    property::{
+        EndOfLine, FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs,
+    },
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
@@ -16,8 +18,8 @@ use settings::{DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens}
 pub use settings::{
     AutoIndentMode, CompletionSettingsContent, EditPredictionPromptFormat, EditPredictionProvider,
     EditPredictionsMode, FormatOnSave, Formatter, FormatterList, InlayHintKind,
-    LanguageSettingsContent, LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap,
-    WordsCompletionMode,
+    LanguageSettingsContent, LineEndingSetting, LspInsertMode, RewrapBehavior,
+    ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
@@ -82,6 +84,9 @@ pub struct LanguageSettings {
     /// Whether or not to ensure there's a single newline at the end of a buffer
     /// when saving it.
     pub ensure_final_newline_on_save: bool,
+    /// How line endings are initialized for new files and normalized during
+    /// format and save.
+    pub line_ending: LineEndingSetting,
     /// How to perform a buffer format.
     pub formatter: settings::FormatterList,
     /// Zed's Prettier integration settings.
@@ -472,9 +477,6 @@ pub struct EditPredictionSettings {
     /// Settings specific to Ollama.
     pub ollama: Option<OpenAiCompatibleEditPredictionSettings>,
     pub open_ai_compatible_api: Option<OpenAiCompatibleEditPredictionSettings>,
-    /// Whether edit predictions are enabled in the assistant panel.
-    /// This setting has no effect if globally disabled.
-    pub enabled_in_text_threads: bool,
     pub examples_dir: Option<Arc<Path>>,
 }
 
@@ -640,6 +642,11 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
             TrimTrailingWs::Value(b) => b,
         })
         .ok();
+    let line_ending = cfg.get::<EndOfLine>().ok().and_then(|v| match v {
+        EndOfLine::Lf => Some(LineEndingSetting::EnforceLf),
+        EndOfLine::CrLf => Some(LineEndingSetting::EnforceCrlf),
+        EndOfLine::Cr => None,
+    });
 
     settings
         .preferred_line_length
@@ -652,6 +659,7 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
     settings
         .ensure_final_newline_on_save
         .merge_from_option(ensure_final_newline_on_save.as_ref());
+    settings.line_ending.merge_from_option(line_ending.as_ref());
 }
 
 impl settings::Settings for AllLanguageSettings {
@@ -685,6 +693,7 @@ impl settings::Settings for AllLanguageSettings {
                     .remove_trailing_whitespace_on_save
                     .unwrap(),
                 ensure_final_newline_on_save: settings.ensure_final_newline_on_save.unwrap(),
+                line_ending: settings.line_ending.unwrap(),
                 formatter: settings.formatter.unwrap(),
                 prettier: PrettierSettings {
                     allowed: prettier.allowed.unwrap(),
@@ -820,8 +829,6 @@ impl settings::Settings for AllLanguageSettings {
                 prompt_format: openai_compatible_settings.prompt_format.unwrap(),
             });
 
-        let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
-
         let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
 
         for (language, patterns) in all_languages.file_types.iter().flatten() {
@@ -859,7 +866,6 @@ impl settings::Settings for AllLanguageSettings {
                 codestral: codestral_settings,
                 ollama: ollama_settings,
                 open_ai_compatible_api: openai_compatible_settings,
-                enabled_in_text_threads,
                 examples_dir: edit_predictions.examples_dir,
             },
             defaults: default_language_settings,

@@ -272,6 +272,7 @@ impl From<ImageFormat> for UTType {
             ImageFormat::Bmp => Self::bmp(),
             ImageFormat::Svg => Self::svg(),
             ImageFormat::Ico => Self::ico(),
+            ImageFormat::Pnm => Self::pnm(),
         }
     }
 }
@@ -318,6 +319,11 @@ impl UTType {
     pub fn tiff() -> Self {
         // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/tiff
         Self(unsafe { NSPasteboardTypeTIFF }) // This is a rare case where there's a built-in NSPasteboardType
+    }
+
+    pub fn pnm() -> Self {
+        //https://en.wikipedia.org/w/index.php?title=Netpbm&oldid=1336679433 under Uniform Type Identifier
+        Self(unsafe { ns_string("public.pbm") })
     }
 
     fn inner(&self) -> *const Object {
