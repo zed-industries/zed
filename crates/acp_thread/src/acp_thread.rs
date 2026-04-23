@@ -2125,7 +2125,7 @@ impl AcpThread {
         let curr_status = mem::replace(&mut call.status, new_status);
 
         if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } = curr_status {
-            respond_tx.send(outcome).log_err();
+            respond_tx.send(outcome).ok();
         } else if cfg!(debug_assertions) {
             panic!("tried to authorize an already authorized tool call");
         }
