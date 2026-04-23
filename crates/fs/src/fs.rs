@@ -53,10 +53,10 @@ mod fake_git_repo;
 #[cfg(feature = "test-support")]
 use collections::{BTreeMap, btree_map};
 #[cfg(feature = "test-support")]
-use fake_git_repo::FakeGitRepositoryState;
+use fake_git_repo::{FakeCommitDataEntry, FakeGitRepositoryState};
 #[cfg(feature = "test-support")]
 use git::{
-    repository::{InitialGraphCommitData, RepoPath, Worktree, repo_path},
+    repository::{CommitData, InitialGraphCommitData, RepoPath, Worktree, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 #[cfg(feature = "test-support")]
@@ -2208,6 +2208,29 @@ impl FakeFs {
     pub fn set_graph_error(&self, dot_git: &Path, error: Option<String>) {
         self.with_git_state(dot_git, true, |state| {
             state.simulated_graph_error = error;
+        })
+        .unwrap();
+    }
+
+    pub fn set_commit_data(
+        &self,
+        dot_git: &Path,
+        commit_data: impl IntoIterator<Item = (CommitData, bool)>,
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.commit_data = commit_data
+                .into_iter()
+                .map(|(data, should_fail)| {
+                    (
+                        data.sha,
+                        if should_fail {
+                            FakeCommitDataEntry::Fail(data)
+                        } else {
+                            FakeCommitDataEntry::Success(data)
+                        },
+                    )
+                })
+                .collect();
         })
         .unwrap();
     }

@@ -5,7 +5,7 @@ use super::tool_permissions::{
 use crate::{
     AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_paths,
 };
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, Entity, Task};
@@ -61,8 +61,8 @@ impl AgentTool for CopyPathTool {
 
     const NAME: &'static str = "copy_path";
 
-    fn kind() -> ToolKind {
-        ToolKind::Move
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Move
     }
 
     fn initial_title(
@@ -198,7 +198,6 @@ impl AgentTool for CopyPathTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::TestAppContext;
     use project::{FakeFs, Project};

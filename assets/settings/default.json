@@ -1,8 +1,5 @@
 {
   "$schema": "zed://schemas/settings",
-  /// The displayed name of this project. If not set or null, the root directory name
-  /// will be displayed.
-  "project_name": null,
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -342,6 +339,17 @@
     // The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
     "delay": 300,
   },
+  // Whether and how to display code lenses from language servers.
+  //
+  // Possible values:
+  //
+  // 1. Do not display code lenses.
+  //      "code_lens": "off",
+  // 2. Display code lenses from language servers above code elements.
+  //      "code_lens": "on",
+  // 3. Display code lenses in the code action menu.
+  //      "code_lens": "menu",
+  "code_lens": "off",
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`
@@ -1363,6 +1371,24 @@
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
+  // How line endings should be handled for new files and during format and save.
+  // This setting can take five values:
+  //
+  // 1. Detect existing line endings and otherwise use the platform default
+  //    (`lf` on Unix, `crlf` on Windows):
+  //    "line_ending": "detect"
+  // 2. Prefer LF (`\n`) for new files and files with no existing line ending:
+  //    "line_ending": "prefer_lf"
+  // 3. Prefer CRLF (`\r\n`) for new files and files with no existing line ending:
+  //    "line_ending": "prefer_crlf"
+  // 4. Enforce LF (`\n`) during format and save:
+  //    "line_ending": "enforce_lf"
+  // 5. Enforce CRLF (`\r\n`) during format and save:
+  //    "line_ending": "enforce_crlf"
+  //
+  // The EditorConfig `end_of_line` property overrides this setting and behaves
+  // like `enforce_lf` or `enforce_crlf`.
+  "line_ending": "detect",
   // Whether or not to perform a buffer format before saving: [on, off]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
