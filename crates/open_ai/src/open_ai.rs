@@ -600,28 +600,7 @@ pub async fn stream_completion(
             .lines()
             .filter_map(|line| async move {
                 match line {
-                    Ok(line) => {
-                        let line = line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:"))?;
-                        if line == "[DONE]" {
-                            None
-                        } else {
-                            match serde_json::from_str(line) {
-                                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                                Ok(ResponseStreamResult::Err { error }) => {
-                                    Some(Err(anyhow!(error.message)))
-                                }
-                                Err(error) => {
-                                    log::error!(
-                                        "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
-                                        Response: `{}`",
-                                        error,
-                                        line,
-                                    );
-                                    Some(Err(anyhow!(error)))
-                                }
-                            }
-                        }
-                    }
+                    Ok(line) => parse_response_stream_line(&line),
                     Err(error) => Some(Err(anyhow!(error))),
                 }
             })
@@ -640,6 +619,30 @@ pub async fn stream_completion(
             body,
             headers: response.headers().clone(),
         })
+    }
+}
+
+fn parse_response_stream_line(line: &str) -> Option<Result<ResponseStreamEvent>> {
+    let line = line
+        .strip_prefix("data: ")
+        .or_else(|| line.strip_prefix("data:"))?
+        .trim();
+
+    if line.is_empty() || line == "[DONE]" || line == "null" {
+        return None;
+    }
+
+    match serde_json::from_str(line) {
+        Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+        Ok(ResponseStreamResult::Err { error }) => Some(Err(anyhow!(error.message))),
+        Err(error) => {
+            log::error!(
+                "Failed to parse OpenAI response into ResponseStreamResult: `{}`\nResponse: `{}`",
+                error,
+                line,
+            );
+            Some(Err(anyhow!(error)))
+        }
     }
 }
 
@@ -707,6 +710,28 @@ mod tests {
                 .get("HTTP-Referer")
                 .and_then(|value| value.to_str().ok()),
             Some(expected)
+        );
+    }
+
+    #[test]
+    fn test_parse_response_stream_line_ignores_null_events() {
+        let actual = parse_response_stream_line("data: null");
+        assert!(actual.is_none());
+    }
+
+    #[test]
+    fn test_parse_response_stream_line_parses_content_events() {
+        let fixture = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"},\"finish_reason\":null}],\"usage\":null}";
+        let actual = parse_response_stream_line(fixture)
+            .expect("line should be parsed")
+            .expect("line should not be an error");
+        let expected = Some("OK");
+        assert_eq!(
+            actual.choices[0]
+                .delta
+                .as_ref()
+                .and_then(|delta| delta.content.as_deref()),
+            expected
         );
     }
 }

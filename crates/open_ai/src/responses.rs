@@ -328,26 +328,7 @@ pub async fn stream_response(
                 .lines()
                 .filter_map(|line| async move {
                     match line {
-                        Ok(line) => {
-                            let line = line
-                                .strip_prefix("data: ")
-                                .or_else(|| line.strip_prefix("data:"))?;
-                            if line == "[DONE]" || line.is_empty() {
-                                None
-                            } else {
-                                match serde_json::from_str::<StreamEvent>(line) {
-                                    Ok(event) => Some(Ok(event)),
-                                    Err(error) => {
-                                        log::error!(
-                                            "Failed to parse OpenAI responses stream event: `{}`\nResponse: `{}`",
-                                            error,
-                                            line,
-                                        );
-                                        Some(Err(anyhow!(error)))
-                                    }
-                                }
-                            }
-                        }
+                        Ok(line) => parse_stream_event_line(&line),
                         Err(error) => Some(Err(anyhow!(error))),
                     }
                 })
@@ -464,6 +445,29 @@ pub async fn stream_response(
     }
 }
 
+fn parse_stream_event_line(line: &str) -> Option<Result<StreamEvent>> {
+    let line = line
+        .strip_prefix("data: ")
+        .or_else(|| line.strip_prefix("data:"))?
+        .trim();
+
+    if line.is_empty() || line == "[DONE]" || line == "null" {
+        return None;
+    }
+
+    match serde_json::from_str::<StreamEvent>(line) {
+        Ok(event) => Some(Ok(event)),
+        Err(error) => {
+            log::error!(
+                "Failed to parse OpenAI responses stream event: `{}`\nResponse: `{}`",
+                error,
+                line,
+            );
+            Some(Err(anyhow!(error)))
+        }
+    }
+}
+
 fn build_response_request(
     api_url: &str,
     api_key: &str,
@@ -528,5 +532,11 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some(expected)
         );
+    }
+
+    #[test]
+    fn test_parse_stream_event_line_ignores_null_events() {
+        let actual = parse_stream_event_line("data: null");
+        assert!(actual.is_none());
     }
 }
