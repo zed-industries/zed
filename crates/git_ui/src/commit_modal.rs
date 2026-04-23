@@ -559,9 +559,7 @@ impl Render for CommitModal {
         //   - the editor's internal content margin (based on the buffer font's descent)
         let warning_left_padding = {
             let editor_style = panel_editor_style(true, window, cx);
-            let font_id = window
-                .text_system()
-                .resolve_font(&editor_style.text.font());
+            let font_id = window.text_system().resolve_font(&editor_style.text.font());
             let font_size = editor_style.text.font_size.to_pixels(window.rem_size());
             let editor_content_margin = -window.text_system().descent(font_id, font_size);
             rems(0.875).to_pixels(window.rem_size()) + editor_content_margin
@@ -607,16 +605,13 @@ impl Render for CommitModal {
             .p(container_padding)
             .when(title_exceeds_limit, |el| {
                 el.child(
-                    div()
-                        .pl(warning_left_padding)
-                        .py_1()
-                        .child(
-                            Label::new(format!(
-                                "Commit message title exceeds {max_title_length}-character limit"
-                            ))
-                            .size(LabelSize::Small)
-                            .color(Color::Warning),
-                        ),
+                    div().pl(warning_left_padding).py_1().child(
+                        Label::new(format!(
+                            "Commit message title exceeds {max_title_length}-character limit"
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Warning),
+                    ),
                 )
             })
             .child(
