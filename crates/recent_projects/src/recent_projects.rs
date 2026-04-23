@@ -1359,7 +1359,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     this.tooltip(move |_, cx| {
                                         if let Some(branch) = tooltip_branch.clone() {
                                             Tooltip::with_meta(
-                                                format!("{}/{}", name.to_string(), branch),
+                                                format!("{}/{}", name, branch),
                                                 None,
                                                 tooltip_path.clone(),
                                                 cx,
@@ -1489,7 +1489,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     })
                     .unzip();
 
-                let tooltip_title = if paths.clone().len() > 1 {
+                let tooltip_title = if paths.len() > 1 {
                     "Add Folders to this Project"
                 } else {
                     "Add Folder to this Project"
