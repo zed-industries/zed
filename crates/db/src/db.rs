@@ -205,11 +205,15 @@ pub async fn open_db<M: Migrator + 'static>(
     let scope_name = scope.scope_name().to_owned();
     let db_path = db_path(db_dir, scope);
 
-    if let Some(parent) = db_path.parent() {
-        smol::fs::create_dir_all(parent)
+    if let Some(parent) = db_path.parent()
+        && smol::fs::create_dir_all(parent)
             .await
             .context("Could not create db directory")
-            .log_err();
+            .log_err()
+            .is_none()
+    {
+        ALL_FILE_DB_FAILED.store(true, Ordering::Release);
+        return open_fallback_db::<M>().await;
     }
 
     if let Some(connection) = open_main_db::<M>(&db_path).await {
@@ -262,7 +266,12 @@ async fn recover_corrupt_db<M: Migrator>(
 
     smol::fs::rename(scope_dir, &backup_dir)
         .await
-        .with_context(|| format!("Failed to move corrupt database to {}", backup_dir.display()))
+        .with_context(|| {
+            format!(
+                "Failed to move corrupt database to {}",
+                backup_dir.display()
+            )
+        })
         .log_err()?;
     log::warn!(
         "Database at {} failed to open; moved to {} and retrying with a fresh file.",
@@ -523,9 +532,11 @@ mod tests {
             "recovery should reopen an on-disk db, not fall back to memory"
         );
         assert!(
-            recovered.select_row::<usize>("SELECT * FROM test2").unwrap()()
-                .unwrap()
-                .is_none(),
+            recovered
+                .select_row::<usize>("SELECT * FROM test2")
+                .unwrap()()
+            .unwrap()
+            .is_none(),
             "the fresh db should have run NewSchema's migrations"
         );
 
@@ -543,7 +554,9 @@ mod tests {
         );
         assert!(scope_dirs.iter().any(|n| n == "0-dev"));
         assert!(
-            scope_dirs.iter().any(|n| n != "0-dev" && n.ends_with("-dev")),
+            scope_dirs
+                .iter()
+                .any(|n| n != "0-dev" && n.ends_with("-dev")),
             "expected a timestamped backup directory, got {scope_dirs:?}"
         );
 
