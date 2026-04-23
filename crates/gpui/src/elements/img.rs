@@ -294,7 +294,7 @@ impl Element for Img {
                 })
             });
 
-            let frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
+            let mut frame_index = state.as_ref().map(|state| state.frame_index).unwrap_or(0);
 
             let layout_id = self.interactivity.request_layout(
                 global_id,
@@ -312,8 +312,11 @@ impl Element for Img {
                         cx,
                     ) {
                         Some(Ok(data)) => {
+                            let frame_count = data.frame_count();
+                            let max_frame_index = frame_count.saturating_sub(1);
+
                             if let Some(state) = &mut state {
-                                let frame_count = data.frame_count();
+                                state.frame_index = state.frame_index.min(max_frame_index);
                                 if frame_count > 1 {
                                     if window.is_window_active() {
                                         let current_time = Instant::now();
@@ -334,8 +337,11 @@ impl Element for Img {
                                     } else {
                                         state.last_frame_time = None;
                                     }
+                                } else {
+                                    state.last_frame_time = None;
                                 }
                                 state.started_loading = None;
+                                frame_index = state.frame_index;
                             }
 
                             let image_size = data.render_size(frame_index);
@@ -800,13 +806,122 @@ impl From<image::ImageError> for ImageCacheError {
 mod tests {
     use super::*;
     use crate::{TestAppContext, point, px, size};
+    use image::{Frame, ImageBuffer, Rgba};
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    fn test_image(frame_count: usize) -> Arc<RenderImage> {
+        let frame = Frame::new(ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 0])));
+        Arc::new(RenderImage::new(SmallVec::from_iter(
+            (0..frame_count).map(|_| frame.clone()),
+        )))
+    }
+
+    struct ImgWithFrameOverride {
+        image: Arc<RenderImage>,
+        frame_override: Rc<Cell<Option<usize>>>,
+    }
+
+    impl IntoElement for ImgWithFrameOverride {
+        type Element = Self;
+        fn into_element(self) -> Self {
+            self
+        }
+    }
+
+    impl Element for ImgWithFrameOverride {
+        type RequestLayoutState = AnyElement;
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
+        }
+
+        fn request_layout(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (LayoutId, Self::RequestLayoutState) {
+            let mut element = img(ImageSource::Render(self.image.clone()))
+                .id("test-img")
+                .into_any_element();
+            (element.request_layout(window, cx), element)
+        }
+
+        fn prepaint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            element: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            element.prepaint(window, cx);
+        }
+
+        fn paint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            element: &mut Self::RequestLayoutState,
+            _: &mut Self::PrepaintState,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            element.paint(window, cx);
+            if let Some(index) = self.frame_override.take() {
+                window.with_global_id("test-img".into(), |id, window| {
+                    window.with_element_state::<ImgState, _>(id, |state, _| {
+                        let mut state = state.unwrap();
+                        state.frame_index = index;
+                        ((), state)
+                    });
+                });
+            }
+        }
+    }
 
     #[gpui::test]
     fn zero_frame_image_does_not_panic_on_paint(cx: &mut TestAppContext) {
-        let cx = cx.add_empty_window();
-        let image = Arc::new(RenderImage::new(SmallVec::new()));
-        cx.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
-            img(ImageSource::Render(image)).into_any_element()
+        cx.add_empty_window()
+            .draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+                img(ImageSource::Render(test_image(0))).into_any_element()
+            });
+    }
+
+    #[gpui::test]
+    fn stale_frame_index_is_clamped_when_image_changes(cx: &mut TestAppContext) {
+        let frame_override = Rc::new(Cell::new(Some(4usize)));
+        let window = cx.add_empty_window();
+
+        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), {
+            let frame_override = frame_override.clone();
+            move |_, _| {
+                ImgWithFrameOverride {
+                    image: test_image(5),
+                    frame_override: frame_override.clone(),
+                }
+                .into_any_element()
+            }
+        });
+
+        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), {
+            let frame_override = frame_override.clone();
+            move |_, _| {
+                ImgWithFrameOverride {
+                    image: test_image(1),
+                    frame_override: frame_override.clone(),
+                }
+                .into_any_element()
+            }
         });
     }
 }
