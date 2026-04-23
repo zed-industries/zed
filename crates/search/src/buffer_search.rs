@@ -1291,9 +1291,26 @@ impl BufferSearchBar {
     ) {
         self.search_options.toggle(search_option);
         self.default_options = self.search_options;
-        drop(self.update_matches(false, false, window, cx));
+        let search = self.update_matches(false, false, window, cx);
         self.adjust_query_regex_language(cx);
         self.sync_select_next_case_sensitivity(cx);
+        // For `Include Hidden`, the newly-revealed match may live inside a
+        // previously-collapsed section; re-activate so the searchable item
+        // gets a chance to unfold/scroll to it. Other options only narrow the
+        // match set, so keep the cursor where the user left it.
+        if search_option == SearchOptions::INCLUDE_HIDDEN {
+            cx.spawn_in(window, async move |this, cx| {
+                if search.await.is_ok() {
+                    this.update_in(cx, |this, window, cx| {
+                        if !this.dismissed {
+                            this.activate_current_match(window, cx);
+                        }
+                    })?;
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
         cx.notify();
     }
 
