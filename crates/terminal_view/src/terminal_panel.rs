@@ -18,6 +18,7 @@ use gpui::{
 use itertools::Itertools;
 use project::{Fs, Project};
 
+use settings::TerminalHeaderDoubleClickAction;
 use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{Terminal, terminal_settings::TerminalSettings};
@@ -1207,12 +1208,18 @@ pub fn new_terminal_pane(
 ) -> Entity<Pane> {
     let terminal_panel = cx.entity();
     let pane = cx.new(|cx| {
+        let double_click_action = match TerminalSettings::get_global(cx).double_click_action {
+            TerminalHeaderDoubleClickAction::ToggleZoom => {
+                workspace::ToggleZoom::default().boxed_clone()
+            }
+            _ => workspace::NewTerminal::default().boxed_clone(),
+        };
         let mut pane = Pane::new(
             workspace.clone(),
             project.clone(),
             Default::default(),
             None,
-            workspace::NewTerminal::default().boxed_clone(),
+            double_click_action,
             false,
             window,
             cx,

@@ -10,8 +10,8 @@ pub use settings::AlternateScroll;
 
 use settings::{
     IntoGpui, PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBlink,
-    TerminalDockPosition, TerminalLineHeight, VenvSettings, WorkingDirectory,
-    merge_from::MergeFrom,
+    TerminalDockPosition, TerminalHeaderDoubleClickAction, TerminalLineHeight, VenvSettings,
+    WorkingDirectory, merge_from::MergeFrom,
 };
 use task::Shell;
 use theme_settings::FontFamilyName;
@@ -23,6 +23,7 @@ pub struct Toolbar {
 
 #[derive(Clone, Debug, Deserialize, RegisterSetting)]
 pub struct TerminalSettings {
+    pub double_click_action: TerminalHeaderDoubleClickAction,
     pub shell: Shell,
     pub working_directory: WorkingDirectory,
     pub font_size: Option<Pixels>, // todo(settings_refactor) can be non-optional...
@@ -132,6 +133,7 @@ impl settings::Settings for TerminalSettings {
                 })
                 .collect(),
             path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
+            double_click_action: user_content.double_click_action.unwrap_or_default(),
             show_count_badge: user_content.show_count_badge.unwrap(),
         }
     }

@@ -904,6 +904,7 @@ impl VsCodeSettings {
             scrollbar: None,
             scroll_multiplier: None,
             toolbar: None,
+            double_click_action: None,
             show_count_badge: None,
             flexible: None,
         })

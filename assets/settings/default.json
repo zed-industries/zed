@@ -1946,6 +1946,11 @@
     "path_hyperlink_timeout_ms": 1,
     // Whether to show a badge on the terminal panel icon with the count of open terminals.
     "show_count_badge": false,
+    // Action to perform on double-clicking the terminal header.
+    // "new_terminal" opens a new terminal, "toggle_zoom" toggles zoom.
+    //
+    // Default: new_terminal
+    "double_click_action": "new_terminal",
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.

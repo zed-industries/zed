@@ -6589,7 +6589,7 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
-    fn behavior_settings_section() -> [SettingsPageItem; 4] {
+    fn behavior_settings_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Behavior Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6645,6 +6645,29 @@ fn terminal_page() -> SettingsPage {
                             .terminal
                             .get_or_insert_default()
                             .keep_selection_on_copy = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            // New double-click action setting
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Double-Click Action",
+                description: "Action when double-clicking the terminal header (new_terminal or toggle_zoom).",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.double_click_action"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .double_click_action
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .double_click_action = value;
                     },
                 }),
                 metadata: None,

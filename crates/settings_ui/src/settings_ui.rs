@@ -482,6 +482,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DiagnosticSeverityContent>(render_dropdown)
         .add_basic_renderer::<settings::SeedQuerySetting>(render_dropdown)
         .add_basic_renderer::<settings::DoubleClickInMultibuffer>(render_dropdown)
+        .add_basic_renderer::<settings::TerminalHeaderDoubleClickAction>(render_dropdown)
         .add_basic_renderer::<settings::GoToDefinitionFallback>(render_dropdown)
         .add_basic_renderer::<settings::ActivateOnClose>(render_dropdown)
         .add_basic_renderer::<settings::ShowDiagnostics>(render_dropdown)
