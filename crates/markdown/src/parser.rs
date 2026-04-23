@@ -20,7 +20,8 @@ pub const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_OLD_FOOTNOTES)
     .union(Options::ENABLE_GFM)
     .union(Options::ENABLE_SUPERSCRIPT)
-    .union(Options::ENABLE_SUBSCRIPT);
+    .union(Options::ENABLE_SUBSCRIPT)
+    .union(Options::ENABLE_MATH);
 
 #[derive(Default)]
 struct ParseState {
@@ -510,7 +511,20 @@ pub(crate) fn parse_markdown_with_options(
             pulldown_cmark::Event::TaskListMarker(checked) => {
                 state.push_event(range, MarkdownEvent::TaskListMarker(checked))
             }
-            pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
+            pulldown_cmark::Event::InlineMath(content) => state.push_event(
+                range,
+                MarkdownEvent::Math {
+                    display: false,
+                    content: SharedString::from(content.into_string()),
+                },
+            ),
+            pulldown_cmark::Event::DisplayMath(content) => state.push_event(
+                range,
+                MarkdownEvent::Math {
+                    display: true,
+                    content: SharedString::from(content.into_string()),
+                },
+            ),
         }
     }
 
@@ -628,6 +642,13 @@ pub enum MarkdownEvent {
     Rule,
     /// A task list marker, rendered as a checkbox in HTML. Contains a true when it is checked.
     TaskListMarker(bool),
+    /// A LaTeX math expression. `display: true` indicates block-level (`$$...$$`) math;
+    /// `display: false` indicates inline (`$...$`) math. `content` is the formula text
+    /// with delimiters stripped (as yielded by pulldown_cmark).
+    Math {
+        display: bool,
+        content: SharedString,
+    },
     /// Start of a root-level block (a top-level structural element like a paragraph, heading, list, etc.).
     RootStart,
     /// End of a root-level block. Contains the root block index.
@@ -784,7 +805,6 @@ mod tests {
     use super::*;
 
     const UNWANTED_OPTIONS: Options = Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
-        .union(Options::ENABLE_MATH)
         .union(Options::ENABLE_DEFINITION_LIST)
         .union(Options::ENABLE_WIKILINKS);
 

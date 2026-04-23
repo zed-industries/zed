@@ -5,10 +5,12 @@ mod path_range;
 
 use base64::Engine as _;
 use futures::FutureExt as _;
+use futures::StreamExt as _;
 use gpui::EdgesRefinement;
 use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
 use language::LanguageName;
+use latex_render::{LatexColor, LatexRenderer};
 
 use log::Level;
 use mermaid::{
@@ -235,6 +237,8 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
+    latex_renderer: Arc<LatexRenderer>,
+    _latex_notify_task: Task<()>,
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
@@ -248,6 +252,7 @@ pub struct MarkdownOptions {
     pub parse_links_only: bool,
     pub parse_html: bool,
     pub render_mermaid_diagrams: bool,
+    pub render_math: bool,
     pub parse_heading_slugs: bool,
 }
 
@@ -391,6 +396,25 @@ impl Markdown {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+
+        // Bridge renderer completion notifications (raised from a background
+        // thread) onto the foreground, where we can ask the entity to redraw.
+        let (notify_tx, mut notify_rx) = futures::channel::mpsc::unbounded::<()>();
+        let latex_renderer = Arc::new(
+            LatexRenderer::new(cx.background_executor().clone()).with_on_render_complete(Arc::new(
+                move || {
+                    notify_tx.unbounded_send(()).ok();
+                },
+            )),
+        );
+        let latex_notify_task = cx.spawn(async move |this, cx| {
+            while notify_rx.next().await.is_some() {
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        });
+
         let mut this = Self {
             source,
             selection: Selection::default(),
@@ -407,6 +431,8 @@ impl Markdown {
             fallback_code_block_language,
             options,
             mermaid_state: MermaidState::default(),
+            latex_renderer,
+            _latex_notify_task: latex_notify_task,
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
@@ -1031,6 +1057,58 @@ impl MarkdownElement {
         self
     }
 
+    fn push_markdown_math(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        content: &SharedString,
+        display: bool,
+        latex_renderer: &Arc<LatexRenderer>,
+        window: &Window,
+    ) {
+        let text_style = builder.text_style();
+        let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let base_size = f32::from(font_size) as f64;
+        // Display math renders at a slightly larger size than inline, matching
+        // the convention of `$$...$$` in traditional LaTeX.
+        let render_size = if display { base_size * 1.3 } else { base_size };
+        let rgba = gpui::Rgba::from(text_style.color);
+        let color = LatexColor::new(
+            (rgba.r.clamp(0.0, 1.0) * 255.0) as u8,
+            (rgba.g.clamp(0.0, 1.0) * 255.0) as u8,
+            (rgba.b.clamp(0.0, 1.0) * 255.0) as u8,
+            (rgba.a.clamp(0.0, 1.0) * 255.0) as u8,
+        );
+
+        let result = latex_renderer.render(content.as_ref(), render_size, color, display);
+        let child: AnyElement = match result {
+            Some(Ok((image, (width, height)))) => img(ImageSource::Render(image))
+                .w(px(width as f32))
+                .h(px(height as f32))
+                .into_any_element(),
+            Some(Err(error)) => div()
+                .child(format!("Math error: {error}"))
+                .text_color(gpui::red())
+                .into_any_element(),
+            // Reserve approximate space so layout does not jump when the
+            // render completes. 0.5em per character is a rough estimate.
+            None => {
+                let placeholder_width = (render_size * content.chars().count() as f64 * 0.5) as f32;
+                div()
+                    .w(px(placeholder_width))
+                    .h(px(render_size as f32))
+                    .into_any_element()
+            }
+        };
+
+        builder.modify_current_div(|el| {
+            if display {
+                el.flex().flex_row().justify_center().py_2().child(child)
+            } else {
+                el.flex().flex_row().items_center().child(child)
+            }
+        });
+    }
+
     fn push_markdown_image(
         &self,
         builder: &mut MarkdownElementBuilder,
@@ -1584,7 +1662,15 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
+        let (
+            parsed_markdown,
+            images,
+            active_root_block,
+            render_mermaid_diagrams,
+            mermaid_state,
+            render_math,
+            latex_renderer,
+        ) = {
             let markdown = self.markdown.read(cx);
             (
                 markdown.parsed_markdown.clone(),
@@ -1592,6 +1678,8 @@ impl Element for MarkdownElement {
                 markdown.active_root_block,
                 markdown.options.render_mermaid_diagrams,
                 markdown.mermaid_state.clone(),
+                markdown.options.render_math,
+                markdown.latex_renderer.clone(),
             )
         };
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
@@ -2108,6 +2196,21 @@ impl Element for MarkdownElement {
                     builder.push_text_style(self.style.link.clone());
                     builder.push_text(&format!("[{label}]"), range.clone());
                     builder.pop_text_style();
+                }
+                MarkdownEvent::Math { display, content } => {
+                    if render_math {
+                        self.push_markdown_math(
+                            &mut builder,
+                            content,
+                            *display,
+                            &latex_renderer,
+                            window,
+                        );
+                    } else {
+                        let delimiter = if *display { "$$" } else { "$" };
+                        builder
+                            .push_text(&format!("{delimiter}{content}{delimiter}"), range.clone());
+                    }
                 }
             }
         }
