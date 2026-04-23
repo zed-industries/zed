@@ -792,7 +792,7 @@ pub(crate) fn check_scripts() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
             .add_step(run_shellcheck())
             .add_step(download_actionlint().id("get_actionlint"))
