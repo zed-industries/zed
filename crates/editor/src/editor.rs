@@ -16007,7 +16007,7 @@ impl Editor {
         }
     }
 
-    fn navigation_entry(
+    pub(crate) fn navigation_entry(
         &self,
         cursor_anchor: Anchor,
         cx: &mut Context<Self>,
