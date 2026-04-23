@@ -102,6 +102,15 @@ actions!(
 #[derive(Deserialize, RegisterSetting)]
 pub struct ClientSettings {
     pub server_url: String,
+    /// Overrides the key used to store credentials in the system keychain.
+    /// Defaults to `server_url` when unset.
+    ///
+    /// Useful when running multiple Zed instances side by side without them
+    /// overwriting each other's keychain entries.
+    ///
+    /// Note: changing this after signing in will require signing in again, as
+    /// existing credentials are stored under the old key.
+    pub credentials_url: Option<String>,
 }
 
 impl Settings for ClientSettings {
@@ -109,10 +118,12 @@ impl Settings for ClientSettings {
         if let Some(server_url) = &*ZED_SERVER_URL {
             return Self {
                 server_url: server_url.clone(),
+                credentials_url: content.credentials_url.clone(),
             };
         }
         Self {
             server_url: content.server_url.clone().unwrap(),
+            credentials_url: content.credentials_url.clone(),
         }
     }
 }
@@ -351,6 +362,12 @@ impl ClientCredentialsProvider {
         Ok(cx.update(|cx| ClientSettings::get_global(cx).server_url.clone()))
     }
 
+    /// Returns the key used for credential storage in the system keychain.
+    fn credentials_url(&self, cx: &AsyncApp) -> Result<String> {
+        let from_settings = cx.update(|cx| ClientSettings::get_global(cx).credentials_url.clone());
+        Ok(from_settings.unwrap_or(self.server_url(cx)?))
+    }
+
     /// Reads the credentials from the provider.
     fn read_credentials<'a>(
         &'a self,
@@ -361,10 +378,10 @@ impl ClientCredentialsProvider {
                 return None;
             }
 
-            let server_url = self.server_url(cx).ok()?;
+            let credentials_url = self.credentials_url(cx).ok()?;
             let (user_id, access_token) = self
                 .provider
-                .read_credentials(&server_url, cx)
+                .read_credentials(&credentials_url, cx)
                 .await
                 .log_err()
                 .flatten()?;
@@ -385,10 +402,10 @@ impl ClientCredentialsProvider {
         cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move {
-            let server_url = self.server_url(cx)?;
+            let credentials_url = self.credentials_url(cx)?;
             self.provider
                 .write_credentials(
-                    &server_url,
+                    &credentials_url,
                     &user_id.to_string(),
                     access_token.as_bytes(),
                     cx,
@@ -404,8 +421,8 @@ impl ClientCredentialsProvider {
         cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move {
-            let server_url = self.server_url(cx)?;
-            self.provider.delete_credentials(&server_url, cx).await
+            let credentials_url = self.credentials_url(cx)?;
+            self.provider.delete_credentials(&credentials_url, cx).await
         }
         .boxed_local()
     }

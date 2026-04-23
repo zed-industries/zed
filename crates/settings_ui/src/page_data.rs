@@ -6589,7 +6589,7 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
-    fn behavior_settings_section() -> [SettingsPageItem; 4] {
+    fn behavior_settings_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Behavior Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6645,6 +6645,19 @@ fn terminal_page() -> SettingsPage {
                             .terminal
                             .get_or_insert_default()
                             .keep_selection_on_copy = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Audible Bell",
+                description: "Whether to play a sound when the BEL character (`\\a`, `0x07`) is printed",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.bell"),
+                    pick: |settings_content| settings_content.terminal.as_ref()?.bell.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.terminal.get_or_insert_default().bell = value;
                     },
                 }),
                 metadata: None,
