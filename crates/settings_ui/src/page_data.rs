@@ -1,5 +1,4 @@
 use gpui::{Action as _, App};
-use theme::SystemAppearance;
 use itertools::Itertools as _;
 use settings::{
     AudioInputDeviceName, AudioOutputDeviceName, LanguageSettingsContent, SemanticTokens,
@@ -7,6 +6,7 @@ use settings::{
 };
 use std::sync::{Arc, OnceLock};
 use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
+use theme::SystemAppearance;
 use ui::IntoElement;
 
 use crate::{
