@@ -322,7 +322,7 @@ jobs:
         path: compliance-report-${{ github.ref_name }}.md
         if-no-files-found: error
     - name: send_compliance_slack_notification
-      if: always()
+      if: ${{ always() }}
       run: |
         if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
             STATUS="✅ Compliance check passed for $COMPLIANCE_TAG"
@@ -691,7 +691,7 @@ jobs:
         if-no-files-found: error
         overwrite: true
     - name: send_compliance_slack_notification
-      if: failure() || needs.compliance_check.outputs.outcome != 'success'
+      if: ${{ failure() || needs.compliance_check.outputs.outcome != 'success' }}
       run: |
         if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
             STATUS="✅ Compliance check passed for $COMPLIANCE_TAG"

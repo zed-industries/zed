@@ -250,11 +250,11 @@ pub(crate) fn add_compliance_steps(
             ComplianceContext::Release {
                 non_blocking_outcome,
             } => Expression::new(format!(
-                "failure() || {prior_outcome} != 'success'",
+                "${{{{ failure() || {prior_outcome} != 'success' }}}}",
                 prior_outcome = non_blocking_outcome.expr()
             )),
             ComplianceContext::Scheduled { .. } | ComplianceContext::ReleaseNonBlocking => {
-                Expression::new("always()")
+                Expression::new("${{ always() }}")
             }
         })
         .add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
