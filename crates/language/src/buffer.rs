@@ -1,8 +1,8 @@
 pub mod row_chunk;
 
 use crate::{
-    DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig, PLAIN_TEXT,
-    RunnableCapture, RunnableTag, TextObject, TreeSitterOptions,
+    ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
+    PLAIN_TEXT, RunnableCapture, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
@@ -1579,16 +1579,21 @@ impl Buffer {
 
             let target_encoding = force_encoding.unwrap_or(current_encoding);
 
+            let bytes = load_bytes_task.await?;
+
+            anyhow::ensure!(
+                analyze_byte_content(&bytes) != ByteContent::Binary,
+                "Binary files are not supported"
+            );
+
             let is_unicode = target_encoding == encoding_rs::UTF_8
                 || target_encoding == encoding_rs::UTF_16LE
                 || target_encoding == encoding_rs::UTF_16BE;
 
             let (new_text, has_bom, encoding_used) = if force_encoding.is_some() && !is_unicode {
-                let bytes = load_bytes_task.await?;
                 let (cow, _had_errors) = target_encoding.decode_without_bom_handling(&bytes);
                 (cow.into_owned(), false, target_encoding)
             } else {
-                let bytes = load_bytes_task.await?;
                 let (cow, used_enc, _had_errors) = target_encoding.decode(&bytes);
 
                 let actual_has_bom = if used_enc == encoding_rs::UTF_8 {
@@ -4251,7 +4256,10 @@ impl BufferSnapshot {
         items
     }
 
-    pub fn outline_range_containing<T: ToOffset>(&self, range: Range<T>) -> Option<Range<Point>> {
+    pub fn outline_ranges_containing<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = Range<Point>> + '_ {
         let range = range.to_offset(self);
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.outline_config.as_ref().map(|c| &c.query)
@@ -4262,35 +4270,41 @@ impl BufferSnapshot {
             .map(|g| g.outline_config.as_ref().unwrap())
             .collect::<Vec<_>>();
 
-        while let Some(mat) = matches.peek() {
-            let config = &configs[mat.grammar_index];
-            let containing_item_node = maybe!({
-                let item_node = mat.captures.iter().find_map(|cap| {
-                    if cap.index == config.item_capture_ix {
-                        Some(cap.node)
-                    } else {
+        std::iter::from_fn(move || {
+            while let Some(mat) = matches.peek() {
+                let config = &configs[mat.grammar_index];
+                let containing_item_node = maybe!({
+                    let item_node = mat.captures.iter().find_map(|cap| {
+                        if cap.index == config.item_capture_ix {
+                            Some(cap.node)
+                        } else {
+                            None
+                        }
+                    })?;
+
+                    let item_byte_range = item_node.byte_range();
+                    if item_byte_range.end < range.start || item_byte_range.start > range.end {
                         None
+                    } else {
+                        Some(item_node)
                     }
-                })?;
+                });
 
-                let item_byte_range = item_node.byte_range();
-                if item_byte_range.end < range.start || item_byte_range.start > range.end {
-                    None
-                } else {
-                    Some(item_node)
-                }
-            });
-
-            if let Some(item_node) = containing_item_node {
-                return Some(
+                let range = containing_item_node.as_ref().map(|item_node| {
                     Point::from_ts_point(item_node.start_position())
-                        ..Point::from_ts_point(item_node.end_position()),
-                );
+                        ..Point::from_ts_point(item_node.end_position())
+                });
+                matches.advance();
+                if range.is_some() {
+                    return range;
+                }
             }
+            None
+        })
+    }
 
-            matches.advance();
-        }
-        None
+    pub fn outline_range_containing<T: ToOffset>(&self, range: Range<T>) -> Option<Range<Point>> {
+        self.outline_ranges_containing(range).next()
     }
 
     pub fn outline_items_containing<T: ToOffset>(

@@ -12,7 +12,7 @@ use picker::{
 };
 use remote::RemoteConnectionOptions;
 use settings::Settings;
-use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{ButtonLike, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathExt};
 use workspace::{
@@ -70,7 +70,7 @@ impl SidebarRecentProjects {
             cx.spawn_in(window, async move |this, cx| {
                 let Some(fs) = fs else { return };
                 let workspaces = db
-                    .recent_workspaces_on_disk(fs.as_ref())
+                    .recent_project_workspaces(fs.as_ref())
                     .await
                     .log_err()
                     .unwrap_or_default();
@@ -417,22 +417,36 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         create_new_window: false,
                     };
 
-                    Button::new("open_local_folder", "Add Local Folders")
-                        .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
+                    ButtonLike::new("open_local_folder")
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_1()
+                                .justify_between()
+                                .child(Label::new("Add Local Folders"))
+                                .child(KeyBinding::for_action_in(&open_action, &focus_handle, cx)),
+                        )
                         .on_click(cx.listener(move |_, _, window, cx| {
                             window.dispatch_action(open_action.boxed_clone(), cx);
                             cx.emit(DismissEvent);
                         }))
                 })
                 .child(
-                    Button::new("open_remote_folder", "Add Remote Folder")
-                        .key_binding(KeyBinding::for_action(
-                            &OpenRemote {
-                                from_existing_connection: false,
-                                create_new_window: false,
-                            },
-                            cx,
-                        ))
+                    ButtonLike::new("open_remote_folder")
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_1()
+                                .justify_between()
+                                .child(Label::new("Add Remote Folder"))
+                                .child(KeyBinding::for_action(
+                                    &OpenRemote {
+                                        from_existing_connection: false,
+                                        create_new_window: false,
+                                    },
+                                    cx,
+                                )),
+                        )
                         .on_click(cx.listener(|_, _, window, cx| {
                             window.dispatch_action(
                                 OpenRemote {

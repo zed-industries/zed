@@ -18,7 +18,8 @@ use crate::{
     devcontainer_api::{DevContainerError, DevContainerUp},
     devcontainer_json::{
         ContainerBuild, DevContainer, DevContainerBuildType, FeatureOptions, ForwardPort,
-        MountDefinition, deserialize_devcontainer_json,
+        MountDefinition, deserialize_devcontainer_json, deserialize_devcontainer_json_from_value,
+        deserialize_devcontainer_json_to_value,
     },
     docker::{
         Docker, DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -131,40 +132,60 @@ impl DevContainerManifest {
         labels
     }
 
-    fn parse_nonremote_vars_for_content(&self, content: &str) -> Result<String, DevContainerError> {
-        let mut replaced_content = content
-            .replace("${devcontainerId}", &self.devcontainer_id())
-            .replace(
-                "${containerWorkspaceFolderBasename}",
-                &self.remote_workspace_base_name().unwrap_or_default(),
-            )
-            .replace(
-                "${localWorkspaceFolderBasename}",
-                &self.local_workspace_base_name()?,
-            )
-            .replace(
-                "${containerWorkspaceFolder}",
-                &self
-                    .remote_workspace_folder()
-                    .map(|path| path.display().to_string())
-                    .unwrap_or_default()
-                    .replace('\\', "/"),
-            )
-            .replace(
-                "${localWorkspaceFolder}",
-                &self.local_workspace_folder().replace('\\', "/"),
-            );
-        for (k, v) in &self.local_environment {
-            let find = format!("${{localEnv:{k}}}");
-            replaced_content = replaced_content.replace(&find, &v.replace('\\', "/"));
+    fn parse_nonremote_vars_for_content(
+        &self,
+        content: &str,
+    ) -> Result<serde_json_lenient::Value, DevContainerError> {
+        let mut value = deserialize_devcontainer_json_to_value(content)?;
+        let mut to_visit = vec![&mut value];
+
+        while let Some(value) = to_visit.pop() {
+            use serde_json_lenient::Value;
+
+            match value {
+                Value::String(string) => {
+                    *string = string
+                        .replace("${devcontainerId}", &self.devcontainer_id())
+                        .replace(
+                            "${containerWorkspaceFolderBasename}",
+                            &self.remote_workspace_base_name().unwrap_or_default(),
+                        )
+                        .replace(
+                            "${localWorkspaceFolderBasename}",
+                            &self.local_workspace_base_name()?,
+                        )
+                        .replace(
+                            "${containerWorkspaceFolder}",
+                            &self
+                                .remote_workspace_folder()
+                                .map(|path| path.display().to_string())
+                                .unwrap_or_default()
+                                .replace('\\', "/"),
+                        )
+                        .replace(
+                            "${localWorkspaceFolder}",
+                            &self.local_workspace_folder().replace('\\', "/"),
+                        );
+                    *string = Self::replace_environment_variables(
+                        string,
+                        "localEnv",
+                        &self.local_environment,
+                    );
+                }
+
+                Value::Array(array) => to_visit.extend(array.iter_mut()),
+                Value::Object(object) => to_visit.extend(object.values_mut()),
+
+                Value::Null | Value::Bool(_) | Value::Number(_) => {}
+            }
         }
 
-        Ok(replaced_content)
+        Ok(value)
     }
 
     fn parse_nonremote_vars(&mut self) -> Result<(), DevContainerError> {
         let replaced_content = self.parse_nonremote_vars_for_content(&self.raw_config)?;
-        let parsed_config = deserialize_devcontainer_json(&replaced_content)?;
+        let parsed_config = deserialize_devcontainer_json_from_value(replaced_content)?;
 
         self.config = ConfigStatus::VariableParsed(parsed_config);
 
@@ -178,30 +199,60 @@ impl DevContainerManifest {
         let mut merged_remote_env = container_env.clone();
         // HOME is user-specific, and we will often not run as the image user
         merged_remote_env.remove("HOME");
-        if let Some(remote_env) = self.dev_container().remote_env.clone() {
-            let mut raw = serde_json_lenient::to_string(&remote_env).map_err(|e| {
-                log::error!(
-                    "Unexpected error serializing dev container remote_env: {e} - {:?}",
-                    remote_env
-                );
-                DevContainerError::DevContainerParseFailed
-            })?;
-            for (k, v) in container_env {
-                raw = raw.replace(&format!("${{containerEnv:{k}}}"), v);
-            }
-            let reserialized: HashMap<String, String> = serde_json_lenient::from_str(&raw)
-                .map_err(|e| {
-                    log::error!(
-                        "Unexpected error reserializing dev container remote env: {e} - {:?}",
-                        &raw
-                    );
-                    DevContainerError::DevContainerParseFailed
-                })?;
-            for (k, v) in reserialized {
+        if let Some(mut remote_env) = self.dev_container().remote_env.clone() {
+            remote_env.values_mut().for_each(|value| {
+                *value = Self::replace_environment_variables(value, "containerEnv", &container_env)
+            });
+            for (k, v) in remote_env {
                 merged_remote_env.insert(k, v);
             }
         }
         Ok(merged_remote_env)
+    }
+
+    fn replace_environment_variables(
+        mut orig: &str,
+        environment_source: &str,
+        environment: &HashMap<String, String>,
+    ) -> String {
+        let mut replaced = String::with_capacity(orig.len());
+        let prefix = format!("${{{environment_source}:");
+        while let Some(start) = orig.find(&prefix) {
+            let var_name_start = start + prefix.len();
+            let Some(end) = orig[var_name_start..].find('}') else {
+                // No closing `}` => malformed variable reference => paste as is.
+                break;
+            };
+            let end = var_name_start + end;
+
+            let (var_name_end, default_start) =
+                if let Some(var_name_end) = orig[var_name_start..end].find(':') {
+                    let var_name_end = var_name_start + var_name_end;
+                    (var_name_end, var_name_end + 1)
+                } else {
+                    (end, end)
+                };
+
+            let var_name = &orig[var_name_start..var_name_end];
+            if var_name.is_empty() {
+                // Empty variable name => paste as is.
+                replaced.push_str(&orig[..end + 1]);
+                orig = &orig[end + 1..];
+                continue;
+            }
+            let default = &orig[default_start..end];
+
+            replaced.push_str(&orig[..start]);
+            replaced.push_str(
+                environment
+                    .get(var_name)
+                    .map(|value| value.as_str())
+                    .unwrap_or(default),
+            );
+            orig = &orig[end + 1..];
+        }
+        replaced.push_str(orig);
+        replaced
     }
 
     fn config_file(&self) -> PathBuf {
@@ -250,6 +301,7 @@ impl DevContainerManifest {
             None => "zed-dc",
         };
         let prefix = prefix.get(..6).unwrap_or(prefix);
+        let prefix = prefix.trim_matches(|c: char| !c.is_alphanumeric());
 
         dockerfile_build_path.hash(&mut hasher);
 
@@ -478,7 +530,7 @@ impl DevContainerManifest {
             let contents_parsed = self.parse_nonremote_vars_for_content(&contents)?;
 
             let feature_json: DevContainerFeatureJson =
-                serde_json_lenient::from_str(&contents_parsed).map_err(|e| {
+                serde_json_lenient::from_value(contents_parsed).map_err(|e| {
                     log::error!("Failed to parse devcontainer-feature.json: {e}");
                     DevContainerError::ResourceFetchFailed
                 })?;
@@ -797,9 +849,14 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         let Some(docker_compose_files) = dev_container.docker_compose_file.clone() else {
             return Err(DevContainerError::DevContainerParseFailed);
         };
+        // Normalize upfront so every downstream consumer of
+        // `DockerComposeResources.files` (compose fragment reads, project-name
+        // derivation, `docker compose -f` invocations, …) sees resolved paths.
+        // `dockerComposeFile` entries are joined verbatim with
+        // `config_directory`, so raw entries can carry `..` components.
         let docker_compose_full_paths = docker_compose_files
             .iter()
-            .map(|relative| self.config_directory.join(relative))
+            .map(|relative| normalize_path(&self.config_directory.join(relative)))
             .collect::<Vec<PathBuf>>();
 
         let Some(config) = self
@@ -933,8 +990,9 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
             docker_compose_resources.files.push(config_location);
 
+            let project_name = self.project_name().await?;
             self.docker_client
-                .docker_compose_build(&docker_compose_resources.files, &self.project_name())
+                .docker_compose_build(&docker_compose_resources.files, &project_name)
                 .await?;
             (
                 self.docker_client
@@ -1025,8 +1083,9 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
                 docker_compose_resources.files.push(config_location);
 
+                let project_name = self.project_name().await?;
                 self.docker_client
-                    .docker_compose_build(&docker_compose_resources.files, &self.project_name())
+                    .docker_compose_build(&docker_compose_resources.files, &project_name)
                     .await?;
 
                 (
@@ -1650,7 +1709,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         resources: DockerComposeResources,
     ) -> Result<DockerInspect, DevContainerError> {
         let mut command = Command::new(self.docker_client.docker_cli());
-        command.args(&["compose", "--project-name", &self.project_name()]);
+        let project_name = self.project_name().await?;
+        command.args(&["compose", "--project-name", &project_name]);
         for docker_compose_file in resources.files {
             command.args(&["-f", &docker_compose_file.display().to_string()]);
         }
@@ -2045,15 +2105,80 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             .await
     }
 
-    fn project_name(&self) -> String {
-        if let Some(name) = &self.dev_container().name {
-            safe_id_lower(name)
-        } else {
-            let alternate_name = &self
-                .local_workspace_base_name()
-                .unwrap_or(self.local_workspace_folder());
-            safe_id_lower(alternate_name)
+    /// Matches `@devcontainers/cli`'s `getProjectName` in
+    /// `src/spec-node/dockerCompose.ts`. See `derive_project_name` for the
+    /// full precedence. Using the devcontainer.json `name` field here
+    /// diverges from the reference CLI and creates duplicate compose
+    /// projects when the same folder is opened by both tools — see #54255.
+    ///
+    /// Async because the derivation reads both the workspace `.env` file
+    /// and the merged compose config — neither of which is available
+    /// synchronously.
+    async fn project_name(&self) -> Result<String, DevContainerError> {
+        let workspace_fallback = self
+            .local_workspace_base_name()
+            .unwrap_or_else(|_| self.local_workspace_folder());
+        let compose_resources = self.docker_compose_manifest().await.ok();
+        let first_compose_file = compose_resources
+            .as_ref()
+            .and_then(|r| r.files.first())
+            .map(PathBuf::as_path);
+        let compose_config_name = compose_resources
+            .as_ref()
+            .and_then(|r| r.config.name.as_deref());
+        let mut compose_name_explicitly_declared = false;
+        if let Some(resources) = &compose_resources {
+            for file in &resources.files {
+                // Mirrors the CLI's fragment re-parse (dockerCompose.ts 663-673):
+                // the whole readFile+yaml.load pair is wrapped in a single
+                // try/catch that swallows every failure. The comment there
+                // calls out `!reset` custom tags; the behavior is "on any
+                // failure, treat the fragment as not-declared and keep
+                // scanning." Propagating an I/O error here would diverge
+                // from that policy and fail the whole devcontainer flow for
+                // a fragment the CLI would have silently skipped.
+                let contents = match self.fs.load(file).await {
+                    Ok(contents) => contents,
+                    Err(err) => {
+                        log::warn!(
+                            "Ignoring unreadable compose fragment `{}` while deriving project name: {err:?}",
+                            file.display()
+                        );
+                        continue;
+                    }
+                };
+                if compose_fragment_declares_name(&contents) {
+                    compose_name_explicitly_declared = true;
+                    break;
+                }
+            }
         }
+        let dotenv_path = self.local_project_directory.join(".env");
+        let dotenv_contents = match self.fs.load(&dotenv_path).await {
+            Ok(contents) => Some(contents),
+            Err(err) if is_missing_file_error(&err) => None,
+            Err(err) => {
+                // Mirrors the CLI: `getProjectName` only swallows `ENOENT`/
+                // `EISDIR` on the `.env` read. Any other error (permission
+                // denied, I/O failure, …) must surface so we don't silently
+                // fall back to a non-canonical project name and create a
+                // second compose project for the same repo.
+                log::error!(
+                    "Failed to read workspace .env `{}` while deriving project name: {err:?}",
+                    dotenv_path.display()
+                );
+                return Err(DevContainerError::FilesystemError);
+            }
+        };
+        Ok(derive_project_name(
+            &self.local_environment,
+            dotenv_contents.as_deref(),
+            compose_config_name,
+            compose_name_explicitly_declared,
+            first_compose_file,
+            &self.local_project_directory,
+            &workspace_fallback,
+        ))
     }
 
     async fn expanded_dockerfile_content(&self) -> Result<String, DevContainerError> {
@@ -2062,12 +2187,24 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             return Err(DevContainerError::DevContainerParseFailed);
         };
 
-        let devcontainer_args = self
-            .dev_container()
-            .build
-            .as_ref()
-            .and_then(|b| b.args.clone())
-            .unwrap_or_default();
+        // For docker-compose configs the build args live on the primary
+        // compose service rather than on dev_container.build.
+        let devcontainer_args = match self.dev_container().build_type() {
+            DevContainerBuildType::DockerCompose => {
+                let compose = self.docker_compose_manifest().await?;
+                find_primary_service(&compose, self)?
+                    .1
+                    .build
+                    .and_then(|b| b.args)
+                    .unwrap_or_default()
+            }
+            _ => self
+                .dev_container()
+                .build
+                .as_ref()
+                .and_then(|b| b.args.clone())
+                .unwrap_or_default(),
+        };
         let contents = self.fs.load(&dockerfile_path).await.map_err(|e| {
             log::error!("Failed to load Dockerfile: {e}");
             DevContainerError::FilesystemError
@@ -2276,6 +2413,132 @@ fn escape_regex_chars(input: &str) -> String {
         result.push(c);
     }
     result
+}
+
+/// Sanitize a string for use as a Docker Compose project name, matching
+/// `@devcontainers/cli`'s `toProjectName` (modern Compose branch): lowercase
+/// the input and strip any character outside `[-_a-z0-9]`.
+fn sanitize_compose_project_name(input: &str) -> String {
+    input
+        .chars()
+        .flat_map(|c| c.to_lowercase())
+        .filter(|c| c.is_ascii_digit() || c.is_ascii_lowercase() || *c == '-' || *c == '_')
+        .collect()
+}
+
+/// Derive the Docker Compose project name, mirroring `getProjectName` in
+/// `@devcontainers/cli`'s `src/spec-node/dockerCompose.ts`. Precedence:
+///
+/// 1. `COMPOSE_PROJECT_NAME` from the local environment.
+/// 2. `COMPOSE_PROJECT_NAME` from the workspace `.env` file.
+/// 3. The top-level `name:` field of the merged compose config, but only
+///    when at least one compose fragment explicitly declared `name:`.
+///    Compose injects a default `name: devcontainer` into its merged
+///    output whenever no fragment declared one — that default must NOT be
+///    treated as a user-provided name, so rule 4 applies instead.
+/// 4. Basename of the first compose file's directory, appending
+///    `_devcontainer` only when that directory is
+///    `<workspace_root>/.devcontainer`.
+///
+/// The caller is responsible for computing `compose_name_explicitly_declared`
+/// by scanning the original compose fragments for a top-level `name:` key
+/// (the reference CLI does the same). This keeps the helper a pure function
+/// of its inputs.
+///
+/// All branches pass through `sanitize_compose_project_name` — the CLI's
+/// final normalization step.
+fn derive_project_name(
+    local_environment: &HashMap<String, String>,
+    workspace_dotenv_contents: Option<&str>,
+    compose_config_name: Option<&str>,
+    compose_name_explicitly_declared: bool,
+    first_compose_file: Option<&Path>,
+    workspace_root: &Path,
+    workspace_fallback: &str,
+) -> String {
+    if let Some(env_name) = local_environment.get("COMPOSE_PROJECT_NAME")
+        && !env_name.is_empty()
+    {
+        return sanitize_compose_project_name(env_name);
+    }
+    if let Some(contents) = workspace_dotenv_contents
+        && let Some(dotenv_name) = parse_dotenv_compose_project_name(contents)
+        && !dotenv_name.is_empty()
+    {
+        return sanitize_compose_project_name(&dotenv_name);
+    }
+    if let Some(name) = compose_config_name
+        && !name.is_empty()
+        && compose_name_explicitly_declared
+    {
+        return sanitize_compose_project_name(name);
+    }
+    let compose_dir = first_compose_file.and_then(Path::parent);
+    let canonical_devcontainer_dir = normalize_path(&workspace_root.join(".devcontainer"));
+    let raw = match compose_dir {
+        Some(dir) if dir == canonical_devcontainer_dir => {
+            // Matches the CLI's `configDir/.devcontainer` branch: use the
+            // *workspace root's* basename with the `_devcontainer` suffix,
+            // NOT the `.devcontainer` dir's basename.
+            format!("{workspace_fallback}_devcontainer")
+        }
+        Some(dir) => dir
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_else(|| workspace_fallback.to_string()),
+        None => format!("{workspace_fallback}_devcontainer"),
+    };
+    sanitize_compose_project_name(&raw)
+}
+
+/// Classify an anyhow error from `Fs::load` as "file does not exist" vs a
+/// real I/O failure. Used on the `.env` read in `project_name()`, where the
+/// CLI's `getProjectName` catches only `ENOENT`/`EISDIR` and rethrows
+/// everything else; any other error must propagate so callers can surface
+/// the problem instead of silently falling back to a non-canonical project
+/// name. (The fragment-rescan loop uses a different, broader swallow —
+/// the CLI wraps its fragment read+parse in one try/catch that ignores
+/// every failure.)
+fn is_missing_file_error(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<std::io::Error>().is_some_and(|e| {
+        matches!(
+            e.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::IsADirectory
+        )
+    })
+}
+
+/// Extract `COMPOSE_PROJECT_NAME` from a `.env` file's contents. Matches
+/// the subset of dotenv syntax that `@devcontainers/cli`'s regex parser
+/// recognizes: a bare `COMPOSE_PROJECT_NAME=value` line (no `export` prefix,
+/// no quoting, no line continuation). Comment lines are skipped.
+fn parse_dotenv_compose_project_name(contents: &str) -> Option<String> {
+    for line in contents.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("COMPOSE_PROJECT_NAME=") {
+            return Some(value.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Detect whether a compose-file fragment declares a top-level `name:` key.
+/// Matches the reference CLI's approach: parse the fragment as YAML and check
+/// for a `name` key on the root mapping. This handles all valid styles —
+/// block mappings, quoted keys (`"name":`), flow-style root mappings, anchors,
+/// etc. On parse failure we fall through (return `false`), matching the CLI's
+/// own behavior when fragment parsing errors.
+fn compose_fragment_declares_name(contents: &str) -> bool {
+    let Ok(docs) = yaml_rust2::YamlLoader::load_from_str(contents) else {
+        return false;
+    };
+    let Some(yaml_rust2::Yaml::Hash(h)) = docs.into_iter().next() else {
+        return false;
+    };
+    h.contains_key(&yaml_rust2::Yaml::String("name".to_string()))
 }
 
 /// Extracts the short feature ID from a full feature reference string.
@@ -2818,7 +3081,9 @@ mod test {
             image: DockerInspect {
                 id: "mcr.microsoft.com/devcontainers/base:ubuntu".to_string(),
                 config: DockerInspectConfig {
-                    labels: DockerConfigLabels { metadata: None },
+                    labels: DockerConfigLabels {
+                        metadata: None,
+                        },
                     image_user: None,
                     env: Vec::new(),
                 },
@@ -2951,7 +3216,9 @@ mod test {
         "REMOTE_WORKSPACE_FOLDER": "${containerWorkspaceFolder}",
         "LOCAL_WORKSPACE_FOLDER": "${localWorkspaceFolder}",
         "LOCAL_ENV_VAR_1": "${localEnv:local_env_1}",
-        "LOCAL_ENV_VAR_2": "${localEnv:my_other_env}"
+        "LOCAL_ENV_VAR_2": "${localEnv:my_other_env}",
+        "LOCAL_ENV_VAR_3": "before-${localEnv:missing_local_env}-after",
+        "LOCAL_ENV_VAR_4": "${localEnv:with_defaults:default}"
 
     }
 }
@@ -3045,6 +3312,42 @@ mod test {
                 .and_then(|env| env.get("LOCAL_ENV_VAR_2")),
             Some(&"THISVALUEHERE".to_string())
         );
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("LOCAL_ENV_VAR_3")),
+            Some(&"before--after".to_string())
+        );
+        assert_eq!(
+            variable_replaced_devcontainer
+                .remote_env
+                .as_ref()
+                .and_then(|env| env.get("LOCAL_ENV_VAR_4")),
+            Some(&"default".to_string())
+        );
+    }
+
+    #[test]
+    fn test_replace_environment_variables() {
+        let replaced = DevContainerManifest::replace_environment_variables(
+            "before ${containerEnv:FOUND} middle ${containerEnv:MISSING:default-value} after${containerEnv:MISSING2}",
+            "containerEnv",
+            &HashMap::from([("FOUND".to_string(), "value".to_string())]),
+        );
+
+        assert_eq!(replaced, "before value middle default-value after");
+    }
+
+    #[test]
+    fn test_replace_environment_variables_supports_defaults_with_colons() {
+        let replaced = DevContainerManifest::replace_environment_variables(
+            "before ${containerEnv:MISSING:one:two} after",
+            "containerEnv",
+            &HashMap::new(),
+        );
+
+        assert_eq!(replaced, "before one:two after");
     }
 
     #[gpui::test]
@@ -3618,6 +3921,28 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
 
         let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
 
+        let docker_commands = test_dependencies
+            .command_runner
+            .commands_by_program("docker");
+        let compose_up = docker_commands
+            .iter()
+            .find(|c| {
+                c.args.first().map(String::as_str) == Some("compose")
+                    && c.args.iter().any(|a| a == "up")
+            })
+            .expect("docker compose up command recorded");
+        let project_name_idx = compose_up
+            .args
+            .iter()
+            .position(|a| a == "--project-name")
+            .expect("compose command has --project-name flag");
+        assert_eq!(
+            compose_up.args[project_name_idx + 1],
+            "project_devcontainer",
+            "compose project name should match @devcontainers/cli derivation \
+             (${{folderBasename}}_devcontainer), ignoring devcontainer.json `name`"
+        );
+
         let files = test_dependencies.fs.files();
         let feature_dockerfile = files
             .iter()
@@ -3829,6 +4154,252 @@ ENV DOCKER_BUILDKIT=1
             serde_json_lenient::from_str::<DockerComposeConfig>(&runtime_override).unwrap(),
             expected_runtime_override
         )
+    }
+
+    #[test]
+    fn derive_project_name_env_wins_over_everything() {
+        // CLI precedence rule 1: `COMPOSE_PROJECT_NAME` env var short-circuits
+        // every later source (.env, compose name:, basename fallback).
+        use crate::devcontainer_manifest::derive_project_name;
+
+        let env = HashMap::from([("COMPOSE_PROJECT_NAME".to_string(), "from_env".to_string())]);
+        let got = derive_project_name(
+            &env,
+            Some("COMPOSE_PROJECT_NAME=from_dotenv\n"),
+            Some("from_compose_name"),
+            true,
+            Some(Path::new(
+                "/path/to/local/project/.devcontainer/docker-compose.yml",
+            )),
+            Path::new("/path/to/local/project"),
+            "project",
+        );
+        assert_eq!(got, "from_env");
+    }
+
+    #[test]
+    fn derive_project_name_dotenv_wins_over_compose_and_fallback() {
+        // CLI precedence rule 2: when no env var is set, the workspace .env's
+        // `COMPOSE_PROJECT_NAME=` line wins over the compose config's `name:`
+        // field and the basename fallback.
+        use crate::devcontainer_manifest::derive_project_name;
+
+        let got = derive_project_name(
+            &HashMap::new(),
+            Some("# comment\nCOMPOSE_PROJECT_NAME=from_dotenv\n"),
+            Some("from_compose_name"),
+            true,
+            Some(Path::new(
+                "/path/to/local/project/.devcontainer/docker-compose.yml",
+            )),
+            Path::new("/path/to/local/project"),
+            "project",
+        );
+        assert_eq!(got, "from_dotenv");
+    }
+
+    #[test]
+    fn derive_project_name_compose_name_wins_over_fallback() {
+        // CLI precedence rule 3: when neither env nor .env provide a name,
+        // the merged compose config's top-level `name:` field takes precedence
+        // over the basename fallback. Also covers sanitization (spaces
+        // stripped, uppercase lowercased).
+        use crate::devcontainer_manifest::derive_project_name;
+
+        let got = derive_project_name(
+            &HashMap::new(),
+            None,
+            Some("My Compose Project"),
+            true,
+            Some(Path::new(
+                "/path/to/local/project/.devcontainer/docker-compose.yml",
+            )),
+            Path::new("/path/to/local/project"),
+            "project",
+        );
+        assert_eq!(got, "mycomposeproject");
+    }
+
+    #[test]
+    fn derive_project_name_skips_compose_name_when_not_explicitly_declared() {
+        // CLI precedence rule 3 edge case: `docker compose config` injects a
+        // default `name: devcontainer` into the merged output whenever no
+        // compose fragment declared one. `@devcontainers/cli` ignores that
+        // default by tracking per-fragment whether `name:` was declared and
+        // skipping rule 3 if none was. The caller conveys that signal via
+        // `compose_name_explicitly_declared`; when it's `false`, even a
+        // non-empty `compose_config_name` must be skipped so rule 4 applies.
+        use crate::devcontainer_manifest::derive_project_name;
+
+        let got = derive_project_name(
+            &HashMap::new(),
+            None,
+            Some("devcontainer"),
+            false,
+            Some(Path::new(
+                "/path/to/myworkspace/.devcontainer/docker-compose.yml",
+            )),
+            Path::new("/path/to/myworkspace"),
+            "myworkspace",
+        );
+        assert_eq!(got, "myworkspace_devcontainer");
+    }
+
+    #[test]
+    fn derive_project_name_omits_suffix_when_compose_file_outside_devcontainer_dir() {
+        // CLI precedence rule 4: when falling back to the first compose file's
+        // directory basename, the `_devcontainer` suffix is only appended when
+        // that directory IS `<config>/.devcontainer`. A compose file at the
+        // workspace root (as `"dockerComposeFile": "../docker-compose.yml"`
+        // produces) must derive to the plain dir basename, not
+        // `project_devcontainer` — otherwise Zed diverges from the CLI.
+        use crate::devcontainer_manifest::derive_project_name;
+
+        let got = derive_project_name(
+            &HashMap::new(),
+            None,
+            None,
+            false,
+            Some(Path::new("/path/to/local/project/docker-compose.yml")),
+            Path::new("/path/to/local/project"),
+            "project",
+        );
+        assert_eq!(got, "project");
+    }
+
+    #[test]
+    fn derive_project_name_handles_resolved_paths_from_docker_compose_manifest() {
+        // `docker_compose_manifest()` normalizes compose file paths upfront
+        // (resolving `..` components from raw `dockerComposeFile` entries like
+        // `"subdir/../docker-compose.yml"`) before populating
+        // `DockerComposeResources.files`. This test pins the resulting
+        // rule-4/rule-5 behavior on those normalized paths: a file
+        // semantically under `<workspace>/.devcontainer` takes rule 4, and
+        // one that resolves outside it takes rule 5.
+        use crate::devcontainer_manifest::derive_project_name;
+
+        // Normalized equivalent of `.devcontainer/subdir/../docker-compose.yml`:
+        // rule 4 applies → `${ws}_devcontainer`.
+        let got_under = derive_project_name(
+            &HashMap::new(),
+            None,
+            None,
+            false,
+            Some(Path::new(
+                "/path/to/local/project/.devcontainer/docker-compose.yml",
+            )),
+            Path::new("/path/to/local/project"),
+            "project",
+        );
+        assert_eq!(got_under, "project_devcontainer");
+
+        // Normalized equivalent of `.devcontainer/../docker-compose.yml`:
+        // the file sits at the workspace root, so rule 5 applies — plain
+        // basename of the parent dir, no suffix.
+        let got_escaped = derive_project_name(
+            &HashMap::new(),
+            None,
+            None,
+            false,
+            Some(Path::new("/path/to/local/project/docker-compose.yml")),
+            Path::new("/path/to/local/project"),
+            "project",
+        );
+        assert_eq!(got_escaped, "project");
+    }
+
+    #[test]
+    fn compose_fragment_declares_name_detects_top_level_name_key() {
+        // Block-style top-level key — declared.
+        use crate::devcontainer_manifest::compose_fragment_declares_name;
+
+        assert!(compose_fragment_declares_name(
+            "name: my-project\nservices:\n  app:\n    image: foo\n"
+        ));
+        // Indented `name:` belongs to a nested mapping (here a service) and
+        // must NOT count as a top-level declaration.
+        assert!(!compose_fragment_declares_name(
+            "services:\n  app:\n    name: inner\n    image: foo\n"
+        ));
+        // Comment lines are ignored.
+        assert!(!compose_fragment_declares_name(
+            "# name: commented-out\nservices: {}\n"
+        ));
+        // Empty fragment — no declaration.
+        assert!(!compose_fragment_declares_name(""));
+        // Quoted key — still a top-level declaration. A line scanner that
+        // looks for bare `name:` at column 0 would miss this.
+        assert!(compose_fragment_declares_name(
+            "\"name\": my-project\nservices: {}\n"
+        ));
+        // Flow-style root mapping — also a top-level declaration. Again a
+        // line scanner keyed on block-style layout would miss it.
+        assert!(compose_fragment_declares_name(
+            "{name: my-project, services: {app: {image: foo}}}\n"
+        ));
+        // Unparsable fragment falls through to "not declared" (matches the
+        // CLI's behavior on parse failure).
+        assert!(!compose_fragment_declares_name(": : :\n- - -\n"));
+    }
+
+    #[test]
+    fn is_missing_file_error_only_accepts_notfound_and_isadirectory() {
+        // Mirrors the CLI's narrow `ENOENT`/`EISDIR` swallow in
+        // `getProjectName`'s `.env` read. Any other `io::Error` — permission
+        // denied, I/O failure, `ENOTDIR`, etc. — must not be classified as
+        // "missing" so callers surface the problem instead of silently
+        // falling back to a non-canonical project name. Non-`io::Error`
+        // anyhow errors must also not be classified as missing.
+        use crate::devcontainer_manifest::is_missing_file_error;
+
+        let notfound = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::NotFound));
+        assert!(is_missing_file_error(&notfound));
+
+        // EISDIR — `.env` exists as a directory; CLI swallows, so must we.
+        let is_a_dir = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::IsADirectory));
+        assert!(is_missing_file_error(&is_a_dir));
+
+        // ENOTDIR — a path component isn't a directory; CLI does NOT
+        // swallow this (its catch is narrow to ENOENT/EISDIR), so we must
+        // propagate it as a real failure.
+        let not_a_dir = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::NotADirectory));
+        assert!(!is_missing_file_error(&not_a_dir));
+
+        let permission_denied =
+            anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(!is_missing_file_error(&permission_denied));
+
+        let other_io = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::Other));
+        assert!(!is_missing_file_error(&other_io));
+
+        let non_io: anyhow::Error = anyhow::anyhow!("something else");
+        assert!(!is_missing_file_error(&non_io));
+    }
+
+    #[test]
+    fn sanitize_compose_project_name_matches_cli_rules() {
+        use crate::devcontainer_manifest::sanitize_compose_project_name;
+
+        // Plain lowercase alnum passes through.
+        assert_eq!(
+            sanitize_compose_project_name("project_devcontainer"),
+            "project_devcontainer"
+        );
+        // Hyphens survive (unlike safe_id_lower which would replace them with _).
+        assert_eq!(
+            sanitize_compose_project_name("devcontainer-compose-test_devcontainer"),
+            "devcontainer-compose-test_devcontainer"
+        );
+        // Uppercase letters are lowercased.
+        assert_eq!(
+            sanitize_compose_project_name("Makermint-Studio_devcontainer"),
+            "makermint-studio_devcontainer"
+        );
+        // Characters outside [-_a-z0-9] are stripped.
+        assert_eq!(
+            sanitize_compose_project_name("Rust & PostgreSQL_devcontainer"),
+            "rustpostgresql_devcontainer"
+        );
     }
 
     #[test]
@@ -4977,6 +5548,96 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
         )
     }
 
+    #[gpui::test]
+    async fn test_expands_compose_service_args_in_dockerfile(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+
+        let given_devcontainer_contents = r#"
+            {
+              "dockerComposeFile": "docker-compose-with-args.yml",
+              "service": "app",
+            }
+            "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
+                "FROM ${BASE_IMAGE}\nUSER root\n".to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let expanded = devcontainer_manifest
+            .expanded_dockerfile_content()
+            .await
+            .unwrap();
+
+        assert_eq!(expanded, "FROM test_image:latest\nUSER root");
+
+        let base_image =
+            image_from_dockerfile(expanded, &None).expect("base image resolves from compose args");
+        assert_eq!(base_image, "test_image:latest");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
+    async fn check_for_existing_container_errors_when_multiple_match(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let (test_dependencies, devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, r#"{"image": "image"}"#)
+                .await
+                .unwrap();
+        test_dependencies
+            .docker
+            .set_duplicate_container_ids(vec!["abc123".to_string(), "def456".to_string()]);
+
+        let result = devcontainer_manifest
+            .check_for_existing_devcontainer()
+            .await;
+
+        let Err(DevContainerError::MultipleMatchingContainers(ids)) = result else {
+            panic!("expected MultipleMatchingContainers, got {result:?}");
+        };
+        assert_eq!(ids, vec!["abc123".to_string(), "def456".to_string()]);
+    }
+
+    #[gpui::test]
+    async fn trim_non_alphanumeric_chars_from_image_tag(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+            {
+              "name": "abcde test",
+              "image": "test_image:latest",
+            }
+            "#;
+
+        let (_, devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        let image_tag = devcontainer_manifest.generate_features_image_tag("Dockerfile".to_string());
+
+        assert!(
+            image_tag.starts_with("abcde-"),
+            "expected prefix 'abcde-', got: {image_tag}"
+        );
+        assert!(
+            image_tag.ends_with("-features"),
+            "expected suffix '-features', got: {image_tag}"
+        );
+    }
+
     #[test]
     fn test_aliases_dockerfile_with_pre_existing_aliases_for_build() {}
 
@@ -4998,6 +5659,10 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
         exec_commands_recorded: Mutex<Vec<RecordedExecCommand>>,
         podman: bool,
         has_buildx: bool,
+        /// When `Some`, `find_process_by_filters` returns
+        /// `MultipleMatchingContainers` with these IDs. Used to exercise the
+        /// duplicate-container error path.
+        duplicate_container_ids: Mutex<Option<Vec<String>>>,
     }
 
     impl FakeDocker {
@@ -5006,11 +5671,19 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
                 podman: false,
                 has_buildx: true,
                 exec_commands_recorded: Mutex::new(Vec::new()),
+                duplicate_container_ids: Mutex::new(None),
             }
         }
         #[cfg(not(target_os = "windows"))]
         fn set_podman(&mut self, podman: bool) {
             self.podman = podman;
+        }
+        #[cfg(not(target_os = "windows"))]
+        fn set_duplicate_container_ids(&self, ids: Vec<String>) {
+            *self
+                .duplicate_container_ids
+                .lock()
+                .expect("should be available") = Some(ids);
         }
     }
 
@@ -5222,6 +5895,35 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
                     == Some(
                         &project_path
                             .join(".devcontainer")
+                            .join("docker-compose-with-args.yml"),
+                    )
+            {
+                return Ok(Some(DockerComposeConfig {
+                    name: None,
+                    services: HashMap::from([(
+                        "app".to_string(),
+                        DockerComposeService {
+                            build: Some(DockerComposeServiceBuild {
+                                context: Some(".".to_string()),
+                                dockerfile: Some("Dockerfile".to_string()),
+                                args: Some(HashMap::from([(
+                                    "BASE_IMAGE".to_string(),
+                                    "test_image:latest".to_string(),
+                                )])),
+                                additional_contexts: None,
+                                target: None,
+                            }),
+                            ..Default::default()
+                        },
+                    )]),
+                    ..Default::default()
+                }));
+            }
+            if config_files.len() == 1
+                && config_files.get(0)
+                    == Some(
+                        &project_path
+                            .join(".devcontainer")
                             .join("docker-compose-plain.yml"),
                     )
             {
@@ -5275,6 +5977,14 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
             &self,
             _filters: Vec<String>,
         ) -> Result<Option<DockerPs>, DevContainerError> {
+            if let Some(ids) = self
+                .duplicate_container_ids
+                .lock()
+                .expect("should be available")
+                .clone()
+            {
+                return Err(DevContainerError::MultipleMatchingContainers(ids));
+            }
             Ok(Some(DockerPs {
                 id: "found_docker_ps".to_string(),
             }))

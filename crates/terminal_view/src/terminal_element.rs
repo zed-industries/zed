@@ -1162,7 +1162,9 @@ impl Element for TerminalElement {
                         let (shape, text) = match cursor.shape {
                             AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
                             AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
+                            AlacCursorShape::Underline if !focused => (CursorShape::Hollow, None),
                             AlacCursorShape::Underline => (CursorShape::Underline, None),
+                            AlacCursorShape::Beam if !focused => (CursorShape::Hollow, None),
                             AlacCursorShape::Beam => (CursorShape::Bar, None),
                             AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
                             AlacCursorShape::Hidden => unreachable!(),

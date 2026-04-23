@@ -39,13 +39,12 @@ fn create_table_cell(
     cx: &Context<'_, CsvPreviewView>,
 ) -> gpui::Stateful<Div> {
     div()
-        .id(ElementId::NamedInteger(
+        .id(ElementId::Name(
             format!(
                 "csv-display-cell-{}-{}",
                 *display_cell_id.row, *display_cell_id.col
             )
             .into(),
-            0,
         ))
         .cursor_pointer()
         .flex()

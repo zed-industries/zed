@@ -584,6 +584,56 @@ pub struct LspRunnables {
     pub runnables: Vec<(Option<LocationLink>, TaskTemplate)>,
 }
 
+pub fn runnable_to_task_template(label: String, args: RunnableArgs) -> TaskTemplate {
+    let mut task_template = TaskTemplate::default();
+    task_template.label = label;
+    match args {
+        RunnableArgs::Cargo(cargo) => {
+            match cargo.override_cargo {
+                Some(override_cargo) => {
+                    let mut override_parts = override_cargo.split(" ").map(|s| s.to_string());
+                    task_template.command = override_parts
+                        .next()
+                        .unwrap_or_else(|| override_cargo.clone());
+                    task_template.args.extend(override_parts);
+                }
+                None => task_template.command = "cargo".to_string(),
+            };
+            task_template.env = cargo.environment;
+            task_template.cwd = Some(
+                cargo
+                    .workspace_root
+                    .unwrap_or(cargo.cwd)
+                    .to_string_lossy()
+                    .to_string(),
+            );
+            task_template.args.extend(cargo.cargo_args);
+            if !cargo.executable_args.is_empty() {
+                let shell_kind = task_template.shell.shell_kind(cfg!(windows));
+                task_template.args.push("--".to_string());
+                task_template.args.extend(
+                    cargo
+                        .executable_args
+                        .into_iter()
+                        // rust-analyzer's doctest data may contain things like `X<T>::new`
+                        // which cause shell issues when run as `$SHELL -i -c "cargo test ..."`.
+                        // Escape extra cargo args unconditionally as those are unlikely to contain `~`.
+                        .flat_map(|extra_arg| {
+                            shell_kind.try_quote(&extra_arg).map(|s| s.to_string())
+                        }),
+                );
+            }
+        }
+        RunnableArgs::Shell(shell) => {
+            task_template.command = shell.program;
+            task_template.args = shell.args;
+            task_template.env = shell.environment;
+            task_template.cwd = Some(shell.cwd.to_string_lossy().into_owned());
+        }
+    }
+    task_template
+}
+
 #[async_trait(?Send)]
 impl LspCommand for GetLspRunnables {
     type Response = LspRunnables;
@@ -632,70 +682,7 @@ impl LspCommand for GetLspRunnables {
                 ),
                 None => None,
             };
-            let mut task_template = TaskTemplate::default();
-            task_template.label = runnable.label;
-            match runnable.args {
-                RunnableArgs::Cargo(cargo) => {
-                    match cargo.override_cargo {
-                        Some(override_cargo) => {
-                            let mut override_parts =
-                                override_cargo.split(" ").map(|s| s.to_string());
-                            task_template.command = override_parts
-                                .next()
-                                .unwrap_or_else(|| override_cargo.clone());
-                            task_template.args.extend(override_parts);
-                        }
-                        None => task_template.command = "cargo".to_string(),
-                    };
-                    task_template.env = cargo.environment;
-                    task_template.cwd = Some(
-                        cargo
-                            .workspace_root
-                            .unwrap_or(cargo.cwd)
-                            .to_string_lossy()
-                            .to_string(),
-                    );
-                    task_template.args.extend(cargo.cargo_args);
-                    if !cargo.executable_args.is_empty() {
-                        let shell_kind = task_template.shell.shell_kind(cfg!(windows));
-                        task_template.args.push("--".to_string());
-                        task_template.args.extend(
-                            cargo
-                                .executable_args
-                                .into_iter()
-                                // rust-analyzer's doctest data may be smth. like
-                                // ```
-                                // command: "cargo",
-                                // args: [
-                                //     "test",
-                                //     "--doc",
-                                //     "--package",
-                                //     "cargo-output-parser",
-                                //     "--",
-                                //     "X<T>::new",
-                                //     "--show-output",
-                                // ],
-                                // ```
-                                // and `X<T>::new` will cause troubles if not escaped properly, as later
-                                // the task runs as `$SHELL -i -c "cargo test ..."`.
-                                //
-                                // We cannot escape all shell arguments unconditionally, as we use this for ssh commands, which may involve paths starting with `~`.
-                                // That bit is not auto-expanded when using single quotes.
-                                // Escape extra cargo args unconditionally as those are unlikely to contain `~`.
-                                .flat_map(|extra_arg| {
-                                    shell_kind.try_quote(&extra_arg).map(|s| s.to_string())
-                                }),
-                        );
-                    }
-                }
-                RunnableArgs::Shell(shell) => {
-                    task_template.command = shell.program;
-                    task_template.args = shell.args;
-                    task_template.env = shell.environment;
-                    task_template.cwd = Some(shell.cwd.to_string_lossy().into_owned());
-                }
-            }
-
+            let task_template = runnable_to_task_template(runnable.label, runnable.args);
             runnables.push((location, task_template));
         }
 

@@ -299,10 +299,6 @@ impl LanguageModel for FakeLanguageModel {
         1000000
     }
 
-    fn count_tokens(&self, _: LanguageModelRequest, _: &App) -> BoxFuture<'static, Result<u64>> {
-        futures::future::ready(Ok(0)).boxed()
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,

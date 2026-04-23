@@ -6,7 +6,7 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use editor::{
     Addon, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
@@ -359,13 +359,9 @@ impl ProjectDiff {
             );
             match branch_diff.read(cx).diff_base() {
                 DiffBase::Head => {}
-                DiffBase::Merge { .. } => diff_display_editor.set_render_diff_hunk_controls(
-                    Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                    cx,
-                ),
+                DiffBase::Merge { .. } => diff_display_editor.disable_diff_hunk_controls(cx),
             }
             diff_display_editor.rhs_editor().update(cx, |editor, cx| {
-                editor.disable_diagnostics(cx);
                 editor.set_show_diff_review_button(true, cx);
 
                 match branch_diff.read(cx).diff_base() {
@@ -378,7 +374,6 @@ impl ProjectDiff {
                         editor.register_addon(BranchDiffAddon {
                             branch_diff: branch_diff.clone(),
                         });
-                        editor.start_temporary_diff_override();
                     }
                 }
             });
@@ -769,7 +764,7 @@ impl ProjectDiff {
         needs_fold
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip(this, cx))]
     pub async fn refresh(
         this: WeakEntity<Self>,
         reason: RefreshReason,
@@ -781,13 +776,13 @@ impl ProjectDiff {
                 let load_buffers = branch_diff.load_buffers(cx);
                 (branch_diff.repo().cloned(), load_buffers)
             });
-            let mut previous_paths = this
+            let mut previous_buffers = this
                 .multibuffer
                 .read(cx)
                 .snapshot(cx)
                 .buffers_with_paths()
-                .map(|(_, path_key)| path_key.clone())
-                .collect::<HashSet<_>>();
+                .map(|(buffer_snapshot, path_key)| (path_key.clone(), buffer_snapshot.remote_id()))
+                .collect::<HashMap<_, _>>();
 
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
@@ -797,14 +792,14 @@ impl ProjectDiff {
                     let sort_prefix = sort_prefix(&repo, &entry.repo_path, entry.file_status, cx);
                     let path_key =
                         PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
-                    previous_paths.remove(&path_key);
+                    previous_buffers.remove(&path_key);
                     path_keys.push(path_key)
                 }
             }
 
             this.editor.update(cx, |editor, cx| {
-                for path in previous_paths {
-                    if let Some(buffer) = this.multibuffer.read(cx).buffer_for_path(&path, cx) {
+                for (path, buffer_id) in previous_buffers {
+                    if let Some(buffer) = this.multibuffer.read(cx).buffer(buffer_id) {
                         let skip = match reason {
                             RefreshReason::DiffChanged | RefreshReason::EditorSaved => {
                                 buffer.read(cx).is_dirty()
@@ -817,6 +812,8 @@ impl ProjectDiff {
                     }
 
                     this.buffer_diff_subscriptions.remove(&path.path);
+                    let _span = ztracing::info_span!("remove_excerpts_for_path");
+                    _span.enter();
                     editor.remove_excerpts_for_path(path, cx);
                 }
             });

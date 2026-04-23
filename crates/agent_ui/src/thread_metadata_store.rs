@@ -4,7 +4,7 @@ use std::{
 };
 
 use agent::{ThreadStore, ZED_AGENT_ID};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
@@ -191,7 +191,7 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
             return Ok(());
         }
 
-        let recent_workspaces = workspace_db.recent_workspaces_on_disk(fs.as_ref()).await?;
+        let recent_workspaces = workspace_db.recent_project_workspaces(fs.as_ref()).await?;
 
         let mut local_path_lists = HashSet::<PathList>::default();
         let mut remote_path_lists = HashMap::<PathList, RemoteConnectionOptions>::default();
@@ -785,6 +785,8 @@ impl ThreadMetadataStore {
         if let Some(job) = archive_job {
             self.in_flight_archives.insert(thread_id, job);
         }
+
+        cx.emit(ThreadMetadataStoreEvent::ThreadArchived(thread_id));
     }
 
     pub fn unarchive(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
@@ -1176,7 +1178,9 @@ impl ThreadMetadataStore {
             .and_then(|t| t.created_at)
             .unwrap_or_else(|| updated_at);
 
-        let interacted_at = existing_thread.and_then(|t| t.interacted_at);
+        let interacted_at = existing_thread
+            .map(|t| t.interacted_at)
+            .unwrap_or(Some(updated_at));
 
         let agent_id = thread_ref.connection().agent_id();
 
@@ -1225,6 +1229,13 @@ impl ThreadMetadataStore {
 }
 
 impl Global for ThreadMetadataStore {}
+
+#[derive(Clone, Debug)]
+pub enum ThreadMetadataStoreEvent {
+    ThreadArchived(ThreadId),
+}
+
+impl gpui::EventEmitter<ThreadMetadataStoreEvent> for ThreadMetadataStore {}
 
 struct ThreadMetadataDb(ThreadSafeConnection);
 
@@ -1678,8 +1689,7 @@ mod tests {
     use acp_thread::StubAgentConnection;
     use action_log::ActionLog;
     use agent::DbThread;
-    use agent_client_protocol as acp;
-
+    use agent_client_protocol::schema as acp;
     use gpui::{TestAppContext, VisualTestContext};
     use project::FakeFs;
     use project::Project;

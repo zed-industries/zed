@@ -3,7 +3,7 @@ use super::tool_permissions::{
     resolve_project_path,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, Entity, SharedString, Task};
 use project::{Project, ProjectPath, WorktreeSettings};
@@ -127,8 +127,8 @@ impl AgentTool for ListDirectoryTool {
 
     const NAME: &'static str = "list_directory";
 
-    fn kind() -> ToolKind {
-        ToolKind::Read
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Read
     }
 
     fn initial_title(
@@ -267,7 +267,6 @@ impl AgentTool for ListDirectoryTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::{TestAppContext, UpdateGlobal};
     use indoc::indoc;
