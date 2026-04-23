@@ -536,7 +536,7 @@ impl Render for ProjectSearchView {
             let is_waiting_for_scan = model.waiting_for_scan;
 
             let heading_text = if is_waiting_for_scan {
-                "Waiting for project scan to complete…"
+                "Loading project…"
             } else if is_search_underway {
                 "Searching…"
             } else if has_no_results {

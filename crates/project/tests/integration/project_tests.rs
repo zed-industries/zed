@@ -12280,8 +12280,7 @@ async fn search(
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
             }
-            SearchResult::LimitReached => {}
-            SearchResult::WaitingForScan => {}
+            SearchResult::LimitReached | SearchResult::WaitingForScan => {}
         }
     }
     Ok(results
