@@ -2333,7 +2333,7 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         maybe!({
-            let selection = self.state.selection?;
+            let selection = self.selection?;
             let (_, entry) = self.selected_sub_entry(cx)?;
             let is_dir = entry.is_dir();
             let project = self.project.read(cx);
@@ -2355,7 +2355,7 @@ impl ProjectPanel {
                         cx.update(|cx| {
                             let message = format!("Failed to add to .gitignore: {}", e);
                             let toast = StatusToast::new(message, cx, |this, _| {
-                                this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                                this.icon(Icon::new(IconName::XCircle).color(Color::Error))
                                     .dismiss_button(true)
                             });
                             workspace.update(cx, |workspace, cx| {
