@@ -774,6 +774,7 @@ impl TerminalBuilder {
 
         Ok(String::from_utf16(&buf[..size as usize])?)
     }
+
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -933,6 +934,17 @@ impl TaskStatus {
 const FIND_HYPERLINK_THROTTLE_PX: Pixels = px(5.0);
 
 impl Terminal {
+    #[cfg(windows)]
+    fn strip_windows_verbatim_prefix(path: &str) -> std::borrow::Cow<'_, str> {
+        if let Some(path) = path.strip_prefix(r"\\?\UNC\") {
+            std::borrow::Cow::Owned(format!(r"\\{path}"))
+        } else if let Some(path) = path.strip_prefix(r"\\?\") {
+            std::borrow::Cow::Borrowed(path)
+        } else {
+            std::borrow::Cow::Borrowed(path)
+        }
+    }
+
     fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
@@ -940,12 +952,15 @@ impl Terminal {
                 // and it would end up showing the shell executable path in breadcrumbs
                 #[cfg(windows)]
                 {
-                    if self
+                    let ignore_shell_program_title = self
                         .shell_program
                         .as_ref()
-                        .map(|e| *e == title)
-                        .unwrap_or(false)
-                    {
+                        .map(|shell_program| {
+                            Self::strip_windows_verbatim_prefix(shell_program)
+                                == Self::strip_windows_verbatim_prefix(&title)
+                        })
+                        .unwrap_or(false);
+                    if ignore_shell_program_title {
                         return;
                     }
                 }
@@ -3496,6 +3511,38 @@ mod tests {
                     );
                 }
             }
+        }
+
+        #[cfg(windows)]
+        #[gpui::test]
+        fn test_ignores_windows_shell_title_with_verbatim_prefix(cx: &mut TestAppContext) {
+            let terminal = cx.new(|cx| {
+                TerminalBuilder::new_display_only(
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    0,
+                    cx.background_executor(),
+                    PathStyle::local(),
+                )
+                .unwrap()
+                .subscribe(cx)
+            });
+
+            terminal.update(cx, |terminal, cx| {
+                terminal.shell_program =
+                    Some(r"\\?\C:\Program Files\PowerShell\7\pwsh.exe".to_string());
+
+                terminal.process_event(
+                    AlacTermEvent::Title(r"C:\Program Files\PowerShell\7\pwsh.exe".to_string()),
+                    cx,
+                );
+
+                assert!(
+                    terminal.breadcrumb_text.is_empty(),
+                    "default shell title should be ignored even when shell_program uses the \\\\?\\ prefix"
+                );
+            });
         }
     }
 }

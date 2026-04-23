@@ -175,6 +175,12 @@ pub struct TerminalSettingsContent {
     /// Default: 45
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub minimum_contrast: Option<f32>,
+    /// Whether to show the shell-driven terminal title in the tab.
+    ///
+    /// When enabled, terminal breadcrumbs are hidden and terminal tab rename is disabled.
+    ///
+    /// Default: false
+    pub show_title_in_tab: Option<bool>,
     /// Whether to show a badge on the terminal panel icon with the count of open terminals.
     ///
     /// Default: false

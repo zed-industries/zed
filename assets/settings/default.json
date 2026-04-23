@@ -1944,6 +1944,10 @@
     // Timeout for hover and Cmd-click path hyperlink discovery in milliseconds. Specifying a
     // timeout of `0` will disable path hyperlinking in terminal.
     "path_hyperlink_timeout_ms": 1,
+    // Whether to show the shell-driven terminal title in the tab.
+    //
+    // When enabled, terminal breadcrumbs are hidden and terminal tab rename is disabled.
+    "show_title_in_tab": false,
     // Whether to show a badge on the terminal panel icon with the count of open terminals.
     "show_count_badge": false,
     // Whether to invoke the OS-specific alert sound when the terminal bell (BEL character) is printed.

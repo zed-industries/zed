@@ -919,6 +919,7 @@ impl VsCodeSettings {
             scrollbar: None,
             scroll_multiplier: None,
             toolbar: None,
+            show_title_in_tab: None,
             show_count_badge: None,
             flexible: None,
         })

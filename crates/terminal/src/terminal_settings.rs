@@ -51,6 +51,7 @@ pub struct TerminalSettings {
     pub minimum_contrast: f32,
     pub path_hyperlink_regexes: Vec<String>,
     pub path_hyperlink_timeout_ms: u64,
+    pub show_title_in_tab: bool,
     pub show_count_badge: bool,
     pub bell: TerminalBell,
 }
@@ -133,6 +134,7 @@ impl settings::Settings for TerminalSettings {
                 })
                 .collect(),
             path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
+            show_title_in_tab: user_content.show_title_in_tab.unwrap(),
             show_count_badge: user_content.show_count_badge.unwrap(),
             bell: user_content.bell.unwrap(),
         }
@@ -181,5 +183,59 @@ impl From<CursorShape> for AlacCursorStyle {
             shape: value.into(),
             blinking: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TerminalSettings;
+    use gpui::TestAppContext;
+    use settings::{
+        default_settings, LocalSettingsKind, LocalSettingsPath, Settings, SettingsLocation,
+        SettingsStore, WorktreeId,
+    };
+    use util::rel_path::RelPath;
+
+    #[gpui::test]
+    fn test_show_title_in_tab_comes_from_user_settings_while_project_shell_override_applies(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx, &default_settings());
+            store.register_setting::<TerminalSettings>();
+            store.set_default_settings(&default_settings(), cx).unwrap();
+            store
+                .set_user_settings(r#"{ "terminal": { "show_title_in_tab": true } }"#, cx)
+                .unwrap();
+            store
+                .set_local_settings(
+                    WorktreeId::from_usize(1),
+                    LocalSettingsPath::InWorktree(RelPath::empty().into_arc()),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{ "terminal": { "shell": { "program": "/bin/project-shell" } } }"#),
+                    cx,
+                )
+                .unwrap();
+
+            cx.set_global(store);
+
+            let settings_location = SettingsLocation {
+                worktree_id: WorktreeId::from_usize(1),
+                path: RelPath::empty(),
+            };
+
+            assert!(TerminalSettings::get(Some(settings_location), cx).show_title_in_tab);
+            assert_eq!(
+                TerminalSettings::get(
+                    Some(SettingsLocation {
+                        worktree_id: WorktreeId::from_usize(1),
+                        path: RelPath::empty(),
+                    }),
+                    cx,
+                )
+                .shell,
+                task::Shell::Program("/bin/project-shell".to_owned())
+            );
+        });
     }
 }
