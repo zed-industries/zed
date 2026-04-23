@@ -996,11 +996,7 @@ mod tests {
     #[test]
     fn test_force_width_latin_unchanged() {
         let cell_width = px(8.);
-        let mut layout = make_layout(vec![
-            glyph_at(0., 0),
-            glyph_at(8., 1),
-            glyph_at(16., 2),
-        ]);
+        let mut layout = make_layout(vec![glyph_at(0., 0), glyph_at(8., 1), glyph_at(16., 2)]);
 
         apply_force_width_to_layout(&mut layout, cell_width);
 
@@ -1026,11 +1022,7 @@ mod tests {
     #[test]
     fn test_force_width_base_after_combining_mark() {
         let cell_width = px(8.);
-        let mut layout = make_layout(vec![
-            glyph_at(0., 0),
-            glyph_at(0., 3),
-            glyph_at(8., 6),
-        ]);
+        let mut layout = make_layout(vec![glyph_at(0., 0), glyph_at(0., 3), glyph_at(8., 6)]);
 
         apply_force_width_to_layout(&mut layout, cell_width);
 
@@ -1043,10 +1035,10 @@ mod tests {
         let cell_width = px(8.);
         // Simulates "ก้" — base + vowel + tone mark (two combining marks stacked)
         let mut layout = make_layout(vec![
-            glyph_at(0., 0),  // ก (base)
-            glyph_at(0., 3),  // vowel (combining)
-            glyph_at(0., 6),  // tone mark (combining)
-            glyph_at(8., 9),  // next base
+            glyph_at(0., 0), // ก (base)
+            glyph_at(0., 3), // vowel (combining)
+            glyph_at(0., 6), // tone mark (combining)
+            glyph_at(8., 9), // next base
         ]);
 
         apply_force_width_to_layout(&mut layout, cell_width);
@@ -1076,10 +1068,7 @@ mod tests {
         let cell_width = px(8.);
         // Base glyph is within 1px of grid so it keeps its shaped position.
         // The combining mark must align to the base's actual position, not the grid slot.
-        let mut layout = make_layout(vec![
-            glyph_at(0.5, 0),
-            glyph_at(0.5, 3),
-        ]);
+        let mut layout = make_layout(vec![glyph_at(0.5, 0), glyph_at(0.5, 3)]);
 
         apply_force_width_to_layout(&mut layout, cell_width);
 
