@@ -1870,11 +1870,6 @@ impl Workspace {
 
             if let Some(paths) = serialized_workspace.as_ref().map(|ws| &ws.paths) {
                 paths_to_open = paths.ordered_paths().cloned().collect();
-                if !paths.is_lexicographically_ordered() {
-                    project_handle.update(cx, |project, cx| {
-                        project.set_worktrees_reordered(true, cx);
-                    });
-                }
             }
 
             // Get project paths for all of the abs_paths
