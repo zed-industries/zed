@@ -175,7 +175,10 @@ fn create_preview_branch(
     let main_sha = StepOutput::new(&main_sha_step, "main_sha");
 
     let commit_step: Step<Use> = steps::BotCommitStep::new(
-        format!("{} preview", outputs.preview_branch),
+        format!(
+            "{} preview for @${{{{ github.actor }}}}",
+            outputs.preview_branch
+        ),
         &outputs.preview_branch,
         &token,
     )
@@ -229,7 +232,10 @@ fn promote_to_stable(
     let write_channel = named::bash("echo -n stable > crates/zed/RELEASE_CHANNEL");
 
     let commit_step: Step<Use> = steps::BotCommitStep::new(
-        format!("{} stable", outputs.stable_branch),
+        format!(
+            "{} stable for @${{{{ github.actor }}}}",
+            outputs.stable_branch
+        ),
         &outputs.stable_branch,
         &token,
     )

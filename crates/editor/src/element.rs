@@ -4728,7 +4728,10 @@ impl EditorElement {
         let mut rows = Vec::<StickyHeader>::new();
 
         for item in editor.sticky_headers.iter().flatten() {
-            let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
+            let start_point = item
+                .source_range_for_text
+                .start
+                .to_point(snapshot.buffer_snapshot());
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
 
             let sticky_row = snapshot
