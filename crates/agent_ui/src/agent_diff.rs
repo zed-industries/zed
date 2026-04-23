@@ -98,6 +98,7 @@ impl AgentDiffPane {
             editor
                 .set_render_diff_hunk_controls(diff_hunk_controls(&thread, workspace.clone()), cx);
             editor.register_addon(AgentDiffAddon);
+            editor.disable_mouse_wheel_zoom();
             editor
         });
 
@@ -1417,7 +1418,8 @@ impl AgentDiff {
             | AcpThreadEvent::Retry(_)
             | AcpThreadEvent::ModeUpdated(_)
             | AcpThreadEvent::ConfigOptionsUpdated(_)
-            | AcpThreadEvent::WorkingDirectoriesUpdated => {}
+            | AcpThreadEvent::WorkingDirectoriesUpdated
+            | AcpThreadEvent::PromptUpdated => {}
         }
     }
 
@@ -1809,7 +1811,7 @@ mod tests {
             cx.set_global(settings_store);
             prompt_store::init(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
-            language_model::init_settings(cx);
+            language_model::init(cx);
         });
 
         let fs = FakeFs::new(cx.executor());
@@ -1966,7 +1968,7 @@ mod tests {
             cx.set_global(settings_store);
             prompt_store::init(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
-            language_model::init_settings(cx);
+            language_model::init(cx);
             workspace::register_project_item::<Editor>(cx);
         });
 

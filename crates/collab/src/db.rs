@@ -532,6 +532,7 @@ impl RejoinedProject {
                     root_name: worktree.root_name.clone(),
                     visible: worktree.visible,
                     abs_path: worktree.abs_path.clone(),
+                    root_repo_common_dir: None,
                 })
                 .collect(),
             collaborators: self
@@ -559,6 +560,7 @@ pub struct RejoinedWorktree {
     pub settings_files: Vec<WorktreeSettingsFile>,
     pub scan_id: u64,
     pub completed_scan_id: u64,
+    pub root_repo_common_dir: Option<String>,
 }
 
 pub struct LeftRoom {
@@ -638,6 +640,7 @@ pub struct Worktree {
     pub settings_files: Vec<WorktreeSettingsFile>,
     pub scan_id: u64,
     pub completed_scan_id: u64,
+    pub root_repo_common_dir: Option<String>,
 }
 
 #[derive(Debug)]

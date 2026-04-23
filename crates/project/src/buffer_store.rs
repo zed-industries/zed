@@ -11,7 +11,8 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
 use language::{
-    Buffer, BufferEvent, Capability, DiskState, File as _, Language, Operation,
+    Buffer, BufferEvent, Capability, DiskState, File as _, Language, LineEnding, Operation,
+    language_settings::{AllLanguageSettings, LineEndingSetting},
     proto::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
         split_operations,
@@ -663,7 +664,7 @@ impl LocalBufferStore {
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
                     let text_buffer = text::Buffer::new(ReplicaId::LOCAL, buffer_id, "");
-                    Buffer::build(
+                    let mut buffer = Buffer::build(
                         text_buffer,
                         Some(Arc::new(File {
                             worktree,
@@ -674,7 +675,9 @@ impl LocalBufferStore {
                             is_private: false,
                         })),
                         Capability::ReadWrite,
-                    )
+                    );
+                    apply_initial_line_ending(&mut buffer, cx);
+                    buffer
                 }),
                 Err(e) => return Err(e),
             };
@@ -724,8 +727,10 @@ impl LocalBufferStore {
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |buffer_store, cx| {
             let buffer = cx.new(|cx| {
-                Buffer::local("", cx)
-                    .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
+                let mut buffer = Buffer::local("", cx)
+                    .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx);
+                apply_initial_line_ending(&mut buffer, cx);
+                buffer
             });
             buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.add_buffer(buffer.clone(), cx).log_err();
@@ -1628,8 +1633,10 @@ impl BufferStore {
         cx: &mut Context<Self>,
     ) -> Entity<Buffer> {
         let buffer = cx.new(|cx| {
-            Buffer::local(text, cx)
-                .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx)
+            let mut buffer = Buffer::local(text, cx)
+                .with_language(language.unwrap_or_else(|| language::PLAIN_TEXT.clone()), cx);
+            apply_initial_line_ending(&mut buffer, cx);
+            buffer
         });
 
         self.add_buffer(buffer.clone(), cx).log_err();
@@ -1798,4 +1805,25 @@ fn is_not_found_error(error: &anyhow::Error) -> bool {
         .root_cause()
         .downcast_ref::<io::Error>()
         .is_some_and(|err| err.kind() == io::ErrorKind::NotFound)
+}
+
+fn apply_initial_line_ending(buffer: &mut Buffer, cx: &mut Context<Buffer>) {
+    // Only applies for empty rope or a single line with no trailing newline.
+    if buffer.max_point().row > 0 {
+        return;
+    }
+    let location = buffer.file().map(|file| settings::SettingsLocation {
+        worktree_id: file.worktree_id(cx),
+        path: file.path().as_ref(),
+    });
+    let language = buffer.language().map(|l| l.name());
+    let settings = AllLanguageSettings::get(location, cx).language(location, language.as_ref(), cx);
+    let desired = match settings.line_ending {
+        LineEndingSetting::Detect => return,
+        LineEndingSetting::PreferLf | LineEndingSetting::EnforceLf => LineEnding::Unix,
+        LineEndingSetting::PreferCrlf | LineEndingSetting::EnforceCrlf => LineEnding::Windows,
+    };
+    if buffer.line_ending() != desired {
+        buffer.set_line_ending(desired, cx);
+    }
 }

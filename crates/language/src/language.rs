@@ -108,7 +108,6 @@ pub(crate) fn to_settings_soft_wrap(value: language_core::SoftWrap) -> settings:
         language_core::SoftWrap::None => settings::SoftWrap::None,
         language_core::SoftWrap::PreferLine => settings::SoftWrap::PreferLine,
         language_core::SoftWrap::EditorWidth => settings::SoftWrap::EditorWidth,
-        language_core::SoftWrap::PreferredLineLength => settings::SoftWrap::PreferredLineLength,
         language_core::SoftWrap::Bounded => settings::SoftWrap::Bounded,
     }
 }
@@ -202,6 +201,17 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
         None,
     ))
 });
+
+/// Commands that the client (editor) handles locally rather than forwarding
+/// to the language server. Servers embed these in code lens and code action
+/// responses when they want the editor to perform a well-known UI action.
+#[derive(Debug, Clone)]
+pub enum ClientCommand {
+    /// Open a location list (references panel / peek view).
+    ShowLocations,
+    /// Schedule a task from an LSP command's arguments.
+    ScheduleTask(task::TaskTemplate),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
@@ -554,6 +564,14 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         _: &App,
     ) -> Result<InitializeParams> {
         Ok(original)
+    }
+
+    fn client_command(
+        &self,
+        _command_name: &str,
+        _arguments: &[serde_json::Value],
+    ) -> Option<ClientCommand> {
+        None
     }
 
     /// Method only implemented by the default JSON language server adapter.
@@ -1023,9 +1041,7 @@ impl Language {
                 BufferChunks::new(text, range, Some((captures, highlight_maps)), false, None)
             {
                 let end_offset = offset + chunk.text.len();
-                if let Some(highlight_id) = chunk.syntax_highlight_id
-                    && !highlight_id.is_default()
-                {
+                if let Some(highlight_id) = chunk.syntax_highlight_id {
                     result.push((offset..end_offset, highlight_id));
                 }
                 offset = end_offset;
@@ -1077,11 +1093,11 @@ impl Language {
 
 #[inline]
 pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> HighlightMap {
-    HighlightMap::from_ids(capture_names.iter().map(|capture_name| {
-        theme
-            .highlight_id(capture_name)
-            .map_or(HighlightId::default(), HighlightId)
-    }))
+    HighlightMap::from_ids(
+        capture_names
+            .iter()
+            .map(|capture_name| theme.highlight_id(capture_name).map(HighlightId::new)),
+    )
 }
 
 impl LanguageScope {
@@ -1645,9 +1661,18 @@ mod tests {
         ];
 
         let map = build_highlight_map(capture_names, &theme);
-        assert_eq!(theme.get_capture_name(map.get(0)), Some("function"));
-        assert_eq!(theme.get_capture_name(map.get(1)), Some("function.async"));
-        assert_eq!(theme.get_capture_name(map.get(2)), Some("variable.builtin"));
+        assert_eq!(
+            theme.get_capture_name(map.get(0).unwrap()),
+            Some("function")
+        );
+        assert_eq!(
+            theme.get_capture_name(map.get(1).unwrap()),
+            Some("function.async")
+        );
+        assert_eq!(
+            theme.get_capture_name(map.get(2).unwrap()),
+            Some("variable.builtin")
+        );
     }
 
     #[gpui::test(iterations = 10)]

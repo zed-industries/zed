@@ -1,9 +1,9 @@
 use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
 use acp_thread::AgentSessionConfigOptions;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_servers::AgentServer;
-use agent_settings::AgentSettings;
+
 use collections::HashSet;
 use fs::Fs;
 use fuzzy::StringMatchCandidate;
@@ -13,14 +13,13 @@ use gpui::{
 use ordered_float::OrderedFloat;
 use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use ui::{
-    DocumentationSide, ElevationIndex, IconButton, ListItem, ListItemSpacing, PopoverMenuHandle,
-    Tooltip, prelude::*,
+    ElevationIndex, IconButton, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 
-use crate::ui::HoldForDefault;
+use crate::ui::{HoldForDefault, documentation_aside_side};
 
 const PICKER_THRESHOLD: usize = 5;
 
@@ -382,7 +381,7 @@ impl Render for ConfigOptionSelector {
             self.picker.clone(),
             trigger_button,
             tooltip,
-            gpui::Corner::BottomRight,
+            gpui::Anchor::BottomRight,
             cx,
         )
         .with_handle(self.picker_handle.clone())
@@ -695,13 +694,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                 let description = description.clone();
                 let is_default = *is_default;
 
-                let settings = AgentSettings::get_global(cx);
-                let side = match settings.dock {
-                    settings::DockPosition::Left => DocumentationSide::Right,
-                    settings::DockPosition::Bottom | settings::DockPosition::Right => {
-                        DocumentationSide::Left
-                    }
-                };
+                let side = documentation_aside_side(cx);
 
                 ui::DocumentationAside::new(
                     side,

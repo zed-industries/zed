@@ -8,9 +8,7 @@ use gpui::{
     WindowOptions, actions, point, size, transparent_black,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
-use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
-};
+use language_model::{ConfiguredModel, LanguageModelRegistry};
 use picker::{Picker, PickerDelegate};
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
@@ -165,8 +163,6 @@ pub struct RulesLibrary {
 struct RuleEditor {
     title_editor: Entity<Editor>,
     body_editor: Entity<Editor>,
-    token_count: Option<u64>,
-    pending_token_count: Task<Option<()>>,
     next_title_and_body_to_save: Option<(String, Rope)>,
     pending_save: Option<Task<Option<()>>>,
     _subscriptions: Vec<Subscription>,
@@ -223,6 +219,10 @@ impl PickerDelegate for RulePickerDelegate {
             Some(RulePickerEntry::Rule(_)) => true,
             Some(RulePickerEntry::Header(_)) | Some(RulePickerEntry::Separator) | None => false,
         }
+    }
+
+    fn select_on_hover(&self) -> bool {
+        false
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
@@ -781,13 +781,10 @@ impl RulesLibrary {
                                 body_editor,
                                 next_title_and_body_to_save: None,
                                 pending_save: None,
-                                token_count: None,
-                                pending_token_count: Task::ready(None),
                                 _subscriptions,
                             },
                         );
                         this.set_active_rule(Some(prompt_id), window, cx);
-                        this.count_tokens(prompt_id, window, cx);
                     }
                     Err(error) => {
                         // TODO: we should show the error in the UI.
@@ -1015,7 +1012,6 @@ impl RulesLibrary {
         match event {
             EditorEvent::BufferEdited => {
                 self.save_rule(prompt_id, window, cx);
-                self.count_tokens(prompt_id, window, cx);
             }
             EditorEvent::Blurred => {
                 title_editor.update(cx, |title_editor, cx| {
@@ -1045,7 +1041,6 @@ impl RulesLibrary {
         match event {
             EditorEvent::BufferEdited => {
                 self.save_rule(prompt_id, window, cx);
-                self.count_tokens(prompt_id, window, cx);
             }
             EditorEvent::Blurred => {
                 body_editor.update(cx, |body_editor, cx| {
@@ -1061,59 +1056,6 @@ impl RulesLibrary {
                 });
             }
             _ => {}
-        }
-    }
-
-    fn count_tokens(&mut self, prompt_id: PromptId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ConfiguredModel { model, .. }) =
-            LanguageModelRegistry::read_global(cx).default_model()
-        else {
-            return;
-        };
-        if let Some(rule) = self.rule_editors.get_mut(&prompt_id) {
-            let editor = &rule.body_editor.read(cx);
-            let buffer = &editor.buffer().read(cx).as_singleton().unwrap().read(cx);
-            let body = buffer.as_rope().clone();
-            rule.pending_token_count = cx.spawn_in(window, async move |this, cx| {
-                async move {
-                    const DEBOUNCE_TIMEOUT: Duration = Duration::from_secs(1);
-
-                    cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
-                    let token_count = cx
-                        .update(|_, cx| {
-                            model.count_tokens(
-                                LanguageModelRequest {
-                                    thread_id: None,
-                                    prompt_id: None,
-                                    intent: None,
-                                    messages: vec![LanguageModelRequestMessage {
-                                        role: Role::System,
-                                        content: vec![body.to_string().into()],
-                                        cache: false,
-                                        reasoning_details: None,
-                                    }],
-                                    tools: Vec::new(),
-                                    tool_choice: None,
-                                    stop: Vec::new(),
-                                    temperature: None,
-                                    thinking_allowed: true,
-                                    thinking_effort: None,
-                                    speed: None,
-                                },
-                                cx,
-                            )
-                        })?
-                        .await?;
-
-                    this.update(cx, |this, cx| {
-                        let rule_editor = this.rule_editors.get_mut(&prompt_id).unwrap();
-                        rule_editor.token_count = Some(token_count);
-                        cx.notify();
-                    })
-                }
-                .log_err()
-                .await
-            });
         }
     }
 
@@ -1289,8 +1231,6 @@ impl RulesLibrary {
                 let rule_metadata = self.store.read(cx).metadata(prompt_id)?;
                 let rule_editor = &self.rule_editors[&prompt_id];
                 let focus_handle = rule_editor.body_editor.focus_handle(cx);
-                let registry = LanguageModelRegistry::read_global(cx);
-                let model = registry.default_model().map(|default| default.model);
                 let built_in = prompt_id.is_built_in();
 
                 Some(
@@ -1314,52 +1254,17 @@ impl RulesLibrary {
                                     built_in,
                                     cx,
                                 ))
-                                .child(
-                                    h_flex()
-                                        .h_full()
-                                        .flex_shrink_0()
-                                        .children(rule_editor.token_count.map(|token_count| {
-                                            let token_count: SharedString =
-                                                token_count.to_string().into();
-                                            let label_token_count: SharedString =
-                                                token_count.to_string().into();
-
-                                            div()
-                                                .id("token_count")
-                                                .mr_1()
-                                                .flex_shrink_0()
-                                                .tooltip(move |_window, cx| {
-                                                    Tooltip::with_meta(
-                                                        "Token Estimation",
-                                                        None,
-                                                        format!(
-                                                            "Model: {}",
-                                                            model
-                                                                .as_ref()
-                                                                .map(|model| model.name().0)
-                                                                .unwrap_or_default()
-                                                        ),
-                                                        cx,
-                                                    )
-                                                })
-                                                .child(
-                                                    Label::new(format!(
-                                                        "{} tokens",
-                                                        label_token_count
-                                                    ))
-                                                    .color(Color::Muted),
-                                                )
-                                        }))
-                                        .map(|this| {
-                                            if built_in {
-                                                this.child(self.render_built_in_rule_controls())
-                                            } else {
-                                                this.child(self.render_regular_rule_controls(
-                                                    rule_metadata.default,
-                                                ))
-                                            }
-                                        }),
-                                ),
+                                .child(h_flex().h_full().flex_shrink_0().map(|this| {
+                                    if built_in {
+                                        this.child(self.render_built_in_rule_controls())
+                                    } else {
+                                        this.child(
+                                            self.render_regular_rule_controls(
+                                                rule_metadata.default,
+                                            ),
+                                        )
+                                    }
+                                })),
                         )
                         .child(
                             div()

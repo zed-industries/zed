@@ -1,6 +1,5 @@
 use crate::DEFAULT_THREAD_TITLE;
 use crate::SendImmediately;
-use crate::ThreadHistory;
 use crate::{
     ChatWithFollow,
     completion_provider::{
@@ -11,7 +10,7 @@ use crate::{
 };
 use acp_thread::MentionUri;
 use agent::ThreadStore;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
@@ -261,7 +260,7 @@ async fn resolve_pasted_context_items(
 ) -> (Vec<ResolvedPastedContextItem>, Vec<Entity<Worktree>>) {
     let mut items = Vec::new();
     let mut added_worktrees = Vec::new();
-    let default_image_name: SharedString = MentionUri::PastedImage.name().into();
+    let default_image_name: SharedString = "Image".into();
 
     for entry in entries {
         match entry {
@@ -394,7 +393,6 @@ impl MessageEditor {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: Option<WeakEntity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         session_capabilities: SharedSessionCapabilities,
         agent_id: AgentId,
@@ -422,6 +420,7 @@ impl MessageEditor {
             editor.set_show_indent_guides(false, cx);
             editor.set_show_completions_on_input(Some(true));
             editor.set_soft_wrap();
+            editor.disable_mouse_wheel_zoom();
             editor.set_use_modal_editing(true);
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
@@ -457,7 +456,6 @@ impl MessageEditor {
             },
             editor.downgrade(),
             mention_set.clone(),
-            history,
             prompt_store.clone(),
             workspace.clone(),
         ));
@@ -812,7 +810,9 @@ impl MessageEditor {
                                 )
                                 .uri(match uri {
                                     MentionUri::File { .. } => Some(uri.to_uri().to_string()),
-                                    MentionUri::PastedImage => None,
+                                    MentionUri::PastedImage { .. } => {
+                                        Some(uri.to_uri().to_string())
+                                    }
                                     other => {
                                         debug_panic!(
                                             "unexpected mention uri for image: {:?}",
@@ -1638,7 +1638,9 @@ impl MessageEditor {
                     let mention_uri = if let Some(uri) = uri {
                         MentionUri::parse(&uri, path_style)
                     } else {
-                        Ok(MentionUri::PastedImage)
+                        Ok(MentionUri::PastedImage {
+                            name: "Image".to_string(),
+                        })
                     };
                     let Some(mention_uri) = mention_uri.log_err() else {
                         continue;
@@ -1905,7 +1907,7 @@ mod tests {
 
     use acp_thread::MentionUri;
     use agent::{ThreadStore, outline};
-    use agent_client_protocol as acp;
+    use agent_client_protocol::schema as acp;
     use base64::Engine as _;
     use editor::{
         AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
@@ -2048,7 +2050,6 @@ mod tests {
                     project.downgrade(),
                     thread_store.clone(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -2149,7 +2150,6 @@ mod tests {
                     workspace_handle.clone(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     None,
                     session_capabilities.clone(),
                     "Claude Agent".into(),
@@ -2316,7 +2316,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     None,
                     session_capabilities.clone(),
                     "Test Agent".into(),
@@ -2543,7 +2542,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     None,
                     session_capabilities.clone(),
                     "Test Agent".into(),
@@ -3037,7 +3035,6 @@ mod tests {
                     project.downgrade(),
                     thread_store.clone(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3139,7 +3136,6 @@ mod tests {
                     project.downgrade(),
                     thread_store.clone(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3209,7 +3205,6 @@ mod tests {
                     project.downgrade(),
                     thread_store.clone(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3262,7 +3257,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     None,
                     Default::default(),
                     "Test Agent".into(),
@@ -3321,7 +3315,6 @@ mod tests {
                     project.downgrade(),
                     thread_store.clone(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3379,7 +3372,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     None,
                     Default::default(),
                     "Test Agent".into(),
@@ -3442,7 +3434,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     None,
                     Default::default(),
                     "Test Agent".into(),
@@ -3604,7 +3595,6 @@ mod tests {
                     project.downgrade(),
                     thread_store.clone(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3719,7 +3709,6 @@ mod tests {
                     project.downgrade(),
                     Some(thread_store.clone()),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3798,7 +3787,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     None,
                     Default::default(),
                     "Test Agent".into(),
@@ -3897,7 +3885,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     None,
                     Default::default(),
                     "Test Agent".into(),
@@ -4074,6 +4061,11 @@ mod tests {
             &mut cx,
         );
 
+        let image_name = temporary_image_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Image")
+            .to_string();
         std::fs::remove_file(&temporary_image_path).expect("remove temp png");
 
         let expected_file_uri = MentionUri::File {
@@ -4081,12 +4073,16 @@ mod tests {
         }
         .to_uri()
         .to_string();
-        let expected_image_uri = MentionUri::PastedImage.to_uri().to_string();
+        let expected_image_uri = MentionUri::PastedImage {
+            name: image_name.clone(),
+        }
+        .to_uri()
+        .to_string();
 
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("[@Image]({expected_image_uri}) [@file.txt]({expected_file_uri}) ")
+                format!("[@{image_name}]({expected_image_uri}) [@file.txt]({expected_file_uri}) ")
             );
         });
 
@@ -4094,7 +4090,7 @@ mod tests {
 
         assert_eq!(contents.len(), 2);
         assert!(contents.iter().any(|(uri, mention)| {
-            *uri == MentionUri::PastedImage && matches!(mention, Mention::Image(_))
+            matches!(uri, MentionUri::PastedImage { .. }) && matches!(mention, Mention::Image(_))
         }));
         assert!(contents.iter().any(|(uri, mention)| {
             *uri == MentionUri::File {
@@ -4144,7 +4140,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     None,
                     Default::default(),
                     "Test Agent".into(),
@@ -4237,7 +4232,6 @@ mod tests {
                 MessageEditor::new(
                     workspace.downgrade(),
                     project.downgrade(),
-                    None,
                     None,
                     None,
                     Default::default(),
@@ -4387,7 +4381,6 @@ mod tests {
                 MessageEditor::new(
                     workspace.downgrade(),
                     project.downgrade(),
-                    None,
                     None,
                     None,
                     Default::default(),

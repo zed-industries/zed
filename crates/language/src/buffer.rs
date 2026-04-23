@@ -878,6 +878,14 @@ impl EditPreview {
         })
     }
 
+    pub fn result_text_snapshot(&self) -> &text::BufferSnapshot {
+        &self.applied_edits_snapshot
+    }
+
+    pub fn result_syntax_snapshot(&self) -> &SyntaxSnapshot {
+        &self.syntax_snapshot
+    }
+
     pub fn anchor_to_offset_in_result(&self, anchor: Anchor) -> usize {
         anchor
             .bias_right(&self.old_snapshot)
@@ -3733,16 +3741,24 @@ impl BufferSnapshot {
     /// returned in chunks where each chunk has a single syntax highlighting style and
     /// diagnostic status.
     #[ztracing::instrument(skip_all)]
-    pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks<'_> {
+    pub fn chunks<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        language_aware: LanguageAwareStyling,
+    ) -> BufferChunks<'_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut syntax = None;
-        if language_aware {
+        if language_aware.tree_sitter {
             syntax = Some(self.get_highlights(range.clone()));
         }
-        // We want to look at diagnostic spans only when iterating over language-annotated chunks.
-        let diagnostics = language_aware;
-        BufferChunks::new(self.text.as_rope(), range, syntax, diagnostics, Some(self))
+        BufferChunks::new(
+            self.text.as_rope(),
+            range,
+            syntax,
+            language_aware.diagnostics,
+            Some(self),
+        )
     }
 
     pub fn highlighted_text_for_range<T: ToOffset>(
@@ -4235,7 +4251,10 @@ impl BufferSnapshot {
         items
     }
 
-    pub fn outline_range_containing<T: ToOffset>(&self, range: Range<T>) -> Option<Range<Point>> {
+    pub fn outline_ranges_containing<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = Range<Point>> + '_ {
         let range = range.to_offset(self);
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.outline_config.as_ref().map(|c| &c.query)
@@ -4246,35 +4265,41 @@ impl BufferSnapshot {
             .map(|g| g.outline_config.as_ref().unwrap())
             .collect::<Vec<_>>();
 
-        while let Some(mat) = matches.peek() {
-            let config = &configs[mat.grammar_index];
-            let containing_item_node = maybe!({
-                let item_node = mat.captures.iter().find_map(|cap| {
-                    if cap.index == config.item_capture_ix {
-                        Some(cap.node)
-                    } else {
+        std::iter::from_fn(move || {
+            while let Some(mat) = matches.peek() {
+                let config = &configs[mat.grammar_index];
+                let containing_item_node = maybe!({
+                    let item_node = mat.captures.iter().find_map(|cap| {
+                        if cap.index == config.item_capture_ix {
+                            Some(cap.node)
+                        } else {
+                            None
+                        }
+                    })?;
+
+                    let item_byte_range = item_node.byte_range();
+                    if item_byte_range.end < range.start || item_byte_range.start > range.end {
                         None
+                    } else {
+                        Some(item_node)
                     }
-                })?;
+                });
 
-                let item_byte_range = item_node.byte_range();
-                if item_byte_range.end < range.start || item_byte_range.start > range.end {
-                    None
-                } else {
-                    Some(item_node)
-                }
-            });
-
-            if let Some(item_node) = containing_item_node {
-                return Some(
+                let range = containing_item_node.as_ref().map(|item_node| {
                     Point::from_ts_point(item_node.start_position())
-                        ..Point::from_ts_point(item_node.end_position()),
-                );
+                        ..Point::from_ts_point(item_node.end_position())
+                });
+                matches.advance();
+                if range.is_some() {
+                    return range;
+                }
             }
+            None
+        })
+    }
 
-            matches.advance();
-        }
-        None
+    pub fn outline_range_containing<T: ToOffset>(&self, range: Range<T>) -> Option<Range<Point>> {
+        self.outline_ranges_containing(range).next()
     }
 
     pub fn outline_items_containing<T: ToOffset>(
@@ -4477,7 +4502,13 @@ impl BufferSnapshot {
         let mut text = String::new();
         let mut highlight_ranges = Vec::new();
         let mut name_ranges = Vec::new();
-        let mut chunks = self.chunks(source_range_for_text.clone(), true);
+        let mut chunks = self.chunks(
+            source_range_for_text.clone(),
+            LanguageAwareStyling {
+                tree_sitter: true,
+                diagnostics: true,
+            },
+        );
         let mut last_buffer_range_end = 0;
         for (buffer_range, is_name) in buffer_ranges {
             let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
@@ -5402,7 +5433,13 @@ impl BufferSnapshot {
         let mut words = BTreeMap::default();
         let mut current_word_start_ix = None;
         let mut chunk_ix = query.range.start;
-        for chunk in self.chunks(query.range, false) {
+        for chunk in self.chunks(
+            query.range,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
+        ) {
             for (i, c) in chunk.text.char_indices() {
                 let ix = chunk_ix + i;
                 if classifier.is_word(c) {
@@ -5439,6 +5476,15 @@ impl BufferSnapshot {
 
         words
     }
+}
+
+/// A configuration to use when producing styled text chunks.
+#[derive(Clone, Copy)]
+pub struct LanguageAwareStyling {
+    /// Whether to highlight text chunks using tree-sitter.
+    pub tree_sitter: bool,
+    /// Whether to highlight text chunks based on the diagnostics data.
+    pub diagnostics: bool,
 }
 
 pub struct WordsQuery<'a> {
@@ -5549,11 +5595,11 @@ impl<'a> BufferChunks<'a> {
                     && range.start >= capture.node.start_byte()
                 {
                     let next_capture_end = capture.node.end_byte();
-                    if range.start < next_capture_end {
-                        highlights.stack.push((
-                            next_capture_end,
-                            highlights.highlight_maps[capture.grammar_index].get(capture.index),
-                        ));
+                    if range.start < next_capture_end
+                        && let Some(capture_id) =
+                            highlights.highlight_maps[capture.grammar_index].get(capture.index)
+                    {
+                        highlights.stack.push((next_capture_end, capture_id));
                     }
                     highlights.next_capture.take();
                 }
@@ -5688,9 +5734,11 @@ impl<'a> Iterator for BufferChunks<'a> {
                 } else {
                     let highlight_id =
                         highlights.highlight_maps[capture.grammar_index].get(capture.index);
-                    highlights
-                        .stack
-                        .push((capture.node.end_byte(), highlight_id));
+                    if let Some(highlight_id) = highlight_id {
+                        highlights
+                            .stack
+                            .push((capture.node.end_byte(), highlight_id));
+                    }
                     highlights.next_capture = highlights.captures.next();
                 }
             }

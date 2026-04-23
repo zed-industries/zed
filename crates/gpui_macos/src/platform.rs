@@ -858,6 +858,7 @@ impl Platform for MacPlatform {
             .background_executor
             .spawn(async move {
                 if let Some(mut child) = new_command("open")
+                    .arg("--")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")
