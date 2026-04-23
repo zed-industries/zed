@@ -15,6 +15,7 @@
   - [Tools](./ai/tools.md)
   - [Tool Permissions](./ai/tool-permissions.md)
   - [External Agents](./ai/external-agents.md)
+- [Parallel Agents](./ai/parallel-agents.md)
 - [Inline Assistant](./ai/inline-assistant.md)
 - [Edit Prediction](./ai/edit-prediction.md)
 - [Rules](./ai/rules.md)

@@ -20,7 +20,6 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 use x_ai::XAI_API_URL;
-pub use x_ai::completion::count_xai_tokens;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");
@@ -316,16 +315,6 @@ impl LanguageModel for XAiLanguageModel {
         true
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let model = self.model.clone();
-        cx.background_spawn(async move { count_xai_tokens(request, model) })
-            .boxed()
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -347,6 +336,7 @@ impl LanguageModel for XAiLanguageModel {
             self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
             None,
+            false,
         );
         let completions = self.stream_completion(request, cx);
         async move {

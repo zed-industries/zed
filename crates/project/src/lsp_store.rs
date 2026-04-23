@@ -77,7 +77,8 @@ use language::{
     OffsetUtf16, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16,
     Toolchain, Transaction, Unclipped,
     language_settings::{
-        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, all_language_settings,
+        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, LineEndingSetting,
+        all_language_settings,
     },
     modeline, point_to_lsp,
     proto::{
@@ -1086,6 +1087,7 @@ impl LocalLspStore {
                     let mut cx = cx.clone();
                     async move {
                         this.update(&mut cx, |this, cx| {
+                            this.invalidate_code_lens();
                             cx.emit(LspStoreEvent::RefreshCodeLens);
                             this.downstream_client.as_ref().map(|(client, project_id)| {
                                 client.send(proto::RefreshCodeLens {
@@ -1602,6 +1604,9 @@ impl LocalLspStore {
                     (adapters_and_servers, settings, request_timeout)
                 })
             })?;
+        let had_existing_line_endings = buffer
+            .handle
+            .read_with(cx, |buffer, _| buffer.max_point().row > 0);
 
         // handle whitespace formatting
         if settings.remove_trailing_whitespace_on_save {
@@ -1620,6 +1625,30 @@ impl LocalLspStore {
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.ensure_final_newline(cx);
             })?;
+        }
+
+        let line_ending_policy = match settings.line_ending {
+            LineEndingSetting::Detect => None,
+            LineEndingSetting::PreferLf => Some((LineEnding::Unix, true)),
+            LineEndingSetting::PreferCrlf => Some((LineEnding::Windows, true)),
+            LineEndingSetting::EnforceLf => Some((LineEnding::Unix, false)),
+            LineEndingSetting::EnforceCrlf => Some((LineEnding::Windows, false)),
+        };
+        if let Some((desired_line_ending, preserve_existing)) = line_ending_policy {
+            buffer.handle.update(cx, |buffer, cx| {
+                if buffer.line_ending() == desired_line_ending {
+                    return;
+                }
+                if preserve_existing && had_existing_line_endings {
+                    zlog::trace!(
+                        logger => "preserving existing line endings ({}) on save",
+                        buffer.line_ending().label()
+                    );
+                    return;
+                }
+                zlog::trace!(logger => "normalizing line endings to {}", desired_line_ending.label());
+                buffer.set_line_ending(desired_line_ending, cx);
+            });
         }
 
         // Formatter for `code_actions_on_format` that runs before
@@ -2986,7 +3015,6 @@ impl LocalLspStore {
         };
 
         let Ok(file_url) = lsp::Uri::from_file_path(old_path.as_path()) else {
-            debug_panic!("{old_path:?} is not parseable as an URI");
             return;
         };
         self.unregister_buffer_from_language_servers(buffer, &file_url, cx);
@@ -4747,6 +4775,7 @@ impl LspStore {
 
                     this.update(cx, |this, cx| {
                         let mut plain_text_buffers = Vec::new();
+                        let mut buffers_with_language = Vec::new();
                         let mut buffers_with_unknown_injections = Vec::new();
                         for handle in this.buffer_store.read(cx).buffers() {
                             let buffer = handle.read(cx);
@@ -4754,8 +4783,11 @@ impl LspStore {
                                 || buffer.language() == Some(&*language::PLAIN_TEXT)
                             {
                                 plain_text_buffers.push(handle);
-                            } else if buffer.contains_unknown_injections() {
-                                buffers_with_unknown_injections.push(handle);
+                            } else {
+                                if buffer.contains_unknown_injections() {
+                                    buffers_with_unknown_injections.push(handle.clone());
+                                }
+                                buffers_with_language.push(handle);
                             }
                         }
 
@@ -4772,6 +4804,24 @@ impl LspStore {
                             this.detect_language_for_buffer(&buffer, cx);
                             if let Some(local) = this.as_local_mut() {
                                 local.initialize_buffer(&buffer, cx);
+                                if local
+                                    .registered_buffers
+                                    .contains_key(&buffer.read(cx).remote_id())
+                                {
+                                    local.register_buffer_with_language_servers(
+                                        &buffer,
+                                        HashSet::default(),
+                                        cx,
+                                    );
+                                }
+                            }
+                        }
+
+                        // Also register buffers that already have a language with
+                        // any newly-available language servers (e.g., from extensions
+                        // that finished loading after buffers were restored).
+                        if let Some(local) = this.as_local_mut() {
+                            for buffer in buffers_with_language {
                                 if local
                                     .registered_buffers
                                     .contains_key(&buffer.read(cx).remote_id())
@@ -5522,20 +5572,20 @@ impl LspStore {
                     .await
                     .context("resolving a code action")?;
                 if let Some(edit) = action.lsp_action.edit()
-                    && (edit.changes.is_some() || edit.document_changes.is_some()) {
-                        return LocalLspStore::deserialize_workspace_edit(
-                            this.upgrade().context("no app present")?,
-                            edit.clone(),
-                            push_to_history,
-
-                            lang_server.clone(),
-                            cx,
-                        )
-                        .await;
-                    }
+                    && (edit.changes.is_some() || edit.document_changes.is_some())
+                {
+                    return LocalLspStore::deserialize_workspace_edit(
+                        this.upgrade().context("no app present")?,
+                        edit.clone(),
+                        push_to_history,
+                        lang_server.clone(),
+                        cx,
+                    )
+                    .await;
+                }
 
                 let Some(command) = action.lsp_action.command() else {
-                    return Ok(ProjectTransaction::default())
+                    return Ok(ProjectTransaction::default());
                 };
 
                 let server_capabilities = lang_server.capabilities();
@@ -5546,15 +5596,18 @@ impl LspStore {
                     .unwrap_or_default();
 
                 if !available_commands.contains(&command.command) {
-                    log::warn!("Cannot execute a command {} not listed in the language server capabilities", command.command);
-                    return Ok(ProjectTransaction::default())
+                    log::warn!(
+                        "Skipping executeCommand for {}, not listed in language server capabilities",
+                        command.command
+                    );
+                    return Ok(ProjectTransaction::default());
                 }
 
-                let request_timeout = cx.update(|app|
+                let request_timeout = cx.update(|app| {
                     ProjectSettings::get_global(app)
-                    .global_lsp_settings
-                    .get_request_timeout()
-                );
+                        .global_lsp_settings
+                        .get_request_timeout()
+                });
 
                 this.update(cx, |this, _| {
                     this.as_local_mut()
@@ -5564,12 +5617,16 @@ impl LspStore {
                 })?;
 
                 let _result = lang_server
-                    .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
-                        command: command.command.clone(),
-                        arguments: command.arguments.clone().unwrap_or_default(),
-                        ..lsp::ExecuteCommandParams::default()
-                    }, request_timeout)
-                    .await.into_response()
+                    .request::<lsp::request::ExecuteCommand>(
+                        lsp::ExecuteCommandParams {
+                            command: command.command.clone(),
+                            arguments: command.arguments.clone().unwrap_or_default(),
+                            ..lsp::ExecuteCommandParams::default()
+                        },
+                        request_timeout,
+                    )
+                    .await
+                    .into_response()
                     .context("execute command")?;
 
                 return this.update(cx, |this, _| {
@@ -11896,12 +11953,17 @@ impl LspStore {
         &self,
         id: LanguageServerId,
     ) -> Option<Arc<CachedLspAdapter>> {
-        self.as_local()
-            .and_then(|local| local.language_servers.get(&id))
-            .and_then(|language_server_state| match language_server_state {
-                LanguageServerState::Running { adapter, .. } => Some(adapter.clone()),
-                _ => None,
-            })
+        if let Some(local) = self.as_local()
+            && let Some(LanguageServerState::Running { adapter, .. }) =
+                local.language_servers.get(&id)
+        {
+            return Some(adapter.clone());
+        }
+        // In remote (SSH/collab) mode there are no local `language_servers`, but
+        // `language_server_statuses` is kept in sync with the upstream and carries each
+        // server's registered name, which is enough to look the adapter up in the registry.
+        let name = &self.language_server_statuses.get(&id)?.name;
+        self.languages.adapter_for_name(name)
     }
 
     pub(super) fn update_local_worktree_language_servers(

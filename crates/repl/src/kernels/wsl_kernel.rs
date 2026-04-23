@@ -1,5 +1,6 @@
 use super::{
-    KernelSession, KernelSpecification, RunningKernel, WslKernelSpecification, start_kernel_tasks,
+    KernelSession, KernelSpecification, RunningKernel, WslKernelSpecification,
+    build_python_exec_shell_script, start_kernel_tasks,
 };
 use anyhow::{Context as _, Result};
 use futures::{
@@ -228,8 +229,6 @@ impl WslRunningKernel {
             kernel_args.extend(resolved_argv.iter().cloned());
 
             let shell_command = if needs_python_resolution {
-                // 1. Check for .venv/bin/python or .venv/bin/python3 in working directory
-                // 2. Fall back to system python3 or python
                 let rest_args: Vec<String> = resolved_argv.iter().skip(1).cloned().collect();
                 let arg_string = quote_posix_shell_arguments(&rest_args)?;
                 let set_env_command = if env_assignments.is_empty() {
@@ -245,34 +244,8 @@ impl WslRunningKernel {
                 } else {
                     String::new()
                 };
-                // TODO: find a better way to debug missing python issues in WSL
 
-                format!(
-                    "set -e; \
-                     {} \
-                     {} \
-                     echo \"Working directory: $(pwd)\" >&2; \
-                     if [ -x .venv/bin/python ]; then \
-                       echo \"Found .venv/bin/python\" >&2; \
-                       exec .venv/bin/python {}; \
-                     elif [ -x .venv/bin/python3 ]; then \
-                       echo \"Found .venv/bin/python3\" >&2; \
-                       exec .venv/bin/python3 {}; \
-                     elif command -v python3 >/dev/null 2>&1; then \
-                       echo \"Found system python3\" >&2; \
-                       exec python3 {}; \
-                     elif command -v python >/dev/null 2>&1; then \
-                       echo \"Found system python\" >&2; \
-                       exec python {}; \
-                     else \
-                       echo 'Error: Python not found in .venv or PATH' >&2; \
-                       echo 'Contents of current directory:' >&2; \
-                       ls -la >&2; \
-                       echo 'PATH:' \"$PATH\" >&2; \
-                       exit 127; \
-                     fi",
-                    cd_command, set_env_command, arg_string, arg_string, arg_string, arg_string
-                )
+                build_python_exec_shell_script(&arg_string, &cd_command, &set_env_command)
             } else {
                 let args_string = quote_posix_shell_arguments(&resolved_argv)?;
 

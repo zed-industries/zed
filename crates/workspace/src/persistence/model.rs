@@ -12,9 +12,11 @@ use db::sqlez::{
 };
 use gpui::{AsyncWindowContext, Entity, WeakEntity, WindowId};
 
-use crate::ProjectGroupKey;
 use language::{Toolchain, ToolchainScope};
-use project::{Project, debugger::breakpoint_store::SourceBreakpoint};
+use project::{
+    Project, ProjectGroupKey, bookmark_store::SerializedBookmark,
+    debugger::breakpoint_store::SourceBreakpoint,
+};
 use remote::RemoteConnectionOptions;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -134,6 +136,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
+    pub(crate) bookmarks: BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
     pub(crate) breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     pub(crate) user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     pub(crate) window_id: Option<u64>,

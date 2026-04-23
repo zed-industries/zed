@@ -29,13 +29,11 @@ use editor::{
     movement::{self, FindRange},
 };
 use gpui::{
-    Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, Subscription, Task, WeakEntity, Window, actions,
+    Action, App, AppContext, Axis, Context, Entity, EventEmitter, Focusable, KeyContext,
+    KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
-use language::{
-    CharKind, CharScopeContext, CursorShape, Point, Selection, SelectionGoal, TransactionId,
-};
+use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use multi_buffer::ToPoint as _;
@@ -770,6 +768,7 @@ impl Vim {
                         Operator::ChangeSurrounds {
                             target: action.target,
                             opening: false,
+                            bracket_anchors: Vec::new(),
                         },
                         window,
                         cx,
@@ -966,7 +965,9 @@ impl Vim {
                     Mode::Replace => vim.paste_replace(window, cx),
                     Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                         vim.selected_register.replace('+');
-                        vim.paste(&VimPaste::default(), window, cx);
+                        let mut action = VimPaste::default();
+                        action.preserve_clipboard = true;
+                        vim.paste(&action, window, cx);
                     }
                     _ => {
                         vim.update_editor(cx, |_, editor, cx| editor.paste(&Paste, window, cx));
@@ -1043,8 +1044,17 @@ impl Vim {
     }
 
     pub fn pane(&self, window: &Window, cx: &Context<Self>) -> Option<Entity<Pane>> {
-        self.workspace(window, cx)
-            .map(|workspace| workspace.read(cx).focused_pane(window, cx))
+        let pane = self
+            .workspace(window, cx)
+            .map(|workspace| workspace.read(cx).focused_pane(window, cx))?;
+        // `focused_pane` falls back to the center pane when a dock panel
+        // without its own pane (e.g. the Agent panel) has focus. Guard
+        // against that so vim search/match commands don't steal focus.
+        if pane.read(cx).focus_handle(cx).contains_focused(window, cx) {
+            Some(pane)
+        } else {
+            None
+        }
     }
 
     pub fn enabled(cx: &mut App) -> bool {
@@ -1585,32 +1595,6 @@ impl Vim {
         .unwrap_or_default()
     }
 
-    fn editor_cursor_word(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<String> {
-        self.update_editor(cx, |_, editor, cx| {
-            let snapshot = &editor.snapshot(window, cx);
-            let selection = editor
-                .selections
-                .newest::<MultiBufferOffset>(&snapshot.display_snapshot);
-
-            let snapshot = snapshot.buffer_snapshot();
-            let (range, kind) =
-                snapshot.surrounding_word(selection.start, Some(CharScopeContext::Completion));
-            if kind == Some(CharKind::Word) {
-                let text: String = snapshot.text_for_range(range).collect();
-                if !text.trim().is_empty() {
-                    return Some(text);
-                }
-            }
-
-            None
-        })
-        .unwrap_or_default()
-    }
-
     /// When doing an action that modifies the buffer, we start recording so that `.`
     /// will replay the action.
     pub fn start_recording(&mut self, cx: &mut Context<Self>) {
@@ -1971,10 +1955,14 @@ impl Vim {
                 }
                 _ => self.clear_operator(window, cx),
             },
-            Some(Operator::ChangeSurrounds { target, opening }) => match self.mode {
+            Some(Operator::ChangeSurrounds {
+                target,
+                opening,
+                bracket_anchors,
+            }) => match self.mode {
                 Mode::Normal => {
                     if let Some(target) = target {
-                        self.change_surrounds(text, target, opening, window, cx);
+                        self.change_surrounds(text, target, opening, bracket_anchors, window, cx);
                         self.clear_operator(window, cx);
                     }
                 }
