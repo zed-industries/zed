@@ -5654,7 +5654,7 @@ fn panels_page() -> SettingsPage {
                             .commit_title_max_length
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _app: &App| {
                         settings_content
                             .git_panel
                             .get_or_insert_default()
