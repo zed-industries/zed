@@ -1391,11 +1391,7 @@ impl AgentPanel {
     ) {
         let session_id = action.from_session_id.clone();
 
-        let Some(thread) = ThreadStore::global(cx)
-            .read(cx)
-            .entries()
-            .find(|t| t.id == session_id)
-        else {
+        let Some(content) = Self::initial_content_for_thread_summary(session_id.clone(), cx) else {
             log::error!("No session found for summarization with id {}", session_id);
             return;
         };
@@ -1407,10 +1403,7 @@ impl AgentPanel {
                     None,
                     None,
                     None,
-                    Some(AgentInitialContent::ThreadSummary {
-                        session_id: thread.id,
-                        title: Some(thread.title),
-                    }),
+                    Some(content),
                     true,
                     "agent_panel",
                     window,
@@ -1420,6 +1413,21 @@ impl AgentPanel {
             })
         })
         .detach_and_log_err(cx);
+    }
+
+    fn initial_content_for_thread_summary(
+        session_id: acp::SessionId,
+        cx: &App,
+    ) -> Option<AgentInitialContent> {
+        let thread = ThreadStore::global(cx)
+            .read(cx)
+            .entries()
+            .find(|t| t.id == session_id)?;
+
+        Some(AgentInitialContent::ThreadSummary {
+            session_id: thread.id,
+            title: Some(thread.title),
+        })
     }
 
     fn external_thread(
@@ -5044,26 +5052,17 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_new_native_agent_thread_from_summary_works_for_root_thread(
-        cx: &mut TestAppContext,
-    ) {
-        let (panel, mut cx) = setup_panel(cx).await;
-        cx.run_until_parked();
-
-        panel.update(&mut cx, |panel, cx| {
-            panel.connection_store.update(cx, |store, cx| {
-                store.restart_connection(
-                    Agent::NativeAgent,
-                    Rc::new(StubAgentServer::new(SessionTrackingConnection::new())),
-                    cx,
-                );
-            });
+    async fn test_initial_content_for_thread_summary_uses_own_session_id(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
         });
-        cx.run_until_parked();
 
         let source_session_id = acp::SessionId::new("source-thread-session");
+        let source_title: SharedString = "Source Thread Title".into();
         let db_thread = agent::DbThread {
-            title: "Source Thread Title".into(),
+            title: source_title.clone(),
             messages: Vec::new(),
             updated_at: Utc::now(),
             detailed_summary: None,
@@ -5080,21 +5079,22 @@ mod tests {
             draft_prompt: None,
             ui_scroll_position: None,
         };
-        let thread_store = cx.update(|_, cx| ThreadStore::global(cx));
-        let save_task = thread_store.update(&mut cx, |store, cx| {
-            store.save_thread(
-                source_session_id.clone(),
-                db_thread,
-                PathList::default(),
-                cx,
-            )
-        });
-        save_task
+
+        let thread_store = cx.update(|cx| ThreadStore::global(cx));
+        thread_store
+            .update(cx, |store, cx| {
+                store.save_thread(
+                    source_session_id.clone(),
+                    db_thread,
+                    PathList::default(),
+                    cx,
+                )
+            })
             .await
             .expect("saving source thread should succeed");
         cx.run_until_parked();
 
-        thread_store.read_with(&cx, |store, _cx| {
+        thread_store.read_with(cx, |store, _cx| {
             let entry = store
                 .thread_from_session_id(&source_session_id)
                 .expect("saved thread should be listed in the store");
@@ -5104,40 +5104,33 @@ mod tests {
             );
         });
 
-        panel.update_in(&mut cx, |panel, window, cx| {
-            panel.new_native_agent_thread_from_summary(
-                &NewNativeAgentThreadFromSummary {
-                    from_session_id: source_session_id.clone(),
-                },
-                window,
+        let content = cx
+            .update(|cx| {
+                AgentPanel::initial_content_for_thread_summary(source_session_id.clone(), cx)
+            })
+            .expect("initial content should be produced for a root thread");
+
+        match content {
+            AgentInitialContent::ThreadSummary { session_id, title } => {
+                assert_eq!(
+                    session_id, source_session_id,
+                    "thread-summary mention should use the source thread's own session id"
+                );
+                assert_eq!(title, Some(source_title.clone()));
+            }
+            _ => panic!("expected AgentInitialContent::ThreadSummary"),
+        }
+
+        // Unknown session ids should still produce no content.
+        let missing = cx.update(|cx| {
+            AgentPanel::initial_content_for_thread_summary(
+                acp::SessionId::new("does-not-exist"),
                 cx,
-            );
+            )
         });
-        cx.run_until_parked();
-
-        panel.read_with(&cx, |panel, cx| {
-            assert!(
-                panel.active_thread_view(cx).is_some(),
-                "a new native-agent thread should have been created from the summary"
-            );
-        });
-
-        let new_session_id = panel.read_with(&cx, |panel, cx| {
-            panel
-                .active_agent_thread(cx)
-                .unwrap()
-                .read(cx)
-                .session_id()
-                .clone()
-        });
-        assert_ne!(
-            new_session_id, source_session_id,
-            "new thread should have its own session id, distinct from the source"
-        );
-        assert_eq!(
-            panel.read_with(&cx, |panel, _cx| panel.selected_agent.clone()),
-            Agent::NativeAgent,
-            "creating a thread from summary should select the native agent"
+        assert!(
+            missing.is_none(),
+            "unknown session ids should not produce initial content"
         );
     }
 
