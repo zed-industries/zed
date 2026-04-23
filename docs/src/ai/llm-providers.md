@@ -5,7 +5,7 @@ description: Bring your own API keys to Zed. Set up Anthropic, OpenAI, Google AI
 
 # LLM Providers
 
-To use AI in Zed, you need to have at least one large language model provider set up. Once configured, providers are available in the [Agent Panel](./agent-panel.md), [Inline Assistant](./inline-assistant.md), and [Text Threads](./text-threads.md).
+To use AI in Zed, you need to have at least one large language model provider set up. Once configured, providers are available in the [Agent Panel](./agent-panel.md) and [Inline Assistant](./inline-assistant.md).
 
 You can do that by either subscribing to [one of Zed's plans](./plans-and-usage.md), or by using API keys you already have for the supported providers. For general AI setup, see [Configuration](./configuration.md).
 
@@ -88,7 +88,7 @@ With that done, choose one of the three authentication methods:
 While it's possible to configure through the Agent Panel settings UI by entering your AWS access key and secret directly, we recommend using named profiles instead for better security practices.
 To do this:
 
-1. Create an IAM User that you can assume in the [IAM Console](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users).
+1. Create an IAM User in the [IAM Console](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users).
 2. Create security credentials for that User, save them and keep them secure.
 3. Open the Agent Configuration with (`agent: open settings`) and go to the Amazon Bedrock section
 4. Copy the credentials from Step 2 into the respective **Access Key ID**, **Secret Access Key**, and **Region** fields.
@@ -152,8 +152,6 @@ For the most up-to-date supported regions and models, refer to the [Supported Mo
 
 #### Extended Context Window {#bedrock-extended-context}
 
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
-
 Anthropic models on Bedrock support a 1M token extended context window through the `anthropic_beta` API parameter. To enable this feature, set `"allow_extended_context": true` in your Bedrock configuration:
 
 ```json [settings]
@@ -169,11 +167,9 @@ Anthropic models on Bedrock support a 1M token extended context window through t
 }
 ```
 
-Zed enables extended context for supported models (Claude Sonnet 4.5 and Claude Opus 4.6). Extended context usage may increase API costs—refer to AWS Bedrock pricing for details.
+Zed enables extended context for supported models (Claude Sonnet 4.5, Claude Opus 4.6, and Claude Opus 4.7). Extended context usage may increase API costs—refer to AWS Bedrock pricing for details.
 
 #### Image Support {#bedrock-image-support}
-
-> **Preview:** This feature is available in Zed Preview. It will be included in the next Stable release.
 
 Bedrock models that support vision (Claude 3 and later, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision models, Mistral Pixtral) can receive images in conversations and tool results.
 
@@ -611,6 +607,7 @@ By default, OpenAI-compatible models inherit the following capabilities:
 - `parallel_tool_calls`: false (does not support `parallel_tool_calls` parameter)
 - `prompt_cache_key`: false (does not support `prompt_cache_key` parameter)
 - `chat_completions`: true (calls the `/chat/completions` endpoint)
+- `interleaved_reasoning`: false (thinking tokens are sent inline in message text; set to true to send them as a dedicated `reasoning_content` field for models that expect it)
 
 If a provider exposes models that only work with the Responses API, set `chat_completions` to `false` for those entries. Zed uses the Responses endpoint for these models.
 
@@ -629,8 +626,6 @@ OpenRouter provides access to multiple AI models through a single API. It suppor
 The OpenRouter API key will be saved in your keychain.
 
 Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
-
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
 
 When using OpenRouter as your assistant provider, you must explicitly select a model in your settings. OpenRouter no longer provides a default model selection.
 
@@ -768,7 +763,7 @@ You can also set a custom endpoint for Vercel AI Gateway in your settings file:
 [Vercel v0](https://v0.app/docs/api/model) is a model for generating full-stack apps, with framework-aware completions for stacks like Next.js and Vercel.
 It supports text and image inputs and provides fast streaming responses.
 
-The v0 models are [OpenAI-compatible models](/#openai-api-compatible), and Vercel appears as a dedicated provider in the panel's settings view.
+The v0 models are [OpenAI-compatible models](#openai-api-compatible), and Vercel appears as a dedicated provider in the panel's settings view.
 
 To start using it with Zed, ensure you have first created a [v0 API key](https://v0.dev/chat/settings/keys).
 Once you have it, paste it directly into the Vercel provider section in the panel's settings view.

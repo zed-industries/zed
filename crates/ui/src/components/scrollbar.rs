@@ -6,19 +6,18 @@ use std::{
 };
 
 use gpui::{
-    Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context,
-    Corner, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId, Entity, EntityId,
+    Along, Anchor, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask,
+    Context, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId, Entity, EntityId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
-    LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Negate,
-    ParentElement, Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
+    LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
     StatefulInteractiveElement, Style, Styled, Task, UniformListDecoration,
     UniformListScrollHandle, Window, ease_in_out, prelude::FluentBuilder as _, px, quad, relative,
     size,
 };
-use settings::SettingsStore;
+use gpui_util::ResultExt;
 use smallvec::SmallVec;
 use theme::ActiveTheme as _;
-use util::ResultExt;
 
 use std::ops::Range;
 
@@ -34,7 +33,6 @@ pub mod scrollbars {
     use gpui::{App, Global};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
-    use settings::Settings;
 
     /// When to show the scrollbar in the editor.
     ///
@@ -54,28 +52,7 @@ pub mod scrollbars {
         Never,
     }
 
-    impl From<settings::ShowScrollbar> for ShowScrollbar {
-        fn from(value: settings::ShowScrollbar) -> Self {
-            match value {
-                settings::ShowScrollbar::Auto => ShowScrollbar::Auto,
-                settings::ShowScrollbar::System => ShowScrollbar::System,
-                settings::ShowScrollbar::Always => ShowScrollbar::Always,
-                settings::ShowScrollbar::Never => ShowScrollbar::Never,
-            }
-        }
-    }
-
-    pub trait GlobalSetting {
-        fn get_value(cx: &App) -> &Self;
-    }
-
-    impl<T: Settings> GlobalSetting for T {
-        fn get_value(cx: &App) -> &T {
-            T::get_global(cx)
-        }
-    }
-
-    pub trait ScrollbarVisibility: GlobalSetting + 'static {
+    pub trait ScrollbarVisibility: 'static {
         fn visibility(&self, cx: &App) -> ShowScrollbar;
     }
 
@@ -103,11 +80,9 @@ where
     let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
     let track_color = config.track_color;
 
-    let state = window.use_keyed_state(element_id, cx, |window, cx| {
+    let state = window.use_keyed_state(element_id, cx, |_, cx| {
         let parent_id = cx.entity_id();
-        ScrollbarStateWrapper(
-            cx.new(|cx| ScrollbarState::new_from_config(config, parent_id, window, cx)),
-        )
+        ScrollbarStateWrapper(cx.new(|cx| ScrollbarState::new_from_config(config, parent_id, cx)))
     });
 
     state.update(cx, |state, cx| {
@@ -258,7 +233,7 @@ impl<T: ScrollableHandle> UniformListDecoration for ScrollbarStateWrapper<T> {
         _cx: &mut App,
     ) -> gpui::AnyElement {
         ScrollbarElement {
-            origin: scroll_offset.negate(),
+            origin: -scroll_offset,
             state: self.0.clone(),
         }
         .into_any()
@@ -399,8 +374,8 @@ impl Scrollbars {
         Self::new_with_setting(show_along, |_| ShowScrollbar::Always)
     }
 
-    pub fn for_settings<S: ScrollbarVisibility>() -> Scrollbars {
-        Scrollbars::new_with_setting(ScrollAxes::Both, |cx| S::get_value(cx).visibility(cx))
+    pub fn for_settings<S: ScrollbarVisibility + Default>() -> Scrollbars {
+        Scrollbars::new_with_setting(ScrollAxes::Both, |cx| S::default().visibility(cx))
     }
 }
 
@@ -589,6 +564,16 @@ enum ParentHoverEvent {
     Outside,
 }
 
+pub fn on_new_scrollbars<T: gpui::Global>(cx: &mut App) {
+    cx.observe_new::<ScrollbarState>(|_, window, cx| {
+        if let Some(window) = window {
+            cx.observe_global_in::<T>(window, ScrollbarState::settings_changed)
+                .detach();
+        }
+    })
+    .detach();
+}
+
 /// This is used to ensure notifies within the state do not notify the parent
 /// unintentionally.
 struct ScrollbarStateWrapper<T: ScrollableHandle>(Entity<ScrollbarState<T>>);
@@ -611,15 +596,7 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
 }
 
 impl<T: ScrollableHandle> ScrollbarState<T> {
-    fn new_from_config(
-        config: Scrollbars<T>,
-        parent_id: EntityId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.observe_global_in::<SettingsStore>(window, Self::settings_changed)
-            .detach();
-
+    fn new_from_config(config: Scrollbars<T>, parent_id: EntityId, cx: &mut Context<Self>) -> Self {
         let (manually_added, scroll_handle) = match config.scrollable_handle {
             Handle::Tracked(handle) => (true, handle),
             Handle::Untracked(func) => (false, func()),
@@ -911,7 +888,7 @@ impl ThumbState {
 }
 
 impl ScrollableHandle for UniformListScrollHandle {
-    fn max_offset(&self) -> Size<Pixels> {
+    fn max_offset(&self) -> Point<Pixels> {
         self.0.borrow().base_handle.max_offset()
     }
 
@@ -929,7 +906,7 @@ impl ScrollableHandle for UniformListScrollHandle {
 }
 
 impl ScrollableHandle for ListState {
-    fn max_offset(&self) -> Size<Pixels> {
+    fn max_offset(&self) -> Point<Pixels> {
         self.max_offset_for_scrollbar()
     }
 
@@ -955,7 +932,7 @@ impl ScrollableHandle for ListState {
 }
 
 impl ScrollableHandle for ScrollHandle {
-    fn max_offset(&self) -> Size<Pixels> {
+    fn max_offset(&self) -> Point<Pixels> {
         self.max_offset()
     }
 
@@ -973,7 +950,7 @@ impl ScrollableHandle for ScrollHandle {
 }
 
 pub trait ScrollableHandle: 'static + Any + Sized + Clone {
-    fn max_offset(&self) -> Size<Pixels>;
+    fn max_offset(&self) -> Point<Pixels>;
     fn set_offset(&self, point: Point<Pixels>);
     fn offset(&self) -> Point<Pixels>;
     fn viewport(&self) -> Bounds<Pixels>;
@@ -984,7 +961,7 @@ pub trait ScrollableHandle: 'static + Any + Sized + Clone {
         self.max_offset().along(axis) > Pixels::ZERO
     }
     fn content_size(&self) -> Size<Pixels> {
-        self.viewport().size + self.max_offset()
+        self.viewport().size + self.max_offset().into()
     }
 }
 
@@ -1006,7 +983,7 @@ impl ScrollbarLayout {
     fn compute_click_offset(
         &self,
         event_position: Point<Pixels>,
-        max_offset: Size<Pixels>,
+        max_offset: Point<Pixels>,
         event_type: ScrollbarMouseEvent,
     ) -> Pixels {
         let Self {
@@ -1041,7 +1018,18 @@ impl ScrollbarLayout {
 
 impl PartialEq for ScrollbarLayout {
     fn eq(&self, other: &Self) -> bool {
-        self.axis == other.axis && self.thumb_bounds == other.thumb_bounds
+        if self.axis != other.axis {
+            return false;
+        }
+
+        let axis = self.axis;
+        let thumb_offset =
+            self.thumb_bounds.origin.along(axis) - self.track_bounds.origin.along(axis);
+        let other_thumb_offset =
+            other.thumb_bounds.origin.along(axis) - other.track_bounds.origin.along(axis);
+
+        thumb_offset == other_thumb_offset
+            && self.thumb_bounds.size.along(axis) == other.thumb_bounds.size.along(axis)
     }
 }
 
@@ -1134,10 +1122,10 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         .into_iter()
                         .map(|(axis, thumb_range, reserved_space)| {
                             let track_anchor = match axis {
-                                ScrollbarAxis::Horizontal => Corner::BottomLeft,
-                                ScrollbarAxis::Vertical => Corner::TopRight,
+                                ScrollbarAxis::Horizontal => Anchor::BottomLeft,
+                                ScrollbarAxis::Vertical => Anchor::TopRight,
                             };
-                            let Bounds { origin, size } = Bounds::from_corner_and_size(
+                            let Bounds { origin, size } = Bounds::from_anchor_and_size(
                                 track_anchor,
                                 bounds
                                     .corner(track_anchor)

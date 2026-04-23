@@ -295,7 +295,7 @@ impl Component for Callout {
                                 "Error details:",
                                 "• Quota exceeded for metric",
                                 "• Limit: 0",
-                                "• Model: gemini-3-pro",
+                                "• Model: gemini-3.1-pro",
                                 "Please retry in 26.33s.",
                                 "Additional details:",
                                 "- Request ID: abc123def456",

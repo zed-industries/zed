@@ -154,6 +154,14 @@ pub fn init_test(app_version: Version, release_channel: ReleaseChannel, cx: &mut
 }
 
 impl ReleaseChannel {
+    /// All release channels.
+    pub const ALL: [ReleaseChannel; 4] = [
+        ReleaseChannel::Dev,
+        ReleaseChannel::Nightly,
+        ReleaseChannel::Preview,
+        ReleaseChannel::Stable,
+    ];
+
     /// Returns the global [`ReleaseChannel`].
     pub fn global(cx: &App) -> Self {
         cx.global::<GlobalReleaseChannel>().0

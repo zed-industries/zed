@@ -12,9 +12,6 @@ function finalize {
   # after packages install (curl, etc), get the rust toolchain
   which rustup > /dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
   cat <<EOF
-Note: It's recommended to install and configure Wild or Mold for faster builds.
-      Run script/install-wild or script/install-mold.
-
 Finished installing Linux dependencies with script/linux
 EOF
 }
@@ -39,6 +36,8 @@ if [[ -n $apt ]]; then
     make
     cmake
     clang
+    lld
+    llvm
     jq
     git
     curl
@@ -48,24 +47,35 @@ if [[ -n $apt ]]; then
     musl-tools
     musl-dev
     build-essential
+    pipewire
+    xdg-desktop-portal
   )
   if (grep -qP 'PRETTY_NAME="(Debian|Raspbian).+13' /etc/os-release); then
       # libstdc++-14-dev is in build-essential
-      deps+=( mold )
+      true
   elif (grep -qP 'PRETTY_NAME="(Linux Mint 22|.+24\.(04|10))' /etc/os-release); then
-    deps+=( mold libstdc++-14-dev )
+    deps+=( libstdc++-14-dev )
   elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+12|Linux Mint 21|.+22\.04)' /etc/os-release); then
-    deps+=( mold libstdc++-12-dev )
+    deps+=( libstdc++-12-dev )
   elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+11|Linux Mint 20|.+20\.04)' /etc/os-release); then
     # Ubuntu 20.04 ships clang-10 and libstdc++-10 which lack adequate C++20
     # support for building webrtc-sys (requires -std=c++20, lambdas in
     # unevaluated contexts from clang 17+, and working std::ranges in the
-    # stdlib). clang-18 is available in focal-security/universe as an official
-    # backport, and libstdc++-11-dev from the ubuntu-toolchain-r PPA provides
-    # headers with working pointer_traits/contiguous_range.
+    # stdlib).
     # Note: the prebuilt libwebrtc.a is compiled with libstdc++, so we must
     # use libstdc++ (not libc++) to avoid ABI mismatches at link time.
-    $maysudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+
+    # libstdc++-11-dev (headers with working pointer_traits/contiguous_range)
+    # is only available from the ubuntu-toolchain-r PPA. Add the source list
+    # and GPG key manually instead of using add-apt-repository, whose HKP
+    # keyserver lookups (port 11371) frequently time out in CI.
+    $maysudo "$apt" install -y curl gnupg
+    codename=$(lsb_release -cs)
+    echo "deb https://ppa.launchpadcontent.net/ubuntu-toolchain-r/test/ubuntu $codename main" | \
+      $maysudo tee /etc/apt/sources.list.d/ubuntu-toolchain-r-test.list > /dev/null
+    curl -fsSL 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x1E9377A2BA9EF27F' | \
+      sed -n '/-----BEGIN PGP PUBLIC KEY BLOCK-----/,/-----END PGP PUBLIC KEY BLOCK-----/p' | \
+      $maysudo gpg --dearmor -o /etc/apt/trusted.gpg.d/ubuntu-toolchain-r-test.gpg
     deps+=( clang-18 libstdc++-11-dev )
   fi
 
@@ -99,6 +109,8 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     libzstd-devel
     vulkan-loader
     sqlite-devel
+    pipewire
+    xdg-desktop-portal
     jq
     git
     tar
@@ -110,7 +122,6 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
       perl-IPC-Cmd
       perl-File-Compare
       perl-File-Copy
-      mold
     )
   elif grep -qP '^ID="?(rhel|rocky|alma|centos|ol)' /etc/os-release; then
     deps+=( perl-interpreter )
@@ -155,6 +166,7 @@ if [[ -n $zyp ]]; then
     cmake
     fontconfig-devel
     gcc
+    libva-devel
     gcc-c++
     glib2-devel
     git
@@ -167,12 +179,13 @@ if [[ -n $zyp ]]; then
     libxkbcommon-x11-devel
     libzstd-devel
     make
-    mold
     openssl-devel
     sqlite3-devel
     tar
     wayland-devel
     xcb-util-devel
+    pipewire
+    xdg-desktop-portal
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   finalize
@@ -191,6 +204,7 @@ if [[ -n $pacman ]]; then
     alsa-lib
     fontconfig
     glib2
+    libva
     wayland
     libgit2
     libxcb
@@ -198,8 +212,9 @@ if [[ -n $pacman ]]; then
     openssl
     zstd
     pkgconf
-    mold
     sqlite
+    pipewire
+    xdg-desktop-portal
     jq
     git
   )
@@ -222,14 +237,16 @@ if [[ -n $xbps ]]; then
     alsa-lib-devel
     fontconfig-devel
     glib-devel
+    libva-devel
     libxcb-devel
     libxkbcommon-devel
     libzstd-devel
     openssl-devel
     wayland-devel
     vulkan-loader
-    mold
     sqlite-devel
+    pipewire
+    xdg-desktop-portal
   )
   $maysudo "$xbps" -Syu "${deps[@]}"
   finalize
@@ -249,11 +266,13 @@ if [[ -n $emerge ]]; then
     dev-util/cmake
     media-libs/alsa-lib
     media-libs/fontconfig
+    media-libs/libva
     media-libs/vulkan-loader
     x11-libs/libxcb
     x11-libs/libxkbcommon
-    sys-devel/mold
     dev-db/sqlite
+    media-video/pipewire
+    sys-apps/xdg-desktop-portal
   )
   $maysudo "$emerge" -u "${deps[@]}"
   finalize

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use collections::BTreeMap;
+use credentials_provider::CredentialsProvider;
 use futures::{AsyncReadExt, FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
@@ -41,6 +42,7 @@ pub struct VercelAiGatewayLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<AvailableModel>,
     fetch_models_task: Option<Task<Result<(), LanguageModelCompletionError>>>,
@@ -52,16 +54,26 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = VercelAiGatewayLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = VercelAiGatewayLanguageModelProvider::api_url(cx);
-        let task = self
-            .api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx);
+        let task = self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        );
 
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -100,7 +112,11 @@ impl State {
 }
 
 impl VercelAiGatewayLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>({
                 let mut last_settings = VercelAiGatewayLanguageModelProvider::settings(cx).clone();
@@ -116,6 +132,7 @@ impl VercelAiGatewayLanguageModelProvider {
             .detach();
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                credentials_provider,
                 http_client: http_client.clone(),
                 available_models: Vec::new(),
                 fetch_models_task: None,
@@ -385,6 +402,10 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
         }
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_split_token_display(&self) -> bool {
         true
     }
@@ -399,24 +420,6 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let max_token_count = self.max_token_count();
-        cx.background_spawn(async move {
-            let messages = crate::provider::open_ai::collect_tiktoken_messages(request);
-            let model = if max_token_count >= 100_000 {
-                "gpt-4o"
-            } else {
-                "gpt-4"
-            };
-            tiktoken_rs::num_tokens_from_messages(model, &messages).map(|tokens| tokens as u64)
-        })
-        .boxed()
     }
 
     fn stream_completion(
@@ -440,6 +443,7 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
             self.model.capabilities.prompt_cache_key,
             self.max_output_tokens(),
             None,
+            false,
         );
         let completions = self.stream_open_ai(request, cx);
         async move {
@@ -570,6 +574,7 @@ async fn list_models(
                 parallel_tool_calls,
                 prompt_cache_key,
                 chat_completions: true,
+                interleaved_reasoning: false,
             },
         });
     }

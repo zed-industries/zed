@@ -1,20 +1,18 @@
-#![allow(unused, dead_code)]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use editor::{Editor, EditorMode, MultiBuffer, SizingBehavior};
 use futures::future::Shared;
 use gpui::{
-    App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, KeyContext,
-    RetainAllImageCache, StatefulInteractiveElement, Task, TextStyleRefinement, image_cache,
-    prelude::*,
+    App, Entity, EventEmitter, Focusable, Hsla, InteractiveElement, RetainAllImageCache,
+    StatefulInteractiveElement, Task, TextStyleRefinement, prelude::*,
 };
 use language::{Buffer, Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use nbformat::v4::{CellId, CellMetadata, CellType};
 use runtimelib::{JupyterMessage, JupyterMessageContent};
 use settings::Settings as _;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{CommonAnimationExt, IconButtonShape, prelude::*};
 use util::ResultExt;
 
@@ -98,6 +96,11 @@ pub enum Cell {
     Code(Entity<CodeCell>),
     Markdown(Entity<MarkdownCell>),
     Raw(Entity<RawCell>),
+}
+
+pub(crate) enum MovementDirection {
+    Start,
+    End,
 }
 
 fn convert_outputs(
@@ -225,6 +228,52 @@ impl Cell {
             })),
         }
     }
+
+    pub(crate) fn move_to(&self, direction: MovementDirection, window: &mut Window, cx: &mut App) {
+        fn move_in_editor(
+            editor: &Entity<Editor>,
+            direction: MovementDirection,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            editor.update(cx, |editor, cx| {
+                match direction {
+                    MovementDirection::Start => {
+                        editor.move_to_beginning(&Default::default(), window, cx);
+                    }
+                    MovementDirection::End => {
+                        editor.move_to_end(&Default::default(), window, cx);
+                    }
+                }
+                editor.focus_handle(cx).focus(window, cx);
+            })
+        }
+
+        match self {
+            Cell::Code(cell) => {
+                cell.update(cx, |cell, cx| {
+                    move_in_editor(&cell.editor, direction, window, cx)
+                });
+            }
+            Cell::Markdown(cell) => {
+                cell.update(cx, |cell, cx| {
+                    cell.set_editing(true);
+                    move_in_editor(&cell.editor, direction, window, cx);
+
+                    cx.notify();
+                });
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn editor<'a>(&'a self, cx: &'a App) -> Option<&'a Entity<Editor>> {
+        match self {
+            Cell::Code(cell) => Some(cell.read(cx).editor()),
+            Cell::Markdown(cell) => Some(cell.read(cx).editor()),
+            _ => None,
+        }
+    }
 }
 
 pub trait RenderableCell: Render {
@@ -236,7 +285,7 @@ pub trait RenderableCell: Render {
     fn source(&self) -> &String;
     fn selected(&self) -> bool;
     fn set_selected(&mut self, selected: bool) -> &mut Self;
-    fn selected_bg_color(&self, window: &mut Window, cx: &mut Context<Self>) -> Hsla {
+    fn selected_bg_color(&self, _window: &mut Window, cx: &mut Context<Self>) -> Hsla {
         if self.selected() {
             let mut color = cx.theme().colors().element_hover;
             color.fade_out(0.5);
@@ -253,7 +302,7 @@ pub trait RenderableCell: Render {
     fn cell_position_spacer(
         &self,
         is_first: bool,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let cell_position = self.cell_position();
@@ -328,7 +377,6 @@ pub struct MarkdownCell {
     editing: bool,
     selected: bool,
     cell_position: Option<CellPosition>,
-    languages: Arc<LanguageRegistry>,
     _editor_subscription: gpui::Subscription,
 }
 
@@ -381,12 +429,12 @@ impl MarkdownCell {
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
             editor.set_use_modal_editing(true);
+            editor.disable_mouse_wheel_zoom();
             editor
         });
 
         let markdown = cx.new(|cx| Markdown::new(source.clone().into(), None, None, cx));
 
-        let cell_id = id.clone();
         let editor_subscription =
             cx.subscribe(&editor, move |this, _editor, event, cx| match event {
                 editor::EditorEvent::Blurred => {
@@ -410,7 +458,6 @@ impl MarkdownCell {
             editing: start_editing,
             selected: false,
             cell_position: None,
-            languages,
             _editor_subscription: editor_subscription,
         }
     }
@@ -461,8 +508,6 @@ impl MarkdownCell {
             .unwrap_or_default();
 
         self.source = source.clone();
-        let languages = self.languages.clone();
-
         self.markdown.update(cx, |markdown, cx| {
             markdown.reset(source.into(), cx);
         });
@@ -606,7 +651,7 @@ pub struct CodeCell {
     outputs: Vec<Output>,
     selected: bool,
     cell_position: Option<CellPosition>,
-    language_task: Task<()>,
+    _language_task: Task<()>,
     execution_start_time: Option<Instant>,
     execution_duration: Option<Duration>,
     is_executing: bool,
@@ -626,7 +671,7 @@ impl CodeCell {
         let buffer = cx.new(|cx| Buffer::local(source.clone(), cx));
         let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
-        let editor_view = cx.new(|cx| {
+        let editor = cx.new(|cx| {
             let mut editor = Editor::new(
                 EditorMode::Full {
                     scale_ui_elements_with_buffer_font_size: false,
@@ -648,6 +693,8 @@ impl CodeCell {
                 ..Default::default()
             };
 
+            editor.disable_mouse_wheel_zoom();
+            editor.disable_scrollbars_and_minimap(window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
             editor.set_use_modal_editing(true);
@@ -666,14 +713,14 @@ impl CodeCell {
             metadata,
             execution_count: None,
             source,
-            editor: editor_view,
+            editor,
             outputs: Vec::new(),
             selected: false,
             cell_position: None,
-            language_task,
             execution_start_time: None,
             execution_duration: None,
             is_executing: false,
+            _language_task: language_task,
         }
     }
 
@@ -725,6 +772,7 @@ impl CodeCell {
                 ..Default::default()
             };
 
+            editor.disable_mouse_wheel_zoom();
             editor.set_text(source.clone(), window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
@@ -748,10 +796,10 @@ impl CodeCell {
             outputs,
             selected: false,
             cell_position: None,
-            language_task,
             execution_start_time: None,
             execution_duration: None,
             is_executing: false,
+            _language_task: language_task,
         }
     }
 
@@ -879,15 +927,7 @@ impl CodeCell {
         cx.notify();
     }
 
-    fn output_control(&self) -> Option<CellControlType> {
-        if self.has_outputs() {
-            Some(CellControlType::ClearCell)
-        } else {
-            None
-        }
-    }
-
-    pub fn gutter_output(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub fn gutter_output(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_selected = self.selected();
 
         div()
@@ -948,7 +988,7 @@ impl RenderableCell for CodeCell {
         &self.source
     }
 
-    fn control(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<CellControl> {
+    fn control(&self, _window: &mut Window, cx: &mut Context<Self>) -> Option<CellControl> {
         let control_type = if self.has_outputs() {
             CellControlType::RerunCell
         } else {
@@ -1038,8 +1078,7 @@ impl RenderableCell for CodeCell {
 }
 
 impl RunnableCell for CodeCell {
-    fn run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        println!("Running code cell: {}", self.id);
+    fn run(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(CellEvent::Run(self.id.clone()));
     }
 
@@ -1062,11 +1101,8 @@ impl Render for CodeCell {
         } else {
             None
         };
-        let output_max_width = plain::max_width_for_columns(
-            ReplSettings::get_global(cx).output_max_width_columns,
-            window,
-            cx,
-        );
+        let output_max_width =
+            plain::max_width_for_columns(ReplSettings::get_global(cx).max_columns, window, cx);
         // get the language from the editor's buffer
         let language_name = self
             .editor
@@ -1198,41 +1234,23 @@ impl Render for CodeCell {
                                             },
                                         )
                                         // output at bottom
-                                        .child(div().w_full().children(self.outputs.iter().map(
-                                            |output| {
-                                                let content = match output {
-                                                    Output::Plain { content, .. } => {
-                                                        Some(content.clone().into_any_element())
-                                                    }
-                                                    Output::Markdown { content, .. } => {
-                                                        Some(content.clone().into_any_element())
-                                                    }
-                                                    Output::Stream { content, .. } => {
-                                                        Some(content.clone().into_any_element())
-                                                    }
-                                                    Output::Image { content, .. } => {
-                                                        Some(content.clone().into_any_element())
-                                                    }
-                                                    Output::Message(message) => Some(
-                                                        div()
-                                                            .child(message.clone())
-                                                            .into_any_element(),
-                                                    ),
-                                                    Output::Table { content, .. } => {
-                                                        Some(content.clone().into_any_element())
-                                                    }
-                                                    Output::Json { content, .. } => {
-                                                        Some(content.clone().into_any_element())
-                                                    }
-                                                    Output::ErrorOutput(error_view) => {
-                                                        error_view.render(window, cx)
-                                                    }
-                                                    Output::ClearOutputWaitMarker => None,
-                                                };
-
-                                                div().children(content)
-                                            },
-                                        ))),
+                                        .child(
+                                            div()
+                                                .id((
+                                                    ElementId::from(self.id.to_string()),
+                                                    "output-scroll",
+                                                ))
+                                                .w_full()
+                                                .when_some(output_max_width, |div, max_width| {
+                                                    div.max_w(max_width).overflow_x_scroll()
+                                                })
+                                                .when_some(output_max_height, |div, max_height| {
+                                                    div.max_h(max_height).overflow_y_scroll()
+                                                })
+                                                .children(self.outputs.iter().map(|output| {
+                                                    div().children(output.content(window, cx))
+                                                })),
+                                        ),
                                 ),
                             ),
                     )
