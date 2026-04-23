@@ -6663,7 +6663,7 @@ fn terminal_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("terminal.bell"),
                     pick: |settings_content| settings_content.terminal.as_ref()?.bell.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _app: &App| {
                         settings_content.terminal.get_or_insert_default().bell = value;
                     },
                 }),
