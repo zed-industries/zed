@@ -886,6 +886,7 @@ impl SearchableItem for LspLogView {
             replacement: false,
             selection: false,
             select_all: true,
+            include_hidden: false,
         }
     }
     fn active_match_index(

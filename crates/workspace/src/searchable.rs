@@ -57,6 +57,9 @@ pub struct SearchOptions {
     pub selection: bool,
     pub select_all: bool,
     pub find_in_results: bool,
+    /// Whether the item has sections hidden behind disclosures whose contents
+    /// can also be searched.
+    pub include_hidden: bool,
 }
 
 // Whether to always select the current selection (even if empty)
@@ -81,6 +84,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
             selection: true,
             select_all: true,
             find_in_results: false,
+            include_hidden: false,
         }
     }
 

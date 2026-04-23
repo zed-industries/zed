@@ -1836,6 +1836,7 @@ impl SearchableItem for TerminalView {
             selection: false,
             select_all: false,
             find_in_results: false,
+            include_hidden: false,
         }
     }
 

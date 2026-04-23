@@ -3,7 +3,8 @@ mod registrar;
 use crate::{
     FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOption,
     SearchOptions, SearchSource, SelectAllMatches, SelectNextMatch, SelectPreviousMatch,
-    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
+    ToggleCaseSensitive, ToggleIncludeHidden, ToggleRegex, ToggleReplace, ToggleSelection,
+    ToggleWholeWord,
     buffer_search::registrar::WithResultsOrExternalQuery,
     search_bar::{
         ActionButtonState, HistoryNavigationDirection, alignment_element,
@@ -295,6 +296,7 @@ impl Render for BufferSearchBar {
             selection,
             select_all,
             find_in_results,
+            include_hidden,
         } = self.supported_options(cx);
 
         self.query_editor.update(cx, |query_editor, cx| {
@@ -377,6 +379,13 @@ impl Render for BufferSearchBar {
                     })
                     .when(regex, |div| {
                         div.child(SearchOption::Regex.as_button(
+                            self.search_options,
+                            SearchSource::Buffer,
+                            focus_handle.clone(),
+                        ))
+                    })
+                    .when(include_hidden, |div| {
+                        div.child(SearchOption::IncludeHidden.as_button(
                             self.search_options,
                             SearchSource::Buffer,
                             focus_handle.clone(),
@@ -618,6 +627,9 @@ impl Render for BufferSearchBar {
             .when(regex, |this| {
                 this.on_action(cx.listener(Self::toggle_regex))
             })
+            .when(include_hidden, |this| {
+                this.on_action(cx.listener(Self::toggle_include_hidden))
+            })
             .when(selection, |this| {
                 this.on_action(cx.listener(Self::toggle_selection))
             })
@@ -769,6 +781,13 @@ impl BufferSearchBar {
                 this.toggle_regex(action, window, cx);
             }
         }));
+        registrar.register_handler(ForDeployed(
+            |this, action: &ToggleIncludeHidden, window, cx| {
+                if this.supported_options(cx).include_hidden {
+                    this.toggle_include_hidden(action, window, cx);
+                }
+            },
+        ));
         registrar.register_handler(ForDeployed(|this, action: &ToggleSelection, window, cx| {
             if this.supported_options(cx).selection {
                 this.toggle_selection(action, window, cx);
@@ -1282,6 +1301,10 @@ impl BufferSearchBar {
         self.search_options.contains(search_option)
     }
 
+    pub fn search_options(&self) -> SearchOptions {
+        self.search_options
+    }
+
     pub fn enable_search_option(
         &mut self,
         search_option: SearchOptions,
@@ -1532,6 +1555,15 @@ impl BufferSearchBar {
         self.toggle_search_option(SearchOptions::REGEX, window, cx)
     }
 
+    fn toggle_include_hidden(
+        &mut self,
+        _: &ToggleIncludeHidden,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_search_option(SearchOptions::INCLUDE_HIDDEN, window, cx)
+    }
+
     fn clear_active_searchable_item_matches(&mut self, window: &mut Window, cx: &mut App) {
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             self.active_match_index = None;
@@ -1590,6 +1622,8 @@ impl BufferSearchBar {
                 } else {
                     // Value doesn't matter, we only construct empty matchers with it
 
+                    let include_hidden =
+                        self.search_options.contains(SearchOptions::INCLUDE_HIDDEN);
                     if self.search_options.contains(SearchOptions::REGEX) {
                         match SearchQuery::regex(
                             query,
@@ -1603,7 +1637,9 @@ impl BufferSearchBar {
                             false,
                             None,
                         ) {
-                            Ok(query) => query.with_replacement(self.replacement(cx)),
+                            Ok(query) => query
+                                .with_include_hidden(include_hidden)
+                                .with_replacement(self.replacement(cx)),
                             Err(e) => {
                                 self.query_error = Some(e.to_string());
                                 self.clear_active_searchable_item_matches(window, cx);
@@ -1622,7 +1658,9 @@ impl BufferSearchBar {
                             false,
                             None,
                         ) {
-                            Ok(query) => query.with_replacement(self.replacement(cx)),
+                            Ok(query) => query
+                                .with_include_hidden(include_hidden)
+                                .with_replacement(self.replacement(cx)),
                             Err(e) => {
                                 self.query_error = Some(e.to_string());
                                 self.clear_active_searchable_item_matches(window, cx);

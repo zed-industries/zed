@@ -67,6 +67,7 @@ pub enum SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
+        include_hidden: bool,
         inner: SearchInputs,
     },
     Regex {
@@ -76,6 +77,7 @@ pub enum SearchQuery {
         whole_word: bool,
         case_sensitive: bool,
         include_ignored: bool,
+        include_hidden: bool,
         one_match_per_line: bool,
         inner: SearchInputs,
     },
@@ -134,6 +136,7 @@ impl SearchQuery {
             whole_word,
             case_sensitive,
             include_ignored,
+            include_hidden: false,
             inner,
         })
     }
@@ -251,6 +254,7 @@ impl SearchQuery {
             whole_word,
             case_sensitive,
             include_ignored,
+            include_hidden: false,
             inner,
             one_match_per_line,
         })
@@ -357,6 +361,22 @@ impl SearchQuery {
                 ..
             } => {
                 *replacement = Some(new_replacement);
+                self
+            }
+        }
+    }
+
+    pub fn with_include_hidden(mut self, new_include_hidden: bool) -> Self {
+        match self {
+            Self::Text {
+                ref mut include_hidden,
+                ..
+            }
+            | Self::Regex {
+                ref mut include_hidden,
+                ..
+            } => {
+                *include_hidden = new_include_hidden;
                 self
             }
         }
@@ -604,6 +624,13 @@ impl SearchQuery {
             Self::Regex {
                 include_ignored, ..
             } => *include_ignored,
+        }
+    }
+
+    pub fn include_hidden(&self) -> bool {
+        match self {
+            Self::Text { include_hidden, .. } => *include_hidden,
+            Self::Regex { include_hidden, .. } => *include_hidden,
         }
     }
 

@@ -1646,6 +1646,7 @@ impl SearchableItem for Editor {
                 selection: false,
                 select_all: true,
                 find_in_results: true,
+                include_hidden: false,
             }
         } else {
             SearchOptions {
@@ -1656,6 +1657,7 @@ impl SearchableItem for Editor {
                 selection: true,
                 select_all: true,
                 find_in_results: false,
+                include_hidden: false,
             }
         }
     }

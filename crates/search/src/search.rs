@@ -37,6 +37,8 @@ actions!(
         ToggleCaseSensitive,
         /// Toggles regular expression mode.
         ToggleRegex,
+        /// Toggles searching content hidden behind disclosures.
+        ToggleIncludeHidden,
         /// Toggles the replace interface.
         ToggleReplace,
         /// Toggles searching within selection only.
@@ -71,6 +73,7 @@ bitflags! {
         const ONE_MATCH_PER_LINE = 1 << SearchOption::OneMatchPerLine as u8;
         /// If set, reverse direction when finding the active match
         const BACKWARDS = 1 << SearchOption::Backwards as u8;
+        const INCLUDE_HIDDEN = 1 << SearchOption::IncludeHidden as u8;
     }
 }
 
@@ -83,6 +86,7 @@ pub enum SearchOption {
     Regex,
     OneMatchPerLine,
     Backwards,
+    IncludeHidden,
 }
 
 pub enum SearchSource<'a, 'b> {
@@ -103,6 +107,7 @@ impl SearchOption {
             SearchOption::Regex => "Use Regular Expressions",
             SearchOption::OneMatchPerLine => "One Match Per Line",
             SearchOption::Backwards => "Search Backwards",
+            SearchOption::IncludeHidden => "Include Hidden Context",
         }
     }
 
@@ -112,6 +117,7 @@ impl SearchOption {
             SearchOption::CaseSensitive => ui::IconName::CaseSensitive,
             SearchOption::IncludeIgnored => ui::IconName::Sliders,
             SearchOption::Regex => ui::IconName::Regex,
+            SearchOption::IncludeHidden => ui::IconName::Eye,
             _ => panic!("{self:?} is not a named SearchOption"),
         }
     }
@@ -122,6 +128,7 @@ impl SearchOption {
             SearchOption::CaseSensitive => &ToggleCaseSensitive,
             SearchOption::IncludeIgnored => &ToggleIncludeIgnored,
             SearchOption::Regex => &ToggleRegex,
+            SearchOption::IncludeHidden => &ToggleIncludeHidden,
             _ => panic!("{self:?} is not a toggle action"),
         }
     }
@@ -173,6 +180,7 @@ impl SearchOptions {
         options.set(SearchOptions::CASE_SENSITIVE, query.case_sensitive());
         options.set(SearchOptions::INCLUDE_IGNORED, query.include_ignored());
         options.set(SearchOptions::REGEX, query.is_regex());
+        options.set(SearchOptions::INCLUDE_HIDDEN, query.include_hidden());
         options
     }
 

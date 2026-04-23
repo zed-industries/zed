@@ -964,6 +964,7 @@ impl SearchableItem for MarkdownPreviewView {
             selection: false,
             select_all: false,
             find_in_results: false,
+            include_hidden: false,
         }
     }
 
