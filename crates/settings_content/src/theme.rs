@@ -1036,9 +1036,6 @@ pub struct ThemeColorsContent {
     /// Background color for Vim yank highlight.
     #[serde(rename = "vim.yank.background")]
     pub vim_yank_background: Option<String>,
-    /// Foreground color for Helix jump labels.
-    #[serde(rename = "vim.helix_jump_label.foreground")]
-    pub vim_helix_jump_label_foreground: Option<String>,
     /// Background color for Vim Helix Normal mode indicator.
     #[serde(rename = "vim.helix_normal.background")]
     pub vim_helix_normal_background: Option<String>,

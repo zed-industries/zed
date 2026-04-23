@@ -7,11 +7,9 @@ use edit_prediction_types::{
     EditPredictionIconSet, SuggestionDisplayType,
 };
 use feature_flags::FeatureFlagAppExt;
-use fs::Fs;
 use gpui::{App, Entity, prelude::*};
 use language::{Buffer, ToPoint as _};
 use project::Project;
-use settings::{EditPredictionDataCollectionChoice, update_settings_file};
 
 use crate::{BufferEditPrediction, EditPredictionStore};
 
@@ -77,7 +75,24 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                     .read(cx)
                     .is_file_open_source(&self.project, file, cx);
 
-            if self.store.read(cx).is_data_collection_enabled(cx) {
+            if let Some(organization_configuration) = self
+                .store
+                .read(cx)
+                .user_store
+                .read(cx)
+                .current_organization_configuration()
+            {
+                if !organization_configuration
+                    .edit_prediction
+                    .is_feedback_enabled
+                {
+                    return DataCollectionState::Disabled {
+                        is_project_open_source,
+                    };
+                }
+            }
+
+            if self.store.read(cx).data_collection_choice.is_enabled(cx) {
                 DataCollectionState::Enabled {
                     is_project_open_source,
                 }
@@ -87,9 +102,9 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 }
             }
         } else {
-            DataCollectionState::Disabled {
+            return DataCollectionState::Disabled {
                 is_project_open_source: false,
-            }
+            };
         }
     }
 
@@ -98,26 +113,27 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
             return false;
         }
 
-        self.store
+        if let Some(organization_configuration) = self
+            .store
             .read(cx)
-            .is_data_collection_allowed_by_organization(cx)
+            .user_store
+            .read(cx)
+            .current_organization_configuration()
+        {
+            if !organization_configuration
+                .edit_prediction
+                .is_feedback_enabled
+            {
+                return false;
+            }
+        }
+
+        true
     }
 
     fn toggle_data_collection(&mut self, cx: &mut App) {
-        let fs = <dyn Fs>::global(cx);
-        let is_currently_enabled = self.store.read(cx).is_data_collection_enabled(cx);
-        update_settings_file(fs, cx, move |settings, _| {
-            let edit_predictions = settings
-                .project
-                .all_languages
-                .edit_predictions
-                .get_or_insert_default();
-
-            edit_predictions.allow_data_collection = Some(if is_currently_enabled {
-                EditPredictionDataCollectionChoice::No
-            } else {
-                EditPredictionDataCollectionChoice::Yes
-            });
+        self.store.update(cx, |store, cx| {
+            store.toggle_data_collection_choice(cx);
         });
     }
 

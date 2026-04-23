@@ -1309,9 +1309,7 @@ impl NativeAgentConnection {
                                     {
                                         response
                                             .send(outcome)
-                                            .map_err(|_| {
-                                                anyhow!("authorization receiver was dropped")
-                                            })
+                                            .map(|_| anyhow!("authorization receiver was dropped"))
                                             .log_err();
                                     }
                                 })

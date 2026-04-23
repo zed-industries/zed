@@ -39,8 +39,6 @@ You can search your threads in history; search will fuzzy match on thread titles
 
 If you have external agents installed, Zed will detect whether you have existing threads and invite you to import them into Zed. Once you open Thread History, you'll find an import icon button in the Thread History toolbar that lets you import threads at any time. Clicking on it opens a modal where you can select the agents whose threads you want to import.
 
-> **Note:** Thread import is subject to agent support. Some agents (such as Cursor and Gemini CLI) are not currently supported.
-
 ## Running Multiple Threads {#running-multiple-threads}
 
 Each thread runs independently, so you can send a prompt, open a second thread, and give it a different task while the first continues working. To scope a new thread to a specific project, hover over that project's header in the Threads Sidebar and click the `+` button, or use {#action agents_sidebar::NewThreadInGroup} from the keyboard. See [Creating New Threads](./agent-panel.md#new-thread) for the other entry points.
@@ -55,11 +53,10 @@ To add another project to the sidebar, click the **Add Project** button (open-fo
 
 ### Multi-Root Folder Projects {#multi-root-folder-projects}
 
-A single project can contain multiple folders (a multi-root folder project). Agents can then read and write across all of those folders in a single thread. There are multiple ways to set one up:
+A single project can contain multiple folders (a multi-root folder project). Agents can then read and write across all of those folders in a single thread. There are two ways to set one up:
 
 - **From the sidebar:** Click the **Add Project** button, choose **Add Local Folders**, and select multiple folders in the file picker. They open together as one multi-root project.
 - **From the title bar:** Click the project picker (the leftmost project name). For any local entry in the recent projects list, hover it and click the folder-with-plus icon (**Add Folder to this Project**) to merge that project's folders into the current project.
-- **From the Project panel:** Right-click a root folder or any empty space in the Project panel and choose **Add Folders to Project** to add more folders to the current project.
 
 ## Worktree Isolation {#worktree-isolation}
 

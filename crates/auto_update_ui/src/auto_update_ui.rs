@@ -13,7 +13,6 @@ use notifications::status_toast::StatusToast;
 use release_channel::{AppVersion, ReleaseChannel};
 use semver::Version;
 use serde::Deserialize;
-use settings::Settings as _;
 use smol::io::AsyncReadExt;
 use ui::{AnnouncementToast, ListBulletItem, ParallelAgentsIllustration, prelude::*};
 use util::{ResultExt as _, maybe};
@@ -205,10 +204,7 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
         }
     };
 
-    if *version >= version_with_parallel_agents
-        && !ParallelAgentAnnouncement::dismissed(cx)
-        && !project::DisableAiSettings::get_global(cx).disable_ai
-    {
+    if *version >= version_with_parallel_agents && !ParallelAgentAnnouncement::dismissed(cx) {
         let fs = <dyn Fs>::global(cx);
         Some(AnnouncementContent {
             heading: "Introducing Parallel Agents".into(),

@@ -124,7 +124,7 @@ impl AskPassSession {
                         ControlFlow::Continue(Ok(password))
                     } else {
                         if let Some(kill_tx) = kill_tx.lock().await.take() {
-                            kill_tx.send(()).ok();
+                            kill_tx.send(()).log_err();
                         }
                         ControlFlow::Break(())
                     }

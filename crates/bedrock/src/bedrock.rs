@@ -58,13 +58,8 @@ pub async fn stream_completion(
             additional_fields.insert("thinking".to_string(), Document::from(thinking_config));
         }
         Some(Thinking::Adaptive { effort: _ }) => {
-            let thinking_config = HashMap::from([
-                ("type".to_string(), Document::String("adaptive".to_string())),
-                (
-                    "display".to_string(),
-                    Document::String("summarized".to_string()),
-                ),
-            ]);
+            let thinking_config =
+                HashMap::from([("type".to_string(), Document::String("adaptive".to_string()))]);
             additional_fields.insert("thinking".to_string(), Document::from(thinking_config));
         }
         _ => {}

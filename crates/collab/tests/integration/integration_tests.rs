@@ -5299,7 +5299,6 @@ async fn test_project_search(
                     "Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call."
                 )
             }
-            SearchResult::WaitingForScan => {}
         };
     }
 

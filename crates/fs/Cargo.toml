@@ -36,7 +36,6 @@ thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
-telemetry.workspace = true
 tempfile.workspace = true
 text.workspace = true
 time.workspace = true

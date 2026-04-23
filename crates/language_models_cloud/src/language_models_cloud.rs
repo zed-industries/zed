@@ -408,9 +408,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 );
 
                 if enable_thinking && effort.is_some() {
-                    request.thinking = Some(anthropic::Thinking::Adaptive {
-                        display: Some(anthropic::AdaptiveThinkingDisplay::Summarized),
-                    });
+                    request.thinking = Some(anthropic::Thinking::Adaptive);
                     request.output_config = Some(anthropic::OutputConfig { effort });
                 }
 

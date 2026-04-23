@@ -13,8 +13,8 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Task, WeakEntity, Window, actions, rems,
+    KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
+    Window, actions, rems,
 };
 use open_path_prompt::{
     OpenPathPrompt,
@@ -37,10 +37,9 @@ use std::{
     },
 };
 use ui::{
-    ButtonLike, CommonAnimationExt, ContextMenu, HighlightedLabel, Indicator, KeyBinding, ListItem,
-    ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    ButtonLike, ContextMenu, HighlightedLabel, Indicator, KeyBinding, ListItem, ListItemSpacing,
+    PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
-use ui_input::ErasedEditor;
 use util::{
     ResultExt, maybe,
     paths::{PathStyle, PathWithPosition},
@@ -1756,41 +1755,6 @@ impl PickerDelegate for FileFinderDelegate {
                         .child(full_path_label),
                 ),
         )
-    }
-
-    fn render_editor(
-        &self,
-        editor: &Arc<dyn ErasedEditor>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Div {
-        let has_search_query = self.latest_search_query.is_some();
-        let is_project_scan_running = {
-            let worktree_store = self.project.read(cx).worktree_store();
-            !worktree_store.read(cx).initial_scan_completed()
-        };
-
-        h_flex()
-            .flex_none()
-            .h_9()
-            .px_2p5()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(editor.render(window, cx))
-            .when(is_project_scan_running && has_search_query, |this| {
-                this.child(
-                    h_flex()
-                        .id("project-scan-indicator")
-                        .tooltip(Tooltip::text("Project Scan in Progress…"))
-                        .child(
-                            Icon::new(IconName::LoadCircle)
-                                .color(Color::Accent)
-                                .size(IconSize::Small)
-                                .with_rotate_animation(2),
-                        ),
-                )
-            })
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
