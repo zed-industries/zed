@@ -1680,7 +1680,8 @@ impl App {
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
-            .unwrap_or_else(|| panic!("no state of type {} exists", type_name::<G>()))
+            .with_context(|| format!("no state of type {} exists", type_name::<G>()))
+            .unwrap()
     }
 
     /// Access the global of the given type if a value has been assigned.
@@ -1698,7 +1699,8 @@ impl App {
         self.globals_by_type
             .get_mut(&global_type)
             .and_then(|any_state| any_state.downcast_mut::<G>())
-            .unwrap_or_else(|| panic!("no state of type {} exists", type_name::<G>()))
+            .with_context(|| format!("no state of type {} exists", type_name::<G>()))
+            .unwrap()
     }
 
     /// Access the global of the given type mutably. A default value is assigned if a global of this type has not
@@ -1733,7 +1735,7 @@ impl App {
         *self
             .globals_by_type
             .remove(&global_type)
-            .unwrap_or_else(|| panic!("no global added for {}", type_name::<G>()))
+            .unwrap_or_else(|| panic!("no global added for {}", std::any::type_name::<G>()))
             .downcast()
             .unwrap()
     }

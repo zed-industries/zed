@@ -6279,39 +6279,6 @@ async fn test_dirty_buffer_reloads_after_undo(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_buffer_file_change_to_binary_fails(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/dir"),
-        json!({
-            "file.txt": "",
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
-        .await
-        .unwrap();
-
-    fs.write(
-        path!("/dir/file.txt").as_ref(),
-        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01",
-    )
-    .await
-    .unwrap();
-    cx.executor().run_until_parked();
-
-    // Test that existing buffer is left untouched
-    buffer.read_with(cx, |buffer, _| {
-        assert_eq!(buffer.text(), "");
-    });
-}
-
-#[gpui::test]
 async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -12313,7 +12280,7 @@ async fn search(
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
             }
-            SearchResult::LimitReached | SearchResult::WaitingForScan => {}
+            SearchResult::LimitReached => {}
         }
     }
     Ok(results

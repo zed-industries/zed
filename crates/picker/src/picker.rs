@@ -838,7 +838,7 @@ impl<D: PickerDelegate> Picker<D> {
                 el.with_width_from_item(Some(widest_item))
             })
             .flex_grow()
-            .py(DynamicSpacing::Base04.rems(cx))
+            .py_1()
             .track_scroll(&scroll_handle)
             .into_any_element(),
             ElementContainer::List(state) => list(
@@ -849,7 +849,7 @@ impl<D: PickerDelegate> Picker<D> {
             )
             .with_sizing_behavior(sizing_behavior)
             .flex_grow()
-            .py(DynamicSpacing::Base04.rems(cx))
+            .py_2()
             .into_any_element(),
         }
     }
@@ -1123,16 +1123,13 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(self.delegate.match_count() == 0, |el| {
                 el.when_some(self.delegate.no_matches_text(window, cx), |el, text| {
                     el.child(
-                        v_flex()
-                            .flex_grow()
-                            .py(DynamicSpacing::Base04.rems(cx))
-                            .child(
-                                ListItem::new("empty_state")
-                                    .inset(true)
-                                    .spacing(ListItemSpacing::Sparse)
-                                    .disabled(true)
-                                    .child(Label::new(text).color(Color::Muted)),
-                            ),
+                        v_flex().flex_grow().py_2().child(
+                            ListItem::new("empty_state")
+                                .inset(true)
+                                .spacing(ListItemSpacing::Sparse)
+                                .disabled(true)
+                                .child(Label::new(text).color(Color::Muted)),
+                        ),
                     )
                 })
             })

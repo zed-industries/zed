@@ -9,7 +9,6 @@
 mod buffer;
 mod diagnostic;
 mod diagnostic_set;
-mod file_content;
 mod language_registry;
 
 pub mod language_settings;
@@ -92,7 +91,6 @@ pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic::{Diagnostic, DiagnosticSourceKind};
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
-pub use file_content::{ByteContent, FILE_ANALYSIS_BYTES, analyze_byte_content};
 pub use language_registry::{
     AvailableLanguage, BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry,
     QUERY_FILENAME_PREFIXES,

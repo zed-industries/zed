@@ -18,37 +18,6 @@ use serde::Deserialize;
 pub(crate) const ZED_ZIPPY_LOGIN: &str = "zed-zippy[bot]";
 pub(crate) const ZED_ZIPPY_EMAIL: &str = "234243425+zed-zippy[bot]@users.noreply.github.com";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AutomatedChangeKind {
-    VersionBump,
-    ReleaseChannelUpdate,
-}
-
-impl AutomatedChangeKind {
-    pub(crate) fn expected_files(&self) -> &'static [&'static str] {
-        match self {
-            Self::VersionBump => &["Cargo.lock", "crates/zed/Cargo.toml"],
-            Self::ReleaseChannelUpdate => &["crates/zed/RELEASE_CHANNEL"],
-        }
-    }
-
-    pub(crate) fn expected_loc(&self) -> u64 {
-        match self {
-            Self::VersionBump => 2,
-            Self::ReleaseChannelUpdate => 1,
-        }
-    }
-}
-
-impl fmt::Display for AutomatedChangeKind {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::VersionBump => formatter.write_str("version bump"),
-            Self::ReleaseChannelUpdate => formatter.write_str("release channel update"),
-        }
-    }
-}
-
 pub trait Subcommand {
     type ParsedOutput: FromStr<Err = anyhow::Error>;
 
@@ -273,29 +242,19 @@ impl CommitDetails {
         &self.title
     }
 
-    pub fn sha(&self) -> &CommitSha {
+    pub(crate) fn sha(&self) -> &CommitSha {
         &self.sha
     }
 
-    pub(crate) fn detect_automated_change(&self) -> Option<(AutomatedChangeKind, &str)> {
+    pub(crate) fn version_bump_mention(&self) -> Option<&str> {
         static VERSION_BUMP_REGEX: LazyLock<Regex> = LazyLock::new(|| {
             Regex::new(r"^Bump to [0-9]+\.[0-9]+\.[0-9]+ for @([a-zA-Z0-9][a-zA-Z0-9-]*)$").unwrap()
-        });
-        static RELEASE_CHANNEL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r"^v[0-9]+\.[0-9]+\.x (?:stable|preview) for @([a-zA-Z0-9][a-zA-Z0-9-]*)$")
-                .unwrap()
         });
 
         VERSION_BUMP_REGEX
             .captures(&self.title)
-            .and_then(|capture| capture.get(1))
-            .map(|r#match| (AutomatedChangeKind::VersionBump, r#match.as_str()))
-            .or_else(|| {
-                RELEASE_CHANNEL_REGEX
-                    .captures(&self.title)
-                    .and_then(|capture| capture.get(1))
-                    .map(|r#match| (AutomatedChangeKind::ReleaseChannelUpdate, r#match.as_str()))
-            })
+            .and_then(|cap| cap.get(1))
+            .map(|m| m.as_str())
     }
 }
 
@@ -671,69 +630,53 @@ mod tests {
     }
 
     #[test]
-    fn automated_change_detects_version_bump() {
+    fn version_bump_mention_extracts_username() {
         let line = format!(
             "abc123{d}Zed Zippy{d}bot@test.com{d}Bump to 0.230.2 for @cole-miller",
             d = CommitDetails::FIELD_DELIMITER
         );
         let commit = CommitDetails::parse(&line, "").unwrap();
-        let (kind, actor) = commit.detect_automated_change().unwrap();
-        assert_eq!(kind, AutomatedChangeKind::VersionBump);
-        assert_eq!(actor, "cole-miller");
+        assert_eq!(commit.version_bump_mention(), Some("cole-miller"));
     }
 
     #[test]
-    fn automated_change_detects_stable_release_channel() {
-        let line = format!(
-            "abc123{d}Zed Zippy{d}bot@test.com{d}v0.233.x stable for @cole-miller",
-            d = CommitDetails::FIELD_DELIMITER
-        );
-        let commit = CommitDetails::parse(&line, "").unwrap();
-        let (kind, actor) = commit.detect_automated_change().unwrap();
-        assert_eq!(kind, AutomatedChangeKind::ReleaseChannelUpdate);
-        assert_eq!(actor, "cole-miller");
-    }
-
-    #[test]
-    fn automated_change_detects_preview_release_channel() {
-        let line = format!(
-            "abc123{d}Zed Zippy{d}bot@test.com{d}v0.234.x preview for @cole-miller",
-            d = CommitDetails::FIELD_DELIMITER
-        );
-        let commit = CommitDetails::parse(&line, "").unwrap();
-        let (kind, actor) = commit.detect_automated_change().unwrap();
-        assert_eq!(kind, AutomatedChangeKind::ReleaseChannelUpdate);
-        assert_eq!(actor, "cole-miller");
-    }
-
-    #[test]
-    fn automated_change_returns_none_for_regular_commit() {
+    fn version_bump_mention_returns_none_without_mention() {
         let line = format!(
             "abc123{d}Alice{d}alice@test.com{d}Fix a bug",
             d = CommitDetails::FIELD_DELIMITER
         );
         let commit = CommitDetails::parse(&line, "").unwrap();
-        assert!(commit.detect_automated_change().is_none());
+        assert!(commit.version_bump_mention().is_none());
     }
 
     #[test]
-    fn automated_change_rejects_wrong_prefix() {
+    fn version_bump_mention_rejects_wrong_prefix() {
         let line = format!(
             "abc123{d}Zed Zippy{d}bot@test.com{d}Fix thing for @cole-miller",
             d = CommitDetails::FIELD_DELIMITER
         );
         let commit = CommitDetails::parse(&line, "").unwrap();
-        assert!(commit.detect_automated_change().is_none());
+        assert!(commit.version_bump_mention().is_none());
     }
 
     #[test]
-    fn automated_change_rejects_trailing_text() {
+    fn version_bump_mention_rejects_bare_mention() {
+        let line = format!(
+            "abc123{d}Zed Zippy{d}bot@test.com{d}@cole-miller bumped something",
+            d = CommitDetails::FIELD_DELIMITER
+        );
+        let commit = CommitDetails::parse(&line, "").unwrap();
+        assert!(commit.version_bump_mention().is_none());
+    }
+
+    #[test]
+    fn version_bump_mention_rejects_trailing_text() {
         let line = format!(
             "abc123{d}Zed Zippy{d}bot@test.com{d}Bump to 0.230.2 for @cole-miller extra",
             d = CommitDetails::FIELD_DELIMITER
         );
         let commit = CommitDetails::parse(&line, "").unwrap();
-        assert!(commit.detect_automated_change().is_none());
+        assert!(commit.version_bump_mention().is_none());
     }
 
     #[test]

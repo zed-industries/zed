@@ -222,6 +222,7 @@ impl VsCodeSettings {
             which_key: None,
             modeline_lines: None,
             feature_flags: None,
+            instrumentation: None,
         }
     }
 
