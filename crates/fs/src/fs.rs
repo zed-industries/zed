@@ -92,10 +92,9 @@ pub fn requires_poll_watcher(path: &Path) -> bool {
         _ => {}
     }
 
-    let path = effective_watch_path(path);
-
     #[cfg(target_os = "linux")]
     {
+        let path = effective_watch_path(path);
         return detect_requires_poll_watcher_linux(&path);
     }
 
@@ -1199,6 +1198,7 @@ impl Fs for RealFs {
                 fs_watcher::poll_interval().as_millis(),
                 path.display()
             );
+            telemetry::event!("fs_watcher_poll", path = path.display().to_string());
             fs_watcher::WatcherMode::Poll
         } else {
             fs_watcher::WatcherMode::Native
