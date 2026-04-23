@@ -218,6 +218,77 @@ async fn test_sort_positions(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_case_sensitive_match_tie_breaker(cx: &mut TestAppContext) {
+    let completions = vec![
+        CompletionBuilder::variable("abc", None, "11"),
+        CompletionBuilder::variable("ABC", None, "11"),
+    ];
+
+    let matches = filter_and_sort_matches("a", &completions, SnippetSortOrder::default(), cx).await;
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string.as_str())
+            .collect::<Vec<_>>(),
+        vec!["abc", "ABC"]
+    );
+
+    let matches = filter_and_sort_matches("A", &completions, SnippetSortOrder::default(), cx).await;
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ABC", "abc"]
+    );
+
+    let matches =
+        filter_and_sort_matches("ab", &completions, SnippetSortOrder::default(), cx).await;
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string.as_str())
+            .collect::<Vec<_>>(),
+        vec!["abc", "ABC"]
+    );
+
+    let matches =
+        filter_and_sort_matches("AB", &completions, SnippetSortOrder::default(), cx).await;
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ABC", "abc"]
+    );
+
+    let completions = vec![
+        CompletionBuilder::variable("aBc", None, "11"),
+        CompletionBuilder::variable("Abc", None, "11"),
+    ];
+
+    let matches =
+        filter_and_sort_matches("Ab", &completions, SnippetSortOrder::default(), cx).await;
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Abc", "aBc"]
+    );
+
+    let matches =
+        filter_and_sort_matches("aB", &completions, SnippetSortOrder::default(), cx).await;
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string.as_str())
+            .collect::<Vec<_>>(),
+        vec!["aBc", "Abc"]
+    );
+}
+
+#[gpui::test]
 async fn test_fuzzy_over_sort_positions(cx: &mut TestAppContext) {
     let completions = vec![
         CompletionBuilder::variable("lsp_document_colors", None, "7fffffff"), // 0.29 fuzzy score

@@ -377,6 +377,20 @@ pub async fn connect(
     .map_err(|e| e.cloned())
 }
 
+/// Returns `true` if the global [`ConnectionPool`] already has a live
+/// connection for the given options. Callers can use this to decide
+/// whether to show interactive UI (e.g., a password modal) before
+/// connecting.
+pub fn has_active_connection(opts: &RemoteConnectionOptions, cx: &App) -> bool {
+    cx.try_global::<ConnectionPool>().is_some_and(|pool| {
+        matches!(
+            pool.connections.get(opts),
+            Some(ConnectionPoolEntry::Connected(remote))
+                if remote.upgrade().is_some_and(|r| !r.has_been_killed())
+        )
+    })
+}
+
 impl RemoteClient {
     pub fn new(
         unique_identifier: ConnectionIdentifier,

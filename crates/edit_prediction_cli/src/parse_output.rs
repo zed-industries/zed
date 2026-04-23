@@ -37,7 +37,7 @@ pub fn parse_prediction_output(
     provider: PredictionProvider,
 ) -> Result<(String, Option<ActualCursor>)> {
     match provider {
-        PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_) => {
+        PredictionProvider::Teacher(_, _) | PredictionProvider::TeacherNonBatching(_, _) => {
             TeacherPrompt::parse(example, actual_output)
         }
         PredictionProvider::TeacherMultiRegion(_)

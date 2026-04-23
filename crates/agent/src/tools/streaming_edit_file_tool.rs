@@ -12,7 +12,7 @@ use crate::{
 };
 use acp_thread::Diff;
 use action_log::ActionLog;
-use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
+use agent_client_protocol::schema::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::Result;
 use collections::HashSet;
 use futures::FutureExt as _;
@@ -189,9 +189,9 @@ pub enum StreamingEditFileToolOutput {
     },
     Error {
         error: String,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         input_path: Option<PathBuf>,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         diff: String,
     },
 }

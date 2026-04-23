@@ -131,7 +131,7 @@ impl Render for AgentModelSelector {
                         .size(IconSize::XSmall),
                 ),
             tooltip,
-            gpui::Corner::TopRight,
+            gpui::Anchor::TopRight,
             cx,
         )
         .with_handle(self.menu_handle.clone())

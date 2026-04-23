@@ -11,7 +11,7 @@ use git::{
 };
 use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView, git_status_icon};
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, ClipboardItem, Corner, DefiniteLength, DragMoveEvent,
+    Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength, DragMoveEvent,
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, PathBuilder, Pixels,
     Point, ScrollStrategy, ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
@@ -31,7 +31,6 @@ use search::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
     ToggleCaseSensitive, buffer_search,
 };
-use settings::Settings;
 use smallvec::{SmallVec, smallvec};
 use std::{
     cell::Cell,
@@ -41,7 +40,6 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::AccentColors;
-use theme_settings::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
     ButtonLike, Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, DiffStat, Divider,
@@ -62,6 +60,9 @@ const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(1.5);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
+// Extra vertical breathing room added to the UI line height when computing
+// the git graph's row height, so commit dots and lines have space around them.
+const ROW_VERTICAL_PADDING: Pixels = px(4.0);
 
 struct CopiedState {
     copied_at: Option<Instant>,
@@ -974,7 +975,6 @@ pub struct GitGraph {
     git_store: Entity<GitStore>,
     workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
-    row_height: Pixels,
     table_interaction_state: Entity<TableInteractionState>,
     column_widths: Entity<RedistributableColumnsState>,
     selected_entry_idx: Option<usize>,
@@ -1001,10 +1001,19 @@ impl GitGraph {
         cx.notify();
     }
 
-    fn row_height(cx: &App) -> Pixels {
-        let settings = ThemeSettings::get_global(cx);
-        let font_size = settings.buffer_font_size(cx);
-        font_size + px(12.0)
+    /// Computes the height of a single commit row in the git graph.
+    ///
+    /// The returned value is snapped to the nearest physical pixel. This is
+    /// required so that the canvas's float math and the `uniform_list` layout
+    /// (which snaps to device pixels) agree on row positions; otherwise rows
+    /// drift apart as the user scrolls when `ui_font_size` is fractional.
+    fn row_height(window: &Window, _cx: &App) -> Pixels {
+        let rem_size = window.rem_size();
+        let line_height = window.text_style().line_height_in_pixels(rem_size);
+        let raw = line_height + ROW_VERTICAL_PADDING;
+        let scale = window.scale_factor();
+
+        (raw * scale).round() / scale
     }
 
     fn graph_canvas_content_width(&self) -> Pixels {
@@ -1103,10 +1112,10 @@ impl GitGraph {
                 RedistributableColumnsState::new(
                     4,
                     vec![
-                        DefiniteLength::Fraction(0.6192),
-                        DefiniteLength::Fraction(0.1032),
-                        DefiniteLength::Fraction(0.086),
-                        DefiniteLength::Fraction(0.0516),
+                        DefiniteLength::Fraction(0.72),
+                        DefiniteLength::Fraction(0.12),
+                        DefiniteLength::Fraction(0.1),
+                        DefiniteLength::Fraction(0.06),
                     ],
                     vec![
                         TableResizeBehavior::Resizable,
@@ -1137,12 +1146,14 @@ impl GitGraph {
                 )
             })
         };
-        let mut row_height = Self::row_height(cx);
+        let mut row_height = Self::row_height(window, cx);
 
-        cx.observe_global_in::<settings::SettingsStore>(window, move |this, _window, cx| {
-            let new_row_height = Self::row_height(cx);
+        cx.observe_global_in::<settings::SettingsStore>(window, move |this, window, cx| {
+            let new_row_height = Self::row_height(window, cx);
             if new_row_height != row_height {
-                this.row_height = new_row_height;
+                // The `uniform_list` powering the table caches the item size
+                // from its last layout; invalidate it so it re-measures with
+                // the new row height on the next frame.
                 this.table_interaction_state.update(cx, |state, _cx| {
                     state.scroll_handle.0.borrow_mut().last_item_size = None;
                 });
@@ -1166,7 +1177,6 @@ impl GitGraph {
             graph_data: graph,
             _commit_diff_task: None,
             context_menu: None,
-            row_height,
             table_interaction_state,
             column_widths,
             selected_entry_idx: None,
@@ -1287,22 +1297,52 @@ impl GitGraph {
         git_store.repositories().get(&self.repo_id).cloned()
     }
 
-    fn render_chip(&self, name: &SharedString, accent_color: gpui::Hsla) -> impl IntoElement {
+    /// Checks whether a ref name from git's `%D` decoration
+    ///  format refers to the currently checked-out branch.
+    fn is_head_ref(ref_name: &str, head_branch_name: &Option<SharedString>) -> bool {
+        head_branch_name.as_ref().is_some_and(|head| {
+            ref_name == head.as_ref() || ref_name.strip_prefix("HEAD -> ") == Some(head.as_ref())
+        })
+    }
+
+    fn render_chip(
+        &self,
+        name: &SharedString,
+        accent_color: gpui::Hsla,
+        is_head: bool,
+    ) -> impl IntoElement {
         Chip::new(name.clone())
             .label_size(LabelSize::Small)
-            .bg_color(accent_color.opacity(0.1))
-            .border_color(accent_color.opacity(0.5))
+            .truncate()
+            .map(|chip| {
+                if is_head {
+                    chip.icon(IconName::Check)
+                        .bg_color(accent_color.opacity(0.25))
+                        .border_color(accent_color.opacity(0.5))
+                } else {
+                    chip.bg_color(accent_color.opacity(0.08))
+                        .border_color(accent_color.opacity(0.25))
+                }
+            })
     }
 
     fn render_table_rows(
         &mut self,
         range: Range<usize>,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Vec<AnyElement>> {
         let repository = self.get_repository(cx);
 
-        let row_height = self.row_height;
+        let head_branch_name: Option<SharedString> = repository.as_ref().and_then(|repo| {
+            repo.read(cx)
+                .snapshot()
+                .branch
+                .as_ref()
+                .map(|branch| SharedString::from(branch.name().to_string()))
+        });
+
+        let row_height = Self::row_height(window, cx);
 
         // We fetch data outside the visible viewport to avoid loading entries when
         // users scroll through the git graph
@@ -1314,7 +1354,7 @@ impl GitGraph {
                         .min(self.graph_data.commits.len().saturating_sub(1))]
                     .iter()
                     .for_each(|commit| {
-                        repository.fetch_commit_data(commit.data.sha, cx);
+                        repository.fetch_commit_data(commit.data.sha, false, cx);
                     });
             });
         }
@@ -1333,7 +1373,9 @@ impl GitGraph {
                 };
 
                 let data = repository.update(cx, |repository, cx| {
-                    repository.fetch_commit_data(commit.data.sha, cx).clone()
+                    repository
+                        .fetch_commit_data(commit.data.sha, false, cx)
+                        .clone()
                 });
 
                 let short_sha = commit.data.sha.display_short();
@@ -1414,13 +1456,13 @@ impl GitGraph {
                                 .gap_2()
                                 .overflow_hidden()
                                 .children((!commit.data.ref_names.is_empty()).then(|| {
-                                    h_flex().gap_1().children(
-                                        commit
-                                            .data
-                                            .ref_names
-                                            .iter()
-                                            .map(|name| self.render_chip(name, accent_color)),
-                                    )
+                                    h_flex().gap_1().children(commit.data.ref_names.iter().map(
+                                        |name| {
+                                            let is_head =
+                                                Self::is_head_ref(name.as_ref(), &head_branch_name);
+                                            self.render_chip(name, accent_color, is_head)
+                                        },
+                                    ))
                                 }))
                                 .child(subject_label),
                         )
@@ -1760,7 +1802,7 @@ impl GitGraph {
                     .px_1p5()
                     .gap_1()
                     .border_1()
-                    .border_color(color.border)
+                    .border_color(color.border_variant)
                     .rounded_md()
                     .bg(color.toolbar_background)
                     .on_action(cx.listener(Self::confirm_search))
@@ -1885,12 +1927,19 @@ impl GitGraph {
 
         let data = repository.update(cx, |repository, cx| {
             repository
-                .fetch_commit_data(commit_entry.data.sha, cx)
+                .fetch_commit_data(commit_entry.data.sha, false, cx)
                 .clone()
         });
 
         let full_sha: SharedString = commit_entry.data.sha.to_string().into();
         let ref_names = commit_entry.data.ref_names.clone();
+
+        let head_branch_name: Option<SharedString> = repository
+            .read(cx)
+            .snapshot()
+            .branch
+            .as_ref()
+            .map(|branch| SharedString::from(branch.name().to_string()));
 
         let accent_colors = cx.theme().accents();
         let accent_color = accent_colors
@@ -1907,7 +1956,7 @@ impl GitGraph {
                 Some(data.commit_timestamp),
                 data.subject.clone(),
             ),
-            CommitDataState::Loading => ("Loading…".into(), "".into(), None, "Loading…".into()),
+            CommitDataState::Loading(_) => ("Loading…".into(), "".into(), None, "Loading…".into()),
         };
 
         let date_string = commit_timestamp
@@ -1963,7 +2012,7 @@ impl GitGraph {
         v_flex()
             .min_w(px(300.))
             .h_full()
-            .bg(cx.theme().colors().surface_background)
+            .bg(cx.theme().colors().editor_background)
             .flex_basis(DefiniteLength::Fraction(
                 self.commit_details_split_state.read(cx).right_ratio(),
             ))
@@ -2006,9 +2055,10 @@ impl GitGraph {
                     )
                     .children((!ref_names.is_empty()).then(|| {
                         h_flex().gap_1().flex_wrap().justify_center().children(
-                            ref_names
-                                .iter()
-                                .map(|name| self.render_chip(name, accent_color)),
+                            ref_names.iter().map(|name| {
+                                let is_head = Self::is_head_ref(name.as_ref(), &head_branch_name);
+                                self.render_chip(name, accent_color, is_head)
+                            }),
                         )
                     }))
                     .child(
@@ -2167,10 +2217,20 @@ impl GitGraph {
                     .child(
                         h_flex()
                             .gap_1()
+                            .w_full()
+                            .justify_between()
                             .child(
-                                Label::new(format!("{} Changed Files", changed_files_count))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                Label::new(format!(
+                                    "{} Changed {}",
+                                    changed_files_count,
+                                    if changed_files_count == 1 {
+                                        "File"
+                                    } else {
+                                        "Files"
+                                    }
+                                ))
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
                             )
                             .child(DiffStat::new(
                                 "commit-diff-stat",
@@ -2218,7 +2278,7 @@ impl GitGraph {
                 h_flex().p_1p5().w_full().child(
                     Button::new("view-commit", "View Commit")
                         .full_width()
-                        .style(ButtonStyle::Outlined)
+                        .style(ButtonStyle::OutlinedGhost)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_selected_commit_view(window, cx);
                         })),
@@ -2228,7 +2288,7 @@ impl GitGraph {
     }
 
     fn render_graph_canvas(&self, window: &Window, cx: &mut Context<GitGraph>) -> impl IntoElement {
-        let row_height = self.row_height;
+        let row_height = Self::row_height(window, cx);
         let table_state = self.table_interaction_state.read(cx);
         let viewport_height = table_state
             .scroll_handle
@@ -2236,7 +2296,7 @@ impl GitGraph {
             .borrow()
             .last_item_size
             .map(|size| size.item.height)
-            .unwrap_or(px(600.0));
+            .unwrap_or(window.viewport_size().height);
         let loaded_commit_count = self.graph_data.commits.len();
 
         let content_height = row_height * loaded_commit_count;
@@ -2494,7 +2554,12 @@ impl GitGraph {
         .h_full()
     }
 
-    fn row_at_position(&self, position_y: Pixels, cx: &Context<Self>) -> Option<usize> {
+    fn row_at_position(
+        &self,
+        position_y: Pixels,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<usize> {
         let canvas_bounds = self.graph_canvas_bounds.get()?;
         let table_state = self.table_interaction_state.read(cx);
         let scroll_offset_y = -table_state.scroll_offset().y;
@@ -2503,7 +2568,8 @@ impl GitGraph {
 
         if local_y >= px(0.) && local_y < canvas_bounds.size.height {
             let absolute_y = local_y + scroll_offset_y;
-            let absolute_row = (absolute_y / self.row_height).floor() as usize;
+            let row_height = Self::row_height(window, cx);
+            let absolute_row = (absolute_y / row_height).floor() as usize;
 
             if absolute_row < self.graph_data.commits.len() {
                 return Some(absolute_row);
@@ -2516,10 +2582,10 @@ impl GitGraph {
     fn handle_graph_mouse_move(
         &mut self,
         event: &gpui::MouseMoveEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(row) = self.row_at_position(event.position.y, cx) {
+        if let Some(row) = self.row_at_position(event.position.y, window, cx) {
             if self.hovered_entry_idx != Some(row) {
                 self.hovered_entry_idx = Some(row);
                 cx.notify();
@@ -2536,7 +2602,7 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(row) = self.row_at_position(event.position().y, cx) {
+        if let Some(row) = self.row_at_position(event.position().y, window, cx) {
             self.select_entry(row, ScrollStrategy::Nearest, cx);
             if event.click_count() >= 2 {
                 self.open_commit_view(row, window, cx);
@@ -2562,7 +2628,7 @@ impl GitGraph {
             AllCommitCount::Loaded(count) => count,
             AllCommitCount::NotLoaded => self.graph_data.commits.len(),
         };
-        let content_height = self.row_height * commit_count;
+        let content_height = Self::row_height(window, cx) * commit_count;
         let max_vertical_scroll = (viewport_height - content_height).min(px(0.));
 
         let new_y = (current_offset.y + delta.y).clamp(max_vertical_scroll, px(0.));
@@ -2673,7 +2739,8 @@ impl Render for GitGraph {
                 })
         } else {
             let is_file_history = matches!(self.log_source, LogSource::File(_));
-            let header_resize_info = HeaderResizeInfo::from_state(&self.column_widths, cx);
+            let header_resize_info =
+                HeaderResizeInfo::from_redistributable(&self.column_widths, cx);
             let header_context = TableRenderContext::for_column_widths(
                 Some(self.column_widths.read(cx).widths_to_render()),
                 true,
@@ -2738,7 +2805,7 @@ impl Render for GitGraph {
                             cx,
                         ))
                         .child({
-                            let row_height = self.row_height;
+                            let row_height = Self::row_height(window, cx);
                             let selected_entry_idx = self.selected_entry_idx;
                             let hovered_entry_idx = self.hovered_entry_idx;
                             let weak_self = cx.weak_entity();
@@ -2944,7 +3011,7 @@ impl Render for GitGraph {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(Corner::TopLeft)
+                        .anchor(Anchor::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)
@@ -3385,12 +3452,12 @@ mod tests {
     use fs::FakeFs;
     use git::Oid;
     use git::repository::InitialGraphCommitData;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal};
     use project::Project;
     use project::git_store::{GitStoreEvent, RepositoryEvent};
     use rand::prelude::*;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{SettingsStore, ThemeSettingsContent};
     use smallvec::{SmallVec, smallvec};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
@@ -4111,6 +4178,61 @@ mod tests {
             commits.len(),
             commit_count_after,
             "initial_graph_data should remain populated after events emitted by initial repository scan"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_initial_graph_data_propagates_error(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        fs.set_graph_error(
+            Path::new("/project/.git"),
+            Some("fatal: bad default revision 'HEAD'".to_string()),
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        repository.update(cx, |repo, cx| {
+            repo.graph_data(
+                crate::LogSource::default(),
+                crate::LogOrder::default(),
+                0..usize::MAX,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let error = repository.read_with(cx, |repo, _| {
+            repo.get_graph_data(crate::LogSource::default(), crate::LogOrder::default())
+                .and_then(|data| data.error.clone())
+        });
+
+        assert!(
+            error.is_some(),
+            "graph data should contain an error after initial_graph_data fails"
+        );
+        let error_message = error.unwrap();
+        assert!(
+            error_message.contains("bad default revision"),
+            "error should contain the git error message, got: {}",
+            error_message
         );
     }
 
@@ -4863,29 +4985,122 @@ mod tests {
         });
         cx.run_until_parked();
 
-        git_graph.update(cx, |graph, cx| {
+        git_graph.update_in(cx, |graph, window, cx| {
             assert!(
                 graph.graph_data.commits.len() >= 10,
                 "graph should load dummy commits"
             );
 
-            graph.row_height = px(20.0);
+            let row_height = GitGraph::row_height(window, cx);
             let origin_y = px(100.0);
             graph.graph_canvas_bounds.set(Some(Bounds {
                 origin: point(px(0.0), origin_y),
-                size: gpui::size(px(100.0), px(1000.0)),
+                size: gpui::size(px(100.0), row_height * 50.0),
             }));
 
+            // Scroll down by half a row so the row under a position near the
+            // top of the canvas is row 1 rather than row 0.
+            let scroll_offset = row_height * 0.75;
             graph.table_interaction_state.update(cx, |state, _| {
-                state.set_scroll_offset(point(px(0.0), px(-15.0)))
+                state.set_scroll_offset(point(px(0.0), -scroll_offset))
             });
-            let pos_y = origin_y + px(10.0);
-            let absolute_calc_row = graph.row_at_position(pos_y, cx);
+            let pos_y = origin_y + row_height * 0.5;
+            let absolute_calc_row = graph.row_at_position(pos_y, window, cx);
 
             assert_eq!(
                 absolute_calc_row,
                 Some(1),
                 "Row calculation should yield absolute row exactly"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_row_height_matches_uniform_list_item_height(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    *settings.theme = ThemeSettingsContent {
+                        ui_font_size: Some(12.7.into()),
+                        ..Default::default()
+                    }
+                });
+            })
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(99);
+        let commits = generate_random_commit_dag(&mut rng, 20, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            let commit_count = graph.graph_data.commits.len();
+            assert!(
+                commit_count > 0,
+                "need at least one commit to measure item height"
+            );
+
+            let table_state = graph.table_interaction_state.read(cx);
+            let item_size = table_state.scroll_handle.0.borrow().last_item_size.expect(
+                "uniform_list should have populated last_item_size after draw(); \
+                     the table has not been laid out",
+            );
+
+            let measured_item_height = item_size.contents.height / commit_count as f32;
+            let computed_row_height = GitGraph::row_height(window, cx);
+
+            assert_eq!(
+                computed_row_height, measured_item_height,
+                "GitGraph::row_height ({}) must exactly match the height that \
+                 uniform_list measured for each table row ({}). \
+                 A mismatch means the canvas and table rows will drift when scrolling.",
+                computed_row_height, measured_item_height,
             );
         });
     }
