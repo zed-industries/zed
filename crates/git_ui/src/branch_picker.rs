@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use editor::Editor;
-use fuzzy::StringMatchCandidate;
+use fuzzy_nucleo::StringMatchCandidate;
 
 use collections::HashSet;
 use git::repository::Branch;
@@ -97,10 +97,11 @@ pub fn create_embedded(
     workspace: WeakEntity<Workspace>,
     repository: Option<Entity<Repository>>,
     width: Rems,
+    show_footer: bool,
     window: &mut Window,
     cx: &mut Context<BranchList>,
 ) -> BranchList {
-    BranchList::new_embedded(workspace, repository, width, window, cx)
+    BranchList::new_embedded(workspace, repository, width, show_footer, window, cx)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -164,6 +165,7 @@ impl BranchList {
 
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
+            picker.delegate.show_footer = !embedded;
         });
 
         let mut subscriptions = Vec::new();
@@ -223,6 +225,7 @@ impl BranchList {
         workspace: WeakEntity<Workspace>,
         repository: Option<Entity<Repository>>,
         width: Rems,
+        show_footer: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -235,6 +238,9 @@ impl BranchList {
             window,
             cx,
         );
+        this.picker.update(cx, |picker, _| {
+            picker.delegate.show_footer = show_footer;
+        });
         this._subscriptions
             .push(cx.subscribe(&this.picker, |_, _, _, cx| {
                 cx.emit(DismissEvent);
@@ -386,6 +392,7 @@ pub struct BranchListDelegate {
     state: PickerState,
     focus_handle: FocusHandle,
     restore_selected_branch: Option<SharedString>,
+    show_footer: bool,
 }
 
 #[derive(Debug)]
@@ -452,6 +459,7 @@ impl BranchListDelegate {
             state: PickerState::List,
             focus_handle: cx.focus_handle(),
             restore_selected_branch: None,
+            show_footer: false,
         }
     }
 
@@ -593,7 +601,7 @@ impl PickerDelegate for BranchListDelegate {
         match self.state {
             PickerState::List | PickerState::NewRemote | PickerState::NewBranch => {
                 match self.branch_filter {
-                    BranchFilter::All | BranchFilter::Remote => "Select branch…",
+                    BranchFilter::All | BranchFilter::Remote => "Switch branch…",
                 }
             }
             PickerState::CreateRemote(_) => "Enter a name for this remote…",
@@ -729,11 +737,11 @@ impl PickerDelegate for BranchListDelegate {
                     .enumerate()
                     .map(|(ix, branch)| StringMatchCandidate::new(ix, branch.name()))
                     .collect::<Vec<StringMatchCandidate>>();
-                let mut matches: Vec<Entry> = fuzzy::match_strings(
+                let mut matches: Vec<Entry> = fuzzy_nucleo::match_strings_async(
                     &candidates,
                     &query,
-                    true,
-                    true,
+                    fuzzy_nucleo::Case::Smart,
+                    fuzzy_nucleo::LengthPenalty::On,
                     10000,
                     &Default::default(),
                     cx.background_executor().clone(),
@@ -944,7 +952,7 @@ impl PickerDelegate for BranchListDelegate {
                 } else if branch.is_remote() {
                     IconName::Screen
                 } else {
-                    IconName::GitBranchAlt
+                    IconName::GitBranch
                 }
             }
         };
@@ -1172,7 +1180,7 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        if self.editor_position() == PickerEditorPosition::End {
+        if !self.show_footer || self.editor_position() == PickerEditorPosition::End {
             return None;
         }
         let focus_handle = self.focus_handle.clone();
@@ -1237,7 +1245,7 @@ impl PickerDelegate for BranchListDelegate {
                         },
                     )
                     .child(
-                        Button::new("select_branch", "Select")
+                        Button::new("switch_branch", "Switch")
                             .key_binding(
                                 KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                     .map(|kb| kb.size(rems_from_px(12.))),
@@ -1331,7 +1339,7 @@ impl PickerDelegate for BranchListDelegate {
                             this.child(button)
                         })
                         .child(
-                            Button::new("branch-from-default", "Create")
+                            Button::new("create-new-branch", "Create")
                                 .key_binding(
                                     KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                         .map(|kb| kb.size(rems_from_px(12.))),
@@ -1347,7 +1355,7 @@ impl PickerDelegate for BranchListDelegate {
                 footer_container()
                     .justify_end()
                     .child(
-                        Button::new("branch-from-default", "Confirm")
+                        Button::new("confirm-create-remote", "Confirm")
                             .key_binding(
                                 KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                     .map(|kb| kb.size(rems_from_px(12.))),

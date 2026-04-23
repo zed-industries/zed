@@ -1,4 +1,4 @@
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, bail};
 use file_icons::FileIcons;
 use prompt_store::{PromptId, UserPromptId};

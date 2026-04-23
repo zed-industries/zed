@@ -269,6 +269,15 @@ impl LspAdapter for VtslsLspAdapter {
                     "enabled": true
                 }
             },
+            "implementationsCodeLens": {
+                "enabled": true,
+                "showOnAllClassMethods": true,
+                "showOnInterfaceMethods": true
+            },
+            "referencesCodeLens": {
+                "enabled": true,
+                "showOnAllFunctions": true
+            },
             "tsserver": {
                 "maxTsServerMemory": 8092
             },

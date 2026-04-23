@@ -157,32 +157,6 @@ impl MarkdownStyle {
             rule_color: colors.border,
             block_quote_border_color: colors.border,
             code_block_overflow_x_scroll: true,
-            heading_level_styles: Some(HeadingLevelStyles {
-                h1: Some(TextStyleRefinement {
-                    font_size: Some(rems(1.15).into()),
-                    ..Default::default()
-                }),
-                h2: Some(TextStyleRefinement {
-                    font_size: Some(rems(1.1).into()),
-                    ..Default::default()
-                }),
-                h3: Some(TextStyleRefinement {
-                    font_size: Some(rems(1.05).into()),
-                    ..Default::default()
-                }),
-                h4: Some(TextStyleRefinement {
-                    font_size: Some(rems(1.).into()),
-                    ..Default::default()
-                }),
-                h5: Some(TextStyleRefinement {
-                    font_size: Some(rems(0.95).into()),
-                    ..Default::default()
-                }),
-                h6: Some(TextStyleRefinement {
-                    font_size: Some(rems(0.875).into()),
-                    ..Default::default()
-                }),
-            }),
             code_block: StyleRefinement {
                 padding: EdgesRefinement {
                     top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
@@ -263,6 +237,7 @@ pub struct Markdown {
     mermaid_state: MermaidState,
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
+    context_menu_link: Option<SharedString>,
     context_menu_selected_text: Option<String>,
     search_highlights: Vec<Range<usize>>,
     active_search_highlight: Option<usize>,
@@ -434,6 +409,7 @@ impl Markdown {
             mermaid_state: MermaidState::default(),
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
+            context_menu_link: None,
             context_menu_selected_text: None,
             search_highlights: Vec::new(),
             active_search_highlight: None,
@@ -656,8 +632,16 @@ impl Markdown {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
-    fn capture_selection_for_context_menu(&mut self) {
+    fn capture_for_context_menu(&mut self, link: Option<SharedString>) {
         self.context_menu_selected_text = self.selected_text();
+        self.context_menu_link = link;
+    }
+
+    /// Returns the URL of the link that was most recently right-clicked, if any.
+    /// This is set during a right-click mouse-down event and can be read by parent
+    /// views to include a "Copy Link" item in their context menus.
+    pub fn context_menu_link(&self) -> Option<&SharedString> {
+        self.context_menu_link.as_ref()
     }
 
     fn parse(&mut self, cx: &mut Context<Self>) {
@@ -1067,12 +1051,12 @@ impl MarkdownElement {
 
             image_container.child(
                 img(source)
+                    .id(("markdown-image", range.start))
                     .max_w_full()
                     .when_some(height, |this, height| this.h(height))
                     .when_some(width, |this, width| this.w(width)),
             )
         });
-        let _ = range;
     }
 
     fn push_markdown_paragraph(
@@ -1114,7 +1098,7 @@ impl MarkdownElement {
         text_align_override: Option<TextAlign>,
     ) {
         let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
-        let mut heading = div().mb_2();
+        let mut heading = div().mt_4().mb_2();
         heading = apply_heading_style(heading, level, self.style.heading_level_styles.as_ref());
 
         heading = match align {
@@ -1336,13 +1320,18 @@ impl MarkdownElement {
 
         self.on_mouse_event(window, cx, {
             let hitbox = hitbox.clone();
-            move |markdown, event: &MouseDownEvent, phase, window, _| {
+            let rendered_text = rendered_text.clone();
+            move |markdown, event: &MouseDownEvent, phase, window, _cx| {
                 if phase.capture()
                     && event.button == MouseButton::Right
                     && hitbox.is_hovered(window)
                 {
-                    // Capture selected text so it survives until menu item is clicked
-                    markdown.capture_selection_for_context_menu();
+                    let link = rendered_text
+                        .source_index_for_position(event.position)
+                        .ok()
+                        .and_then(|ix| rendered_text.link_for_source_index(ix))
+                        .map(|link| link.destination_url.clone());
+                    markdown.capture_for_context_menu(link);
                 }
             }
         });
@@ -1352,7 +1341,7 @@ impl MarkdownElement {
             let hitbox = hitbox.clone();
             move |markdown, event: &MouseDownEvent, phase, window, cx| {
                 if hitbox.is_hovered(window) {
-                    if phase.bubble() {
+                    if phase.bubble() && event.button != MouseButton::Right {
                         let position_result =
                             rendered_text.source_index_for_position(event.position);
 
@@ -3516,6 +3505,90 @@ mod tests {
         assert!(!has_code_block(&Markdown::escape(diagnostic)));
     }
 
+    #[gpui::test]
+    fn test_link_detected_for_source_index(cx: &mut TestAppContext) {
+        let rendered = render_markdown("[Click here](https://example.com)", cx);
+
+        assert_eq!(rendered.links.len(), 1);
+        assert_eq!(rendered.links[0].destination_url, "https://example.com");
+
+        // Source index 1 ('C' in "Click") is inside the link's source range
+        let link = rendered.link_for_source_index(1);
+        assert!(link.is_some());
+        assert_eq!(link.unwrap().destination_url, "https://example.com");
+
+        // A source index past the end of the link range returns None
+        let past_end = rendered.links[0].source_range.end;
+        assert!(rendered.link_for_source_index(past_end).is_none());
+    }
+
+    #[gpui::test]
+    fn test_link_for_source_index_ignores_plain_text(cx: &mut TestAppContext) {
+        let rendered = render_markdown("Hello world", cx);
+
+        assert!(rendered.links.is_empty());
+        assert!(rendered.link_for_source_index(0).is_none());
+        assert!(rendered.link_for_source_index(5).is_none());
+    }
+
+    #[gpui::test]
+    fn test_context_menu_link_initial_state(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown =
+            cx.new(|cx| Markdown::new("Hello [world](https://example.com)".into(), None, None, cx));
+        cx.run_until_parked();
+
+        cx.update(|_window, cx| {
+            assert!(markdown.read(cx).context_menu_link().is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn test_capture_for_context_menu(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| Markdown::new("text".into(), None, None, cx));
+        cx.run_until_parked();
+
+        // Simulates right-clicking on a link
+        let url: SharedString = "https://example.com".into();
+        markdown.update(cx, |md, _cx| {
+            md.capture_for_context_menu(Some(url.clone()));
+        });
+        cx.update(|_window, cx| {
+            assert_eq!(
+                markdown
+                    .read(cx)
+                    .context_menu_link()
+                    .map(SharedString::as_ref),
+                Some("https://example.com")
+            );
+        });
+
+        // Simulates right-clicking on plain text — link is cleared
+        markdown.update(cx, |md, _cx| {
+            md.capture_for_context_menu(None);
+        });
+        cx.update(|_window, cx| {
+            assert!(markdown.read(cx).context_menu_link().is_none());
+        });
+    }
+
     #[track_caller]
     fn assert_mappings(rendered: &RenderedText, expected: Vec<Vec<(usize, usize)>>) {
         assert_eq!(rendered.lines.len(), expected.len(), "line count mismatch");
@@ -3550,5 +3623,34 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[gpui::test]
+    fn test_heading_font_sizes_are_distinct(cx: &mut TestAppContext) {
+        let rendered = render_markdown("# H1\n\n## H2\n\n### H3\n\nBody text", cx);
+
+        assert!(
+            rendered.lines.len() >= 4,
+            "expected at least 4 rendered lines, got {}",
+            rendered.lines.len()
+        );
+
+        let h1_line_height = rendered.lines[0].layout.line_height();
+        let h2_line_height = rendered.lines[1].layout.line_height();
+        let h3_line_height = rendered.lines[2].layout.line_height();
+        let body_line_height = rendered.lines[3].layout.line_height();
+
+        assert!(
+            h1_line_height > h2_line_height,
+            "H1 line height ({h1_line_height:?}) should be greater than H2 ({h2_line_height:?})"
+        );
+        assert!(
+            h2_line_height > h3_line_height,
+            "H2 line height ({h2_line_height:?}) should be greater than H3 ({h3_line_height:?})"
+        );
+        assert!(
+            h3_line_height > body_line_height,
+            "H3 line height ({h3_line_height:?}) should be greater than body text ({body_line_height:?})"
+        );
     }
 }

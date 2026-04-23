@@ -1385,6 +1385,10 @@ impl PlatformWindow for WaylandWindow {
         }
 
         state.renderer.draw(scene);
+
+        if state.renderer.needs_redraw() {
+            state.force_render_after_recovery = true;
+        }
     }
 
     fn completed_frame(&self) {

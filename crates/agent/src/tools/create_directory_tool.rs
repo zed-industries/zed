@@ -2,7 +2,7 @@ use super::tool_permissions::{
     SensitiveSettingsKind, authorize_symlink_access, canonicalize_worktree_roots,
     detect_symlink_escape, sensitive_settings_kind,
 };
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
@@ -52,8 +52,8 @@ impl AgentTool for CreateDirectoryTool {
 
     const NAME: &'static str = "create_directory";
 
-    fn kind() -> ToolKind {
-        ToolKind::Read
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Read
     }
 
     fn initial_title(
@@ -169,7 +169,6 @@ impl AgentTool for CreateDirectoryTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::TestAppContext;
     use project::{FakeFs, Project};

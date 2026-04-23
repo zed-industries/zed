@@ -433,7 +433,7 @@ impl PickerDelegate for ChannelModalDelegate {
                                     Some(
                                         deferred(
                                             anchored()
-                                                .anchor(gpui::Corner::TopRight)
+                                                .anchor(gpui::Anchor::TopRight)
                                                 .child(menu.clone()),
                                         )
                                         .with_priority(1),

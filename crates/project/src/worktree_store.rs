@@ -1383,12 +1383,6 @@ impl WorktreeStore {
     pub fn paths(&self, cx: &App) -> WorktreePaths {
         let (mains, folders): (Vec<PathBuf>, Vec<PathBuf>) = self
             .visible_worktrees(cx)
-            .filter(|worktree| {
-                let worktree = worktree.read(cx);
-                // Remote worktrees that haven't received their first update
-                // don't have enough data to contribute yet.
-                !worktree.is_remote() || worktree.root_entry().is_some()
-            })
             .map(|worktree| {
                 let snapshot = worktree.read(cx).snapshot();
                 let folder_path = snapshot.abs_path().to_path_buf();

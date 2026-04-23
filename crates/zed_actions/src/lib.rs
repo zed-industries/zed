@@ -1,6 +1,7 @@
 use gpui::{Action, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 // If the zed binary doesn't use anything in this crate, it will be optimized away
 // and the actions won't initialize. So we just provide an empty initialization function
@@ -251,6 +252,49 @@ pub mod workspace {
     );
 }
 
+/// Describes which ref to base a new git worktree on. The worktree is
+/// always created in a detached HEAD state; users can opt into creating
+/// a branch afterwards from the worktree itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum NewWorktreeBranchTarget {
+    /// Create a detached worktree from the current HEAD.
+    #[default]
+    CurrentBranch,
+    /// Create a detached worktree at the tip of an existing branch.
+    ExistingBranch { name: String },
+}
+
+/// Creates a new git worktree and switches the workspace to it.
+/// Dispatched by the unified worktree picker when the user selects a "Create new worktree" entry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
+#[action(namespace = git)]
+#[serde(deny_unknown_fields)]
+pub struct CreateWorktree {
+    /// When this is None, Zed will randomly generate a worktree name.
+    pub worktree_name: Option<String>,
+    pub branch_target: NewWorktreeBranchTarget,
+}
+
+/// Switches the workspace to an existing linked worktree.
+/// Dispatched by the unified worktree picker when the user selects an existing worktree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
+#[action(namespace = git)]
+#[serde(deny_unknown_fields)]
+pub struct SwitchWorktree {
+    pub path: PathBuf,
+    pub display_name: String,
+}
+
+/// Opens an existing worktree in a new window.
+/// Dispatched by the worktree picker's "Open in New Window" button.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
+#[action(namespace = git)]
+#[serde(deny_unknown_fields)]
+pub struct OpenWorktreeInNewWindow {
+    pub path: PathBuf,
+}
+
 pub mod git {
     use gpui::actions;
 
@@ -423,7 +467,9 @@ pub mod buffer_search {
             /// Dismisses the search bar.
             Dismiss,
             /// Focuses back on the editor.
-            FocusEditor
+            FocusEditor,
+            /// Sets the search query to the current selection without opening the search bar or running a search.
+            UseSelectionForFind,
         ]
     );
 }

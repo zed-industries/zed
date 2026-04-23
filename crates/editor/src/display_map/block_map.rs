@@ -2056,13 +2056,15 @@ impl BlockMapWriter<'_> {
             if let Some(companion) = &self.companion
                 && companion.inverse.is_some()
             {
-                companion_buffer_ids.extend(
-                    companion
-                        .companion
-                        .buffer_to_companion_buffer(companion.display_map_id)
-                        .get(&buffer_id)
-                        .copied(),
-                )
+                if let Some(diff) = multi_buffer_snapshot.diff_for_buffer_id(buffer_id) {
+                    let companion_buffer_id =
+                        if companion.companion.is_rhs(companion.display_map_id) {
+                            diff.base_text().remote_id()
+                        } else {
+                            diff.buffer_id()
+                        };
+                    companion_buffer_ids.insert(companion_buffer_id);
+                }
             }
         }
         ranges.sort_unstable_by_key(|range| range.start);
@@ -2869,7 +2871,6 @@ mod tests {
         display_map::{
             Companion, fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
         },
-        split::{convert_lhs_rows_to_rhs, convert_rhs_rows_to_lhs},
         test::test_font,
     };
     use buffer_diff::BufferDiff;
@@ -4680,13 +4681,7 @@ mod tests {
 
         let rhs_entity_id = rhs_multibuffer.entity_id();
 
-        let companion = cx.new(|_| {
-            Companion::new(
-                rhs_entity_id,
-                convert_rhs_rows_to_lhs,
-                convert_lhs_rows_to_rhs,
-            )
-        });
+        let companion = cx.new(|_| Companion::new(rhs_entity_id));
 
         let rhs_edits = Patch::new(vec![text::Edit {
             old: WrapRow(0)..rhs_wrap_snapshot.max_point().row(),

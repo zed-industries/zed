@@ -71,6 +71,17 @@ pub enum Model {
     )]
     ClaudeOpus4_6,
     #[serde(
+        rename = "claude-opus-4-7",
+        alias = "claude-opus-4-7-latest",
+        alias = "claude-opus-4-7-1m-context",
+        alias = "claude-opus-4-7-1m-context-latest",
+        alias = "claude-opus-4-7-thinking",
+        alias = "claude-opus-4-7-thinking-latest",
+        alias = "claude-opus-4-7-1m-context-thinking",
+        alias = "claude-opus-4-7-1m-context-thinking-latest"
+    )]
+    ClaudeOpus4_7,
+    #[serde(
         rename = "claude-sonnet-4",
         alias = "claude-sonnet-4-latest",
         alias = "claude-sonnet-4-thinking",
@@ -130,6 +141,10 @@ impl Model {
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
+        if id.starts_with("claude-opus-4-7") {
+            return Ok(Self::ClaudeOpus4_7);
+        }
+
         if id.starts_with("claude-opus-4-6") {
             return Ok(Self::ClaudeOpus4_6);
         }
@@ -175,6 +190,7 @@ impl Model {
             Self::ClaudeOpus4_1 => "claude-opus-4-1-latest",
             Self::ClaudeOpus4_5 => "claude-opus-4-5-latest",
             Self::ClaudeOpus4_6 => "claude-opus-4-6-latest",
+            Self::ClaudeOpus4_7 => "claude-opus-4-7-latest",
             Self::ClaudeSonnet4 => "claude-sonnet-4-latest",
             Self::ClaudeSonnet4_5 => "claude-sonnet-4-5-latest",
             Self::ClaudeSonnet4_6 => "claude-sonnet-4-6-latest",
@@ -191,6 +207,7 @@ impl Model {
             Self::ClaudeOpus4_1 => "claude-opus-4-1-20250805",
             Self::ClaudeOpus4_5 => "claude-opus-4-5-20251101",
             Self::ClaudeOpus4_6 => "claude-opus-4-6",
+            Self::ClaudeOpus4_7 => "claude-opus-4-7",
             Self::ClaudeSonnet4 => "claude-sonnet-4-20250514",
             Self::ClaudeSonnet4_5 => "claude-sonnet-4-5-20250929",
             Self::ClaudeSonnet4_6 => "claude-sonnet-4-6",
@@ -206,6 +223,7 @@ impl Model {
             Self::ClaudeOpus4_1 => "Claude Opus 4.1",
             Self::ClaudeOpus4_5 => "Claude Opus 4.5",
             Self::ClaudeOpus4_6 => "Claude Opus 4.6",
+            Self::ClaudeOpus4_7 => "Claude Opus 4.7",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
             Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
             Self::ClaudeSonnet4_6 => "Claude Sonnet 4.6",
@@ -223,6 +241,7 @@ impl Model {
             | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_6
+            | Self::ClaudeOpus4_7
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4_6
@@ -248,7 +267,7 @@ impl Model {
             | Self::ClaudeSonnet4_5
             | Self::ClaudeHaiku4_5
             | Self::Claude3Haiku => 200_000,
-            Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => 1_000_000,
+            Self::ClaudeOpus4_6 | Self::ClaudeOpus4_7 | Self::ClaudeSonnet4_6 => 1_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -261,7 +280,7 @@ impl Model {
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4_6
             | Self::ClaudeHaiku4_5 => 64_000,
-            Self::ClaudeOpus4_6 => 128_000,
+            Self::ClaudeOpus4_6 | Self::ClaudeOpus4_7 => 128_000,
             Self::Claude3Haiku => 4_096,
             Self::Custom {
                 max_output_tokens, ..
@@ -275,6 +294,7 @@ impl Model {
             | Self::ClaudeOpus4_1
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_6
+            | Self::ClaudeOpus4_7
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4_6
@@ -312,6 +332,7 @@ impl Model {
                     | Self::ClaudeOpus4_1
                     | Self::ClaudeOpus4_5
                     | Self::ClaudeOpus4_6
+                    | Self::ClaudeOpus4_7
                     | Self::ClaudeSonnet4
                     | Self::ClaudeSonnet4_5
                     | Self::ClaudeSonnet4_6
@@ -320,10 +341,17 @@ impl Model {
         }
     }
 
+    pub fn supports_speed(&self) -> bool {
+        matches!(self, Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6)
+    }
+
     pub fn supports_adaptive_thinking(&self) -> bool {
         match self {
             Self::Custom { mode, .. } => matches!(mode, AnthropicModelMode::AdaptiveThinking),
-            _ => matches!(self, Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6),
+            _ => matches!(
+                self,
+                Self::ClaudeOpus4_6 | Self::ClaudeOpus4_7 | Self::ClaudeSonnet4_6
+            ),
         }
     }
 
@@ -970,71 +998,6 @@ pub fn parse_prompt_too_long(message: &str) -> Option<u64> {
         .0
         .parse()
         .ok()
-}
-
-/// Request body for the token counting API.
-/// Similar to `Request` but without `max_tokens` since it's not needed for counting.
-#[derive(Debug, Serialize)]
-pub struct CountTokensRequest {
-    pub model: String,
-    pub messages: Vec<Message>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system: Option<StringOrContents>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<Tool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thinking: Option<Thinking>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<ToolChoice>,
-}
-
-/// Response from the token counting API.
-#[derive(Debug, Deserialize)]
-pub struct CountTokensResponse {
-    pub input_tokens: u64,
-}
-
-/// Count the number of tokens in a message without creating it.
-pub async fn count_tokens(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-    request: CountTokensRequest,
-) -> Result<CountTokensResponse, AnthropicError> {
-    let uri = format!("{api_url}/v1/messages/count_tokens");
-
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Anthropic-Version", "2023-06-01")
-        .header("X-Api-Key", api_key.trim())
-        .header("Content-Type", "application/json");
-
-    let serialized_request =
-        serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
-    let http_request = request_builder
-        .body(AsyncBody::from(serialized_request))
-        .map_err(AnthropicError::BuildRequestBody)?;
-
-    let mut response = client
-        .send(http_request)
-        .await
-        .map_err(AnthropicError::HttpSend)?;
-
-    let rate_limits = RateLimitInfo::from_headers(response.headers());
-
-    if response.status().is_success() {
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
-            .await
-            .map_err(AnthropicError::ReadResponse)?;
-
-        serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)
-    } else {
-        Err(handle_error_response(response, rate_limits).await)
-    }
 }
 
 // -- Conversions from/to `language_model_core` types --

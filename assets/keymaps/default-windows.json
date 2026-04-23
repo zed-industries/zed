@@ -225,7 +225,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "agent::NewThread",
-      "ctrl-shift-h": "agent::OpenHistory",
       "shift-alt-c": "agent::OpenSettings",
       "shift-alt-l": "agent::OpenRulesLibrary",
       "shift-alt-p": "agent::ManageProfiles",
@@ -235,10 +234,8 @@
       // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Windows under the `AgentPanel` context
       "alt-l": "agent::CycleFavoriteModels",
       "shift-alt-/": "agent::ToggleModelSelector",
-      "shift-alt-j": "agent::ToggleNavigationMenu",
       "shift-alt-i": "agent::ToggleOptionsMenu",
       "ctrl-shift-alt-n": "agent::ToggleNewThreadMenu",
-      "ctrl-shift-t": "agent::CycleStartThreadIn",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl-shift-.": "agent::AddSelectionToThread",
       "ctrl-shift-e": "project_panel::ToggleFocus",
@@ -384,6 +381,13 @@
     "use_key_equivalents": true,
     "bindings": {
       "backspace": "agent::RemoveSelectedThread",
+    },
+  },
+  {
+    "context": "ThreadsArchiveView",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-backspace": "agent::ArchiveSelectedThread",
     },
   },
   {
@@ -619,6 +623,7 @@
       // "ctrl-shift-alt-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
       "ctrl-shift-alt-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "shift-alt-b": "branches::OpenRecent",
+      "shift-alt-w": "git::Worktree",
       "shift-alt-enter": "toast::RunAction",
       "ctrl-shift-`": "workspace::NewTerminal",
       "ctrl-s": "workspace::Save",
@@ -720,8 +725,9 @@
       "right": "menu::SelectChild",
       "enter": "menu::Confirm",
       "ctrl-f": "agents_sidebar::FocusSidebarFilter",
-      "ctrl-g": "agents_sidebar::ToggleArchive",
-      "shift-backspace": "agent::RemoveSelectedThread",
+      "ctrl-g": "agents_sidebar::ToggleThreadHistory",
+      "shift-backspace": "agent::ArchiveSelectedThread",
+      "ctrl-backspace": "agent::RemoveSelectedThread",
       "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
       "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
     },
@@ -1383,6 +1389,7 @@
     "context": "Welcome",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-n": "workspace::NewFile",
       "ctrl-=": ["zed::IncreaseUiFontSize", { "persist": false }],
       "ctrl-+": ["zed::IncreaseUiFontSize", { "persist": false }],
       "ctrl--": ["zed::DecreaseUiFontSize", { "persist": false }],
@@ -1392,15 +1399,6 @@
       "ctrl-3": ["welcome::OpenRecentProject", 2],
       "ctrl-4": ["welcome::OpenRecentProject", 3],
       "ctrl-5": ["welcome::OpenRecentProject", 4],
-    },
-  },
-  {
-    "context": "GitWorktreeSelector || (GitWorktreeSelector > Picker > Editor)",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-shift-space": "git::WorktreeFromDefaultOnWindow",
-      "ctrl-space": "git::WorktreeFromDefault",
-      "ctrl-shift-backspace": "git::DeleteWorktree",
     },
   },
   {
@@ -1501,9 +1499,15 @@
   {
     "context": "GitPicker",
     "bindings": {
-      "alt-1": "git_picker::ActivateWorktreesTab",
-      "alt-2": "git_picker::ActivateBranchesTab",
-      "alt-3": "git_picker::ActivateStashTab",
+      "alt-1": "git_picker::ActivateBranchesTab",
+      "alt-2": "git_picker::ActivateStashTab",
+    },
+  },
+  {
+    "context": "WorktreePicker || (WorktreePicker > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-backspace": "worktree_picker::DeleteWorktree",
     },
   },
   {

@@ -235,4 +235,50 @@ fn main() {
             }
         }
     }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    prepare_app_icon_x11();
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn icon_path() -> std::path::PathBuf {
+    use std::str::FromStr;
+
+    let release_channel = option_env!("RELEASE_CHANNEL").unwrap_or("dev");
+    let channel = match release_channel {
+        "stable" => "",
+        "preview" => "-preview",
+        "nightly" => "-nightly",
+        "dev" => "-dev",
+        _ => "-dev",
+    };
+
+    #[cfg(windows)]
+    let icon = format!("resources/windows/app-icon{}.ico", channel);
+    #[cfg(not(windows))]
+    let icon = format!("resources/app-icon{}.png", channel);
+
+    std::path::PathBuf::from_str(&icon).unwrap()
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn prepare_app_icon_x11() {
+    use image::{ImageReader, imageops};
+    use std::env;
+    use std::path::Path;
+
+    let out_dir = env::var("OUT_DIR").unwrap();
+
+    let resized_image = ImageReader::open(icon_path())
+        .unwrap()
+        .decode()
+        .unwrap()
+        .resize(256, 256, imageops::FilterType::Lanczos3);
+
+    // name should match include_bytes! call in src/zed.rs
+    let icon_out_path = Path::new(&out_dir).join("app_icon.png");
+    resized_image.save(&icon_out_path).expect("saving app icon");
+
+    println!("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
+    println!("cargo:rerun-if-changed={}", icon_path().to_string_lossy());
 }

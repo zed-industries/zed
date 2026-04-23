@@ -185,7 +185,7 @@ pub(crate) fn add_compliance_steps(
     fn run_compliance_check(context: &ComplianceContext) -> (Step<Run>, StepOutput) {
         let job = named::bash(
             formatdoc! {r#"
-                cargo xtask compliance {target} --report-path "{COMPLIANCE_REPORT_PATH}"
+                cargo xtask compliance version {target} --report-path "{COMPLIANCE_REPORT_PATH}"
                 "#,
                 target = if context.tag_source().is_some() { r#""$LATEST_TAG" --branch main"# } else { r#""$GITHUB_REF_NAME""# },
             }

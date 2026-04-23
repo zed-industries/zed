@@ -1,12 +1,13 @@
 use std::{any::Any, rc::Rc, sync::Arc};
 
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
-use agent_settings::AgentSettings;
+use agent_settings::{AgentSettings, language_model_to_selection};
 use anyhow::Result;
 use collections::HashSet;
 use fs::Fs;
 use gpui::{App, Entity, Task};
+use language_model::{LanguageModelId, LanguageModelProviderId, LanguageModelRegistry};
 use project::{AgentId, Project};
 use prompt_store::PromptStore;
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
@@ -76,7 +77,7 @@ impl AgentServer for NativeAgentServer {
         fs: Arc<dyn Fs>,
         cx: &App,
     ) {
-        let selection = model_id_to_selection(&model_id);
+        let selection = model_id_to_selection(&model_id, cx);
         update_settings_file(fs, cx, move |settings, _| {
             let agent = settings.agent.get_or_insert_default();
             if should_be_favorite {
@@ -89,16 +90,41 @@ impl AgentServer for NativeAgentServer {
 }
 
 /// Convert a ModelId (e.g. "anthropic/claude-3-5-sonnet") to a LanguageModelSelection.
-fn model_id_to_selection(model_id: &acp::ModelId) -> LanguageModelSelection {
+fn model_id_to_selection(model_id: &acp::ModelId, cx: &App) -> LanguageModelSelection {
     let id = model_id.0.as_ref();
     let (provider, model) = id.split_once('/').unwrap_or(("", id));
-    LanguageModelSelection {
-        provider: provider.to_owned().into(),
-        model: model.to_owned(),
-        enable_thinking: false,
-        effort: None,
-        speed: None,
-    }
+
+    let provider_id = LanguageModelProviderId(provider.to_string().into());
+    let model_id_typed = LanguageModelId(model.to_string().into());
+    let resolved = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .provider(&provider_id)
+        .and_then(|p| {
+            p.provided_models(cx)
+                .into_iter()
+                .find(|m| m.id() == model_id_typed)
+        });
+
+    let Some(resolved) = resolved else {
+        return LanguageModelSelection {
+            provider: provider.to_owned().into(),
+            model: model.to_owned(),
+            enable_thinking: false,
+            effort: None,
+            speed: None,
+        };
+    };
+
+    let current_user_selection = AgentSettings::get_global(cx)
+        .default_model
+        .as_ref()
+        .filter(|selection| {
+            selection.provider.0 == resolved.provider_id().0.as_ref()
+                && selection.model == resolved.id().0.as_ref()
+        })
+        .cloned();
+
+    language_model_to_selection(&resolved, current_user_selection.as_ref())
 }
 
 #[cfg(test)]

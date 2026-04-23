@@ -99,7 +99,7 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
 
 /// Commit data needed for the git graph visualization.
 #[derive(Debug, Clone)]
-pub struct GraphCommitData {
+pub struct CommitData {
     pub sha: Oid,
     /// Most commits have a single parent, so we use a SmallVec to avoid allocations.
     pub parents: SmallVec<[Oid; 1]>,
@@ -107,6 +107,7 @@ pub struct GraphCommitData {
     pub author_email: SharedString,
     pub commit_timestamp: i64,
     pub subject: SharedString,
+    pub message: SharedString,
 }
 
 #[derive(Debug)]
@@ -118,7 +119,7 @@ pub struct InitialGraphCommitData {
 
 struct CommitDataRequest {
     sha: Oid,
-    response_tx: oneshot::Sender<Result<GraphCommitData>>,
+    response_tx: oneshot::Sender<Result<CommitData>>,
 }
 
 pub struct CommitDataReader {
@@ -127,7 +128,7 @@ pub struct CommitDataReader {
 }
 
 impl CommitDataReader {
-    pub async fn read(&self, sha: Oid) -> Result<GraphCommitData> {
+    pub async fn read(&self, sha: Oid) -> Result<CommitData> {
         let (response_tx, response_rx) = oneshot::channel();
         self.request_tx
             .send(CommitDataRequest { sha, response_tx })
@@ -137,15 +138,37 @@ impl CommitDataReader {
             .await
             .map_err(|_| anyhow!("commit data reader task dropped response"))?
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_test(
+        executor: BackgroundExecutor,
+        resolve: impl 'static + Send + Sync + Fn(Oid) -> Result<CommitData>,
+    ) -> Self {
+        let (request_tx, request_rx) = smol::channel::bounded::<CommitDataRequest>(64);
+        let resolve = Arc::new(resolve);
+        let delay_executor = executor.clone();
+        let task = executor.spawn(async move {
+            while let Ok(CommitDataRequest { sha, response_tx }) = request_rx.recv().await {
+                delay_executor.simulate_random_delay().await;
+                response_tx.send(resolve(sha)).ok();
+            }
+        });
+
+        Self {
+            request_tx,
+            _task: task,
+        }
+    }
 }
 
-fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<GraphCommitData> {
+fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<CommitData> {
     let mut parents = SmallVec::new();
     let mut author_name = SharedString::default();
     let mut author_email = SharedString::default();
     let mut commit_timestamp = 0i64;
     let mut in_headers = true;
     let mut subject = None;
+    let mut message_lines = Vec::new();
 
     for line in content.lines() {
         if in_headers {
@@ -172,18 +195,22 @@ fn parse_cat_file_commit(sha: Oid, content: &str) -> Option<GraphCommitData> {
                     }
                 }
             }
-        } else if subject.is_none() {
-            subject = Some(SharedString::from(line.to_string()));
+        } else {
+            if subject.is_none() {
+                subject = Some(SharedString::from(line.to_string()));
+            }
+            message_lines.push(line);
         }
     }
 
-    Some(GraphCommitData {
+    Some(CommitData {
         sha,
         parents,
         author_name,
         author_email,
         commit_timestamp,
         subject: subject.unwrap_or_default(),
+        message: SharedString::from(message_lines.join("\n")),
     })
 }
 
@@ -237,6 +264,7 @@ pub struct Worktree {
     // todo(git_worktree) This type should be a Oid
     pub sha: SharedString,
     pub is_main: bool,
+    pub is_bare: bool,
 }
 
 /// Describes how a new worktree should choose or create its checked-out HEAD.
@@ -291,6 +319,34 @@ impl Worktree {
         self.branch_name()
             .unwrap_or(&self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)])
     }
+
+    pub fn directory_name(&self, main_worktree_path: Option<&Path>) -> String {
+        if self.is_main {
+            return "main worktree".to_string();
+        }
+
+        let dir_name = self
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(self.display_name());
+
+        if let Some(main_path) = main_worktree_path {
+            let main_dir = main_path.file_name().and_then(|n| n.to_str());
+            if main_dir == Some(dir_name) {
+                if let Some(parent_name) = self
+                    .path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                {
+                    return parent_name.to_string();
+                }
+            }
+        }
+
+        dir_name.to_string()
+    }
 }
 
 pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree> {
@@ -303,6 +359,8 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
         let mut sha = None;
         let mut ref_name = None;
 
+        let mut is_bare = false;
+
         for line in entry.lines() {
             let line = line.trim();
             if line.is_empty() {
@@ -314,8 +372,10 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
                 sha = Some(rest.to_string());
             } else if let Some(rest) = line.strip_prefix("branch ") {
                 ref_name = Some(rest.to_string());
+            } else if line == "bare" {
+                is_bare = true;
             }
-            // Ignore other lines: detached, bare, locked, prunable, etc.
+            // Ignore other lines: detached, locked, prunable, etc.
         }
 
         if let (Some(path), Some(sha)) = (path, sha) {
@@ -324,6 +384,7 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
                 ref_name: ref_name.map(Into::into),
                 sha: sha.into(),
                 is_main: is_first,
+                is_bare,
             });
             is_first = false;
         }
@@ -949,6 +1010,8 @@ pub trait GitRepository: Send + Sync {
         target_checkpoint: GitRepositoryCheckpoint,
     ) -> BoxFuture<'_, Result<String>>;
 
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>>;
+
     fn default_branch(
         &self,
         include_remote_name: bool,
@@ -1009,6 +1072,25 @@ pub struct RealGitRepository {
     is_trusted: Arc<AtomicBool>,
 }
 
+#[derive(Debug)]
+pub enum RefEdit {
+    Update { ref_name: String, commit: String },
+    Delete { ref_name: String },
+}
+
+impl RefEdit {
+    fn into_args(self) -> Vec<OsString> {
+        match self {
+            Self::Update { ref_name, commit } => {
+                vec!["update-ref".into(), ref_name.into(), commit.into()]
+            }
+            Self::Delete { ref_name } => {
+                vec!["update-ref".into(), "-d".into(), ref_name.into()]
+            }
+        }
+    }
+}
+
 impl RealGitRepository {
     pub fn new(
         dotgit_path: &Path,
@@ -1055,6 +1137,17 @@ impl RealGitRepository {
         ))
     }
 
+    fn edit_ref(&self, edit: RefEdit) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let args = edit.into_args();
+                git_binary?.run(&args).await?;
+                Ok(())
+            })
+            .boxed()
+    }
+
     async fn any_git_binary_help_output(&self) -> SharedString {
         if let Some(output) = self.any_git_binary_help_output.lock().clone() {
             return output;
@@ -1080,6 +1173,11 @@ pub struct GitRepositoryCheckpoint {
 pub struct GitCommitter {
     pub name: Option<String>,
     pub email: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct GitCommitTemplate {
+    pub template: String,
 }
 
 pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
@@ -1433,6 +1531,58 @@ impl GitRepository for RealGitRepository {
                 let repo = repo.lock();
                 let content = repo.find_blob(oid.0)?.content().to_owned();
                 Ok(String::from_utf8(content)?)
+            })
+            .boxed()
+    }
+
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
+        let working_directory_and_git_binary = self.working_directory().map(|working_directory| {
+            (
+                working_directory.clone(),
+                GitBinary::new(
+                    self.any_git_binary_path.clone(),
+                    working_directory,
+                    self.path(),
+                    self.executor.clone(),
+                    self.is_trusted(),
+                ),
+            )
+        });
+
+        self.executor
+            .spawn(async move {
+                let (working_directory, git_binary) = working_directory_and_git_binary?;
+
+                let output = git_binary
+                    .build_command(&["config", "--get", "commit.template"])
+                    .output()
+                    .await
+                    .context("failed to run git config --get commit.template")?;
+
+                let raw_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !output.status.success() || raw_path.is_empty() {
+                    return Ok(None);
+                }
+
+                let path = PathBuf::from(&raw_path);
+                let path = if let Some(path) = raw_path.strip_prefix("~/") {
+                    paths::home_dir().join(path)
+                } else if path.is_relative() {
+                    working_directory.join(path)
+                } else {
+                    path
+                };
+
+                let template = match std::fs::read_to_string(&path) {
+                    Ok(s) if !s.trim().is_empty() => Some(s),
+                    Err(err) => {
+                        log::warn!("failed to read commit template {}: {}", path.display(), err);
+                        None
+                    }
+                    _ => None,
+                };
+
+                Ok(template.map(|template| GitCommitTemplate { template }))
             })
             .boxed()
     }
@@ -2282,25 +2432,11 @@ impl GitRepository for RealGitRepository {
     }
 
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
-        self.executor
-            .spawn(async move {
-                let args: Vec<OsString> = vec!["update-ref".into(), ref_name.into(), commit.into()];
-                git_binary?.run(&args).await?;
-                Ok(())
-            })
-            .boxed()
+        self.edit_ref(RefEdit::Update { ref_name, commit })
     }
 
     fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
-        self.executor
-            .spawn(async move {
-                let args: Vec<OsString> = vec!["update-ref".into(), "-d".into(), ref_name.into()];
-                git_binary?.run(&args).await?;
-                Ok(())
-            })
-            .boxed()
+        self.edit_ref(RefEdit::Delete { ref_name })
     }
 
     fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>> {
@@ -3101,7 +3237,7 @@ async fn run_commit_data_reader(
 async fn read_single_commit_response<R: smol::io::AsyncBufRead + Unpin>(
     stdout: &mut R,
     sha: &Oid,
-) -> Result<GraphCommitData> {
+) -> Result<CommitData> {
     let mut header_bytes = Vec::new();
     stdout.read_until(b'\n', &mut header_bytes).await?;
     let header_line = String::from_utf8_lossy(&header_bytes);
@@ -4118,6 +4254,7 @@ mod tests {
         assert_eq!(result[0].sha.as_ref(), "abc123def");
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
         assert!(result[0].is_main);
+        assert!(!result[0].is_bare);
 
         // Multiple worktrees
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -4127,9 +4264,11 @@ mod tests {
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
         assert!(result[0].is_main);
+        assert!(!result[0].is_bare);
         assert_eq!(result[1].path, PathBuf::from("/home/user/project-wt"));
         assert_eq!(result[1].ref_name, Some("refs/heads/feature".into()));
         assert!(!result[1].is_main);
+        assert!(!result[1].is_bare);
 
         // Detached HEAD entry (included with ref_name: None)
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -4143,6 +4282,7 @@ mod tests {
         assert_eq!(result[1].ref_name, None);
         assert_eq!(result[1].sha.as_ref(), "def456");
         assert!(!result[1].is_main);
+        assert!(!result[1].is_bare);
 
         // Bare repo entry (included with ref_name: None)
         let input = "worktree /home/user/bare.git\nHEAD abc123\nbare\n\n\
@@ -4152,9 +4292,11 @@ mod tests {
         assert_eq!(result[0].path, PathBuf::from("/home/user/bare.git"));
         assert_eq!(result[0].ref_name, None);
         assert!(result[0].is_main);
+        assert!(result[0].is_bare);
         assert_eq!(result[1].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[1].ref_name, Some("refs/heads/main".into()));
         assert!(!result[1].is_main);
+        assert!(!result[1].is_bare);
 
         // Extra porcelain lines (locked, prunable) should be ignored
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\

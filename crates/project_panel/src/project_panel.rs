@@ -31,7 +31,7 @@ use gpui::{
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use project::{
     Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
@@ -1119,7 +1119,7 @@ impl ProjectPanel {
                     || (settings.hide_root && visible_worktrees_count == 1));
             let should_show_compare = !is_dir && self.file_abs_paths_to_diff(cx).is_some();
 
-            let has_git_repo = !is_dir && {
+            let has_git_repo = {
                 let project_path = project::ProjectPath {
                     worktree_id,
                     path: entry.path.clone(),
@@ -1195,15 +1195,18 @@ impl ProjectPanel {
                                 "Copy Relative Path",
                                 Box::new(zed_actions::workspace::CopyRelativePath),
                             )
-                            .when(!is_dir && self.has_git_changes(entry_id), |menu| {
-                                menu.separator().action(
-                                    "Restore File",
-                                    Box::new(git::RestoreFile { skip_prompt: false }),
-                                )
-                            })
                             .when(has_git_repo, |menu| {
                                 menu.separator()
-                                    .action("View File History", Box::new(git::FileHistory))
+                                    .when(!is_dir && self.has_git_changes(entry_id), |menu| {
+                                        menu.action(
+                                            "Restore File",
+                                            Box::new(git::RestoreFile { skip_prompt: false }),
+                                        )
+                                    })
+                                    .action("Add to .gitignore", Box::new(git::AddToGitignore))
+                                    .when(!is_dir, |menu| {
+                                        menu.action("View File History", Box::new(git::FileHistory))
+                                    })
                             })
                             .when(!should_hide_rename, |menu| {
                                 menu.separator().action("Rename", Box::new(Rename))
@@ -1217,10 +1220,10 @@ impl ProjectPanel {
                             .when(!is_collab && is_root, |menu| {
                                 menu.separator()
                                     .action(
-                                        "Add Project to Workspace…",
+                                        "Add Folders to Project…",
                                         Box::new(workspace::AddFolderToProject),
                                     )
-                                    .action("Remove from Workspace", Box::new(RemoveFromProject))
+                                    .action("Remove from Project", Box::new(RemoveFromProject))
                             })
                             .when(is_dir && !is_root, |menu| {
                                 menu.separator().action(
@@ -2077,13 +2080,18 @@ impl ProjectPanel {
 
         let directory_id;
         let new_entry_id = self.resolve_entry(entry_id);
-        if let Some((worktree, expanded_dir_ids)) = self
-            .project
-            .read(cx)
-            .worktree_for_id(worktree_id, cx)
-            .zip(self.state.expanded_dir_ids.get_mut(&worktree_id))
-        {
+        if let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) {
             let worktree = worktree.read(cx);
+            let expanded_dir_ids = match self.state.expanded_dir_ids.entry(worktree_id) {
+                hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                hash_map::Entry::Vacant(entry) => {
+                    let Some(root_entry_id) = worktree.root_entry().map(|entry| entry.id) else {
+                        return;
+                    };
+                    entry.insert(vec![root_entry_id])
+                }
+            };
+
             if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
                 loop {
                     if entry.is_dir() {
@@ -2275,8 +2283,12 @@ impl ProjectPanel {
                         .update(cx, |panel, cx| {
                             let message = format!("Failed to restore {}: {}", file_name, e);
                             let toast = StatusToast::new(message, cx, |this, _| {
-                                this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                                    .dismiss_button(true)
+                                this.icon(
+                                    Icon::new(IconName::XCircle)
+                                        .size(IconSize::Small)
+                                        .color(Color::Error),
+                                )
+                                .dismiss_button(true)
                             });
                             panel
                                 .workspace
@@ -2306,6 +2318,52 @@ impl ProjectPanel {
                     })
                     .ok();
 
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+            Some(())
+        });
+    }
+
+    fn add_to_gitignore(
+        &mut self,
+        _: &git::AddToGitignore,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            let selection = self.selection?;
+            let (_, entry) = self.selected_sub_entry(cx)?;
+            let is_dir = entry.is_dir();
+            let project = self.project.read(cx);
+
+            let project_path = project.path_for_entry(selection.entry_id, cx)?;
+
+            let git_store = project.git_store();
+            let (repository, repo_path) = git_store
+                .read(cx)
+                .repository_and_path_for_project_path(&project_path, cx)?;
+
+            let workspace = self.workspace.clone();
+            let receiver =
+                repository.update(cx, |repo, _| repo.add_path_to_gitignore(&repo_path, is_dir));
+
+            cx.spawn(async move |_, cx| {
+                if let Err(e) = receiver.await? {
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|cx| {
+                            let message = format!("Failed to add to .gitignore: {}", e);
+                            let toast = StatusToast::new(message, cx, |this, _| {
+                                this.icon(Icon::new(IconName::XCircle).color(Color::Error))
+                                    .dismiss_button(true)
+                            });
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.toggle_status_toast(toast, cx);
+                            });
+                        });
+                    }
+                }
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
@@ -6678,6 +6736,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
                         .on_action(cx.listener(Self::restore_file))
+                        .on_action(cx.listener(Self::add_to_gitignore))
                         .when(!project.is_remote(), |el| {
                             el.on_action(cx.listener(Self::trash))
                         })
@@ -7092,7 +7151,7 @@ impl Render for ProjectPanel {
                     deferred(
                         anchored()
                             .position(*position)
-                            .anchor(gpui::Corner::TopLeft)
+                            .anchor(gpui::Anchor::TopLeft)
                             .child(menu.clone()),
                     )
                     .with_priority(3)
