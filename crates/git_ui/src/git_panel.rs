@@ -4939,12 +4939,11 @@ impl GitPanel {
         let toggle_state = self.header_state(header.header);
         let section = header.header;
         let weak = cx.weak_entity();
-        let show_checkbox_persistently = !matches!(&toggle_state, ToggleState::Unselected);
 
         h_flex()
             .id(id)
             .cursor_pointer()
-            .group(group_name.clone())
+            .group(group_name)
             .h(self.list_item_height())
             .w_full()
             .pl_3()
