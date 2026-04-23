@@ -319,7 +319,11 @@ pub mod git {
             /// Opens the git worktree selector.
             Worktree,
             /// Creates a pull request for the current branch.
-            CreatePullRequest
+            CreatePullRequest,
+            /// Navigates to the next git merge conflict.
+            GoToNextConflict,
+            /// Navigates to the previous git merge conflict.
+            GoToPreviousConflict
         ]
     );
 }
