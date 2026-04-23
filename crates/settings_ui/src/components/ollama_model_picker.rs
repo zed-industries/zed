@@ -5,11 +5,10 @@ use gpui::{AnyElement, App, Context, DismissEvent, ReadGlobal, SharedString, Tas
 use picker::{Picker, PickerDelegate};
 use settings::SettingsStore;
 use ui::{ListItem, ListItemSpacing, PopoverMenu, prelude::*};
-use util::ResultExt;
 
 use crate::{
     SettingField, SettingsFieldMetadata, SettingsUiFile, render_picker_trigger_button,
-    update_settings_file,
+    update_settings_file_or_notify,
 };
 
 type OllamaModelPicker = Picker<OllamaModelPickerDelegate>;
@@ -180,7 +179,7 @@ pub fn render_ollama_model_picker(
                 let delegate = OllamaModelPickerDelegate::new(
                     current_value,
                     move |model_name, window, cx| {
-                        update_settings_file(
+                        update_settings_file_or_notify(
                             file.clone(),
                             field.json_path,
                             window,
@@ -191,8 +190,7 @@ pub fn render_ollama_model_picker(
                                     Some(settings::OllamaModelName(model_name.to_string())),
                                 );
                             },
-                        )
-                        .log_err();
+                        );
                     },
                     cx,
                 );

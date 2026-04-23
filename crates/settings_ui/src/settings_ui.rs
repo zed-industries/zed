@@ -227,7 +227,7 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
             } else {
                 None
             };
-            update_settings_file(
+            update_settings_file_or_notify(
                 current_file.clone(),
                 None,
                 window,
@@ -235,9 +235,7 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
                 move |settings, _| {
                     (this.write)(settings, value_to_set);
                 },
-            )
-            // todo(settings_ui): Don't log err
-            .log_err();
+            );
         }));
     }
 
@@ -761,6 +759,7 @@ pub struct SettingsWindow {
     list_state: ListState,
     shown_errors: HashSet<String>,
     pub(crate) regex_validation_error: Option<String>,
+    settings_write_error: Option<String>,
 }
 
 struct SearchDocument {
@@ -1682,6 +1681,7 @@ impl SettingsWindow {
             search_index: None,
             shown_errors: HashSet::default(),
             regex_validation_error: None,
+            settings_write_error: None,
             list_state,
         };
 
@@ -3305,6 +3305,37 @@ impl SettingsWindow {
                 .into_any_element()
         }
 
+        if let Some(error) = self.settings_write_error.clone() {
+            warning_banner = v_flex()
+                .gap_2()
+                .child(warning_banner)
+                .child(
+                    Banner::new()
+                        .severity(Severity::Warning)
+                        .child(
+                            v_flex()
+                                .my_0p5()
+                                .gap_0p5()
+                                .child(Label::new(
+                                    "Failed to save settings. Your last change may not be persisted.",
+                                ))
+                                .child(Label::new(error).size(LabelSize::Small).color(Color::Muted)),
+                        )
+                        .action_slot(
+                            div().pr_1().pb_1().child(
+                                Button::new("dismiss-settings-write-error", "Dismiss")
+                                    .tab_index(0_isize)
+                                    .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.settings_write_error = None;
+                                        cx.notify();
+                                    })),
+                            ),
+                        ),
+                )
+                .into_any_element();
+        }
+
         v_flex()
             .id("settings-ui-page")
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
@@ -3904,11 +3935,48 @@ fn update_settings_file(
             update_project_setting_file(worktree_id, rel_path, update, settings_window, cx)
         }
         SettingsUiFile::User => {
-            // todo(settings_ui) error?
-            SettingsStore::global(cx).update_settings_file(<dyn fs::Fs>::global(cx), update);
+            let settings_window = window.root::<SettingsWindow>().flatten();
+            let completion = SettingsStore::global(cx)
+                .update_settings_file_with_completion(<dyn fs::Fs>::global(cx), update);
+            if let Some(settings_window) = settings_window {
+                cx.spawn(async move |cx| {
+                    let message = match completion.await {
+                        Ok(Ok(())) => None,
+                        Ok(Err(err)) => Some(format!("{err:#}")),
+                        Err(err) => Some(format!("Settings write task was canceled: {err}")),
+                    };
+
+                    if let Some(message) = message {
+                        let _ = settings_window.update(cx, |this, cx| {
+                            this.settings_write_error = Some(message);
+                            cx.notify();
+                        });
+                    }
+                })
+                .detach();
+            }
             Ok(())
         }
         SettingsUiFile::Server(_) => unimplemented!(),
+    }
+}
+
+pub(crate) fn update_settings_file_or_notify(
+    file: SettingsUiFile,
+    file_name: Option<&'static str>,
+    window: &mut Window,
+    cx: &mut App,
+    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
+) {
+    if let Err(err) = update_settings_file(file, file_name, window, cx, update) {
+        if let Some(settings_window) = window.root::<SettingsWindow>().flatten() {
+            settings_window.update(cx, |this, cx| {
+                this.settings_write_error = Some(format!("{err:#}"));
+                cx.notify();
+            });
+        } else {
+            log::error!("Failed to update settings: {err:#}");
+        }
     }
 }
 
@@ -3930,11 +3998,16 @@ impl Global for ProjectSettingsUpdateQueue {}
 
 impl ProjectSettingsUpdateQueue {
     fn new(cx: &mut App) -> Self {
-        let (tx, mut rx) = mpsc::unbounded();
+        let (tx, mut rx) = mpsc::unbounded::<ProjectSettingsUpdateEntry>();
         let task = cx.spawn(async move |mut cx| {
             while let Some(entry) = rx.next().await {
+                let settings_window = entry.settings_window.clone();
                 if let Err(err) = Self::process_entry(entry, &mut cx).await {
                     log::error!("Failed to update project settings: {err:?}");
+                    let _ = settings_window.update(cx, |this: &mut SettingsWindow, cx| {
+                        this.settings_write_error = Some(format!("{err:#}"));
+                        cx.notify();
+                    });
                 }
             }
         });
@@ -4084,7 +4157,7 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
         )
         .on_confirm({
             move |new_text, window, cx| {
-                update_settings_file(
+                update_settings_file_or_notify(
                     file.clone(),
                     field.json_path,
                     window,
@@ -4092,8 +4165,7 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
                     move |settings, _cx| {
                         (field.write)(settings, new_text.map(Into::into));
                     },
-                )
-                .log_err(); // todo(settings_ui) don't log err
+                );
             }
         })
         .into_any_element()
@@ -4121,10 +4193,9 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());
 
                 let state = *state == ui::ToggleState::Selected;
-                update_settings_file(file.clone(), field.json_path, window, cx, move |settings, _cx| {
+                update_settings_file_or_notify(file.clone(), field.json_path, window, cx, move |settings, _cx| {
                     (field.write)(settings, Some(state.into()));
-                })
-                .log_err(); // todo(settings_ui) don't log err
+                });
             }
         })
         .into_any_element()
@@ -4151,7 +4222,7 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
         .on_change({
             move |value, window, cx| {
                 let value = *value;
-                update_settings_file(
+                update_settings_file_or_notify(
                     file.clone(),
                     field.json_path,
                     window,
@@ -4159,8 +4230,7 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
                     move |settings, _cx| {
                         (field.write)(settings, Some(value));
                     },
-                )
-                .log_err(); // todo(settings_ui) don't log err
+                );
             }
         })
         .into_any_element()
@@ -4191,7 +4261,7 @@ where
             if value == current_value {
                 return;
             }
-            update_settings_file(
+            update_settings_file_or_notify(
                 file.clone(),
                 field.json_path,
                 window,
@@ -4199,8 +4269,7 @@ where
                 move |settings, _cx| {
                     (field.write)(settings, Some(value));
                 },
-            )
-            .log_err(); // todo(settings_ui) don't log err
+            );
         }
     })
     .tab_index(0)
@@ -4246,7 +4315,7 @@ fn render_font_picker(
                 font_picker(
                     current_value,
                     move |font_name, window, cx| {
-                        update_settings_file(
+                        update_settings_file_or_notify(
                             file.clone(),
                             field.json_path,
                             window,
@@ -4254,8 +4323,7 @@ fn render_font_picker(
                             move |settings, _cx| {
                                 (field.write)(settings, Some(font_name.to_string().into()));
                             },
-                        )
-                        .log_err(); // todo(settings_ui) don't log err
+                        );
                     },
                     window,
                     cx,
@@ -4296,7 +4364,7 @@ fn render_theme_picker(
                 theme_picker(
                     current_value,
                     move |theme_name, window, cx| {
-                        update_settings_file(
+                        update_settings_file_or_notify(
                             file.clone(),
                             field.json_path,
                             window,
@@ -4307,8 +4375,7 @@ fn render_theme_picker(
                                     Some(settings::ThemeName(theme_name.into())),
                                 );
                             },
-                        )
-                        .log_err(); // todo(settings_ui) don't log err
+                        );
                     },
                     window,
                     cx,
@@ -4349,7 +4416,7 @@ fn render_icon_theme_picker(
                 icon_theme_picker(
                     current_value,
                     move |theme_name, window, cx| {
-                        update_settings_file(
+                        update_settings_file_or_notify(
                             file.clone(),
                             field.json_path,
                             window,
@@ -4360,8 +4427,7 @@ fn render_icon_theme_picker(
                                     Some(settings::IconThemeName(theme_name.into())),
                                 );
                             },
-                        )
-                        .log_err(); // todo(settings_ui) don't log err
+                        );
                     },
                     window,
                     cx,

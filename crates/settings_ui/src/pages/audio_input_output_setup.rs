@@ -4,9 +4,8 @@ use gpui::{AnyElement, App, ElementId, ReadGlobal, SharedString, Window};
 use settings::{AudioInputDeviceName, AudioOutputDeviceName, SettingsStore};
 use std::str::FromStr;
 use ui::{ContextMenu, DropdownMenu, DropdownStyle, IconPosition, IntoElement};
-use util::ResultExt;
 
-use crate::{SettingField, SettingsFieldMetadata, SettingsUiFile, update_settings_file};
+use crate::{SettingField, SettingsFieldMetadata, SettingsUiFile, update_settings_file_or_notify};
 
 pub(crate) const SYSTEM_DEFAULT: &str = "System Default";
 
@@ -116,7 +115,7 @@ fn render_settings_audio_device_dropdown<T: AsRef<Option<String>> + From<Option<
         is_input,
         move |device_id, window, cx| {
             let value: Option<T> = device_id.map(|id| T::from(Some(id.to_string())));
-            update_settings_file(
+            update_settings_file_or_notify(
                 file.clone(),
                 field.json_path,
                 window,
@@ -124,8 +123,7 @@ fn render_settings_audio_device_dropdown<T: AsRef<Option<String>> + From<Option<
                 move |settings, _cx| {
                     (field.write)(settings, value);
                 },
-            )
-            .log_err();
+            );
         },
         window,
         cx,

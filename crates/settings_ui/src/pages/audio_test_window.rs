@@ -22,7 +22,7 @@ use util::ResultExt;
 use workspace::client_side_decorations;
 
 use super::audio_input_output_setup::render_audio_device_dropdown;
-use crate::{SettingsUiFile, update_settings_file};
+use crate::{SettingsUiFile, update_settings_file_or_notify};
 
 pub struct AudioTestWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,
@@ -160,7 +160,7 @@ impl Render for AudioTestWindow {
                         .log_err();
                     let value: Option<AudioInputDeviceName> =
                         device_id.map(|id| AudioInputDeviceName(Some(id.to_string())));
-                    update_settings_file(
+                    update_settings_file_or_notify(
                         SettingsUiFile::User,
                         Some("audio.experimental.input_audio_device"),
                         window,
@@ -168,8 +168,7 @@ impl Render for AudioTestWindow {
                         move |settings, _cx| {
                             settings.audio.get_or_insert_default().input_audio_device = value;
                         },
-                    )
-                    .log_err();
+                    );
                 },
                 window,
                 cx,
@@ -189,7 +188,7 @@ impl Render for AudioTestWindow {
                     .log_err();
                 let value: Option<AudioOutputDeviceName> =
                     device_id.map(|id| AudioOutputDeviceName(Some(id.to_string())));
-                update_settings_file(
+                update_settings_file_or_notify(
                     SettingsUiFile::User,
                     Some("audio.experimental.output_audio_device"),
                     window,
@@ -197,8 +196,7 @@ impl Render for AudioTestWindow {
                     move |settings, _cx| {
                         settings.audio.get_or_insert_default().output_audio_device = value;
                     },
-                )
-                .log_err();
+                );
             },
             window,
             cx,
