@@ -1312,7 +1312,7 @@ mod tests {
             .events
             .iter()
             .filter_map(|(_, event)| match event {
-                Start(BlockQuote(kind)) => Some(kind.clone()),
+                Start(BlockQuote(kind)) => Some(*kind),
                 _ => None,
             })
             .collect();

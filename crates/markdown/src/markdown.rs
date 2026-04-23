@@ -1184,12 +1184,40 @@ impl MarkdownElement {
             .style
             .block_quote_kind_colors
             .for_kind(kind, self.style.block_quote_border_color);
+
+        let header = kind.map(|kind| {
+            let (icon_name, label) = match kind {
+                BlockQuoteKind::Note => (IconName::Info, "Note"),
+                BlockQuoteKind::Tip => (IconName::Sparkle, "Tip"),
+                BlockQuoteKind::Important => (IconName::Chat, "Important"),
+                BlockQuoteKind::Warning => (IconName::Warning, "Warning"),
+                BlockQuoteKind::Caution => (IconName::Stop, "Caution"),
+            };
+            h_flex()
+                .gap_1()
+                .items_center()
+                .mb_1()
+                .child(
+                    Icon::new(icon_name)
+                        .size(IconSize::Small)
+                        .color(Color::Custom(border_color)),
+                )
+                .child(
+                    Label::new(label)
+                        .color(Color::Custom(border_color))
+                        .weight(FontWeight::BOLD),
+                )
+                .into_any_element()
+        });
+
+        let block_div = div().pl_4().mb_2().border_l_4().border_color(border_color);
+        let block_div = match header {
+            Some(header) => block_div.child(header),
+            None => block_div,
+        };
+
         builder.push_text_style(self.style.block_quote.clone());
-        builder.push_div(
-            div().pl_4().mb_2().border_l_4().border_color(border_color),
-            range,
-            markdown_end,
-        );
+        builder.push_div(block_div, range, markdown_end);
     }
 
     fn pop_markdown_block_quote(&self, builder: &mut MarkdownElementBuilder) {
