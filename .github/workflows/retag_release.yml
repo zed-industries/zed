@@ -1,15 +1,15 @@
-# Generated from xtask::workflows::bump_patch_version
+# Generated from xtask::workflows::retag_release
 # Rebuild with `cargo xtask workflows`.
-name: bump_patch_version
+name: retag_release
 on:
   workflow_dispatch:
     inputs:
       branch:
-        description: Branch name to run on
+        description: Release branch to re-tag (e.g. v0.180.x)
         required: true
         type: string
 jobs:
-  run_bump_patch_version:
+  run_retag_release:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
@@ -25,9 +25,14 @@ jobs:
         clean: false
         ref: ${{ inputs.branch }}
         token: ${{ steps.generate-token.outputs.token }}
-    - id: channel
-      name: bump_patch_version::run_bump_patch_version::read_channel
+    - id: info
+      name: retag_release::run_retag_release::resolve_tag
       run: |
+        if [[ ! "$BRANCH" =~ ^v[0-9]+\.[0-9]{1,3}\.x$ ]]; then
+            echo "::error::branch '$BRANCH' does not match the release branch pattern v[N].[N].x"
+            exit 1
+        fi
+
         channel="$(cat crates/zed/RELEASE_CHANNEL)"
 
         tag_suffix=""
@@ -49,43 +54,30 @@ jobs:
             echo "channel=$channel"
             echo "version=$version"
             echo "tag_suffix=$tag_suffix"
+            echo "head_sha=$(git rev-parse HEAD)"
         } >> "$GITHUB_OUTPUT"
-    - name: bump_patch_version::run_bump_patch_version::verify_prior_release_exists
+      env:
+        BRANCH: ${{ inputs.branch }}
+    - name: retag_release::run_retag_release::verify_no_existing_release
       run: |
         status=$(curl -s -o /dev/null -w '%{http_code}' "https://cloud.zed.dev/releases/$CHANNEL/$VERSION/asset?asset=zed&os=macos&arch=aarch64")
-        if [[ "$status" != "200" ]]; then
-            echo "::error::version $VERSION has not been released on $CHANNEL yet (HTTP $status) — bump the patch version only after the current version is released"
+        if [[ "$status" == "200" ]]; then
+            echo "::error::version $VERSION is already released on $CHANNEL — cannot re-tag a released version"
             exit 1
         fi
       env:
-        CHANNEL: ${{ steps.channel.outputs.channel }}
-        VERSION: ${{ steps.channel.outputs.version }}
-    - name: steps::install_cargo_edit
-      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
-      with:
-        tool: cargo-edit
-    - id: bump-version
-      name: bump_patch_version::run_bump_patch_version::bump_version
-      run: |
-        version="$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')"
-        echo "version=$version" >> "$GITHUB_OUTPUT"
-    - id: commit
-      name: steps::bot_commit
-      uses: IAreKyleW00t/verified-bot-commit@126a6a11889ab05bcff72ec2403c326cd249b84c
-      with:
-        message: Bump to ${{ steps.bump-version.outputs.version }} for @${{ github.actor }}
-        ref: refs/heads/${{ inputs.branch }}
-        files: '**'
-        token: ${{ steps.generate-token.outputs.token }}
-    - name: steps::create_tag
+        CHANNEL: ${{ steps.info.outputs.channel }}
+        VERSION: ${{ steps.info.outputs.version }}
+    - name: steps::update_tag
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         script: |
-          github.rest.git.createRef({
+          github.rest.git.updateRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              ref: 'refs/tags/v${{ steps.bump-version.outputs.version }}${{ steps.channel.outputs.tag_suffix }}',
-              sha: '${{ steps.commit.outputs.commit }}'
+              ref: 'tags/v${{ steps.info.outputs.version }}${{ steps.info.outputs.tag_suffix }}',
+              sha: '${{ steps.info.outputs.head_sha }}',
+              force: true
           })
         github-token: ${{ steps.generate-token.outputs.token }}
 concurrency:

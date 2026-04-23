@@ -2259,6 +2259,105 @@ mod tests {
             cx,
         );
 
+        // terminal bell settings - newer accessibility setting
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "accessibility.signals.terminalBell": { "sound": "on" } }"#.to_owned(),
+            r#"{
+              "terminal": {
+                "bell": "system"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // terminal bell settings - newer accessibility setting disabled
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "accessibility.signals.terminalBell": { "sound": "off" } }"#.to_owned(),
+            r#"{
+              "terminal": {
+                "bell": "off"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // terminal bell settings - older enableBell setting (true)
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "terminal.integrated.enableBell": true }"#.to_owned(),
+            r#"{
+              "terminal": {
+                "bell": "system"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // terminal bell settings - older enableBell setting (false)
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "terminal.integrated.enableBell": false }"#.to_owned(),
+            r#"{
+              "terminal": {
+                "bell": "off"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // newer accessibility setting takes precedence over older enableBell
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "accessibility.signals.terminalBell": { "sound": "off" },
+              "terminal.integrated.enableBell": true
+            }"#
+            .to_owned(),
+            r#"{
+              "terminal": {
+                "bell": "off"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
         // hover sticky settings
         check_vscode_import(
             &mut store,

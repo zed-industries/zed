@@ -4894,6 +4894,7 @@ dependencies = [
 name = "dev_container"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-tar",
  "async-trait",
  "env_logger 0.11.8",
@@ -4918,6 +4919,7 @@ dependencies = [
  "walkdir",
  "workspace",
  "worktree",
+ "yaml-rust2",
 ]
 
 [[package]]
@@ -6304,6 +6306,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui",
+ "ui_input",
  "util",
  "workspace",
  "zed_actions",
@@ -6604,6 +6607,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "telemetry",
  "tempfile",
  "text",
  "thiserror 2.0.17",
@@ -7403,6 +7407,7 @@ dependencies = [
  "smallvec",
  "smol",
  "strum 0.27.2",
+ "task",
  "telemetry",
  "theme",
  "theme_settings",
@@ -8919,8 +8924,10 @@ name = "input_latency_ui"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "collections",
  "gpui",
  "hdrhistogram",
+ "telemetry",
 ]
 
 [[package]]
@@ -21919,6 +21926,8 @@ dependencies = [
  "postage",
  "pretty_assertions",
  "project",
+ "proptest",
+ "proptest-derive",
  "remote",
  "schemars 1.0.4",
  "serde",

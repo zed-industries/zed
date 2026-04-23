@@ -3919,6 +3919,7 @@ impl RepositorySnapshot {
     fn initial_update(&self, project_id: u64) -> proto::UpdateRepository {
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
+            branch_list: self.branch_list.iter().map(branch_to_proto).collect(),
             head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses: self
                 .statuses_by_path
@@ -4004,6 +4005,7 @@ impl RepositorySnapshot {
 
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
+            branch_list: self.branch_list.iter().map(branch_to_proto).collect(),
             head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses,
             removed_statuses,
@@ -5820,6 +5822,55 @@ impl Repository {
         })
     }
 
+    pub fn add_path_to_gitignore(
+        &mut self,
+        repo_path: &RepoPath,
+        is_dir: bool,
+    ) -> oneshot::Receiver<Result<()>> {
+        let work_dir = self.snapshot.work_directory_abs_path.clone();
+        let path_display = repo_path.as_ref().display(PathStyle::Posix);
+        let file_path_str = if is_dir {
+            format!("{}/", path_display)
+        } else {
+            path_display.to_string()
+        };
+
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { fs, .. }) => {
+                    let gitignore_path = work_dir.join(".gitignore");
+
+                    let existing_content = fs.load(&gitignore_path).await.unwrap_or_default();
+
+                    if existing_content
+                        .lines()
+                        .any(|line| line.trim() == file_path_str)
+                    {
+                        return Ok(());
+                    }
+
+                    let new_content = if existing_content.is_empty() {
+                        format!("{}\n", file_path_str)
+                    } else if existing_content.ends_with('\n') {
+                        format!("{}{}\n", existing_content, file_path_str)
+                    } else {
+                        format!("{}\n{}\n", existing_content, file_path_str)
+                    };
+
+                    fs.save(
+                        &gitignore_path,
+                        &text::Rope::from(new_content.as_str()),
+                        text::LineEnding::Unix,
+                    )
+                    .await
+                }
+                RepositoryState::Remote(_) => Err(anyhow::anyhow!(
+                    "Cannot modify .gitignore on remote repository"
+                )),
+            }
+        })
+    }
+
     pub fn stash_drop(
         &mut self,
         index: Option<usize>,
@@ -7083,6 +7134,15 @@ impl Repository {
         }
         self.snapshot.branch = new_branch;
         self.snapshot.head_commit = new_head_commit;
+
+        if update.is_last_update {
+            let new_branch_list: Arc<[Branch]> =
+                update.branch_list.iter().map(proto_to_branch).collect();
+            if *self.snapshot.branch_list != *new_branch_list {
+                cx.emit(RepositoryEvent::BranchListChanged);
+            }
+            self.snapshot.branch_list = new_branch_list;
+        }
 
         // We don't store any merge head state for downstream projects; the upstream
         // will track it and we will just get the updated conflicts
