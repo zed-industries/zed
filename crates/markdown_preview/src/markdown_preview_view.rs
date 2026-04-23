@@ -20,6 +20,7 @@ use markdown::{
 };
 use project::search::SearchQuery;
 use settings::Settings;
+use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
 use util::markdown::split_local_url_fragment;
@@ -578,8 +579,18 @@ impl MarkdownPreviewView {
         cx.notify();
     }
 
+    /// Returns the theme chosen in `markdown_preview_theme`, or `None` if the
+    /// user hasn't set one or it can't be resolved.
+    fn resolve_preview_theme(&self, cx: &App) -> Option<Arc<Theme>> {
+        let theme_settings = ThemeSettings::get_global(cx);
+        let theme_selection = theme_settings.markdown_preview_theme.as_ref()?;
+        let theme_name = theme_selection.name(SystemAppearance::global(cx).0);
+        ThemeRegistry::global(cx).get(&theme_name.0).ok()
+    }
+
     fn render_markdown_element(
         &self,
+        preview_theme: &Option<Arc<Theme>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> MarkdownElement {
@@ -596,41 +607,50 @@ impl MarkdownPreviewView {
             }
         }
 
-        let mut markdown_element = MarkdownElement::new(
-            self.markdown.clone(),
-            MarkdownStyle::themed(MarkdownFont::Editor, window, cx),
-        )
-        .code_block_renderer(CodeBlockRenderer::Default {
-            copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
-            border: false,
-        })
-        .scroll_handle(self.scroll_handle.clone())
-        .show_root_block_markers()
-        .image_resolver({
-            let base_directory = self.base_directory.clone();
-            move |dest_url| {
-                resolve_preview_image(
-                    dest_url,
-                    base_directory.as_deref(),
-                    workspace_directory.as_deref(),
-                )
-            }
-        })
-        .on_url_click({
-            let view_handle = cx.entity().downgrade();
-            let workspace = self.workspace.clone();
-            let base_directory = self.base_directory.clone();
-            move |url, window, cx| {
-                handle_url_click(
-                    url,
-                    &view_handle,
-                    base_directory.clone(),
-                    &workspace,
-                    window,
-                    cx,
-                );
-            }
-        });
+        let markdown_style = if let Some(theme) = preview_theme {
+            MarkdownStyle::themed_with_overrides(
+                MarkdownFont::Preview,
+                theme.colors(),
+                theme.syntax(),
+                window,
+                cx,
+            )
+        } else {
+            MarkdownStyle::themed(MarkdownFont::Preview, window, cx)
+        };
+
+        let mut markdown_element = MarkdownElement::new(self.markdown.clone(), markdown_style)
+            .code_block_renderer(CodeBlockRenderer::Default {
+                copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
+                border: false,
+            })
+            .scroll_handle(self.scroll_handle.clone())
+            .show_root_block_markers()
+            .image_resolver({
+                let base_directory = self.base_directory.clone();
+                move |dest_url| {
+                    resolve_preview_image(
+                        dest_url,
+                        base_directory.as_deref(),
+                        workspace_directory.as_deref(),
+                    )
+                }
+            })
+            .on_url_click({
+                let view_handle = cx.entity().downgrade();
+                let workspace = self.workspace.clone();
+                let base_directory = self.base_directory.clone();
+                move |url, window, cx| {
+                    handle_url_click(
+                        url,
+                        &view_handle,
+                        base_directory.clone(),
+                        &workspace,
+                        window,
+                        cx,
+                    );
+                }
+            });
 
         if let Some(active_editor) = active_editor {
             let editor_for_checkbox = active_editor.clone();
@@ -878,6 +898,11 @@ impl Item for MarkdownPreviewView {
 
 impl Render for MarkdownPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let preview_theme = self.resolve_preview_theme(cx);
+        let bg_color = preview_theme
+            .as_ref()
+            .map(|theme| theme.colors().editor_background)
+            .unwrap_or_else(|| cx.theme().colors().editor_background);
         div()
             .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")
@@ -892,7 +917,7 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_top))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_bottom))
             .size_full()
-            .bg(cx.theme().colors().editor_background)
+            .bg(bg_color)
             .child(
                 div()
                     .id("markdown-preview-scroll-container")
@@ -901,7 +926,8 @@ impl Render for MarkdownPreviewView {
                     .track_scroll(&self.scroll_handle)
                     .p_4()
                     .child({
-                        let markdown_element = self.render_markdown_element(window, cx);
+                        let markdown_element =
+                            self.render_markdown_element(&preview_theme, window, cx);
                         let markdown = self.markdown.clone();
                         right_click_menu("markdown-preview-context-menu")
                             .trigger(move |_, _, _| markdown_element)
