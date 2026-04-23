@@ -437,7 +437,13 @@ fn appearance_page() -> SettingsPage {
                                             match mode {
                                                 theme_settings::ThemeAppearanceMode::Light => light.clone(),
                                                 theme_settings::ThemeAppearanceMode::Dark => dark.clone(),
-                                                theme_settings::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                theme_settings::ThemeAppearanceMode::System => {
+                                                    if SystemAppearance::global(app).is_light() {
+                                                        light.clone()
+                                                    } else {
+                                                        dark.clone()
+                                                    }
+                                                }
                                             }
                                         },
                                     };
@@ -6596,7 +6602,7 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
-    fn behavior_settings_section() -> [SettingsPageItem; 4] {
+    fn behavior_settings_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Behavior Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6652,6 +6658,19 @@ fn terminal_page() -> SettingsPage {
                             .terminal
                             .get_or_insert_default()
                             .keep_selection_on_copy = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Audible Bell",
+                description: "Whether to play a sound when the BEL character (`\\a`, `0x07`) is printed",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.bell"),
+                    pick: |settings_content| settings_content.terminal.as_ref()?.bell.as_ref(),
+                    write: |settings_content, value, _app: &App| {
+                        settings_content.terminal.get_or_insert_default().bell = value;
                     },
                 }),
                 metadata: None,
@@ -9406,7 +9425,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
     )
 }
 
-fn edit_prediction_language_settings_section() -> [SettingsPageItem; 4] {
+fn edit_prediction_language_settings_section() -> [SettingsPageItem; 5] {
     [
         SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SubPageLink(SubPageLink {
@@ -9417,6 +9436,32 @@ fn edit_prediction_language_settings_section() -> [SettingsPageItem; 4] {
             in_json: false,
             files: USER,
             render: render_edit_prediction_setup_page
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
+            title: "Data Collection",
+            description: "Controls whether Zed may collect training data when using Zed's Edit Predictions. Data is only collected for files in projects detected as open source. The default value uses the preference previously set via the status-bar toggle, or false if no preference has been stored.",
+            field: Box::new(SettingField {
+                json_path: Some("edit_predictions.allow_data_collection"),
+                pick: |settings_content| {
+                    settings_content
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .allow_data_collection
+                        .as_ref()
+                },
+                write: |settings_content, value, _app| {
+                    settings_content
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .allow_data_collection = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Show Edit Predictions",

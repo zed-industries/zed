@@ -504,6 +504,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::TerminalBlink>(render_dropdown)
         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
         .add_basic_renderer::<settings::EditPredictionPromptFormat>(render_dropdown)
+        .add_basic_renderer::<settings::EditPredictionDataCollectionChoice>(render_dropdown)
         .add_basic_renderer::<f32>(render_editable_number_field)
         .add_basic_renderer::<u32>(render_editable_number_field)
         .add_basic_renderer::<u64>(render_editable_number_field)
@@ -560,6 +561,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DocumentSymbols>(render_dropdown)
         .add_basic_renderer::<settings::AudioInputDeviceName>(render_input_audio_device_dropdown)
         .add_basic_renderer::<settings::AudioOutputDeviceName>(render_output_audio_device_dropdown)
+        .add_basic_renderer::<settings::TerminalBell>(render_dropdown)
         // please semicolon stay on next line
         ;
 }

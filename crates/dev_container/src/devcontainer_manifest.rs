@@ -301,6 +301,7 @@ impl DevContainerManifest {
             None => "zed-dc",
         };
         let prefix = prefix.get(..6).unwrap_or(prefix);
+        let prefix = prefix.trim_matches(|c: char| !c.is_alphanumeric());
 
         dockerfile_build_path.hash(&mut hasher);
 
@@ -5607,6 +5608,34 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
             panic!("expected MultipleMatchingContainers, got {result:?}");
         };
         assert_eq!(ids, vec!["abc123".to_string(), "def456".to_string()]);
+    }
+
+    #[gpui::test]
+    async fn trim_non_alphanumeric_chars_from_image_tag(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+            {
+              "name": "abcde test",
+              "image": "test_image:latest",
+            }
+            "#;
+
+        let (_, devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        let image_tag = devcontainer_manifest.generate_features_image_tag("Dockerfile".to_string());
+
+        assert!(
+            image_tag.starts_with("abcde-"),
+            "expected prefix 'abcde-', got: {image_tag}"
+        );
+        assert!(
+            image_tag.ends_with("-features"),
+            "expected suffix '-features', got: {image_tag}"
+        );
     }
 
     #[test]

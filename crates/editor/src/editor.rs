@@ -3860,9 +3860,6 @@ impl Editor {
         cx.emit(EditorEvent::SelectionsChanged { local });
 
         let selections = &self.selections.disjoint_anchors_arc();
-        if selections.len() == 1 {
-            cx.emit(SearchEvent::ActiveMatchChanged)
-        }
         if local && let Some(buffer_snapshot) = buffer.as_singleton() {
             let inmemory_selections = selections
                 .iter()
