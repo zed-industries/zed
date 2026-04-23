@@ -5424,7 +5424,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 14] {
+    fn git_panel_section() -> [SettingsPageItem; 15] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5637,6 +5637,28 @@ fn panels_page() -> SettingsPage {
                             .git_panel
                             .get_or_insert_default()
                             .show_count_badge = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Commit Title Max Length",
+                description: "Maximum length of the commit message title before a warning is shown. Set to 0 to disable.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.commit_title_max_length"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .commit_title_max_length
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _app: &App| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .commit_title_max_length = value;
                     },
                 }),
                 metadata: None,

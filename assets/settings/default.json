@@ -975,6 +975,11 @@
     //
     // Default: true
     "diff_stats": true,
+    // Maximum length of the commit message title before a warning is shown.
+    // Set to 0 to disable.
+    //
+    // Default: 72
+    "commit_title_max_length": 72,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.

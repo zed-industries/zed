@@ -4343,6 +4343,18 @@ impl GitPanel {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });
 
+        let max_title_length = GitPanelSettings::get_global(cx).commit_title_max_length;
+        let title_exceeds_limit = if max_title_length > 0 {
+            self.commit_editor
+                .read(cx)
+                .text(cx)
+                .lines()
+                .next()
+                .is_some_and(|title| title.len() > max_title_length)
+        } else {
+            false
+        };
+
         let footer = v_flex()
             .child(PanelRepoFooter::new(
                 display_name,
@@ -4350,15 +4362,41 @@ impl GitPanel {
                 head_commit,
                 Some(git_panel),
             ))
+            .when(title_exceeds_limit, |this| {
+                this.child(
+                    h_flex()
+                        .px_2()
+                        .py_1()
+                        .gap_1()
+                        .border_t_1()
+                        .border_color(cx.theme().status().warning_border)
+                        .bg(cx.theme().status().warning_background.opacity(0.5))
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::XSmall)
+                                .color(Color::Warning),
+                        )
+                        .child(
+                            Label::new(format!(
+                                "Commit message title exceeds {max_title_length}-character limit."
+                            ))
+                            .size(LabelSize::Small),
+                        ),
+                )
+            })
             .child(
                 panel_editor_container(window, cx)
                     .id("commit-editor-container")
+                    .cursor_text()
                     .relative()
                     .w_full()
                     .h(max_height + footer_size)
                     .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .cursor_text()
+                    .border_color(if title_exceeds_limit {
+                        cx.theme().status().warning_border
+                    } else {
+                        cx.theme().colors().border
+                    })
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         window.focus(&this.commit_editor.focus_handle(cx), cx);
                     }))
