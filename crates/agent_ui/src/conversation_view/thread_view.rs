@@ -17,6 +17,7 @@ use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::{SidebarSide, update_settings_file};
 use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
+use util::rel_path::RelPath;
 use workspace::SERIALIZATION_THROTTLE_TIME;
 
 use super::*;
@@ -9268,7 +9269,174 @@ pub(crate) fn open_link(
             MentionUri::GitDiff { .. } => {}
             MentionUri::MergeConflict { .. } => {}
         })
+    } else if open_local_markdown_link(url.as_ref(), &workspace, window, cx) {
+        return;
     } else {
         cx.open_url(&url);
+    }
+}
+
+fn open_local_markdown_link(
+    url: &str,
+    workspace: &Entity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    let (path_part, fragment) = util::markdown::split_local_url_fragment(url);
+    if path_part.is_empty() {
+        return false;
+    }
+
+    let decoded_path = urlencoding::decode(path_part).unwrap_or_else(|_| path_part.into());
+    let target_line = fragment.and_then(markdown_fragment_line);
+
+    workspace.update(cx, |workspace, cx| {
+        let project = workspace.project();
+        let Some(project_path) = project.read_with(cx, |project, cx| {
+            markdown_link_project_path(project, decoded_path.as_ref(), cx)
+        }) else {
+            return false;
+        };
+
+        let item = workspace.open_path(project_path, None, true, window, cx);
+        open_item_at_line(item, target_line, window, cx);
+        true
+    })
+}
+
+fn markdown_link_project_path(
+    project: &Project,
+    path: &str,
+    cx: &App,
+) -> Option<project::ProjectPath> {
+    let path = Path::new(path);
+    let path_style = project.path_style(cx);
+
+    if util::paths::is_absolute(&path.to_string_lossy(), path_style) {
+        return project.find_project_path(path, cx);
+    }
+
+    let mut matched_worktree_root_name = false;
+    for worktree in project.visible_worktrees(cx) {
+        let worktree = worktree.read(cx);
+        let Ok(relative_path) = path.strip_prefix(worktree.root_name().as_std_path()) else {
+            continue;
+        };
+        matched_worktree_root_name = true;
+        let Ok(relative_path) = RelPath::new(relative_path, path_style) else {
+            continue;
+        };
+        let Some(entry) = worktree.entry_for_path(&relative_path) else {
+            continue;
+        };
+        return Some(project::ProjectPath {
+            worktree_id: worktree.id(),
+            path: entry.path.clone(),
+        });
+    }
+
+    if matched_worktree_root_name {
+        return None;
+    }
+
+    let Ok(relative_path) = RelPath::new(path, path_style) else {
+        return None;
+    };
+    let mut matching_project_path = None;
+
+    for worktree in project.visible_worktrees(cx) {
+        let worktree = worktree.read(cx);
+        let Some(entry) = worktree.entry_for_path(&relative_path) else {
+            continue;
+        };
+
+        if matching_project_path.is_some() {
+            return None;
+        }
+
+        matching_project_path = Some(project::ProjectPath {
+            worktree_id: worktree.id(),
+            path: entry.path.clone(),
+        });
+    }
+
+    matching_project_path
+}
+
+fn open_item_at_line(
+    item: Task<anyhow::Result<Box<dyn workspace::ItemHandle>>>,
+    target_line: Option<u32>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(target_line) = target_line else {
+        item.detach_and_log_err(cx);
+        return;
+    };
+
+    window
+        .spawn(cx, async move |cx| {
+            let Some(editor) = item.await?.downcast::<Editor>() else {
+                return Ok(());
+            };
+            let range = Point::new(target_line, 0)..Point::new(target_line, 0);
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    editor.change_selections(
+                        SelectionEffects::scroll(Autoscroll::center()),
+                        window,
+                        cx,
+                        |selections| selections.select_ranges(vec![range]),
+                    );
+                })
+                .ok();
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+}
+
+/// Reads a line number from a URL fragment. The fragment uses 1-based line
+/// numbers; the return value is 0-based. Accepts `L42`, `l42`, or `42`. Also
+/// accepts a range like `L42-L45` and uses the first number. Returns `None`
+/// for anything else, so a heading like `section-2` does not jump to a line.
+fn markdown_fragment_line(fragment: &str) -> Option<u32> {
+    let head = fragment.split_once('-').map_or(fragment, |(h, _)| h);
+    let digits = head
+        .strip_prefix(|c: char| c == 'L' || c == 'l')
+        .unwrap_or(head);
+    digits.parse::<u32>().ok()?.checked_sub(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::markdown_fragment_line;
+
+    #[test]
+    fn markdown_fragment_line_parses_line_anchors() {
+        assert_eq!(markdown_fragment_line("L42"), Some(41));
+        assert_eq!(markdown_fragment_line("l42"), Some(41));
+        assert_eq!(markdown_fragment_line("42"), Some(41));
+        assert_eq!(markdown_fragment_line("L1"), Some(0));
+    }
+
+    #[test]
+    fn markdown_fragment_line_parses_range_anchors_using_first_line() {
+        assert_eq!(markdown_fragment_line("L42-L45"), Some(41));
+        assert_eq!(markdown_fragment_line("42-45"), Some(41));
+    }
+
+    #[test]
+    fn markdown_fragment_line_rejects_heading_slugs_and_non_line_fragments() {
+        assert_eq!(markdown_fragment_line("section-2"), None);
+        assert_eq!(markdown_fragment_line("api-v1"), None);
+        assert_eq!(markdown_fragment_line("heading"), None);
+        assert_eq!(markdown_fragment_line(""), None);
+    }
+
+    #[test]
+    fn markdown_fragment_line_rejects_line_zero_and_out_of_range() {
+        assert_eq!(markdown_fragment_line("L0"), None);
+        assert_eq!(markdown_fragment_line("0"), None);
+        assert_eq!(markdown_fragment_line("99999999999999"), None);
     }
 }

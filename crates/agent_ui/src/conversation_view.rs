@@ -3035,6 +3035,47 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_open_link_opens_root_name_prefixed_markdown_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/revm",
+            json!({
+                "crates": {
+                    "interpreter": {
+                        "src": {
+                            "interpreter.rs": "fn main() {}\n"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/revm")], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+        cx.update(|window, cx| {
+            open_link(
+                "revm/crates/interpreter/src/interpreter.rs".into(),
+                &workspace.downgrade(),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert_eq!(cx.opened_url(), None);
+        let open_paths = workspace.read_with(cx, |workspace, cx| workspace.open_item_abs_paths(cx));
+        assert!(open_paths.contains(&PathBuf::from(
+            "/revm/crates/interpreter/src/interpreter.rs"
+        )));
+    }
+
+    #[gpui::test]
     async fn test_notification_for_stop_event(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -3085,6 +3126,65 @@ pub(crate) mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some())
         );
+    }
+
+    #[gpui::test]
+    async fn test_open_link_prefers_worktree_root_name_for_markdown_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "other": {
+                    "revm": {
+                        "crates": {
+                            "interpreter": {
+                                "src": {
+                                    "interpreter.rs": "wrong file"
+                                }
+                            }
+                        }
+                    }
+                },
+                "revm": {
+                    "crates": {
+                        "interpreter": {
+                            "src": {
+                                "interpreter.rs": "right file"
+                            }
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+        let project =
+            Project::test(fs, [Path::new("/root/other"), Path::new("/root/revm")], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            open_link(
+                "revm/crates/interpreter/src/interpreter.rs".into(),
+                &workspace.downgrade(),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let open_paths = workspace.read_with(cx, |workspace, cx| workspace.open_item_abs_paths(cx));
+        assert_eq!(
+            open_paths,
+            vec![PathBuf::from(
+                "/root/revm/crates/interpreter/src/interpreter.rs"
+            )]
+        );
+        assert_eq!(cx.opened_url(), None);
     }
 
     #[gpui::test]

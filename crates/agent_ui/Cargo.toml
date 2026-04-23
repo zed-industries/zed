@@ -106,6 +106,7 @@ time.workspace = true
 ui.workspace = true
 ui_input.workspace = true
 url.workspace = true
+urlencoding.workspace = true
 util.workspace = true
 uuid.workspace = true
 watch.workspace = true
