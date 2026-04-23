@@ -7293,6 +7293,7 @@ dependencies = [
  "smallvec",
  "smol",
  "strum 0.27.2",
+ "task",
  "telemetry",
  "theme",
  "theme_settings",
