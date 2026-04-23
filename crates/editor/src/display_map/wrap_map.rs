@@ -20,9 +20,6 @@ pub type WrapPatch = text::Patch<WrapRow>;
 pub struct WrapRow(pub u32);
 
 const WRAP_YIELD_ROW_INTERVAL: usize = 100;
-// max column span for the sync wrap fast path; lines longer than this go async
-// to avoid blocking the main thread (e.g. binary files decoded as a single huge line)
-const MAX_SYNC_WRAP_COLUMNS: u32 = 10_000;
 
 impl_for_row_types! {
     WrapRow => RowDelta
@@ -300,13 +297,6 @@ impl WrapMap {
                 && let [edit] = &**tab_edits
                 && ((edit.new.end.row().saturating_sub(edit.new.start.row()) + 1) as usize)
                     < WRAP_YIELD_ROW_INTERVAL
-                && edit
-                    .new
-                    .end
-                    .0
-                    .column
-                    .saturating_sub(edit.new.start.0.column)
-                    < MAX_SYNC_WRAP_COLUMNS
                 && let Some((tab_snapshot, tab_edits)) = pending_edits.pop_back()
             {
                 let wrap_edits = smol::block_on(snapshot.update(
