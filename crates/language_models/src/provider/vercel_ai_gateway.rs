@@ -287,6 +287,7 @@ impl VercelAiGatewayLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                None,
             );
             let response = request.await.map_err(map_open_ai_error)?;
             Ok(response)

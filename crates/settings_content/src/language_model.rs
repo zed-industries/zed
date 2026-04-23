@@ -245,11 +245,18 @@ impl MergeFrom for OpenAiReasoningEffort {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct CustomHeader {
+    pub name: String,
+    pub value: String,
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct OpenAiCompatibleSettingsContent {
     pub api_url: String,
     pub available_models: Vec<OpenAiCompatibleAvailableModel>,
+    pub custom_headers: Option<Vec<CustomHeader>>,
 }
 
 #[with_fallible_options]

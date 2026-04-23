@@ -611,8 +611,45 @@ By default, OpenAI-compatible models inherit the following capabilities:
 
 If a provider exposes models that only work with the Responses API, set `chat_completions` to `false` for those entries. Zed uses the Responses endpoint for these models.
 
+If your gateway requires extra HTTP headers, add `custom_headers` to the provider configuration. This is useful for gateways like AgentRouter.
+
+```json [settings]
+{
+  "language_models": {
+    "openai_compatible": {
+      "AgentRouter": {
+        "api_url": "https://agentrouter.org/v1",
+        "custom_headers": [
+          { "name": "User-Agent", "value": "Kilo-Code/5.10.0" },
+          { "name": "HTTP-Referer", "value": "https://kilocode.ai" },
+          { "name": "X-Title", "value": "Kilo Code" },
+          { "name": "X-KiloCode-Version", "value": "5.10.0" },
+          { "name": "Origin", "value": "https://kilocode.ai" }
+        ],
+        "available_models": [
+          {
+            "name": "deepseek-v3.2",
+            "display_name": "AgentRouter DeepSeek V3.2",
+            "max_tokens": 163840,
+            "max_output_tokens": 32768,
+            "capabilities": {
+              "tools": true,
+              "images": false,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false,
+              "chat_completions": true,
+              "interleaved_reasoning": false
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
 Note that LLM API keys aren't stored in your settings file.
-So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the example above, it would be `TOGETHER_AI_API_KEY=<your api key>`.
+So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the example above, it would be `AGENT_ROUTER_API_KEY=<your api key>`.
 
 ### OpenRouter {#openrouter}
 

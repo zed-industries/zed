@@ -12,7 +12,7 @@ use language_model::{
 };
 use menu;
 use open_ai::{
-    ResponseStreamEvent,
+    CustomHeader, ResponseStreamEvent,
     responses::{Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, stream_response},
     stream_completion,
 };
@@ -32,6 +32,7 @@ pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 pub struct OpenAiCompatibleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: Vec<CustomHeader>,
 }
 
 pub struct OpenAiCompatibleLanguageModelProvider {
@@ -235,11 +236,12 @@ impl OpenAiCompatibleLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url) = self.state.read_with(cx, |state, _cx| {
+        let (api_key, api_url, custom_headers) = self.state.read_with(cx, |state, _cx| {
             let api_url = &state.settings.api_url;
             (
                 state.api_key_state.key(api_url),
                 state.settings.api_url.clone(),
+                state.settings.custom_headers.clone(),
             )
         });
 
@@ -254,6 +256,7 @@ impl OpenAiCompatibleLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                Some(custom_headers.as_slice()),
             );
             let response = request.await?;
             Ok(response)
@@ -270,11 +273,12 @@ impl OpenAiCompatibleLanguageModel {
     {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url) = self.state.read_with(cx, |state, _cx| {
+        let (api_key, api_url, custom_headers) = self.state.read_with(cx, |state, _cx| {
             let api_url = &state.settings.api_url;
             (
                 state.api_key_state.key(api_url),
                 state.settings.api_url.clone(),
+                state.settings.custom_headers.clone(),
             )
         });
 
@@ -289,6 +293,7 @@ impl OpenAiCompatibleLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                Some(custom_headers.as_slice()),
             );
             let response = request.await?;
             Ok(response)

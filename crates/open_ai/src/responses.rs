@@ -4,7 +4,7 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{ReasoningEffort, RequestError, Role, ToolChoice};
+use crate::{CustomHeader, ReasoningEffort, RequestError, Role, ToolChoice};
 
 #[derive(Serialize, Debug)]
 pub struct Request {
@@ -315,20 +315,10 @@ pub async fn stream_response(
     api_url: &str,
     api_key: &str,
     request: Request,
+    custom_headers: Option<&[CustomHeader]>,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
-    let uri = format!("{api_url}/responses");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
-
     let is_streaming = request.stream;
-    let request = request_builder
-        .body(AsyncBody::from(
-            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
-        ))
-        .map_err(|e| RequestError::Other(e.into()))?;
+    let request = build_response_request(api_url, api_key, request, custom_headers)?;
 
     let mut response = client.send(request).await?;
     if response.status().is_success() {
@@ -471,5 +461,72 @@ pub async fn stream_response(
             body,
             headers: response.headers().clone(),
         })
+    }
+}
+
+fn build_response_request(
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+    custom_headers: Option<&[CustomHeader]>,
+) -> Result<HttpRequest<AsyncBody>, RequestError> {
+    let uri = format!("{api_url}/responses");
+    let mut request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key.trim()));
+
+    if let Some(custom_headers) = custom_headers {
+        for custom_header in custom_headers {
+            request_builder =
+                request_builder.header(custom_header.name.as_str(), custom_header.value.as_str());
+        }
+    }
+
+    request_builder
+        .body(AsyncBody::from(
+            serde_json::to_string(&request).map_err(|error| RequestError::Other(error.into()))?,
+        ))
+        .map_err(|error| RequestError::Other(error.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_build_response_request_includes_custom_headers() {
+        let actual = build_response_request(
+            crate::OPEN_AI_API_URL,
+            "test-key",
+            Request {
+                model: "gpt-5-mini".to_string(),
+                input: Vec::new(),
+                stream: true,
+                temperature: None,
+                top_p: None,
+                max_output_tokens: None,
+                parallel_tool_calls: None,
+                tool_choice: None,
+                tools: Vec::new(),
+                prompt_cache_key: None,
+                reasoning: None,
+            },
+            Some(&[CustomHeader {
+                name: "X-Title".to_string(),
+                value: "Kilo Code".to_string(),
+            }]),
+        )
+        .expect("request should build");
+        let expected = "Kilo Code";
+        assert_eq!(
+            actual
+                .headers()
+                .get("X-Title")
+                .and_then(|value| value.to_str().ok()),
+            Some(expected)
+        );
     }
 }

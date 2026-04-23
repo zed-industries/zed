@@ -17,6 +17,12 @@ use thiserror::Error;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CustomHeader {
+    pub name: String,
+    pub value: String,
+}
+
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
     opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
 }
@@ -548,18 +554,7 @@ pub async fn non_streaming_completion(
     api_key: &str,
     request: Request,
 ) -> Result<Response, RequestError> {
-    let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
-
-    let request = request_builder
-        .body(AsyncBody::from(
-            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
-        ))
-        .map_err(|e| RequestError::Other(e.into()))?;
+    let request = build_completion_request(api_url, api_key, request, None)?;
 
     let mut response = client.send(request).await?;
     if response.status().is_success() {
@@ -594,19 +589,9 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    custom_headers: Option<&[CustomHeader]>,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
-    let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
-
-    let request = request_builder
-        .body(AsyncBody::from(
-            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
-        ))
-        .map_err(|e| RequestError::Other(e.into()))?;
+    let request = build_completion_request(api_url, api_key, request, custom_headers)?;
 
     let mut response = client.send(request).await?;
     if response.status().is_success() {
@@ -655,6 +640,74 @@ pub async fn stream_completion(
             body,
             headers: response.headers().clone(),
         })
+    }
+}
+
+fn build_completion_request(
+    api_url: &str,
+    api_key: &str,
+    request: Request,
+    custom_headers: Option<&[CustomHeader]>,
+) -> Result<HttpRequest<AsyncBody>, RequestError> {
+    let uri = format!("{api_url}/chat/completions");
+    let mut request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", api_key.trim()));
+
+    if let Some(custom_headers) = custom_headers {
+        for custom_header in custom_headers {
+            request_builder =
+                request_builder.header(custom_header.name.as_str(), custom_header.value.as_str());
+        }
+    }
+
+    request_builder
+        .body(AsyncBody::from(
+            serde_json::to_string(&request).map_err(|error| RequestError::Other(error.into()))?,
+        ))
+        .map_err(|error| RequestError::Other(error.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_build_completion_request_includes_custom_headers() {
+        let actual = build_completion_request(
+            OPEN_AI_API_URL,
+            "test-key",
+            Request {
+                model: "gpt-5-mini".to_string(),
+                messages: Vec::new(),
+                stream: true,
+                stream_options: Some(StreamOptions::default()),
+                max_completion_tokens: None,
+                stop: Vec::new(),
+                temperature: None,
+                tool_choice: None,
+                parallel_tool_calls: None,
+                tools: Vec::new(),
+                prompt_cache_key: None,
+                reasoning_effort: None,
+            },
+            Some(&[CustomHeader {
+                name: "HTTP-Referer".to_string(),
+                value: "https://kilocode.ai".to_string(),
+            }]),
+        )
+        .expect("request should build");
+        let expected = "https://kilocode.ai";
+        assert_eq!(
+            actual
+                .headers()
+                .get("HTTP-Referer")
+                .and_then(|value| value.to_str().ok()),
+            Some(expected)
+        );
     }
 }
 
