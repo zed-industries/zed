@@ -138,6 +138,7 @@ pub struct TerminalView {
     hover_tooltip_update: Task<()>,
     workspace_id: Option<WorkspaceId>,
     show_breadcrumbs: bool,
+    show_title_in_tab: bool,
     block_below_cursor: Option<Rc<BlockProperties>>,
     scroll_top: Pixels,
     scroll_handle: TerminalScrollHandle,
@@ -282,6 +283,7 @@ impl TerminalView {
             mode: TerminalMode::Standalone,
             workspace_id,
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
+            show_title_in_tab: TerminalSettings::get_global(cx).show_title_in_tab,
             block_below_cursor: None,
             scroll_top: Pixels::ZERO,
             scroll_handle,
@@ -441,7 +443,7 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.terminal.read(cx).task().is_some() {
+        if self.show_title_in_tab || self.terminal.read(cx).task().is_some() {
             return;
         }
 
@@ -548,7 +550,9 @@ impl TerminalView {
     fn settings_changed(&mut self, cx: &mut Context<Self>) {
         let settings = TerminalSettings::get_global(cx);
         let breadcrumb_visibility_changed = self.show_breadcrumbs != settings.toolbar.breadcrumbs;
+        let title_mode_changed = self.show_title_in_tab != settings.show_title_in_tab;
         self.show_breadcrumbs = settings.toolbar.breadcrumbs;
+        self.show_title_in_tab = settings.show_title_in_tab;
 
         let should_blink = match settings.blinking {
             TerminalBlink::Off => false,
@@ -575,6 +579,14 @@ impl TerminalView {
 
         if breadcrumb_visibility_changed {
             cx.emit(ItemEvent::UpdateBreadcrumbs);
+        }
+        if title_mode_changed {
+            if self.show_title_in_tab {
+                self.rename_editor = None;
+                self.rename_editor_subscription = None;
+            }
+            cx.emit(ItemEvent::UpdateBreadcrumbs);
+            cx.emit(ItemEvent::UpdateTab);
         }
         cx.notify();
     }
@@ -1098,7 +1110,10 @@ fn subscribe_for_terminal_events(
                         cx,
                     ),
                 },
-                Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
+                Event::BreadcrumbsChanged => {
+                    cx.emit(ItemEvent::UpdateBreadcrumbs);
+                    cx.emit(ItemEvent::UpdateTab);
+                }
                 Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
                 Event::SelectionsChanged => {
                     window.invalidate_character_coordinates();
@@ -1330,13 +1345,8 @@ impl Item for TerminalView {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
+        let title = self.tab_content_text(params.detail.unwrap_or_default(), cx);
         let terminal = self.terminal().read(cx);
-        let title = self
-            .custom_title
-            .as_ref()
-            .filter(|title| !title.trim().is_empty())
-            .cloned()
-            .unwrap_or_else(|| terminal.title(true));
 
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
@@ -1433,7 +1443,12 @@ impl Item for TerminalView {
     }
 
     fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
-        if let Some(custom_title) = self.custom_title.as_ref().filter(|l| !l.trim().is_empty()) {
+        if self.show_title_in_tab {
+            let dynamic_title = self.terminal().read(cx).breadcrumb_text.trim().to_owned();
+            if !dynamic_title.is_empty() {
+                return dynamic_title.into();
+            }
+        } else if let Some(custom_title) = self.custom_title.as_ref().filter(|l| !l.trim().is_empty()) {
             return custom_title.clone().into();
         }
         let terminal = self.terminal().read(cx);
@@ -1598,7 +1613,7 @@ impl Item for TerminalView {
         cx: &mut Context<Self>,
     ) -> Vec<(SharedString, Box<dyn gpui::Action>)> {
         let terminal = self.terminal.read(cx);
-        if terminal.task().is_none() {
+        if terminal.task().is_none() && !self.show_title_in_tab {
             vec![("Rename".into(), Box::new(RenameTerminal))]
         } else {
             Vec::new()
@@ -1669,7 +1684,7 @@ impl Item for TerminalView {
     }
 
     fn breadcrumb_location(&self, cx: &App) -> ToolbarItemLocation {
-        if self.show_breadcrumbs && !self.terminal().read(cx).breadcrumb_text.trim().is_empty() {
+        if self.show_breadcrumbs && !self.show_title_in_tab && !self.terminal().read(cx).breadcrumb_text.trim().is_empty() {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Hidden
@@ -2038,7 +2053,7 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal};
     use project::{Entry, Project, ProjectPath, Worktree};
     use remote::RemoteClient;
     use std::path::{Path, PathBuf};
@@ -2813,5 +2828,165 @@ mod tests {
                 text
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_show_title_in_tab_prefers_dynamic_terminal_title(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, workspace) = init_test(cx).await;
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.terminal.get_or_insert_default().show_title_in_tab = Some(true);
+                });
+            });
+        });
+
+        let terminal = project
+            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .await
+            .unwrap();
+        terminal.update(cx, |terminal, _| {
+            terminal.breadcrumb_text = "server: api-01".to_owned();
+        });
+
+        let terminal_view = cx
+            .add_window(|window, cx| {
+                TerminalView::new(
+                    terminal,
+                    workspace.downgrade(),
+                    None,
+                    project.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .root(cx)
+            .unwrap();
+
+        terminal_view.update(cx, |view, cx| {
+            view.set_custom_title(Some("manual-name".to_owned()), cx);
+            assert_eq!(view.tab_content_text(0, cx).as_ref(), "server: api-01");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_show_title_in_tab_falls_back_to_default_tab_title(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, workspace) = init_test(cx).await;
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.terminal.get_or_insert_default().show_title_in_tab = Some(true);
+                });
+            });
+        });
+
+        let terminal = project
+            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .await
+            .unwrap();
+        let expected_default_title = terminal.read_with(cx, |terminal, _| terminal.title(true));
+        terminal.update(cx, |terminal, _| {
+            terminal.breadcrumb_text.clear();
+        });
+
+        let terminal_view = cx
+            .add_window(|window, cx| {
+                TerminalView::new(
+                    terminal,
+                    workspace.downgrade(),
+                    None,
+                    project.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .root(cx)
+            .unwrap();
+
+        terminal_view.update(cx, |view, cx| {
+            view.set_custom_title(Some("manual-name".to_owned()), cx);
+            assert_eq!(view.tab_content_text(0, cx).as_ref(), expected_default_title);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_show_title_in_tab_hides_terminal_breadcrumbs(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, workspace) = init_test(cx).await;
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let terminal = settings.terminal.get_or_insert_default();
+                    terminal.toolbar.get_or_insert_default().breadcrumbs = Some(true);
+                    terminal.show_title_in_tab = Some(true);
+                });
+            });
+        });
+
+        let terminal = project
+            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .await
+            .unwrap();
+        terminal.update(cx, |terminal, _| {
+            terminal.breadcrumb_text = "server: api-01".to_owned();
+        });
+
+        cx.add_window(|window, cx| {
+            let view = TerminalView::new(
+                terminal.clone(),
+                workspace.downgrade(),
+                None,
+                project.downgrade(),
+                window,
+                cx,
+            );
+            assert_eq!(view.breadcrumb_location(cx), ToolbarItemLocation::Hidden);
+            view
+        })
+        .root(cx)
+        .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_show_title_in_tab_disables_rename(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, workspace) = init_test(cx).await;
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let terminal = settings.terminal.get_or_insert_default();
+                    terminal.show_title_in_tab = Some(true);
+                });
+            });
+        });
+
+        let terminal = project
+            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .await
+            .unwrap();
+
+        cx.add_window(|window, cx| {
+            let mut view = TerminalView::new(
+                terminal.clone(),
+                workspace.downgrade(),
+                None,
+                project.downgrade(),
+                window,
+                cx,
+            );
+            let actions = view.tab_extra_context_menu_actions(window, cx);
+            assert!(!actions.iter().any(|(label, _)| label.as_ref() == "Rename"));
+            view.rename_terminal(&RenameTerminal, window, cx);
+            assert!(view.rename_editor.is_none());
+            view
+        })
+        .root(cx)
+        .unwrap();
     }
 }

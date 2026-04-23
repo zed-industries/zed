@@ -51,7 +51,7 @@ use terminal_hyperlinks::RegexSearches;
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use urlencoding;
-use util::{paths::PathStyle, truncate_and_trailoff};
+use util::{paths::{PathStyle, SanitizedPath}, truncate_and_trailoff};
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -60,7 +60,7 @@ use std::{
     cmp::{self, min},
     fmt::Display,
     ops::{Deref, RangeInclusive},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
     time::{Duration, Instant},
@@ -944,7 +944,7 @@ impl Terminal {
                     if self
                         .shell_program
                         .as_ref()
-                        .map(|e| *e == title)
+                        .map(|e| SanitizedPath::new(Path::new(e)) == SanitizedPath::new(Path::new(&title)))
                         .unwrap_or(false)
                     {
                         return;
@@ -3561,6 +3561,38 @@ mod tests {
                     );
                 }
             }
+        }
+
+        #[cfg(windows)]
+        #[gpui::test]
+        fn test_ignores_windows_shell_title_with_verbatim_prefix(cx: &mut TestAppContext) {
+            let terminal = cx.new(|cx| {
+                TerminalBuilder::new_display_only(
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    0,
+                    cx.background_executor(),
+                    PathStyle::local(),
+                )
+                .unwrap()
+                .subscribe(cx)
+            });
+
+            terminal.update(cx, |terminal, cx| {
+                terminal.shell_program =
+                    Some(r"\\?\C:\Program Files\PowerShell\7\pwsh.exe".to_string());
+
+                terminal.process_event(
+                    AlacTermEvent::Title(r"C:\Program Files\PowerShell\7\pwsh.exe".to_string()),
+                    cx,
+                );
+
+                assert!(
+                    terminal.breadcrumb_text.is_empty(),
+                    "default shell title should be ignored even when shell_program uses the \\\\?\\ prefix"
+                );
+            });
         }
     }
 }

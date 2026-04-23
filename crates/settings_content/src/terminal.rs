@@ -157,6 +157,12 @@ pub struct TerminalSettingsContent {
     pub scroll_multiplier: Option<f32>,
     /// Toolbar related settings
     pub toolbar: Option<TerminalToolbarContent>,
+    /// Whether to show the shell-driven terminal title in the tab.
+    ///
+    /// When enabled, terminal breadcrumbs are hidden and terminal tab rename is disabled.
+    ///
+    /// Default: false
+    pub show_title_in_tab: Option<bool>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
     /// The minimum APCA perceptual contrast between foreground and background colors.

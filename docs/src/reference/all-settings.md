@@ -4099,6 +4099,7 @@ List of `integer` column numbers
     "toolbar": {
       "breadcrumbs": false
     },
+    "show_title_in_tab": false,
     "working_directory": "current_project_directory",
     "scrollbar": {
       "show": null
@@ -4550,9 +4551,34 @@ At the moment, only the `breadcrumbs` option is available, it controls displayin
 
 If the terminal title is empty, the breadcrumbs won't be shown.
 
+If `show_title_in_tab` is enabled, Zed hides terminal breadcrumbs even
+when `breadcrumbs` is `true`.
+
 The shell running in the terminal needs to be configured to emit the title.
 
 Example command to set the title: `echo -e "\e]2;New Title\007";`
+
+### Terminal: Show Title In Tab
+
+- Description: Whether to show the shell-driven terminal title in the tab.
+- Setting: `show_title_in_tab`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+When enabled, Zed hides terminal breadcrumbs and disables terminal tab
+renaming. If the shell does not set a title, Zed falls back to the
+default terminal tab label.
+
+```json [settings]
+{
+  "terminal": {
+    "show_title_in_tab": true
+  }
+}
+```
 
 ### Terminal: Button
 

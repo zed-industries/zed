@@ -335,6 +335,27 @@ Show the terminal title in a breadcrumb toolbar:
 
 The title can be set by your shell using the escape sequence `\e]2;Title\007`.
 
+If `terminal.show_title_in_tab` is enabled, Zed hides terminal
+breadcrumbs even when `terminal.toolbar.breadcrumbs` is `true`.
+
+### Tab Titles
+
+If your shell sets a terminal title, you can show that title in the tab
+instead of the terminal toolbar:
+
+```json [settings]
+{
+  "terminal": {
+    "show_title_in_tab": true
+  }
+}
+```
+
+When enabled, Zed uses the shell-driven terminal title for the tab,
+hides terminal breadcrumbs, and disables terminal tab renaming. If the
+shell does not set a title, the tab falls back to Zed's default terminal
+label.
+
 ## Integration with Tasks
 
 The terminal integrates with Zed's [task system](./tasks.md). When you run a task, it executes in the terminal. Rerun the last task from a terminal with:

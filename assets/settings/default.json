@@ -1868,6 +1868,10 @@
       // Example: `echo -e "\e]2;New Title\007";`
       "breadcrumbs": false,
     },
+    // Whether to show the shell-driven terminal title in the tab.
+    //
+    // When enabled, terminal breadcrumbs are hidden and terminal tab rename is disabled.
+    "show_title_in_tab": false,
     // Scrollbar-related settings
     "scrollbar": {
       // When to show the scrollbar in the terminal.

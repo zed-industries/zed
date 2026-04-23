@@ -6818,7 +6818,7 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
-    fn toolbar_section() -> [SettingsPageItem; 2] {
+    fn toolbar_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Toolbar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6842,6 +6842,28 @@ fn terminal_page() -> SettingsPage {
                             .toolbar
                             .get_or_insert_default()
                             .breadcrumbs = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Title in Tab",
+                description: "Show the terminal title in the tab, hide terminal breadcrumbs, and disable terminal tab renaming.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.show_title_in_tab"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .show_title_in_tab
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .show_title_in_tab = value;
                     },
                 }),
                 metadata: None,
