@@ -611,25 +611,22 @@ By default, OpenAI-compatible models inherit the following capabilities:
 
 If a provider exposes models that only work with the Responses API, set `chat_completions` to `false` for those entries. Zed uses the Responses endpoint for these models.
 
-If your gateway requires extra HTTP headers, add `custom_headers` to the provider configuration. This is useful for gateways like AgentRouter.
+If your gateway requires extra HTTP headers, add `custom_headers` to the provider configuration.
 
 ```json [settings]
 {
   "language_models": {
     "openai_compatible": {
-      "AgentRouter": {
-        "api_url": "https://agentrouter.org/v1",
+      "CustomGateway": {
+        "api_url": "https://gateway.example.com/v1",
         "custom_headers": [
-          { "name": "User-Agent", "value": "Kilo-Code/5.10.0" },
-          { "name": "HTTP-Referer", "value": "https://kilocode.ai" },
-          { "name": "X-Title", "value": "Kilo Code" },
-          { "name": "X-KiloCode-Version", "value": "5.10.0" },
-          { "name": "Origin", "value": "https://kilocode.ai" }
+          { "name": "X-Client-Name", "value": "Zed Docs Example" },
+          { "name": "X-Environment", "value": "development" }
         ],
         "available_models": [
           {
-            "name": "deepseek-v3.2",
-            "display_name": "AgentRouter DeepSeek V3.2",
+            "name": "custom-model",
+            "display_name": "Custom Gateway Model",
             "max_tokens": 163840,
             "max_output_tokens": 32768,
             "capabilities": {
@@ -649,7 +646,7 @@ If your gateway requires extra HTTP headers, add `custom_headers` to the provide
 ```
 
 Note that LLM API keys aren't stored in your settings file.
-So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the example above, it would be `AGENT_ROUTER_API_KEY=<your api key>`.
+So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the example above, it would be `CUSTOM_GATEWAY_API_KEY=<your api key>`.
 
 ### OpenRouter {#openrouter}
 
