@@ -895,7 +895,8 @@ impl EditorElement {
             let hitbox = &position_map.gutter_hitbox;
 
             if event.position.x <= hitbox.bounds.right() - gutter_right_padding
-                && editor.collaboration_hub.is_none()
+                // Don't show the gutter_context_menu in collab notes
+                && editor.project.is_some()
             {
                 let point_for_position = position_map.point_for_position(event.position);
                 editor.set_gutter_context_menu(
@@ -1394,7 +1395,7 @@ impl EditorElement {
             indicator.is_active && start_row == valid_point.row()
         });
 
-        let breakpoint_indicator = if gutter_hovered
+        let gutter_hover_button = if gutter_hovered
             && !is_on_diff_review_button_row
             && split_side != Some(SplitSide::Left)
         {
@@ -1439,13 +1440,16 @@ impl EditorElement {
                 editor.gutter_hover_button.1 = None;
                 None
             }
+        } else if editor.has_mouse_context_menu() {
+            editor.gutter_hover_button.1 = None;
+            editor.gutter_hover_button.0
         } else {
             editor.gutter_hover_button.1 = None;
             None
         };
 
-        if &breakpoint_indicator != &editor.gutter_hover_button.0 {
-            editor.gutter_hover_button.0 = breakpoint_indicator;
+        if &gutter_hover_button != &editor.gutter_hover_button.0 {
+            editor.gutter_hover_button.0 = gutter_hover_button;
             cx.notify();
         }
 
@@ -4728,7 +4732,10 @@ impl EditorElement {
         let mut rows = Vec::<StickyHeader>::new();
 
         for item in editor.sticky_headers.iter().flatten() {
-            let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
+            let start_point = item
+                .source_range_for_text
+                .start
+                .to_point(snapshot.buffer_snapshot());
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
 
             let sticky_row = snapshot
@@ -8348,21 +8355,34 @@ pub(crate) fn header_jump_data(
 ) -> JumpData {
     let multibuffer_snapshot = editor_snapshot.buffer_snapshot();
     let buffer = first_excerpt.buffer(multibuffer_snapshot);
-    let (jump_anchor, jump_buffer) = if let Some(anchor) =
+    let (jump_anchor, jump_buffer, excerpt_start) = if let Some(anchor) =
         latest_selection_anchors.get(&first_excerpt.buffer_id())
         && let Some((jump_anchor, selection_buffer)) =
             multibuffer_snapshot.anchor_to_buffer_anchor(*anchor)
     {
-        (jump_anchor, selection_buffer)
+        let jump_offset = text::ToOffset::to_offset(&jump_anchor, selection_buffer);
+        let selection_excerpt_start = multibuffer_snapshot
+            .excerpts_for_buffer(jump_anchor.buffer_id)
+            .find(|excerpt| {
+                let start = text::ToOffset::to_offset(&excerpt.context.start, selection_buffer);
+                let end = text::ToOffset::to_offset(&excerpt.context.end, selection_buffer);
+                start <= jump_offset && jump_offset <= end
+            })
+            .map(|excerpt| excerpt.context.start)
+            .unwrap_or(first_excerpt.range.context.start);
+        (jump_anchor, selection_buffer, selection_excerpt_start)
     } else {
-        (first_excerpt.range.primary.start, buffer)
+        (
+            first_excerpt.range.primary.start,
+            buffer,
+            first_excerpt.range.context.start,
+        )
     };
-    let excerpt_start = first_excerpt.range.context.start;
     let jump_position = language::ToPoint::to_point(&jump_anchor, jump_buffer);
     let rows_from_excerpt_start = if jump_anchor == excerpt_start {
         0
     } else {
-        let excerpt_start_point = language::ToPoint::to_point(&excerpt_start, buffer);
+        let excerpt_start_point = language::ToPoint::to_point(&excerpt_start, jump_buffer);
         jump_position.row.saturating_sub(excerpt_start_point.row)
     };
 
