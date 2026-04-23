@@ -4497,6 +4497,7 @@ pub mod test {
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 shown_errors: HashSet::default(),
                 regex_validation_error: None,
+                settings_write_error: None,
             }
         }
     }
@@ -4622,6 +4623,7 @@ pub mod test {
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             shown_errors: HashSet::default(),
             regex_validation_error: None,
+            settings_write_error: None,
         };
 
         settings_window.build_filter_table();
