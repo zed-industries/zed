@@ -52,13 +52,56 @@ where
         if raw.is_empty() || raw.trim() == "[]" || raw.trim() == "{}" {
             return Ok(None);
         }
-        let value = serde_json_lenient::from_str(&raw)
-            .map_err(|e| format!("Error deserializing from raw json: {e}"));
-        value
+        serde_json_lenient::from_str(&raw)
+            .map_err(|e| format!("Error deserializing from raw json: {e}"))
     } else {
         let std_err = String::from_utf8_lossy(&output.stderr);
         Err(format!(
             "Sent non-successful output; cannot deserialize. StdErr: {std_err}"
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::ExitStatus;
+
+    use super::*;
+
+    fn success_output(stdout: &str) -> Output {
+        Output {
+            status: ExitStatus::default(),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct TestItem {
+        id: String,
+    }
+
+    #[test]
+    fn test_deserialize_newline_delimited_json_rejected() {
+        // Strict single-value contract: NDJSON must be rejected. Commands that
+        // may legitimately return multiple rows (e.g. `docker ps`) parse their
+        // output themselves rather than routing through this helper.
+        let output = success_output("{\"id\":\"first\"}\n{\"id\":\"second\"}\n");
+        let result: Result<Option<TestItem>, String> = deserialize_json_output(output);
+        assert!(result.is_err(), "expected parse error, got {result:?}");
+    }
+
+    #[test]
+    fn test_deserialize_empty_output() {
+        let output = success_output("");
+        let result: Option<TestItem> = deserialize_json_output(output).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_deserialize_empty_object() {
+        let output = success_output("{}");
+        let result: Option<TestItem> = deserialize_json_output(output).unwrap();
+        assert_eq!(result, None);
     }
 }
