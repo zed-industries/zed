@@ -336,33 +336,28 @@ fn is_missing_action(name: &str) -> bool {
     actions_available() && find_action_by_name(name).is_none()
 }
 
-// Find the binding in reverse order, as the last binding takes precedence.
+// Find the last binding (in keymap order) for the given action.
+// Exact action matches are preferred over parameterized variants.
 fn find_binding_in_keymap(keymap: &KeymapFile, action: &str) -> Option<String> {
-    // Look for exact matches first.
-    let exact_match = keymap.sections().rev().find_map(|section| {
-        section.bindings().rev().find_map(|(keystroke, a)| {
-            if a.to_string() == action {
-                Some(keystroke.to_string())
-            } else {
-                None
-            }
+    let find = |predicate: &dyn Fn(&str) -> bool| {
+        keymap.sections().rev().find_map(|section| {
+            section.bindings().rev().find_map(|(keystroke, a)| {
+                if predicate(&a.to_string()) {
+                    Some(keystroke.to_string())
+                } else {
+                    None
+                }
+            })
         })
-    });
+    };
 
-    if exact_match.is_some() {
-        return exact_match;
+    // Look for exact match
+    if let Some(binding) = find(&|a| a == action) {
+        return Some(binding);
     }
 
-    // Then look for parameterized matches.
-    keymap.sections().rev().find_map(|section| {
-        section.bindings().rev().find_map(|(keystroke, a)| {
-            if name_for_action(a.to_string()) == action {
-                Some(keystroke.to_string())
-            } else {
-                None
-            }
-        })
-    })
+    // Look for parameterized match
+    find(&|a| name_for_action(a.to_string()) == action)
 }
 
 fn find_binding(os: Os, action: &str) -> Option<String> {
