@@ -2184,6 +2184,7 @@ async fn test_following_after_replacement(cx_a: &mut TestAppContext, cx_b: &mut 
         );
         mb
     });
+    let multibuffer_snapshot = multibuffer.update(cx_a, |mb, cx| mb.snapshot(cx));
     let snapshot = buffer.update(cx_a, |buffer, _| buffer.snapshot());
     let editor: Entity<Editor> = cx_a.new_window_entity(|window, cx| {
         Editor::for_multibuffer(
@@ -2205,7 +2206,13 @@ async fn test_following_after_replacement(cx_a: &mut TestAppContext, cx_b: &mut 
         editor
             .selections
             .disjoint_anchor_ranges()
-            .map(|range| range.start.text_anchor.to_point(&snapshot))
+            .map(|range| {
+                multibuffer_snapshot
+                    .anchor_to_buffer_anchor(range.start)
+                    .unwrap()
+                    .0
+                    .to_point(&snapshot)
+            })
             .collect::<Vec<_>>()
     });
     multibuffer.update(cx_a, |multibuffer, cx| {
@@ -2232,7 +2239,13 @@ async fn test_following_after_replacement(cx_a: &mut TestAppContext, cx_b: &mut 
         editor
             .selections
             .disjoint_anchor_ranges()
-            .map(|range| range.start.text_anchor.to_point(&snapshot))
+            .map(|range| {
+                multibuffer_snapshot
+                    .anchor_to_buffer_anchor(range.start)
+                    .unwrap()
+                    .0
+                    .to_point(&snapshot)
+            })
             .collect::<Vec<_>>()
     });
     assert_eq!(positions, new_positions);

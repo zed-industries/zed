@@ -157,6 +157,7 @@ impl ModelInput {
             parallel_tool_calls,
             prompt_cache_key,
             chat_completions,
+            ..
         } = ModelCapabilities::default();
 
         Self {
@@ -202,12 +203,14 @@ impl ModelInput {
                 .text(cx)
                 .parse::<u64>()
                 .map_err(|_| SharedString::from("Max Tokens must be a number"))?,
+            reasoning_effort: None,
             capabilities: ModelCapabilities {
                 tools: self.capabilities.supports_tools.selected(),
                 images: self.capabilities.supports_images.selected(),
                 parallel_tool_calls: self.capabilities.supports_parallel_tool_calls.selected(),
                 prompt_cache_key: self.capabilities.supports_prompt_cache_key.selected(),
                 chat_completions: self.capabilities.supports_chat_completions.selected(),
+                interleaved_reasoning: false,
             },
         })
     }
@@ -813,9 +816,9 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
 
-            language_model::init_settings(cx);
+            language_model::init(cx);
             editor::init(cx);
         });
 

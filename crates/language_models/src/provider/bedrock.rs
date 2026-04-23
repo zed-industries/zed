@@ -48,7 +48,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
-use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
+use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -195,12 +195,13 @@ pub struct State {
     settings: Option<AmazonBedrockSettings>,
     /// Whether credentials came from environment variables (only relevant for static credentials)
     credentials_from_env: bool,
+    credentials_provider: Arc<dyn CredentialsProvider>,
     _subscription: Subscription,
 }
 
 impl State {
     fn reset_auth(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let credentials_provider = self.credentials_provider.clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
                 .delete_credentials(AMAZON_AWS_URL, cx)
@@ -220,7 +221,7 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let auth = credentials.clone().into_auth();
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let credentials_provider = self.credentials_provider.clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
                 .write_credentials(
@@ -287,7 +288,7 @@ impl State {
         &self,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), AuthenticateError>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let credentials_provider = self.credentials_provider.clone();
         cx.spawn(async move |this, cx| {
             // Try environment variables first
             let (auth, from_env) = if let Some(bearer_token) = &ZED_BEDROCK_BEARER_TOKEN_VAR.value {
@@ -344,7 +345,7 @@ impl State {
                 .ok_or(AuthenticateError::CredentialsNotFound)?;
 
             let credentials_str = String::from_utf8(credentials_bytes)
-                .context("invalid {PROVIDER_NAME} credentials")?;
+                .with_context(|| format!("invalid {PROVIDER_NAME} credentials"))?;
 
             let credentials: BedrockCredentials =
                 serde_json::from_str(&credentials_str).context("failed to parse credentials")?;
@@ -400,11 +401,16 @@ pub struct BedrockLanguageModelProvider {
 }
 
 impl BedrockLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| State {
             auth: None,
             settings: Some(AllLanguageModelSettings::get_global(cx).bedrock.clone()),
             credentials_from_env: false,
+            credentials_provider,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
@@ -698,14 +704,6 @@ impl LanguageModel for BedrockModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         Some(self.model.max_output_tokens())
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        get_bedrock_tokens(request, cx)
     }
 
     fn stream_completion(
@@ -1143,68 +1141,6 @@ pub fn into_bedrock(
         top_p: None,
         allow_extended_context,
     })
-}
-
-// TODO: just call the ConverseOutput.usage() method:
-// https://docs.rs/aws-sdk-bedrockruntime/latest/aws_sdk_bedrockruntime/operation/converse/struct.ConverseOutput.html#method.output
-pub fn get_bedrock_tokens(
-    request: LanguageModelRequest,
-    cx: &App,
-) -> BoxFuture<'static, Result<u64>> {
-    cx.background_executor()
-        .spawn(async move {
-            let messages = request.messages;
-            let mut tokens_from_images = 0;
-            let mut string_messages = Vec::with_capacity(messages.len());
-
-            for message in messages {
-                use language_model::MessageContent;
-
-                let mut string_contents = String::new();
-
-                for content in message.content {
-                    match content {
-                        MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                            string_contents.push_str(&text);
-                        }
-                        MessageContent::RedactedThinking(_) => {}
-                        MessageContent::Image(image) => {
-                            tokens_from_images += image.estimate_tokens();
-                        }
-                        MessageContent::ToolUse(_tool_use) => {
-                            // TODO: Estimate token usage from tool uses.
-                        }
-                        MessageContent::ToolResult(tool_result) => match tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => {
-                                string_contents.push_str(&text);
-                            }
-                            LanguageModelToolResultContent::Image(image) => {
-                                tokens_from_images += image.estimate_tokens();
-                            }
-                        },
-                    }
-                }
-
-                if !string_contents.is_empty() {
-                    string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
-                        role: match message.role {
-                            Role::User => "user".into(),
-                            Role::Assistant => "assistant".into(),
-                            Role::System => "system".into(),
-                        },
-                        content: Some(string_contents),
-                        name: None,
-                        function_call: None,
-                    });
-                }
-            }
-
-            // Tiktoken doesn't yet support these models, so we manually use the
-            // same tokenizer as GPT-4.
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-                .map(|tokens| (tokens + tokens_from_images) as u64)
-        })
-        .boxed()
 }
 
 pub fn map_to_language_model_completion_events(

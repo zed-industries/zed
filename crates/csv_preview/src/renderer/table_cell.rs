@@ -39,13 +39,12 @@ fn create_table_cell(
     cx: &Context<'_, CsvPreviewView>,
 ) -> gpui::Stateful<Div> {
     div()
-        .id(ElementId::NamedInteger(
+        .id(ElementId::Name(
             format!(
                 "csv-display-cell-{}-{}",
                 *display_cell_id.row, *display_cell_id.col
             )
             .into(),
-            0,
         ))
         .cursor_pointer()
         .flex()
@@ -53,7 +52,6 @@ fn create_table_cell(
         .px_1()
         .bg(cx.theme().colors().editor_background)
         .border_b_1()
-        .border_r_1()
         .border_color(cx.theme().colors().border_variant)
         .map(|div| match vertical_alignment {
             VerticalAlignment::Top => div.items_start(),

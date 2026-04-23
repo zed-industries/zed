@@ -1,6 +1,7 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+mod llm_token;
 mod proxy;
 pub mod telemetry;
 pub mod user;
@@ -13,8 +14,10 @@ use async_tungstenite::tungstenite::{
     http::{HeaderValue, Request, StatusCode},
 };
 use clock::SystemClock;
-use cloud_api_client::CloudApiClient;
+use cloud_api_client::LlmApiToken;
 use cloud_api_client::websocket_protocol::MessageToClient;
+use cloud_api_client::{ClientApiError, CloudApiClient};
+use cloud_api_types::OrganizationId;
 use credentials_provider::CredentialsProvider;
 use feature_flags::FeatureFlagAppExt as _;
 use futures::{
@@ -51,6 +54,7 @@ use tokio::net::TcpStream;
 use url::Url;
 use util::{ConnectionResult, ResultExt};
 
+pub use llm_token::*;
 pub use rpc::*;
 pub use telemetry_events::Event;
 pub use user::*;
@@ -98,6 +102,15 @@ actions!(
 #[derive(Deserialize, RegisterSetting)]
 pub struct ClientSettings {
     pub server_url: String,
+    /// Overrides the key used to store credentials in the system keychain.
+    /// Defaults to `server_url` when unset.
+    ///
+    /// Useful when running multiple Zed instances side by side without them
+    /// overwriting each other's keychain entries.
+    ///
+    /// Note: changing this after signing in will require signing in again, as
+    /// existing credentials are stored under the old key.
+    pub credentials_url: Option<String>,
 }
 
 impl Settings for ClientSettings {
@@ -105,10 +118,12 @@ impl Settings for ClientSettings {
         if let Some(server_url) = &*ZED_SERVER_URL {
             return Self {
                 server_url: server_url.clone(),
+                credentials_url: content.credentials_url.clone(),
             };
         }
         Self {
             server_url: content.server_url.clone().unwrap(),
+            credentials_url: content.credentials_url.clone(),
         }
     }
 }
@@ -339,12 +354,18 @@ pub struct ClientCredentialsProvider {
 impl ClientCredentialsProvider {
     pub fn new(cx: &App) -> Self {
         Self {
-            provider: <dyn CredentialsProvider>::global(cx),
+            provider: zed_credentials_provider::global(cx),
         }
     }
 
     fn server_url(&self, cx: &AsyncApp) -> Result<String> {
         Ok(cx.update(|cx| ClientSettings::get_global(cx).server_url.clone()))
+    }
+
+    /// Returns the key used for credential storage in the system keychain.
+    fn credentials_url(&self, cx: &AsyncApp) -> Result<String> {
+        let from_settings = cx.update(|cx| ClientSettings::get_global(cx).credentials_url.clone());
+        Ok(from_settings.unwrap_or(self.server_url(cx)?))
     }
 
     /// Reads the credentials from the provider.
@@ -357,10 +378,10 @@ impl ClientCredentialsProvider {
                 return None;
             }
 
-            let server_url = self.server_url(cx).ok()?;
+            let credentials_url = self.credentials_url(cx).ok()?;
             let (user_id, access_token) = self
                 .provider
-                .read_credentials(&server_url, cx)
+                .read_credentials(&credentials_url, cx)
                 .await
                 .log_err()
                 .flatten()?;
@@ -381,10 +402,10 @@ impl ClientCredentialsProvider {
         cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move {
-            let server_url = self.server_url(cx)?;
+            let credentials_url = self.credentials_url(cx)?;
             self.provider
                 .write_credentials(
-                    &server_url,
+                    &credentials_url,
                     &user_id.to_string(),
                     access_token.as_bytes(),
                     cx,
@@ -400,8 +421,8 @@ impl ClientCredentialsProvider {
         cx: &'a AsyncApp,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
         async move {
-            let server_url = self.server_url(cx)?;
-            self.provider.delete_credentials(&server_url, cx).await
+            let credentials_url = self.credentials_url(cx)?;
+            self.provider.delete_credentials(&credentials_url, cx).await
         }
         .boxed_local()
     }
@@ -566,6 +587,10 @@ impl Client {
 
     pub fn http_client(&self) -> Arc<HttpClientWithUrl> {
         self.http.clone()
+    }
+
+    pub fn credentials_provider(&self) -> Arc<dyn CredentialsProvider> {
+        self.credentials_provider.provider.clone()
     }
 
     pub fn cloud_client(&self) -> Arc<CloudApiClient> {
@@ -1513,6 +1538,66 @@ impl Client {
         })
     }
 
+    pub async fn acquire_llm_token(
+        &self,
+        llm_token: &LlmApiToken,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<String> {
+        let system_id = self.telemetry().system_id().map(|x| x.to_string());
+        let cloud_client = self.cloud_client();
+        match llm_token
+            .acquire(&cloud_client, system_id, organization_id)
+            .await
+        {
+            Ok(token) => Ok(token),
+            Err(ClientApiError::Unauthorized) => {
+                self.request_sign_out();
+                Err(ClientApiError::Unauthorized).context("Failed to create LLM token")
+            }
+            Err(err) => Err(anyhow::Error::from(err)),
+        }
+    }
+
+    pub async fn refresh_llm_token(
+        &self,
+        llm_token: &LlmApiToken,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<String> {
+        let system_id = self.telemetry().system_id().map(|x| x.to_string());
+        let cloud_client = self.cloud_client();
+        match llm_token
+            .refresh(&cloud_client, system_id, organization_id)
+            .await
+        {
+            Ok(token) => Ok(token),
+            Err(ClientApiError::Unauthorized) => {
+                self.request_sign_out();
+                return Err(ClientApiError::Unauthorized).context("Failed to create LLM token");
+            }
+            Err(err) => return Err(anyhow::Error::from(err)),
+        }
+    }
+
+    pub async fn clear_and_refresh_llm_token(
+        &self,
+        llm_token: &LlmApiToken,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<String> {
+        let system_id = self.telemetry().system_id().map(|x| x.to_string());
+        let cloud_client = self.cloud_client();
+        match llm_token
+            .clear_and_refresh(&cloud_client, system_id, organization_id)
+            .await
+        {
+            Ok(token) => Ok(token),
+            Err(ClientApiError::Unauthorized) => {
+                self.request_sign_out();
+                return Err(ClientApiError::Unauthorized).context("Failed to create LLM token");
+            }
+            Err(err) => return Err(anyhow::Error::from(err)),
+        }
+    }
+
     pub async fn sign_out(self: &Arc<Self>, cx: &AsyncApp) {
         self.state.write().credentials = None;
         self.cloud_client.clear_credentials();
@@ -2141,11 +2226,13 @@ mod tests {
             project_id: 1,
             committer_name: None,
             committer_email: None,
+            features: Vec::new(),
         });
         server.send(proto::JoinProject {
             project_id: 2,
             committer_name: None,
             committer_email: None,
+            features: Vec::new(),
         });
         done_rx1.recv().await.unwrap();
         done_rx2.recv().await.unwrap();

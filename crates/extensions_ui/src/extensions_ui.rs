@@ -14,7 +14,7 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    Action, App, ClipboardItem, Context, Corner, Entity, EventEmitter, Focusable,
+    Action, Anchor, App, ClipboardItem, Context, Entity, EventEmitter, Focusable,
     InteractiveElement, KeyContext, ParentElement, Point, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, WeakEntity, Window, actions, point, uniform_list,
 };
@@ -23,7 +23,7 @@ use project::DirectoryLister;
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Banner, Chip, ContextMenu, Divider, PopoverMenu, ScrollableHandle, Switch, ToggleButtonGroup,
     ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar,
@@ -69,10 +69,6 @@ pub fn init(cx: &mut App) {
                             ExtensionProvides::ContextServers
                         }
                         ExtensionCategoryFilter::AgentServers => ExtensionProvides::AgentServers,
-                        ExtensionCategoryFilter::SlashCommands => ExtensionProvides::SlashCommands,
-                        ExtensionCategoryFilter::IndexedDocsProviders => {
-                            ExtensionProvides::IndexedDocsProviders
-                        }
                         ExtensionCategoryFilter::Snippets => ExtensionProvides::Snippets,
                         ExtensionCategoryFilter::DebugAdapters => ExtensionProvides::DebugAdapters,
                     });
@@ -927,7 +923,7 @@ impl ExtensionsPage {
                                     )
                                     .icon_size(IconSize::Small),
                                 )
-                                .anchor(Corner::TopRight)
+                                .anchor(Anchor::TopRight)
                                 .offset(Point {
                                     x: px(0.0),
                                     y: px(2.0),

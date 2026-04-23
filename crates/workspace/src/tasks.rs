@@ -1,13 +1,14 @@
 use std::process::ExitStatus;
 
 use anyhow::Result;
-use gpui::{AppContext, Context, Entity, Task};
+use collections::HashSet;
+use gpui::{AppContext, AsyncWindowContext, Context, Entity, Task, WeakEntity};
 use language::Buffer;
 use project::{TaskSourceKind, WorktreeId};
 use remote::ConnectionState;
 use task::{
     DebugScenario, ResolvedTask, SaveStrategy, SharedTaskContext, SpawnInTerminal, TaskContext,
-    TaskTemplate,
+    TaskHook, TaskTemplate, TaskVariables, VariableName,
 };
 use ui::Window;
 use util::TryFutureExt;
@@ -77,26 +78,7 @@ impl Workspace {
 
         if self.terminal_provider.is_some() {
             let task = cx.spawn_in(window, async move |workspace, cx| {
-                let save_action = match spawn_in_terminal.save {
-                    SaveStrategy::All => {
-                        let save_all = workspace.update_in(cx, |workspace, window, cx| {
-                            let task = workspace.save_all_internal(SaveIntent::SaveAll, window, cx);
-                            // Match the type of the other arm by ignoring the bool value returned
-                            cx.background_spawn(async { task.await.map(|_| ()) })
-                        });
-                        save_all.ok()
-                    }
-                    SaveStrategy::Current => {
-                        let save_current = workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.save_active_item(SaveIntent::SaveAll, window, cx)
-                        });
-                        save_current.ok()
-                    }
-                    SaveStrategy::None => None,
-                };
-                if let Some(save_action) = save_action {
-                    save_action.log_err().await;
-                }
+                Self::save_for_task(&workspace, spawn_in_terminal.save, cx).await;
 
                 let spawn_task = workspace.update_in(cx, |workspace, window, cx| {
                     workspace
@@ -128,6 +110,32 @@ impl Workspace {
                 }
             });
             self.scheduled_tasks.push(task);
+        }
+    }
+
+    pub async fn save_for_task(
+        workspace: &WeakEntity<Self>,
+        save_strategy: SaveStrategy,
+        cx: &mut AsyncWindowContext,
+    ) {
+        let save_action = match save_strategy {
+            SaveStrategy::All => {
+                let save_all = workspace.update_in(cx, |workspace, window, cx| {
+                    let task = workspace.save_all_internal(SaveIntent::SaveAll, window, cx);
+                    cx.background_spawn(async { task.await.map(|_| ()) })
+                });
+                save_all.ok()
+            }
+            SaveStrategy::Current => {
+                let save_current = workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.save_active_item(SaveIntent::SaveAll, window, cx)
+                });
+                save_current.ok()
+            }
+            SaveStrategy::None => None,
+        };
+        if let Some(save_action) = save_action {
+            save_action.log_err().await;
         }
     }
 
@@ -163,6 +171,111 @@ impl Workspace {
         } else {
             Task::ready(None)
         }
+    }
+
+    pub fn run_create_worktree_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let project = self.project().clone();
+        let hooks = HashSet::from_iter([TaskHook::CreateWorktree]);
+
+        let worktree_tasks: Vec<(WorktreeId, TaskContext, Vec<TaskTemplate>)> = {
+            let project = project.read(cx);
+            let task_store = project.task_store();
+            let Some(inventory) = task_store.read(cx).task_inventory().cloned() else {
+                return;
+            };
+
+            let git_store = project.git_store().read(cx);
+
+            let mut worktree_tasks = Vec::new();
+            for worktree in project.worktrees(cx) {
+                let worktree = worktree.read(cx);
+                let worktree_id = worktree.id();
+                let worktree_abs_path = worktree.abs_path();
+
+                let templates: Vec<TaskTemplate> = inventory
+                    .read(cx)
+                    .templates_with_hooks(&hooks, worktree_id)
+                    .into_iter()
+                    .map(|(_, template)| template)
+                    .collect();
+
+                if templates.is_empty() {
+                    continue;
+                }
+
+                let mut task_variables = TaskVariables::default();
+                task_variables.insert(
+                    VariableName::WorktreeRoot,
+                    worktree_abs_path.to_string_lossy().into_owned(),
+                );
+
+                if let Some(path) = git_store.original_repo_path_for_worktree(worktree_id, cx) {
+                    task_variables.insert(
+                        VariableName::MainGitWorktree,
+                        path.to_string_lossy().into_owned(),
+                    );
+                }
+
+                let task_context = TaskContext {
+                    cwd: Some(worktree_abs_path.to_path_buf()),
+                    task_variables,
+                    project_env: Default::default(),
+                };
+
+                worktree_tasks.push((worktree_id, task_context, templates));
+            }
+            worktree_tasks
+        };
+
+        if worktree_tasks.is_empty() {
+            return;
+        }
+
+        let task = cx.spawn_in(window, async move |workspace, cx| {
+            let mut tasks = Vec::new();
+            for (worktree_id, task_context, templates) in worktree_tasks {
+                let id_base = format!("worktree_setup_{worktree_id}");
+
+                tasks.push(cx.spawn({
+                    let workspace = workspace.clone();
+                    async move |cx| {
+                        for task_template in templates {
+                            let Some(resolved) =
+                                task_template.resolve_task(&id_base, &task_context)
+                            else {
+                                continue;
+                            };
+
+                            let status = workspace.update_in(cx, |workspace, window, cx| {
+                                workspace.spawn_in_terminal(resolved.resolved, window, cx)
+                            })?;
+
+                            if let Some(result) = status.await {
+                                match result {
+                                    Ok(exit_status) if !exit_status.success() => {
+                                        log::error!(
+                                            "Git worktree setup task failed with status: {:?}",
+                                            exit_status.code()
+                                        );
+                                        break;
+                                    }
+                                    Err(error) => {
+                                        log::error!("Git worktree setup task error: {error:#}");
+                                        break;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        anyhow::Ok(())
+                    }
+                }));
+            }
+
+            futures::future::join_all(tasks).await;
+            anyhow::Ok(())
+        });
+        task.detach_and_log_err(cx);
     }
 }
 
@@ -254,7 +367,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             register_serializable_item::<TestItem>(cx);
         });
         let fs = FakeFs::new(cx.executor());
@@ -309,6 +422,69 @@ mod tests {
             workspace.add_item(pane, Box::new(item.clone()), None, true, active, window, cx);
         });
         item
+    }
+
+    #[gpui::test]
+    async fn test_save_for_task_all(cx: &mut TestAppContext) {
+        let (fixture, cx) = create_fixture(cx, SaveStrategy::All).await;
+        let workspace = fixture.workspace.downgrade();
+        cx.run_until_parked();
+
+        assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
+        fixture.workspace.update_in(cx, |_workspace, window, cx| {
+            cx.spawn_in(window, {
+                let workspace = workspace.clone();
+                async move |_this, cx| {
+                    Workspace::save_for_task(&workspace, SaveStrategy::All, cx).await;
+                }
+            })
+            .detach();
+        });
+        cx.run_until_parked();
+        assert!(cx.read(|cx| !fixture.item.read(cx).is_dirty));
+    }
+
+    #[gpui::test]
+    async fn test_save_for_task_none(cx: &mut TestAppContext) {
+        let (fixture, cx) = create_fixture(cx, SaveStrategy::None).await;
+        let workspace = fixture.workspace.downgrade();
+        cx.run_until_parked();
+
+        assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
+        fixture.workspace.update_in(cx, |_workspace, window, cx| {
+            cx.spawn_in(window, {
+                let workspace = workspace.clone();
+                async move |_this, cx| {
+                    Workspace::save_for_task(&workspace, SaveStrategy::None, cx).await;
+                }
+            })
+            .detach();
+        });
+        cx.run_until_parked();
+        assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
+    }
+
+    #[gpui::test]
+    async fn test_save_for_task_current(cx: &mut TestAppContext) {
+        let (fixture, cx) = create_fixture(cx, SaveStrategy::Current).await;
+        let inactive = add_test_item(&fixture.workspace, "file2.txt", false, cx);
+        let workspace = fixture.workspace.downgrade();
+        cx.run_until_parked();
+
+        assert!(cx.read(|cx| fixture.item.read(cx).is_dirty));
+        assert!(cx.read(|cx| inactive.read(cx).is_dirty));
+        fixture.workspace.update_in(cx, |_workspace, window, cx| {
+            cx.spawn_in(window, {
+                let workspace = workspace.clone();
+                async move |_this, cx| {
+                    Workspace::save_for_task(&workspace, SaveStrategy::Current, cx).await;
+                }
+            })
+            .detach();
+        });
+        cx.run_until_parked();
+        assert!(cx.read(|cx| !fixture.item.read(cx).is_dirty));
+        assert!(cx.read(|cx| inactive.read(cx).is_dirty));
     }
 
     struct TestTerminalProvider {

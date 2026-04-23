@@ -6,8 +6,8 @@ use std::{
 };
 
 use gpui::{
-    Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context,
-    Corner, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId, Entity, EntityId,
+    Along, Anchor, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask,
+    Context, Corners, CursorStyle, DispatchPhase, Div, Edges, Element, ElementId, Entity, EntityId,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
     Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
@@ -15,10 +15,9 @@ use gpui::{
     UniformListScrollHandle, Window, ease_in_out, prelude::FluentBuilder as _, px, quad, relative,
     size,
 };
-use settings::SettingsStore;
+use gpui_util::ResultExt;
 use smallvec::SmallVec;
 use theme::ActiveTheme as _;
-use util::ResultExt;
 
 use std::ops::Range;
 
@@ -34,7 +33,6 @@ pub mod scrollbars {
     use gpui::{App, Global};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
-    use settings::Settings;
 
     /// When to show the scrollbar in the editor.
     ///
@@ -54,28 +52,7 @@ pub mod scrollbars {
         Never,
     }
 
-    impl From<settings::ShowScrollbar> for ShowScrollbar {
-        fn from(value: settings::ShowScrollbar) -> Self {
-            match value {
-                settings::ShowScrollbar::Auto => ShowScrollbar::Auto,
-                settings::ShowScrollbar::System => ShowScrollbar::System,
-                settings::ShowScrollbar::Always => ShowScrollbar::Always,
-                settings::ShowScrollbar::Never => ShowScrollbar::Never,
-            }
-        }
-    }
-
-    pub trait GlobalSetting {
-        fn get_value(cx: &App) -> &Self;
-    }
-
-    impl<T: Settings> GlobalSetting for T {
-        fn get_value(cx: &App) -> &T {
-            T::get_global(cx)
-        }
-    }
-
-    pub trait ScrollbarVisibility: GlobalSetting + 'static {
+    pub trait ScrollbarVisibility: 'static {
         fn visibility(&self, cx: &App) -> ShowScrollbar;
     }
 
@@ -103,11 +80,9 @@ where
     let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
     let track_color = config.track_color;
 
-    let state = window.use_keyed_state(element_id, cx, |window, cx| {
+    let state = window.use_keyed_state(element_id, cx, |_, cx| {
         let parent_id = cx.entity_id();
-        ScrollbarStateWrapper(
-            cx.new(|cx| ScrollbarState::new_from_config(config, parent_id, window, cx)),
-        )
+        ScrollbarStateWrapper(cx.new(|cx| ScrollbarState::new_from_config(config, parent_id, cx)))
     });
 
     state.update(cx, |state, cx| {
@@ -399,8 +374,8 @@ impl Scrollbars {
         Self::new_with_setting(show_along, |_| ShowScrollbar::Always)
     }
 
-    pub fn for_settings<S: ScrollbarVisibility>() -> Scrollbars {
-        Scrollbars::new_with_setting(ScrollAxes::Both, |cx| S::get_value(cx).visibility(cx))
+    pub fn for_settings<S: ScrollbarVisibility + Default>() -> Scrollbars {
+        Scrollbars::new_with_setting(ScrollAxes::Both, |cx| S::default().visibility(cx))
     }
 }
 
@@ -589,6 +564,16 @@ enum ParentHoverEvent {
     Outside,
 }
 
+pub fn on_new_scrollbars<T: gpui::Global>(cx: &mut App) {
+    cx.observe_new::<ScrollbarState>(|_, window, cx| {
+        if let Some(window) = window {
+            cx.observe_global_in::<T>(window, ScrollbarState::settings_changed)
+                .detach();
+        }
+    })
+    .detach();
+}
+
 /// This is used to ensure notifies within the state do not notify the parent
 /// unintentionally.
 struct ScrollbarStateWrapper<T: ScrollableHandle>(Entity<ScrollbarState<T>>);
@@ -611,15 +596,7 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
 }
 
 impl<T: ScrollableHandle> ScrollbarState<T> {
-    fn new_from_config(
-        config: Scrollbars<T>,
-        parent_id: EntityId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.observe_global_in::<SettingsStore>(window, Self::settings_changed)
-            .detach();
-
+    fn new_from_config(config: Scrollbars<T>, parent_id: EntityId, cx: &mut Context<Self>) -> Self {
         let (manually_added, scroll_handle) = match config.scrollable_handle {
             Handle::Tracked(handle) => (true, handle),
             Handle::Untracked(func) => (false, func()),
@@ -1145,10 +1122,10 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                         .into_iter()
                         .map(|(axis, thumb_range, reserved_space)| {
                             let track_anchor = match axis {
-                                ScrollbarAxis::Horizontal => Corner::BottomLeft,
-                                ScrollbarAxis::Vertical => Corner::TopRight,
+                                ScrollbarAxis::Horizontal => Anchor::BottomLeft,
+                                ScrollbarAxis::Vertical => Anchor::TopRight,
                             };
-                            let Bounds { origin, size } = Bounds::from_corner_and_size(
+                            let Bounds { origin, size } = Bounds::from_anchor_and_size(
                                 track_anchor,
                                 bounds
                                     .corner(track_anchor)

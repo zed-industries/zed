@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - id: get-app-token
-        uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1 # v2.1.4
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         with:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
@@ -37,6 +37,7 @@ jobs:
               '11happy',
               'AidanV',
               'AmaanBilwar',
+              'MostlyKIGuess',
               'OmChillure',
               'Palanikannan1437',
               'Shivansh-25',
@@ -48,7 +49,6 @@ jobs:
               'arjunkomath',
               'austincummings',
               'ayushk-1801',
-              'claiwe',
               'criticic',
               'dongdong867',
               'emamulandalib',
@@ -61,7 +61,6 @@ jobs:
               'loadingalias',
               'marcocondrache',
               'mchisolm0',
-              'mostlyKIGuess',
               'nairadithya',
               'nihalxkumar',
               'notJoon',
@@ -72,6 +71,7 @@ jobs:
               'seanstrom',
               'th0jensen',
               'tommyming',
+              'transitoryangel',
               'virajbhartiya',
             ];
 
@@ -114,7 +114,11 @@ jobs:
               return;
             }
 
-            if (GUILD_MEMBERS.includes(author)) {
+            const authorLower = author.toLowerCase();
+            const isGuildMember = GUILD_MEMBERS.some(
+              (member) => member.toLowerCase() === authorLower
+            );
+            if (isGuildMember) {
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,

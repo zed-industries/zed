@@ -1,8 +1,8 @@
 pub mod row_chunk;
 
 use crate::{
-    DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig, PLAIN_TEXT,
-    RunnableCapture, RunnableTag, TextObject, TreeSitterOptions,
+    ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
+    PLAIN_TEXT, RunnableCapture, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
@@ -16,11 +16,10 @@ use crate::{
     unified_diff_with_offsets,
 };
 pub use crate::{
-    Grammar, Language, LanguageRegistry,
-    diagnostic_set::DiagnosticSet,
-    highlight_map::{HighlightId, HighlightMap},
+    Grammar, HighlightId, HighlightMap, Language, LanguageRegistry, diagnostic_set::DiagnosticSet,
     proto,
 };
+
 use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
@@ -33,10 +32,8 @@ use gpui::{
     Task, TextStyle,
 };
 
-use lsp::{LanguageServerId, NumberOrString};
+use lsp::LanguageServerId;
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use settings::WorktreeId;
 use smallvec::SmallVec;
 use smol::future::yield_now;
@@ -250,57 +247,6 @@ struct SelectionSet {
     cursor_shape: CursorShape,
     selections: Arc<[Selection<Anchor>]>,
     lamport_timestamp: clock::Lamport,
-}
-
-/// A diagnostic associated with a certain range of a buffer.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Diagnostic {
-    /// The name of the service that produced this diagnostic.
-    pub source: Option<String>,
-    /// The ID provided by the dynamic registration that produced this diagnostic.
-    pub registration_id: Option<SharedString>,
-    /// A machine-readable code that identifies this diagnostic.
-    pub code: Option<NumberOrString>,
-    pub code_description: Option<lsp::Uri>,
-    /// Whether this diagnostic is a hint, warning, or error.
-    pub severity: DiagnosticSeverity,
-    /// The human-readable message associated with this diagnostic.
-    pub message: String,
-    /// The human-readable message (in markdown format)
-    pub markdown: Option<String>,
-    /// An id that identifies the group to which this diagnostic belongs.
-    ///
-    /// When a language server produces a diagnostic with
-    /// one or more associated diagnostics, those diagnostics are all
-    /// assigned a single group ID.
-    pub group_id: usize,
-    /// Whether this diagnostic is the primary diagnostic for its group.
-    ///
-    /// In a given group, the primary diagnostic is the top-level diagnostic
-    /// returned by the language server. The non-primary diagnostics are the
-    /// associated diagnostics.
-    pub is_primary: bool,
-    /// Whether this diagnostic is considered to originate from an analysis of
-    /// files on disk, as opposed to any unsaved buffer contents. This is a
-    /// property of a given diagnostic source, and is configured for a given
-    /// language server via the [`LspAdapter::disk_based_diagnostic_sources`](crate::LspAdapter::disk_based_diagnostic_sources) method
-    /// for the language server.
-    pub is_disk_based: bool,
-    /// Whether this diagnostic marks unnecessary code.
-    pub is_unnecessary: bool,
-    /// Quick separation of diagnostics groups based by their source.
-    pub source_kind: DiagnosticSourceKind,
-    /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
-    pub data: Option<Value>,
-    /// Whether to underline the corresponding text range in the editor.
-    pub underline: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DiagnosticSourceKind {
-    Pulled,
-    Pushed,
-    Other,
 }
 
 /// An operation used to synchronize this buffer with its other replicas.
@@ -749,7 +695,7 @@ impl HighlightedTextBuilder {
 
             if let Some(highlight_style) = chunk
                 .syntax_highlight_id
-                .and_then(|id| id.style(syntax_theme))
+                .and_then(|id| syntax_theme.get(id).cloned())
             {
                 let highlight_style = override_style.map_or(highlight_style, |override_style| {
                     highlight_style.highlight(override_style)
@@ -930,6 +876,14 @@ impl EditPreview {
             buffer.set_language_async(self.syntax_snapshot.root_language(), cx);
             buffer
         })
+    }
+
+    pub fn result_text_snapshot(&self) -> &text::BufferSnapshot {
+        &self.applied_edits_snapshot
+    }
+
+    pub fn result_syntax_snapshot(&self) -> &SyntaxSnapshot {
+        &self.syntax_snapshot
     }
 
     pub fn anchor_to_offset_in_result(&self, anchor: Anchor) -> usize {
@@ -1625,16 +1579,21 @@ impl Buffer {
 
             let target_encoding = force_encoding.unwrap_or(current_encoding);
 
+            let bytes = load_bytes_task.await?;
+
+            anyhow::ensure!(
+                analyze_byte_content(&bytes) != ByteContent::Binary,
+                "Binary files are not supported"
+            );
+
             let is_unicode = target_encoding == encoding_rs::UTF_8
                 || target_encoding == encoding_rs::UTF_16LE
                 || target_encoding == encoding_rs::UTF_16BE;
 
             let (new_text, has_bom, encoding_used) = if force_encoding.is_some() && !is_unicode {
-                let bytes = load_bytes_task.await?;
                 let (cow, _had_errors) = target_encoding.decode_without_bom_handling(&bytes);
                 (cow.into_owned(), false, target_encoding)
             } else {
-                let bytes = load_bytes_task.await?;
                 let (cow, used_enc, _had_errors) = target_encoding.decode(&bytes);
 
                 let actual_has_bom = if used_enc == encoding_rs::UTF_8 {
@@ -3328,6 +3287,10 @@ impl Buffer {
     pub fn preserve_preview(&self) -> bool {
         !self.has_edits_since(&self.preview_version)
     }
+
+    pub fn set_group_interval(&mut self, group_interval: Duration) {
+        self.text.set_group_interval(group_interval);
+    }
 }
 
 #[doc(hidden)]
@@ -3341,10 +3304,6 @@ impl Buffer {
     ) {
         let edits = self.edits_for_marked_text(marked_string);
         self.edit(edits, autoindent_mode, cx);
-    }
-
-    pub fn set_group_interval(&mut self, group_interval: Duration) {
-        self.text.set_group_interval(group_interval);
     }
 
     pub fn randomly_edit<T>(&mut self, rng: &mut T, old_range_count: usize, cx: &mut Context<Self>)
@@ -3787,16 +3746,24 @@ impl BufferSnapshot {
     /// returned in chunks where each chunk has a single syntax highlighting style and
     /// diagnostic status.
     #[ztracing::instrument(skip_all)]
-    pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks<'_> {
+    pub fn chunks<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        language_aware: LanguageAwareStyling,
+    ) -> BufferChunks<'_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut syntax = None;
-        if language_aware {
+        if language_aware.tree_sitter {
             syntax = Some(self.get_highlights(range.clone()));
         }
-        // We want to look at diagnostic spans only when iterating over language-annotated chunks.
-        let diagnostics = language_aware;
-        BufferChunks::new(self.text.as_rope(), range, syntax, diagnostics, Some(self))
+        BufferChunks::new(
+            self.text.as_rope(),
+            range,
+            syntax,
+            language_aware.diagnostics,
+            Some(self),
+        )
     }
 
     pub fn highlighted_text_for_range<T: ToOffset>(
@@ -4289,7 +4256,10 @@ impl BufferSnapshot {
         items
     }
 
-    pub fn outline_range_containing<T: ToOffset>(&self, range: Range<T>) -> Option<Range<Point>> {
+    pub fn outline_ranges_containing<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = Range<Point>> + '_ {
         let range = range.to_offset(self);
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.outline_config.as_ref().map(|c| &c.query)
@@ -4300,35 +4270,41 @@ impl BufferSnapshot {
             .map(|g| g.outline_config.as_ref().unwrap())
             .collect::<Vec<_>>();
 
-        while let Some(mat) = matches.peek() {
-            let config = &configs[mat.grammar_index];
-            let containing_item_node = maybe!({
-                let item_node = mat.captures.iter().find_map(|cap| {
-                    if cap.index == config.item_capture_ix {
-                        Some(cap.node)
-                    } else {
+        std::iter::from_fn(move || {
+            while let Some(mat) = matches.peek() {
+                let config = &configs[mat.grammar_index];
+                let containing_item_node = maybe!({
+                    let item_node = mat.captures.iter().find_map(|cap| {
+                        if cap.index == config.item_capture_ix {
+                            Some(cap.node)
+                        } else {
+                            None
+                        }
+                    })?;
+
+                    let item_byte_range = item_node.byte_range();
+                    if item_byte_range.end < range.start || item_byte_range.start > range.end {
                         None
+                    } else {
+                        Some(item_node)
                     }
-                })?;
+                });
 
-                let item_byte_range = item_node.byte_range();
-                if item_byte_range.end < range.start || item_byte_range.start > range.end {
-                    None
-                } else {
-                    Some(item_node)
-                }
-            });
-
-            if let Some(item_node) = containing_item_node {
-                return Some(
+                let range = containing_item_node.as_ref().map(|item_node| {
                     Point::from_ts_point(item_node.start_position())
-                        ..Point::from_ts_point(item_node.end_position()),
-                );
+                        ..Point::from_ts_point(item_node.end_position())
+                });
+                matches.advance();
+                if range.is_some() {
+                    return range;
+                }
             }
+            None
+        })
+    }
 
-            matches.advance();
-        }
-        None
+    pub fn outline_range_containing<T: ToOffset>(&self, range: Range<T>) -> Option<Range<Point>> {
+        self.outline_ranges_containing(range).next()
     }
 
     pub fn outline_items_containing<T: ToOffset>(
@@ -4531,7 +4507,13 @@ impl BufferSnapshot {
         let mut text = String::new();
         let mut highlight_ranges = Vec::new();
         let mut name_ranges = Vec::new();
-        let mut chunks = self.chunks(source_range_for_text.clone(), true);
+        let mut chunks = self.chunks(
+            source_range_for_text.clone(),
+            LanguageAwareStyling {
+                tree_sitter: true,
+                diagnostics: true,
+            },
+        );
         let mut last_buffer_range_end = 0;
         for (buffer_range, is_name) in buffer_ranges {
             let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
@@ -4551,7 +4533,8 @@ impl BufferSnapshot {
                 let style = chunk
                     .syntax_highlight_id
                     .zip(theme)
-                    .and_then(|(highlight, theme)| highlight.style(theme));
+                    .and_then(|(highlight, theme)| theme.get(highlight).cloned());
+
                 if let Some(style) = style {
                     let start = text.len();
                     let end = start + chunk.text.len();
@@ -5455,7 +5438,13 @@ impl BufferSnapshot {
         let mut words = BTreeMap::default();
         let mut current_word_start_ix = None;
         let mut chunk_ix = query.range.start;
-        for chunk in self.chunks(query.range, false) {
+        for chunk in self.chunks(
+            query.range,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
+        ) {
             for (i, c) in chunk.text.char_indices() {
                 let ix = chunk_ix + i;
                 if classifier.is_word(c) {
@@ -5492,6 +5481,15 @@ impl BufferSnapshot {
 
         words
     }
+}
+
+/// A configuration to use when producing styled text chunks.
+#[derive(Clone, Copy)]
+pub struct LanguageAwareStyling {
+    /// Whether to highlight text chunks using tree-sitter.
+    pub tree_sitter: bool,
+    /// Whether to highlight text chunks based on the diagnostics data.
+    pub diagnostics: bool,
 }
 
 pub struct WordsQuery<'a> {
@@ -5602,11 +5600,11 @@ impl<'a> BufferChunks<'a> {
                     && range.start >= capture.node.start_byte()
                 {
                     let next_capture_end = capture.node.end_byte();
-                    if range.start < next_capture_end {
-                        highlights.stack.push((
-                            next_capture_end,
-                            highlights.highlight_maps[capture.grammar_index].get(capture.index),
-                        ));
+                    if range.start < next_capture_end
+                        && let Some(capture_id) =
+                            highlights.highlight_maps[capture.grammar_index].get(capture.index)
+                    {
+                        highlights.stack.push((next_capture_end, capture_id));
                     }
                     highlights.next_capture.take();
                 }
@@ -5741,9 +5739,11 @@ impl<'a> Iterator for BufferChunks<'a> {
                 } else {
                     let highlight_id =
                         highlights.highlight_maps[capture.grammar_index].get(capture.index);
-                    highlights
-                        .stack
-                        .push((capture.node.end_byte(), highlight_id));
+                    if let Some(highlight_id) = highlight_id {
+                        highlights
+                            .stack
+                            .push((capture.node.end_byte(), highlight_id));
+                    }
                     highlights.next_capture = highlights.captures.next();
                 }
             }
@@ -5832,27 +5832,6 @@ impl operation_queue::Operation for Operation {
             | Operation::UpdateLineEnding {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
-        }
-    }
-}
-
-impl Default for Diagnostic {
-    fn default() -> Self {
-        Self {
-            source: Default::default(),
-            source_kind: DiagnosticSourceKind::Other,
-            code: None,
-            code_description: None,
-            severity: DiagnosticSeverity::ERROR,
-            message: Default::default(),
-            markdown: None,
-            group_id: 0,
-            is_primary: false,
-            is_disk_based: false,
-            is_unnecessary: false,
-            underline: true,
-            data: None,
-            registration_id: None,
         }
     }
 }

@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
+use credentials_provider::CredentialsProvider;
 use deepseek::DEEPSEEK_API_URL;
 
 use futures::Stream;
@@ -22,7 +23,7 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
+use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("deepseek");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("DeepSeek");
@@ -49,6 +50,7 @@ pub struct DeepSeekLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
 }
 
 impl State {
@@ -57,30 +59,51 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = DeepSeekLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = DeepSeekLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
+        self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 }
 
 impl DeepSeekLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                let credentials_provider = this.credentials_provider.clone();
                 let api_url = Self::api_url(cx);
-                this.api_key_state
-                    .handle_url_change(api_url, |this| &mut this.api_key_state, cx);
+                this.api_key_state.handle_url_change(
+                    api_url,
+                    |this| &mut this.api_key_state,
+                    credentials_provider,
+                    cx,
+                );
                 cx.notify();
             })
             .detach();
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                credentials_provider,
             }
         });
 
@@ -268,32 +291,6 @@ impl LanguageModel for DeepSeekLanguageModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        cx.background_spawn(async move {
-            let messages = request
-                .messages
-                .into_iter()
-                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(message.string_contents()),
-                    name: None,
-                    function_call: None,
-                })
-                .collect::<Vec<_>>();
-
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
-        })
-        .boxed()
     }
 
     fn stream_completion(
