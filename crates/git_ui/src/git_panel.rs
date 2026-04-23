@@ -4355,22 +4355,6 @@ impl GitPanel {
             false
         };
 
-        // Compute the left padding to align the warning text with the editor text.
-        // The editor text is offset by:
-        //   - panel_editor_container's p_2 (0.5rem)
-        //   - the editor's internal content margin (based on the buffer font's descent)
-        let warning_left_padding = {
-            let font_id = window
-                .text_system()
-                .resolve_font(&panel_editor_style.text.font());
-            let font_size = panel_editor_style
-                .text
-                .font_size
-                .to_pixels(window.rem_size());
-            let editor_content_margin = -window.text_system().descent(font_id, font_size);
-            rems(0.5).to_pixels(window.rem_size()) + editor_content_margin
-        };
-
         let footer = v_flex()
             .child(PanelRepoFooter::new(
                 display_name,
@@ -4378,25 +4362,32 @@ impl GitPanel {
                 head_commit,
                 Some(git_panel),
             ))
-            .when(title_exceeds_limit, |el| {
-                el.child(
-                    div()
-                        .pl(warning_left_padding)
+            .when(title_exceeds_limit, |this| {
+                this.child(
+                    h_flex()
+                        .px_2()
                         .py_1()
+                        .gap_1()
                         .border_t_1()
                         .border_color(cx.theme().status().warning_border)
+                        .bg(cx.theme().status().warning_background.opacity(0.5))
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::XSmall)
+                                .color(Color::Warning),
+                        )
                         .child(
                             Label::new(format!(
-                                "Commit message title exceeds {max_title_length}-character limit"
+                                "Commit message title exceeds {max_title_length}-character limit."
                             ))
-                            .size(LabelSize::Small)
-                            .color(Color::Warning),
+                            .size(LabelSize::Small),
                         ),
                 )
             })
             .child(
                 panel_editor_container(window, cx)
                     .id("commit-editor-container")
+                    .cursor_text()
                     .relative()
                     .w_full()
                     .h(max_height + footer_size)
@@ -4406,7 +4397,6 @@ impl GitPanel {
                     } else {
                         cx.theme().colors().border
                     })
-                    .cursor_text()
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         window.focus(&this.commit_editor.focus_handle(cx), cx);
                     }))
