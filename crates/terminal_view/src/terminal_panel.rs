@@ -1539,11 +1539,7 @@ impl Focusable for TerminalPanel {
 
 impl Panel for TerminalPanel {
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
-        match TerminalSettings::get_global(cx).dock {
-            TerminalDockPosition::Left => DockPosition::Left,
-            TerminalDockPosition::Bottom => DockPosition::Bottom,
-            TerminalDockPosition::Right => DockPosition::Right,
-        }
+        TerminalSettings::get_global(cx).dock.into()
     }
 
     fn position_is_valid(&self, _: DockPosition) -> bool {
