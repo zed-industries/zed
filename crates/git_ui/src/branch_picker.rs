@@ -601,7 +601,7 @@ impl PickerDelegate for BranchListDelegate {
         match self.state {
             PickerState::List | PickerState::NewRemote | PickerState::NewBranch => {
                 match self.branch_filter {
-                    BranchFilter::All | BranchFilter::Remote => "Select branch…",
+                    BranchFilter::All | BranchFilter::Remote => "Switch branch…",
                 }
             }
             PickerState::CreateRemote(_) => "Enter a name for this remote…",
@@ -1245,7 +1245,7 @@ impl PickerDelegate for BranchListDelegate {
                         },
                     )
                     .child(
-                        Button::new("select_branch", "Select")
+                        Button::new("switch_branch", "Switch")
                             .key_binding(
                                 KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                     .map(|kb| kb.size(rems_from_px(12.))),

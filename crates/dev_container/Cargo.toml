@@ -5,11 +5,13 @@ publish.workspace = true
 edition.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
+yaml-rust2.workspace = true
 shlex.workspace = true
 http_client.workspace = true
 http.workspace = true

@@ -202,6 +202,17 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
     ))
 });
 
+/// Commands that the client (editor) handles locally rather than forwarding
+/// to the language server. Servers embed these in code lens and code action
+/// responses when they want the editor to perform a well-known UI action.
+#[derive(Debug, Clone)]
+pub enum ClientCommand {
+    /// Open a location list (references panel / peek view).
+    ShowLocations,
+    /// Schedule a task from an LSP command's arguments.
+    ScheduleTask(task::TaskTemplate),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Location {
     pub buffer: Entity<Buffer>,
@@ -553,6 +564,14 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         _: &App,
     ) -> Result<InitializeParams> {
         Ok(original)
+    }
+
+    fn client_command(
+        &self,
+        _command_name: &str,
+        _arguments: &[serde_json::Value],
+    ) -> Option<ClientCommand> {
+        None
     }
 
     /// Method only implemented by the default JSON language server adapter.

@@ -482,13 +482,15 @@ message Envelope {
     GitCreateArchiveCheckpoint git_create_archive_checkpoint = 444;
     GitCreateArchiveCheckpointResponse git_create_archive_checkpoint_response = 445;
     GitRestoreArchiveCheckpoint git_restore_archive_checkpoint = 446;
-    
-    PrepareCallHierarchy prepare_call_hierarchy = 447;
-    PrepareCallHierarchyResponse prepare_call_hierarchy_response = 448;
-    GetIncomingCalls get_incoming_calls = 449;
-    GetIncomingCallsResponse get_incoming_calls_response = 450;
-    GetOutgoingCalls get_outgoing_calls = 451;
-    GetOutgoingCallsResponse get_outgoing_calls_response = 452; // current max
+    GetCommitData get_commit_data = 447;
+    GetCommitDataResponse get_commit_data_response = 448;
+
+    PrepareCallHierarchy prepare_call_hierarchy = 449;
+    PrepareCallHierarchyResponse prepare_call_hierarchy_response = 450;
+    GetIncomingCalls get_incoming_calls = 451;
+    GetIncomingCallsResponse get_incoming_calls_response = 452;
+    GetOutgoingCalls get_outgoing_calls = 453;
+    GetOutgoingCallsResponse get_outgoing_calls_response = 454; // current max
   }
 
   reserved 87 to 88;

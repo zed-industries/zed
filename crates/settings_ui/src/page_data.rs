@@ -1,6 +1,5 @@
 use gpui::{Action as _, App};
 use itertools::Itertools as _;
-use release_channel::ReleaseChannel;
 use settings::{
     AudioInputDeviceName, AudioOutputDeviceName, LanguageSettingsContent, SemanticTokens,
     SettingsContent,
@@ -106,33 +105,9 @@ fn developer_page() -> SettingsPage {
 }
 
 fn general_page(cx: &App) -> SettingsPage {
-    fn general_settings_section(cx: &App) -> Vec<SettingsPageItem> {
-        let mut items = vec![
+    fn general_settings_section(_cx: &App) -> Vec<SettingsPageItem> {
+        vec![
             SettingsPageItem::SectionHeader("General Settings"),
-            SettingsPageItem::SettingItem(SettingItem {
-                files: PROJECT,
-                title: "Project Name",
-                description: "The displayed name of this project. If left empty, the root directory name will be displayed.",
-                field: Box::new(SettingField {
-                    json_path: Some("project_name"),
-                    pick: |settings_content| {
-                        settings_content
-                            .project
-                            .worktree
-                            .project_name
-                            .as_ref()
-                            .or(DEFAULT_EMPTY_STRING)
-                    },
-                    write: |settings_content, value| {
-                        settings_content.project.worktree.project_name =
-                            value.filter(|name| !name.is_empty());
-                    },
-                }),
-                metadata: Some(Box::new(SettingsFieldMetadata {
-                    placeholder: Some("Project Name"),
-                    ..Default::default()
-                })),
-            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "When Closing With No Tabs",
                 description: "What to do when using the 'close active item' action with no tabs.",
@@ -225,11 +200,7 @@ fn general_page(cx: &App) -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ];
-
-        use feature_flags::FeatureFlagAppExt;
-        if cx.has_flag::<feature_flags::AgentV2FeatureFlag>() {
-            items.push(SettingsPageItem::SettingItem(SettingItem {
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "CLI Default Open Behavior",
                 description: "How `zed <path>` opens directories when no flag is specified.",
                 field: Box::new(SettingField {
@@ -249,10 +220,8 @@ fn general_page(cx: &App) -> SettingsPage {
                     ..Default::default()
                 })),
                 files: USER,
-            }));
-        }
-
-        items
+            }),
+        ]
     }
     fn security_section() -> [SettingsPageItem; 2] {
         [
@@ -6741,7 +6710,7 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
-    fn behavior_settings_section() -> [SettingsPageItem; 4] {
+    fn behavior_settings_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Behavior Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6797,6 +6766,19 @@ fn terminal_page() -> SettingsPage {
                             .terminal
                             .get_or_insert_default()
                             .keep_selection_on_copy = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Audible Bell",
+                description: "Whether to play a sound when the BEL character (`\\a`, `0x07`) is printed",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.bell"),
+                    pick: |settings_content| settings_content.terminal.as_ref()?.bell.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.terminal.get_or_insert_default().bell = value;
                     },
                 }),
                 metadata: None,
@@ -7494,7 +7476,7 @@ fn ai_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
+    fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
         let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SubPageLink(SubPageLink {
@@ -7508,30 +7490,28 @@ fn ai_page(cx: &App) -> SettingsPage {
             }),
         ];
 
-        if !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable)) {
-            items.push(SettingsPageItem::SettingItem(SettingItem {
-                title: "New Thread Location",
-                description: "Whether to start a new thread in the current local project or in a new Git worktree.",
-                field: Box::new(SettingField {
-                    json_path: Some("agent.new_thread_location"),
-                    pick: |settings_content| {
-                        settings_content
-                            .agent
-                            .as_ref()?
-                            .new_thread_location
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .agent
-                            .get_or_insert_default()
-                            .new_thread_location = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }));
-        }
+        items.push(SettingsPageItem::SettingItem(SettingItem {
+            title: "New Thread Location",
+            description: "Whether to start a new thread in the current local project or in a new Git worktree.",
+            field: Box::new(SettingField {
+                json_path: Some("agent.new_thread_location"),
+                pick: |settings_content| {
+                    settings_content
+                        .agent
+                        .as_ref()?
+                        .new_thread_location
+                        .as_ref()
+                },
+                write: |settings_content, value| {
+                    settings_content
+                        .agent
+                        .get_or_insert_default()
+                        .new_thread_location = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }));
 
         items.extend([
             SettingsPageItem::SettingItem(SettingItem {
@@ -8237,7 +8217,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn formatting_section() -> [SettingsPageItem; 7] {
+    fn formatting_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Formatting"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8302,6 +8282,28 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                     },
                 }),
                 metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Line Ending",
+                description: "How line endings should be handled for new files and during format and save operations.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).line_ending"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.line_ending.as_ref()
+                        })
+                    },
+                    write: |settings_content, value| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.line_ending = value;
+                        })
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    should_do_titlecase: Some(false),
+                    ..Default::default()
+                })),
                 files: USER | PROJECT,
             }),
             SettingsPageItem::SettingItem(SettingItem {
@@ -9107,6 +9109,20 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
 
     let is_global = active_language().is_none();
 
+    let code_lens_item = [SettingsPageItem::SettingItem(SettingItem {
+        title: "Code Lens",
+        description: "Whether and how to display code lenses from language servers.",
+        field: Box::new(SettingField {
+            json_path: Some("code_lens"),
+            pick: |settings_content| settings_content.editor.code_lens.as_ref(),
+            write: |settings_content, value| {
+                settings_content.editor.code_lens = value;
+            },
+        }),
+        metadata: None,
+        files: USER,
+    })];
+
     let lsp_document_colors_item = [SettingsPageItem::SettingItem(SettingItem {
         title: "LSP Document Colors",
         description: "How to render LSP color previews in the editor.",
@@ -9131,6 +9147,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
             whitespace_section(),
             completions_section(),
             inlay_hints_section(),
+            code_lens_item,
             lsp_document_colors_item,
             tasks_section(),
             miscellaneous_section(),
@@ -9146,6 +9163,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
             whitespace_section(),
             completions_section(),
             inlay_hints_section(),
+            code_lens_item,
             tasks_section(),
             miscellaneous_section(),
         )

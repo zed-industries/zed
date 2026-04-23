@@ -224,7 +224,6 @@
     "context": "AgentPanel",
     "bindings": {
       "ctrl-n": "agent::NewThread",
-      "ctrl-shift-h": "agent::OpenHistory",
       "ctrl-alt-c": "agent::OpenSettings",
       "ctrl-alt-p": "agent::ManageProfiles",
       "ctrl-alt-l": "agent::OpenRulesLibrary",
@@ -234,7 +233,6 @@
       "alt-tab": "agent::CycleFavoriteModels",
       // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Linux under the `AgentPanel` context
       "alt-l": "agent::CycleFavoriteModels",
-      "shift-alt-j": "agent::ToggleNavigationMenu",
       "shift-alt-i": "agent::ToggleOptionsMenu",
       "ctrl-alt-shift-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
@@ -1218,7 +1216,7 @@
       "alt-b": ["terminal::SendText", "\u001bb"],
       "alt-f": ["terminal::SendText", "\u001bf"],
       "alt-.": ["terminal::SendText", "\u001b."],
-      "ctrl-delete": ["terminal::SendText", "\u001bd"],
+      "ctrl-delete": ["terminal::SendText", "\u001b[3;5~"],
       // Overrides for conflicting keybindings
       "ctrl-b": ["terminal::SendKeystroke", "ctrl-b"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],

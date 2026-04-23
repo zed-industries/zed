@@ -225,7 +225,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "agent::NewThread",
-      "ctrl-shift-h": "agent::OpenHistory",
       "shift-alt-c": "agent::OpenSettings",
       "shift-alt-l": "agent::OpenRulesLibrary",
       "shift-alt-p": "agent::ManageProfiles",
@@ -235,7 +234,6 @@
       // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Windows under the `AgentPanel` context
       "alt-l": "agent::CycleFavoriteModels",
       "shift-alt-/": "agent::ToggleModelSelector",
-      "shift-alt-j": "agent::ToggleNavigationMenu",
       "shift-alt-i": "agent::ToggleOptionsMenu",
       "ctrl-shift-alt-n": "agent::ToggleNewThreadMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
