@@ -3026,18 +3026,38 @@ impl LocalLspStore {
         file_url: &lsp::Uri,
         cx: &mut App,
     ) {
+        let buffer_id = buffer.read(cx).remote_id();
+        let mut unregistered_server_ids = Vec::new();
         buffer.update(cx, |buffer, cx| {
             let mut snapshots = self.buffer_snapshots.remove(&buffer.remote_id());
+            let language_servers = self
+                .language_servers_for_buffer(buffer, cx)
+                .map(|(_, language_server)| language_server.clone())
+                .collect::<Vec<_>>();
 
-            for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
+            for language_server in language_servers {
                 if snapshots
                     .as_mut()
                     .is_some_and(|map| map.remove(&language_server.server_id()).is_some())
                 {
+                    unregistered_server_ids.push(language_server.server_id());
+                    buffer.set_completion_triggers(
+                        language_server.server_id(),
+                        Default::default(),
+                        cx,
+                    );
                     language_server.unregister_buffer(file_url.clone());
                 }
             }
         });
+        if let Some(opened_servers) = self.buffers_opened_in_servers.get_mut(&buffer_id) {
+            for server_id in unregistered_server_ids {
+                opened_servers.remove(&server_id);
+            }
+            if opened_servers.is_empty() {
+                self.buffers_opened_in_servers.remove(&buffer_id);
+            }
+        }
     }
 
     fn buffer_snapshot_for_lsp_version(
@@ -5209,14 +5229,12 @@ impl LspStore {
         }
 
         let Some(language_server) = buffer.update(cx, |buffer, cx| match server {
-            LanguageServerToQuery::FirstCapable => self.as_local().and_then(|local| {
-                local
-                    .language_servers_for_buffer(buffer, cx)
-                    .find(|(_, server)| {
-                        request.check_capabilities(server.adapter_server_capabilities())
-                    })
-                    .map(|(_, server)| server.clone())
-            }),
+            LanguageServerToQuery::FirstCapable => self
+                .running_language_servers_for_local_buffer(buffer, cx)
+                .find(|(_, language_server)| {
+                    request.check_capabilities(language_server.adapter_server_capabilities())
+                })
+                .map(|(_, language_server)| language_server.clone()),
             LanguageServerToQuery::Other(id) => self
                 .language_server_for_local_buffer(buffer, id, cx)
                 .and_then(|(_, server)| {
@@ -8313,24 +8331,23 @@ impl LspStore {
 
     pub fn running_language_servers_for_local_buffer<'a>(
         &'a self,
-        buffer: &Buffer,
-        cx: &mut App,
+        buffer: &'a Buffer,
+        cx: &'a mut App,
     ) -> impl Iterator<Item = (&'a Arc<CachedLspAdapter>, &'a Arc<LanguageServer>)> {
-        let local = self.as_local();
-        let language_server_ids = local
-            .map(|local| local.language_server_ids_for_buffer(buffer, cx))
-            .unwrap_or_default();
-
-        language_server_ids
+        let Some(local) = self.as_local() else {
+            return Vec::new().into_iter();
+        };
+        let buffer_id = buffer.remote_id();
+        local
+            .language_servers_for_buffer(buffer, cx)
+            .filter(|(_, server)| {
+                local
+                    .buffers_opened_in_servers
+                    .get(&buffer_id)
+                    .is_some_and(|server_ids| server_ids.contains(&server.server_id()))
+            })
+            .collect::<Vec<_>>()
             .into_iter()
-            .filter_map(
-                move |server_id| match local?.language_servers.get(&server_id)? {
-                    LanguageServerState::Running {
-                        adapter, server, ..
-                    } => Some((adapter, server)),
-                    _ => None,
-                },
-            )
     }
 
     pub fn language_servers_for_local_buffer(
@@ -8350,9 +8367,8 @@ impl LspStore {
         server_id: LanguageServerId,
         cx: &'a mut App,
     ) -> Option<(&'a Arc<CachedLspAdapter>, &'a Arc<LanguageServer>)> {
-        self.as_local()?
-            .language_servers_for_buffer(buffer, cx)
-            .find(|(_, s)| s.server_id() == server_id)
+        self.running_language_servers_for_local_buffer(buffer, cx)
+            .find(|(_, server)| server.server_id() == server_id)
     }
 
     fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut Context<Self>) {
@@ -8560,8 +8576,8 @@ impl LspStore {
             let Some((worktree, relative_path)) =
                 self.worktree_store.read(cx).find_worktree(abs_path, cx)
             else {
-                log::warn!("skipping diagnostics update, no worktree found for path {abs_path:?}");
-                return Ok(());
+                log::debug!("skipping diagnostics update, no worktree found for path {abs_path:?}");
+                continue;
             };
 
             let worktree_id = worktree.read(cx).id();
@@ -12495,7 +12511,7 @@ impl LspStore {
                     let Some((worktree, relative_path)) =
                         self.worktree_store.read(cx).find_worktree(abs_path.clone(), cx)
                     else {
-                        log::warn!("skipping workspace diagnostics update, no worktree found for path {abs_path:?}");
+                        log::debug!("skipping workspace diagnostics update, no worktree found for path {abs_path:?}");
                         return acc;
                     };
                     let worktree_id = worktree.read(cx).id();
@@ -14791,4 +14807,237 @@ fn extend_formatting_transaction(
         }
         Ok(())
     })
+}
+
+#[cfg(all(test, feature = "test-support"))]
+mod tests {
+    use fs::FakeFs;
+    use futures::{FutureExt as _, StreamExt as _};
+    use gpui::TestAppContext;
+    use language::{FakeLspAdapter, PointUtf16, rust_lang};
+    use lsp::{LanguageServerId, notification, request};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    use super::*;
+    use crate::Project;
+
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_unregistering_buffer_clears_open_server_bookkeeping(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "test.rs": "fn main() {}\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions {
+                        trigger_characters: Some(vec![".".to_string()]),
+                        ..Default::default()
+                    }),
+                    document_highlight_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        language_registry.add(rust_lang());
+
+        let (buffer, _handle) = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer_with_lsp(path!("/dir/test.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let mut fake_server = fake_servers.next().await.unwrap();
+        assert_eq!(
+            fake_server
+                .receive_notification::<notification::DidOpenTextDocument>()
+                .await
+                .text_document
+                .uri,
+            lsp::Uri::from_file_path(path!("/dir/test.rs")).unwrap()
+        );
+
+        let mut highlight_requests = fake_server
+            .set_request_handler::<request::DocumentHighlightRequest, _, _>(|_, _| async {
+                Ok(None)
+            });
+
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+        let file_url = lsp::Uri::from_file_path(path!("/dir/test.rs")).unwrap();
+        let server_id = lsp_store.update(cx, |lsp_store, cx| {
+            let buffer_id = buffer.read(cx).remote_id();
+            let server_id = buffer.update(cx, |buffer, cx| {
+                lsp_store
+                    .running_language_servers_for_local_buffer(buffer, cx)
+                    .map(|(_, server)| server.server_id())
+                    .next()
+                    .expect("expected buffer to be registered with a language server")
+            });
+
+            lsp_store
+                .as_local_mut()
+                .unwrap()
+                .unregister_buffer_from_language_servers(&buffer, &file_url, cx);
+
+            assert!(
+                lsp_store
+                    .as_local()
+                    .unwrap()
+                    .buffers_opened_in_servers
+                    .get(&buffer_id)
+                    .is_none()
+            );
+            assert!(
+                lsp_store
+                    .local_lsp_servers_for_buffer(&buffer, cx)
+                    .is_empty()
+            );
+            buffer.update(cx, |buffer, _| {
+                assert!(buffer.completion_triggers().is_empty());
+            });
+
+            server_id
+        });
+
+        assert_eq!(
+            fake_server
+                .receive_notification::<notification::DidCloseTextDocument>()
+                .await
+                .text_document,
+            lsp::TextDocumentIdentifier::new(file_url.clone())
+        );
+
+        let highlights = project
+            .update(cx, |project, cx| {
+                project.document_highlights(&buffer, PointUtf16::new(0, 0), cx)
+            })
+            .await
+            .unwrap();
+        assert!(highlights.is_empty());
+        cx.executor().run_until_parked();
+        assert!(highlight_requests.next().now_or_never().is_none());
+
+        let remaining_servers = lsp_store.update(cx, |lsp_store, cx| {
+            buffer.update(cx, |buffer, cx| {
+                lsp_store
+                    .running_language_servers_for_local_buffer(buffer, cx)
+                    .map(|(_, server)| server.server_id())
+                    .collect::<Vec<LanguageServerId>>()
+            })
+        });
+        assert!(remaining_servers.is_empty());
+        assert_eq!(server_id, LanguageServerId(0));
+    }
+
+    #[gpui::test]
+    async fn test_merge_diagnostic_entries_skips_missing_worktrees(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "test.rs": "fn main() {}\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .merge_diagnostic_entries(
+                    vec![
+                        DocumentDiagnosticsUpdate {
+                            diagnostics: DocumentDiagnostics {
+                                diagnostics: vec![DiagnosticEntry {
+                                    range: Unclipped(PointUtf16::new(0, 0))
+                                        ..Unclipped(PointUtf16::new(0, 2)),
+                                    diagnostic: Diagnostic {
+                                        severity: DiagnosticSeverity::ERROR,
+                                        is_primary: true,
+                                        message: "outside worktree".to_string(),
+                                        source_kind: DiagnosticSourceKind::Pushed,
+                                        ..Diagnostic::default()
+                                    },
+                                }],
+                                document_abs_path: path!("/missing/test.rs").into(),
+                                version: None,
+                            },
+                            result_id: None,
+                            server_id: LanguageServerId(0),
+                            disk_based_sources: Cow::Borrowed(&[]),
+                            registration_id: None,
+                        },
+                        DocumentDiagnosticsUpdate {
+                            diagnostics: DocumentDiagnostics {
+                                diagnostics: vec![DiagnosticEntry {
+                                    range: Unclipped(PointUtf16::new(0, 0))
+                                        ..Unclipped(PointUtf16::new(0, 2)),
+                                    diagnostic: Diagnostic {
+                                        severity: DiagnosticSeverity::ERROR,
+                                        is_primary: true,
+                                        message: "inside worktree".to_string(),
+                                        source_kind: DiagnosticSourceKind::Pushed,
+                                        ..Diagnostic::default()
+                                    },
+                                }],
+                                document_abs_path: path!("/dir/test.rs").into(),
+                                version: None,
+                            },
+                            result_id: None,
+                            server_id: LanguageServerId(0),
+                            disk_based_sources: Cow::Borrowed(&[]),
+                            registration_id: None,
+                        },
+                    ],
+                    |_, _, _| false,
+                    cx,
+                )
+                .unwrap();
+
+            let (worktree, relative_path) = lsp_store
+                .worktree_store
+                .read(cx)
+                .find_worktree(path!("/dir/test.rs"), cx)
+                .expect("expected test file to belong to a worktree");
+            let project_path = ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: relative_path,
+            };
+
+            assert_eq!(
+                lsp_store.diagnostic_summary_for_path(&project_path, cx),
+                DiagnosticSummary {
+                    error_count: 1,
+                    warning_count: 0,
+                }
+            );
+        });
+    }
 }

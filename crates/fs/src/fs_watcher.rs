@@ -297,12 +297,17 @@ impl GlobalWatcher {
             state.path_registrations.remove(&registration_state.path);
 
             drop(state);
-            self.watcher
-                .lock()
-                .unwatch(&registration_state.path)
-                .log_err();
+            if let Err(error) = self.watcher.lock().unwatch(&registration_state.path) {
+                if !should_ignore_unwatch_error(&error) {
+                    Err::<(), _>(error).log_err();
+                }
+            }
         }
     }
+}
+
+fn should_ignore_unwatch_error(error: &notify::Error) -> bool {
+    matches!(&error.kind, notify::ErrorKind::WatchNotFound)
 }
 
 static FS_WATCHER_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error>> =
@@ -396,6 +401,12 @@ mod tests {
                 test_case.name
             );
         }
+    }
+
+    #[test]
+    fn test_should_ignore_unwatch_error_for_missing_watch() {
+        assert!(should_ignore_unwatch_error(&notify::Error::watch_not_found()));
+        assert!(!should_ignore_unwatch_error(&notify::Error::path_not_found()));
     }
 }
 
