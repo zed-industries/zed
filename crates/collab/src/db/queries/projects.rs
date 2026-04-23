@@ -886,6 +886,7 @@ impl Database {
                         current_merge_conflicts,
                         branch_summary,
                         head_commit_details,
+                        branch_list: Vec::new(),
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
                         merge_message: db_repository_entry.merge_message,
