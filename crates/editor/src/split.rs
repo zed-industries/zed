@@ -43,7 +43,7 @@ use crate::{
 };
 use zed_actions::assistant::InlineAssist;
 
-pub(crate) fn convert_lhs_rows_to_rhs(
+pub(crate) fn patches_for_lhs_range(
     rhs_snapshot: &MultiBufferSnapshot,
     lhs_snapshot: &MultiBufferSnapshot,
     lhs_bounds: Range<MultiBufferPoint>,
@@ -56,7 +56,7 @@ pub(crate) fn convert_lhs_rows_to_rhs(
     )
 }
 
-pub(crate) fn convert_rhs_rows_to_lhs(
+pub(crate) fn patches_for_rhs_range(
     lhs_snapshot: &MultiBufferSnapshot,
     rhs_snapshot: &MultiBufferSnapshot,
     rhs_bounds: Range<MultiBufferPoint>,
@@ -69,7 +69,7 @@ pub(crate) fn convert_rhs_rows_to_lhs(
     )
 }
 
-fn rhs_range_to_base_text_range(
+fn buffer_range_to_base_text_range(
     rhs_range: &Range<Point>,
     diff_snapshot: &BufferDiffSnapshot,
     rhs_buffer_snapshot: &text::BufferSnapshot,
@@ -89,19 +89,19 @@ fn translate_lhs_selections_to_rhs(
     splittable: &SplittableEditor,
     cx: &App,
 ) -> HashMap<Entity<Buffer>, (Vec<Range<BufferOffset>>, Option<u32>)> {
-    let rhs_display_map = splittable.rhs_editor.read(cx).display_map.read(cx);
-    let Some(companion) = rhs_display_map.companion() else {
+    let Some(lhs) = &splittable.lhs else {
         return HashMap::default();
     };
-    let companion = companion.read(cx);
+    let lhs_snapshot = lhs.multibuffer.read(cx).snapshot(cx);
 
     let mut translated: HashMap<Entity<Buffer>, (Vec<Range<BufferOffset>>, Option<u32>)> =
         HashMap::default();
 
     for (lhs_buffer_id, (ranges, scroll_offset)) in selections_by_buffer {
-        let Some(rhs_buffer_id) = companion.lhs_to_rhs_buffer(*lhs_buffer_id) else {
+        let Some(diff) = lhs_snapshot.diff_for_buffer_id(*lhs_buffer_id) else {
             continue;
         };
+        let rhs_buffer_id = diff.buffer_id();
 
         let Some(rhs_buffer) = splittable
             .rhs_editor
@@ -155,19 +155,19 @@ fn translate_lhs_hunks_to_rhs(
     splittable: &SplittableEditor,
     cx: &App,
 ) -> Vec<MultiBufferDiffHunk> {
-    let rhs_display_map = splittable.rhs_editor.read(cx).display_map.read(cx);
-    let Some(companion) = rhs_display_map.companion() else {
+    let Some(lhs) = &splittable.lhs else {
         return vec![];
     };
-    let companion = companion.read(cx);
+    let lhs_snapshot = lhs.multibuffer.read(cx).snapshot(cx);
     let rhs_snapshot = splittable.rhs_multibuffer.read(cx).snapshot(cx);
     let rhs_hunks: Vec<MultiBufferDiffHunk> = rhs_snapshot.diff_hunks().collect();
 
     let mut translated = Vec::new();
     for lhs_hunk in lhs_hunks {
-        let Some(rhs_buffer_id) = companion.lhs_to_rhs_buffer(lhs_hunk.buffer_id) else {
+        let Some(diff) = lhs_snapshot.diff_for_buffer_id(lhs_hunk.buffer_id) else {
             continue;
         };
+        let rhs_buffer_id = diff.buffer_id();
         if let Some(rhs_hunk) = rhs_hunks.iter().find(|rhs_hunk| {
             rhs_hunk.buffer_id == rhs_buffer_id
                 && rhs_hunk.diff_base_byte_range == lhs_hunk.diff_base_byte_range
@@ -207,19 +207,21 @@ where
             return;
         };
 
-        let diff = source_snapshot
-            .diff_for_buffer_id(first.source_buffer_snapshot.remote_id())
-            .expect("buffer with no diff when creating patches");
-        let source_is_lhs =
-            first.source_buffer_snapshot.remote_id() == diff.base_text().remote_id();
+        let source_buffer_id = first.source_buffer_snapshot.remote_id();
+        let Some(diff) = source_snapshot.diff_for_buffer_id(source_buffer_id) else {
+            pending.clear();
+            return;
+        };
+        let source_is_lhs = source_buffer_id == diff.base_text().remote_id();
         let target_buffer_id = if source_is_lhs {
             diff.buffer_id()
         } else {
             diff.base_text().remote_id()
         };
-        let target_buffer = target_snapshot
-            .buffer_for_id(target_buffer_id)
-            .expect("missing corresponding buffer");
+        let Some(target_buffer) = target_snapshot.buffer_for_id(target_buffer_id) else {
+            pending.clear();
+            return;
+        };
         let rhs_buffer = if source_is_lhs {
             target_buffer
         } else {
@@ -228,28 +230,34 @@ where
 
         let patch = translate_fn(diff, union_start..=union_end, rhs_buffer);
 
-        for excerpt in pending.drain(..) {
-            let target_position = patch.old_to_new(excerpt.buffer_point_range.start);
-            let target_position = target_buffer.anchor_before(target_position);
-            let Some(target_position) = target_snapshot.anchor_in_excerpt(target_position) else {
-                continue;
-            };
-            let Some((target_buffer_snapshot, target_excerpt_range)) =
-                target_snapshot.excerpt_containing(target_position..target_position)
-            else {
-                continue;
-            };
+        let mut source_excerpts = source_snapshot
+            .excerpts_for_buffer(source_buffer_id)
+            .peekable();
+        let mut target_excerpts = target_snapshot
+            .excerpts_for_buffer(target_buffer_id)
+            .peekable();
 
-            result.push(patch_for_excerpt(
-                source_snapshot,
-                target_snapshot,
-                &excerpt.source_buffer_snapshot,
-                target_buffer_snapshot,
-                excerpt.source_excerpt_range,
-                target_excerpt_range,
-                &patch,
-                excerpt.buffer_point_range,
-            ));
+        for excerpt in pending.drain(..) {
+            while let Some(source_excerpt_range) = source_excerpts.peek()
+                && source_excerpt_range != &excerpt.source_excerpt_range
+            {
+                source_excerpts.next();
+                target_excerpts.next();
+            }
+            if let Some(source_excerpt_range) = source_excerpts.peek()
+                && let Some(target_excerpt_range) = target_excerpts.peek()
+            {
+                result.push(patch_for_excerpt(
+                    source_snapshot,
+                    target_snapshot,
+                    &excerpt.source_buffer_snapshot,
+                    target_buffer,
+                    source_excerpt_range.clone(),
+                    target_excerpt_range.clone(),
+                    &patch,
+                    excerpt.buffer_point_range,
+                ));
+            }
         }
     };
 
@@ -412,7 +420,6 @@ pub struct SplittableEditor {
 struct LhsEditor {
     multibuffer: Entity<MultiBuffer>,
     editor: Entity<Editor>,
-    companion: Entity<Companion>,
     was_last_focused: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -424,6 +431,17 @@ impl SplittableEditor {
 
     pub fn lhs_editor(&self) -> Option<&Entity<Editor>> {
         self.lhs.as_ref().map(|s| &s.editor)
+    }
+
+    pub fn update_editors(
+        &self,
+        cx: &mut Context<Self>,
+        f: impl Fn(&mut Editor, &mut Context<Editor>),
+    ) {
+        if let Some(lhs) = &self.lhs {
+            lhs.editor.update(cx, &f);
+        }
+        self.rhs_editor.update(cx, &f);
     }
 
     pub fn diff_view_style(&self) -> DiffViewStyle {
@@ -439,15 +457,18 @@ impl SplittableEditor {
         render_diff_hunk_controls: RenderDiffHunkControlsFn,
         cx: &mut Context<Self>,
     ) {
-        self.rhs_editor.update(cx, |editor, cx| {
+        self.update_editors(cx, |editor, cx| {
             editor.set_render_diff_hunk_controls(render_diff_hunk_controls.clone(), cx);
         });
+    }
 
-        if let Some(lhs) = &self.lhs {
-            lhs.editor.update(cx, |editor, cx| {
-                editor.set_render_diff_hunk_controls(render_diff_hunk_controls.clone(), cx);
-            });
-        }
+    pub fn disable_diff_hunk_controls(&self, cx: &mut Context<Self>) {
+        let empty_controls = Arc::new(|_, _: &_, _, _, _, _: &_, _: &mut _, _: &mut _| {
+            gpui::Empty.into_any_element()
+        });
+        self.update_editors(cx, |editor, cx| {
+            editor.set_render_diff_hunk_controls(empty_controls.clone(), cx);
+        });
     }
 
     fn focused_side(&self) -> SplitSide {
@@ -483,8 +504,9 @@ impl SplittableEditor {
                 Editor::for_multibuffer(rhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_runnables();
-            editor.disable_diagnostics(cx);
+            editor.disable_inline_diagnostics();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
+            editor.start_temporary_diff_override();
             editor
         });
         // TODO(split-diff) we might want to tag editor events with whether they came from rhs/lhs
@@ -603,12 +625,10 @@ impl SplittableEditor {
                             .filter_map(|anchor| {
                                 let (anchor, lhs_buffer) =
                                     lhs_snapshot.anchor_to_buffer_anchor(*anchor)?;
-                                let rhs_buffer_id =
-                                    lhs.companion.read(cx).lhs_to_rhs_buffer(anchor.buffer_id)?;
+                                let diff = lhs_snapshot.diff_for_buffer_id(anchor.buffer_id)?;
+                                let rhs_buffer_id = diff.buffer_id();
                                 let rhs_buffer = rhs_snapshot.buffer_for_id(rhs_buffer_id)?;
-                                let diff = this.rhs_multibuffer.read(cx).diff_for(rhs_buffer_id)?;
-                                let diff_snapshot = diff.read(cx).snapshot(cx);
-                                let rhs_point = diff_snapshot.base_text_point_to_buffer_point(
+                                let rhs_point = diff.base_text_point_to_buffer_point(
                                     anchor.to_point(&lhs_buffer),
                                     &rhs_buffer,
                                 );
@@ -697,18 +717,11 @@ impl SplittableEditor {
         let rhs_display_map = self.rhs_editor.read(cx).display_map.clone();
         let lhs_display_map = lhs_editor.read(cx).display_map.clone();
         let rhs_display_map_id = rhs_display_map.entity_id();
-        let companion = cx.new(|_| {
-            Companion::new(
-                rhs_display_map_id,
-                convert_rhs_rows_to_lhs,
-                convert_lhs_rows_to_rhs,
-            )
-        });
+        let companion = cx.new(|_| Companion::new(rhs_display_map_id));
         let lhs = LhsEditor {
             editor: lhs_editor,
             multibuffer: lhs_multibuffer,
             was_last_focused: false,
-            companion: companion.clone(),
             _subscriptions: subscriptions,
         };
 
@@ -734,7 +747,7 @@ impl SplittableEditor {
 
         self.lhs = Some(lhs);
 
-        self.sync_lhs_for_paths(all_paths, &companion, cx);
+        self.sync_lhs_for_paths(all_paths, cx);
 
         rhs_display_map.update(cx, |dm, cx| {
             dm.set_companion(Some((lhs_display_map, companion.clone())), cx);
@@ -1048,7 +1061,7 @@ impl SplittableEditor {
         cx: &mut Context<Self>,
     ) -> bool {
         let has_ranges = ranges.clone().into_iter().next().is_some();
-        let Some(companion) = self.companion(cx) else {
+        if self.lhs.is_none() {
             return self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
                 let added_a_new_excerpt = rhs_multibuffer.update_excerpts_for_path(
                     path,
@@ -1066,7 +1079,7 @@ impl SplittableEditor {
                 }
                 added_a_new_excerpt
             });
-        };
+        }
 
         let result = self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
             let added_a_new_excerpt = rhs_multibuffer.update_excerpts_for_path(
@@ -1086,7 +1099,7 @@ impl SplittableEditor {
             added_a_new_excerpt
         });
 
-        self.sync_lhs_for_paths(vec![(path, diff)], &companion, cx);
+        self.sync_lhs_for_paths(vec![(path, diff)], cx);
         result
     }
 
@@ -1097,12 +1110,12 @@ impl SplittableEditor {
         direction: ExpandExcerptDirection,
         cx: &mut Context<Self>,
     ) {
-        let Some(companion) = self.companion(cx) else {
+        if self.lhs.is_none() {
             self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
                 rhs_multibuffer.expand_excerpts(excerpt_anchors, lines, direction, cx);
             });
             return;
-        };
+        }
 
         let paths: Vec<_> = self.rhs_multibuffer.update(cx, |rhs_multibuffer, cx| {
             let snapshot = rhs_multibuffer.snapshot(cx);
@@ -1121,7 +1134,7 @@ impl SplittableEditor {
             paths
         });
 
-        self.sync_lhs_for_paths(paths, &companion, cx);
+        self.sync_lhs_for_paths(paths, cx);
     }
 
     pub fn remove_excerpts_for_path(&mut self, path: PathKey, cx: &mut Context<Self>) {
@@ -1147,18 +1160,9 @@ impl SplittableEditor {
         Some(&self.rhs_editor)
     }
 
-    fn companion(&self, cx: &App) -> Option<Entity<Companion>> {
-        if self.lhs.is_none() {
-            return None;
-        }
-        let rhs_display_map = self.rhs_editor.read(cx).display_map.clone();
-        rhs_display_map.read(cx).companion().cloned()
-    }
-
     fn sync_lhs_for_paths(
         &self,
         paths: Vec<(PathKey, Entity<BufferDiff>)>,
-        companion: &Entity<Companion>,
         cx: &mut Context<Self>,
     ) {
         let Some(lhs) = &self.lhs else { return };
@@ -1186,7 +1190,7 @@ impl SplittableEditor {
                 for info in rhs_multibuffer_snapshot.excerpts_for_buffer(main_buffer_id) {
                     have_excerpt = true;
                     let rhs_context = info.context.to_point(&main_buffer_snapshot);
-                    let lhs_context = rhs_range_to_base_text_range(
+                    let lhs_context = buffer_range_to_base_text_range(
                         &rhs_context,
                         &diff_snapshot,
                         &main_buffer_snapshot,
@@ -1242,12 +1246,6 @@ impl SplittableEditor {
                         cx,
                     );
                 }
-
-                let lhs_buffer_id = diff.read(cx).base_text(cx).remote_id();
-                let rhs_buffer_id = diff.read(cx).buffer_id;
-                companion.update(cx, |c, _| {
-                    c.add_buffer_mapping(lhs_buffer_id, rhs_buffer_id);
-                });
             }
         });
     }
@@ -1689,8 +1687,11 @@ impl SplittableEditor {
                     .unwrap();
                 let lhs_range = lhs_excerpt.context.to_point(&lhs_buffer_snapshot);
                 let rhs_range = rhs_excerpt.context.to_point(&rhs_buffer_snapshot);
-                let expected_lhs_range =
-                    rhs_range_to_base_text_range(&rhs_range, &diff_snapshot, &rhs_buffer_snapshot);
+                let expected_lhs_range = buffer_range_to_base_text_range(
+                    &rhs_range,
+                    &diff_snapshot,
+                    &rhs_buffer_snapshot,
+                );
                 assert_eq!(
                     lhs_range, expected_lhs_range,
                     "corresponding lhs excerpt should have a matching range"
@@ -1918,9 +1919,15 @@ impl SearchableItem for SplittableEditor {
         }
     }
 
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
-        self.focused_editor()
-            .update(cx, |editor, cx| editor.query_suggestion(window, cx))
+    fn query_suggestion(
+        &mut self,
+        ignore_settings: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
+        self.focused_editor().update(cx, |editor, cx| {
+            editor.query_suggestion(ignore_settings, window, cx)
+        })
     }
 
     fn activate_match(
@@ -2132,14 +2139,9 @@ mod tests {
                 window,
                 cx,
             );
-            editor.rhs_editor.update(cx, |editor, cx| {
+            editor.update_editors(cx, |editor, cx| {
                 editor.set_soft_wrap_mode(soft_wrap, cx);
             });
-            if let Some(lhs) = &editor.lhs {
-                lhs.editor.update(cx, |editor, cx| {
-                    editor.set_soft_wrap_mode(soft_wrap, cx);
-                });
-            }
             editor
         });
         (editor, cx)

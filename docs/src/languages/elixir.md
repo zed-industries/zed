@@ -15,12 +15,13 @@ Elixir support is available through the [Elixir extension](https://github.com/ze
   - [elixir-lsp/elixir-ls](https://github.com/elixir-lsp/elixir-ls)
   - [elixir-tools/next-ls](https://github.com/elixir-tools/next-ls)
   - [lexical-lsp/lexical](https://github.com/lexical-lsp/lexical)
+  - [remoteoss/dexter](https://github.com/remoteoss/dexter)
 
 Furthermore, the extension provides support for [EEx](https://hexdocs.pm/eex/EEx.html) (Embedded Elixir) templates and [HEEx](https://hexdocs.pm/phoenix/components.html#heex) templates, a mix of HTML and EEx used by Phoenix LiveView applications.
 
 ## Language Servers
 
-The Elixir extension offers language server support for ElixirLS, Expert, Next LS, and Lexical. By default, only ElixirLS is enabled. You can change or disable the enabled language servers in your settings ({#kb zed::OpenSettings}) under Languages > Elixir/EEx/HEEx or directly within your settings file.
+The Elixir extension offers language server support for ElixirLS, Expert, Dexter, Next LS, and Lexical. By default, only ElixirLS is enabled. You can change or disable the enabled language servers in your settings ({#kb zed::OpenSettings}) under Languages > Elixir/EEx/HEEx or directly within your settings file.
 
 Some of the language servers can also accept initialization or workspace configuration options. See the sections below for an outline of what each server supports. The configuration can be passed in your settings file via `lsp.{language-server-id}.initialization_options` and `lsp.{language-server-id}.settings` respectively.
 
@@ -51,13 +52,13 @@ Enable Expert by adding the following to your settings file:
 ```json [settings]
   "languages": {
     "Elixir": {
-      "language_servers": ["expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["expert", "!elixir-ls", "!dexter", "!next-ls", "!lexical", "..."]
     },
     "EEx": {
-      "language_servers": ["expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["expert", "!elixir-ls", "!dexter", "!next-ls", "!lexical", "..."]
     },
     "HEEx": {
-      "language_servers": ["expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["expert", "!elixir-ls", "!dexter", "!next-ls", "!lexical", "..."]
     }
   }
 ```
@@ -93,6 +94,55 @@ To use a custom Expert build, add the following to your settings file:
   }
 ```
 
+### Using Dexter
+
+[Dexter](https://github.com/remoteoss/dexter) is a fast, full-featured Elixir language server optimized for large codebases. It works by parsing source files directly, no compilation required. Supports go-to-definition, references, hover docs, autocompletion, rename, and format on save.
+
+Enable Dexter by adding the following to your settings file:
+
+```json [settings]
+  "languages": {
+    "Elixir": {
+      "language_servers": ["dexter", "!expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "EEx": {
+      "language_servers": ["dexter", "!expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "HEEx": {
+      "language_servers": ["dexter", "!expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+    }
+  }
+```
+
+Dexter can accept initialization options.
+
+The following example disables following `defdelegate` to the target function:
+
+```json [settings]
+  "lsp": {
+    "dexter": {
+      "initialization_options": {
+        "followDelegates": false
+      }
+    }
+  }
+```
+
+To use a custom Dexter binary, add the following to your settings file:
+
+```json [settings]
+  "lsp": {
+    "dexter": {
+      "binary": {
+        "path": "/path/to/dexter",
+        "arguments": ["lsp"]
+      }
+    }
+  }
+```
+
+See the [Dexter documentation](https://github.com/remoteoss/dexter) for more details.
+
 ### Using Next LS
 
 Enable Next LS by adding the following to your settings file:
@@ -100,13 +150,13 @@ Enable Next LS by adding the following to your settings file:
 ```json [settings]
   "languages": {
     "Elixir": {
-      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!lexical", "..."]
+      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!dexter", "!lexical", "..."]
     },
     "EEx": {
-      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!lexical", "..."]
+      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!dexter", "!lexical", "..."]
     },
     "HEEx": {
-      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!lexical", "..."]
+      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!dexter", "!lexical", "..."]
     }
   }
 ```
@@ -170,13 +220,13 @@ Enable Lexical by adding the following to your settings file:
 ```json [settings]
   "languages": {
     "Elixir": {
-      "language_servers": ["lexical", "!expert", "!elixir-ls", "!next-ls", "..."]
+      "language_servers": ["lexical", "!expert", "!elixir-ls", "!dexter", "!next-ls", "..."]
     },
     "EEx": {
-      "language_servers": ["lexical", "!expert", "!elixir-ls", "!next-ls", "..."]
+      "language_servers": ["lexical", "!expert", "!elixir-ls", "!dexter", "!next-ls", "..."]
     },
     "HEEx": {
-      "language_servers": ["lexical", "!expert", "!elixir-ls", "!next-ls", "..."]
+      "language_servers": ["lexical", "!expert", "!elixir-ls", "!dexter", "!next-ls", "..."]
     }
   }
 ```

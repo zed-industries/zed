@@ -31,14 +31,14 @@ Many MCP servers are available as extensions. Find them via:
 
 Popular servers available as an extension include:
 
-- [Context7](https://zed.dev/extensions/context7-mcp-server)
-- [GitHub](https://zed.dev/extensions/github-mcp-server)
-- [Puppeteer](https://zed.dev/extensions/puppeteer-mcp-server)
+- [Context7](https://zed.dev/extensions/mcp-server-context7)
+- [GitHub](https://zed.dev/extensions/mcp-server-github)
+- [Puppeteer](https://zed.dev/extensions/mcp-server-puppeteer)
 - [Gem](https://zed.dev/extensions/gem)
-- [Brave Search](https://zed.dev/extensions/brave-search-mcp-server)
+- [Brave Search](https://zed.dev/extensions/mcp-server-brave-search)
 - [Prisma](https://github.com/aqrln/prisma-mcp-zed)
-- [Framelink Figma](https://zed.dev/extensions/framelink-figma-mcp-server)
-- [Resend](https://zed.dev/extensions/resend-mcp-server)
+- [Framelink Figma](https://zed.dev/extensions/mcp-server-figma)
+- [Resend](https://zed.dev/extensions/mcp-server-resend)
 
 ### As Custom Servers
 
