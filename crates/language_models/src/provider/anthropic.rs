@@ -22,10 +22,7 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-pub use anthropic::completion::{
-    AnthropicEventMapper, count_anthropic_tokens_with_tiktoken, into_anthropic,
-    into_anthropic_count_tokens_request,
-};
+pub use anthropic::completion::{AnthropicEventMapper, into_anthropic};
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
 const PROVIDER_ID: LanguageModelProviderId = ANTHROPIC_PROVIDER_ID;
@@ -376,52 +373,6 @@ impl LanguageModel for AnthropicModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         Some(self.model.max_output_tokens())
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let http_client = self.http_client.clone();
-        let model_id = self.model.request_id().to_string();
-        let mode = self.model.mode();
-
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
-            let api_url = AnthropicLanguageModelProvider::api_url(cx);
-            (
-                state.api_key_state.key(&api_url).map(|k| k.to_string()),
-                api_url.to_string(),
-            )
-        });
-
-        let background = cx.background_executor().clone();
-        async move {
-            // If no API key, fall back to tiktoken estimation
-            let Some(api_key) = api_key else {
-                return background
-                    .spawn(async move { count_anthropic_tokens_with_tiktoken(request) })
-                    .await;
-            };
-
-            let count_request =
-                into_anthropic_count_tokens_request(request.clone(), model_id, mode);
-
-            match anthropic::count_tokens(http_client.as_ref(), &api_url, &api_key, count_request)
-                .await
-            {
-                Ok(response) => Ok(response.input_tokens),
-                Err(err) => {
-                    log::error!(
-                        "Anthropic count_tokens API failed, falling back to tiktoken: {err:?}"
-                    );
-                    background
-                        .spawn(async move { count_anthropic_tokens_with_tiktoken(request) })
-                        .await
-                }
-            }
-        }
-        .boxed()
     }
 
     fn stream_completion(

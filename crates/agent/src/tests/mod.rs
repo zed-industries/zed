@@ -3,7 +3,7 @@ use acp_thread::{
     AgentConnection, AgentModelGroupName, AgentModelList, PermissionOptions, ThreadStatus,
     UserMessageId,
 };
-use agent_client_protocol::{self as acp};
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use client::{Client, RefreshLlmTokenListener, UserStore};
@@ -5402,7 +5402,7 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
             cx,
         );
         thread.set_subagent_context(SubagentContext {
-            parent_thread_id: agent_client_protocol::SessionId::new("parent-id"),
+            parent_thread_id: acp::SessionId::new("parent-id"),
             depth: MAX_SUBAGENT_DEPTH - 1,
         });
         thread
