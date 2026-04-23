@@ -1285,7 +1285,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .child(
                         IconButton::new(("remove-folder", worktree_id.to_usize()), IconName::Close)
                             .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Remove Folder from Workspace"))
+                            .tooltip(Tooltip::text("Remove Folder from Project"))
                             .on_click(cx.listener(move |picker, _, window, cx| {
                                 let Some(workspace) = picker.delegate.workspace.upgrade() else {
                                     return;
@@ -1514,7 +1514,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     Tooltip::with_meta(
                                         "Add Folders to this Project",
                                         None,
-                                        "As a multi-root folder project",
+                                        "As a multi-root folder",
                                         cx,
                                     )
                                 })
