@@ -3854,6 +3854,7 @@ impl RepositorySnapshot {
     fn initial_update(&self, project_id: u64) -> proto::UpdateRepository {
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
+            branch_list: self.branch_list.iter().map(branch_to_proto).collect(),
             head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses: self
                 .statuses_by_path
@@ -3939,6 +3940,7 @@ impl RepositorySnapshot {
 
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
+            branch_list: self.branch_list.iter().map(branch_to_proto).collect(),
             head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses,
             removed_statuses,
@@ -6757,6 +6759,15 @@ impl Repository {
         }
         self.snapshot.branch = new_branch;
         self.snapshot.head_commit = new_head_commit;
+
+        if update.is_last_update {
+            let new_branch_list: Arc<[Branch]> =
+                update.branch_list.iter().map(proto_to_branch).collect();
+            if *self.snapshot.branch_list != *new_branch_list {
+                cx.emit(RepositoryEvent::BranchListChanged);
+            }
+            self.snapshot.branch_list = new_branch_list;
+        }
 
         // We don't store any merge head state for downstream projects; the upstream
         // will track it and we will just get the updated conflicts

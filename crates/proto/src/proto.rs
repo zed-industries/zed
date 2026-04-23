@@ -917,6 +917,7 @@ pub fn split_repository_update(
 ) -> impl Iterator<Item = UpdateRepository> {
     let mut updated_statuses_iter = mem::take(&mut update.updated_statuses).into_iter().fuse();
     let mut removed_statuses_iter = mem::take(&mut update.removed_statuses).into_iter().fuse();
+    let branch_list = mem::take(&mut update.branch_list);
     std::iter::from_fn({
         let update = update.clone();
         move || {
@@ -934,6 +935,7 @@ pub fn split_repository_update(
             Some(UpdateRepository {
                 updated_statuses,
                 removed_statuses,
+                branch_list: Vec::new(),
                 is_last_update: false,
                 ..update.clone()
             })
@@ -942,6 +944,7 @@ pub fn split_repository_update(
     .chain([UpdateRepository {
         updated_statuses: Vec::new(),
         removed_statuses: Vec::new(),
+        branch_list,
         is_last_update: true,
         ..update
     }])
@@ -998,5 +1001,32 @@ mod tests {
             id: u32::MAX,
         };
         assert_eq!(PeerId::from_u64(peer_id.as_u64()), peer_id);
+    }
+
+    #[test]
+    fn test_split_repository_update_keeps_branch_list_on_final_chunk() {
+        let update = UpdateRepository {
+            updated_statuses: vec![
+                StatusEntry::default(),
+                StatusEntry::default(),
+                StatusEntry::default(),
+            ],
+            branch_list: vec![Branch {
+                ref_name: "refs/heads/main".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let chunks = split_repository_update(update).collect::<Vec<_>>();
+
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks[0].branch_list.is_empty());
+        assert!(chunks[1].branch_list.is_empty());
+        assert_eq!(chunks[2].branch_list.len(), 1);
+        assert_eq!(chunks[2].branch_list[0].ref_name, "refs/heads/main");
+        assert!(!chunks[0].is_last_update);
+        assert!(!chunks[1].is_last_update);
+        assert!(chunks[2].is_last_update);
     }
 }

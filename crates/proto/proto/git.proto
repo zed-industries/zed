@@ -127,6 +127,7 @@ message UpdateRepository {
   optional string remote_origin_url = 15;
   optional string original_repo_abs_path = 16;
   repeated Worktree linked_worktrees = 17;
+  repeated Branch branch_list = 18;
 }
 
 message RemoveRepository {
