@@ -321,10 +321,7 @@ mod tests {
     use crate::{
         checks::{ReviewFailure, ReviewSuccess},
         git::{AutomatedChangeKind, CommitDetails, CommitList},
-        github::{
-            AuthorAssociation, GithubLogin, GithubUser, PullRequestData, PullRequestReview,
-            ReviewState,
-        },
+        github::{AuthorAssociation, GithubLogin, GithubUser, PullRequestReview, ReviewState},
     };
 
     use super::{Report, ReportReviewSummary};
