@@ -321,7 +321,7 @@ mod tests {
     use crate::{
         checks::{ReviewFailure, ReviewSuccess},
         git::{CommitDetails, CommitList},
-        github::{GithubLogin, GithubUser, PullRequestReview, ReviewState},
+        github::{AuthorAssociation, GithubLogin, GithubUser, PullRequestReview, ReviewState},
     };
 
     use super::{Report, ReportReviewSummary};
@@ -350,6 +350,7 @@ mod tests {
             }),
             state: Some(ReviewState::Approved),
             body: None,
+            author_association: Some(AuthorAssociation::Member),
         }])
     }
 

@@ -34,7 +34,26 @@ The sections below cover what you can do from here.
 
 By default, the Agent Panel uses Zed's first-party agent.
 
-To choose another agent, go to the plus button in the top-right of the Agent Panel and pick one of the [external agents](./external-agents.md) installed out of the box.
+Start a new thread with {#kb agent::NewThread}, or open the "New Thread…" menu via the `+` icon in the top-right of the panel toolbar (in the empty state, this menu is exposed as the agent selector button on the left). You can also open that menu with {#kb agent::ToggleNewThreadMenu}.
+
+From the "New Thread…" menu you can:
+
+- Pick **Zed Agent** or any installed [external agent](./external-agents.md) to start a new thread with that agent.
+- Choose **New From Summary** to start a fresh Zed Agent thread seeded with a summary of the current conversation — useful for compacting long threads as you approach the context window limit.
+
+{#action agent::NewExternalAgentThread} creates another thread with the currently selected agent.
+
+You can also start a new thread from the [Threads Sidebar](./parallel-agents.md#threads-sidebar), scoped to a specific project — see [Running Multiple Threads](./parallel-agents.md#running-multiple-threads).
+
+### Managing Multiple Threads {#multiple-threads}
+
+You can run multiple agent threads at once, each working independently with its own agent, context window, and conversation history. Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar} to see all your threads grouped by project. Click any thread to switch to it, or use the thread switcher ({#kb agents_sidebar::ToggleThreadSwitcher}) to cycle between recent threads without opening the sidebar.
+
+Threads you're no longer working on can be archived by hovering over them in the sidebar and clicking the archive icon, or selecting them and pressing {#kb agent::ArchiveSelectedThread}. The Thread History holds all your threads across all projects, sorted chronologically, and you can restore them at any time.
+
+If two threads might edit the same files, you can isolate one in a new Git worktree. Use the worktree picker in the title bar to pick which worktree the agent runs in, or create a new one. See [Worktree Isolation](./parallel-agents.md#worktree-isolation) for details.
+
+For more details on the Threads Sidebar and managing multiple projects, see [Parallel Agents](./parallel-agents.md).
 
 ### Editing Messages {#editing-messages}
 

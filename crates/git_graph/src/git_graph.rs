@@ -1251,7 +1251,7 @@ impl GitGraph {
                         .min(self.graph_data.commits.len().saturating_sub(1))]
                     .iter()
                     .for_each(|commit| {
-                        repository.fetch_commit_data(commit.data.sha, cx);
+                        repository.fetch_commit_data(commit.data.sha, false, cx);
                     });
             });
         }
@@ -1270,7 +1270,9 @@ impl GitGraph {
                 };
 
                 let data = repository.update(cx, |repository, cx| {
-                    repository.fetch_commit_data(commit.data.sha, cx).clone()
+                    repository
+                        .fetch_commit_data(commit.data.sha, false, cx)
+                        .clone()
                 });
 
                 let short_sha = commit.data.sha.display_short();
@@ -1817,7 +1819,7 @@ impl GitGraph {
 
         let data = repository.update(cx, |repository, cx| {
             repository
-                .fetch_commit_data(commit_entry.data.sha, cx)
+                .fetch_commit_data(commit_entry.data.sha, false, cx)
                 .clone()
         });
 
@@ -1846,7 +1848,7 @@ impl GitGraph {
                 Some(data.commit_timestamp),
                 data.subject.clone(),
             ),
-            CommitDataState::Loading => ("Loading…".into(), "".into(), None, "Loading…".into()),
+            CommitDataState::Loading(_) => ("Loading…".into(), "".into(), None, "Loading…".into()),
         };
 
         let date_string = commit_timestamp
