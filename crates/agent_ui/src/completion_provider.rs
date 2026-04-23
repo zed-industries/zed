@@ -2249,7 +2249,7 @@ fn editor_selection_ranges(
     editor.update(cx, |editor, cx| {
         let selections = editor.selections.all_adjusted(&editor.display_snapshot(cx));
 
-        let buffer = editor.buffer().clone().read(cx);
+        let buffer = editor.buffer().read(cx);
         let snapshot = buffer.snapshot(cx);
 
         selections
