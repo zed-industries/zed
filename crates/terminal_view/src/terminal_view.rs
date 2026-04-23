@@ -1243,8 +1243,7 @@ impl Render for TerminalView {
                 MouseButton::Right,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
                     if !this.terminal.read(cx).mouse_mode(event.modifiers.shift) {
-                        let had_selection =
-                            this.terminal.read(cx).last_content.selection.is_some();
+                        let had_selection = this.terminal.read(cx).last_content.selection.is_some();
                         if !had_selection {
                             this.terminal.update(cx, |terminal, _| {
                                 terminal.select_word_at_event_position(event);
