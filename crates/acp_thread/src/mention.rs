@@ -96,18 +96,18 @@ impl MentionUri {
         let path = url.path();
         match url.scheme() {
             "file" => {
-                let normalized = if path_style.is_windows() {
+                let trimmed = if path_style.is_windows() {
                     path.trim_start_matches("/")
                 } else {
                     path
                 };
-                let decoded = decode(normalized).unwrap_or(Cow::Borrowed(normalized));
-                let decoded: Cow<str> = if path_style.is_windows() {
+                let decoded = decode(trimmed).unwrap_or(Cow::Borrowed(trimmed));
+                let normalized: Cow<str> = if path_style.is_windows() {
                     Cow::Owned(decoded.replace('/', "\\"))
                 } else {
                     decoded
                 };
-                let path = decoded.as_ref();
+                let path = normalized.as_ref();
 
                 if let Some(fragment) = url.fragment() {
                     let line_range = parse_line_range(fragment).log_err().unwrap_or(1..=1);
