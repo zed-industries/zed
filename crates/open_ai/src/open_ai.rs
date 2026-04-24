@@ -274,7 +274,8 @@ impl Model {
             Self::FiveCodex
             | Self::FivePointTwoCodex
             | Self::FivePointThreeCodex
-            | Self::FivePointFourPro => false,
+            | Self::FivePointFourPro
+            | Self::FivePointFive => false,
             _ => true,
         }
     }
