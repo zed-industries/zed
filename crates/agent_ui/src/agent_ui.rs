@@ -1,5 +1,5 @@
 mod agent_configuration;
-pub(crate) mod agent_connection_store;
+pub mod agent_connection_store;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
@@ -60,6 +60,7 @@ use std::any::TypeId;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
+pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
 pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, MaxIdleRetainedThreads};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;

@@ -2,7 +2,6 @@ use acp_thread::{
     AgentConnection, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
     AgentSessionListResponse,
 };
-use acp_tools::AcpConnectionRegistry;
 use action_log::ActionLog;
 use agent_client_protocol::schema::{self as acp, ErrorCode};
 use agent_client_protocol::{
@@ -22,8 +21,8 @@ use serde::Deserialize;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::rc::Rc;
-use std::sync::Arc;
-use std::{any::Any, cell::RefCell};
+use std::sync::{Arc, Mutex};
+use std::{any::Any, cell::RefCell, collections::VecDeque};
 use task::{Shell, ShellBuilder, SpawnInTerminal};
 use thiserror::Error;
 use util::ResultExt as _;
@@ -40,6 +39,133 @@ use terminal::terminal_settings::{AlternateScroll, CursorShape};
 use crate::GEMINI_ID;
 
 pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
+const MAX_DEBUG_BACKLOG_MESSAGES: usize = 2000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AcpDebugMessageDirection {
+    Incoming,
+    Outgoing,
+    Stderr,
+}
+
+#[derive(Clone)]
+pub enum AcpDebugMessageContent {
+    Request {
+        id: acp::RequestId,
+        method: Arc<str>,
+        params: Option<serde_json::Value>,
+    },
+    Response {
+        id: acp::RequestId,
+        result: Result<Option<serde_json::Value>, acp::Error>,
+    },
+    Notification {
+        method: Arc<str>,
+        params: Option<serde_json::Value>,
+    },
+    Stderr {
+        line: Arc<str>,
+    },
+}
+
+#[derive(Clone)]
+pub struct AcpDebugMessage {
+    pub direction: AcpDebugMessageDirection,
+    pub message: AcpDebugMessageContent,
+}
+
+impl AcpDebugMessage {
+    pub fn from_raw_line(direction: AcpDebugMessageDirection, line: &str) -> Option<Self> {
+        if direction == AcpDebugMessageDirection::Stderr {
+            return Some(Self {
+                direction,
+                message: AcpDebugMessageContent::Stderr {
+                    line: Arc::from(line),
+                },
+            });
+        }
+
+        let value: serde_json::Value = serde_json::from_str(line).ok()?;
+        let object = value.as_object()?;
+
+        let parsed_id = object
+            .get("id")
+            .map(|raw| serde_json::from_value::<acp::RequestId>(raw.clone()));
+
+        let message = if let Some(method) = object.get("method").and_then(|method| method.as_str())
+        {
+            match parsed_id {
+                Some(Ok(id)) => AcpDebugMessageContent::Request {
+                    id,
+                    method: method.into(),
+                    params: object.get("params").cloned(),
+                },
+                Some(Err(err)) => {
+                    log::warn!("Skipping JSON-RPC message with unparsable id: {err}");
+                    return None;
+                }
+                None => AcpDebugMessageContent::Notification {
+                    method: method.into(),
+                    params: object.get("params").cloned(),
+                },
+            }
+        } else if let Some(parsed_id) = parsed_id {
+            let id = match parsed_id {
+                Ok(id) => id,
+                Err(err) => {
+                    log::warn!("Skipping JSON-RPC response with unparsable id: {err}");
+                    return None;
+                }
+            };
+
+            if let Some(error) = object.get("error") {
+                let acp_error =
+                    serde_json::from_value::<acp::Error>(error.clone()).unwrap_or_else(|err| {
+                        log::warn!("Failed to deserialize ACP error: {err}");
+                        acp::Error::internal_error().data(error.to_string())
+                    });
+
+                AcpDebugMessageContent::Response {
+                    id,
+                    result: Err(acp_error),
+                }
+            } else {
+                AcpDebugMessageContent::Response {
+                    id,
+                    result: Ok(object.get("result").cloned()),
+                }
+            }
+        } else {
+            return None;
+        };
+
+        Some(Self { direction, message })
+    }
+}
+
+fn broadcast_debug_message(
+    debug_messages: &Arc<Mutex<VecDeque<AcpDebugMessage>>>,
+    debug_subscribers: &Arc<Mutex<Vec<smol::channel::Sender<AcpDebugMessage>>>>,
+    message: AcpDebugMessage,
+) {
+    {
+        let mut debug_messages = debug_messages
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if debug_messages.len() == MAX_DEBUG_BACKLOG_MESSAGES {
+            debug_messages.pop_front();
+        }
+        debug_messages.push_back(message.clone());
+    }
+
+    let mut debug_subscribers = debug_subscribers
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    debug_subscribers.retain(|sender| !sender.is_closed());
+    for sender in debug_subscribers.iter() {
+        sender.try_send(message.clone()).log_err();
+    }
+}
 
 /// Awaits the response to an ACP request from a GPUI foreground task.
 ///
@@ -240,6 +366,8 @@ pub struct AcpConnection {
     default_config_options: HashMap<String, String>,
     child: Option<Child>,
     session_list: Option<Rc<AcpSessionList>>,
+    debug_messages: Arc<Mutex<VecDeque<AcpDebugMessage>>>,
+    debug_subscribers: Arc<Mutex<Vec<smol::channel::Sender<AcpDebugMessage>>>>,
     _io_task: Task<()>,
     _dispatch_task: Task<()>,
     _wait_task: Task<Result<()>>,
@@ -484,6 +612,27 @@ fn connect_client_future(
 }
 
 impl AcpConnection {
+    pub fn subscribe_debug_messages(
+        &self,
+    ) -> (
+        Vec<AcpDebugMessage>,
+        smol::channel::Receiver<AcpDebugMessage>,
+    ) {
+        let backlog = self
+            .debug_messages
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .cloned()
+            .collect();
+        let (sender, receiver) = smol::channel::unbounded();
+        self.debug_subscribers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(sender);
+        (backlog, receiver)
+    }
+
     pub async fn stdio(
         agent_id: AgentId,
         project: Entity<Project>,
@@ -563,39 +712,44 @@ impl AcpConnection {
         // Set up the foreground dispatch channel for bridging Send handler
         // closures to the !Send foreground thread.
         let (dispatch_tx, dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
-
-        // Register this connection with the logs panel registry. The
-        // returned tap is opt-in: until someone subscribes to the ACP logs
-        // panel, `emit_*` calls below are ~free (atomic load + return).
-        let log_tap = cx.update(|cx| {
-            AcpConnectionRegistry::default_global(cx).update(cx, |registry, cx| {
-                registry.set_active_connection(agent_id.clone(), cx)
-            })
-        });
+        let debug_messages = Arc::new(Mutex::new(VecDeque::new()));
+        let debug_subscribers = Arc::new(Mutex::new(Vec::new()));
 
         let incoming_lines = futures::io::BufReader::new(stdout).lines();
         let tapped_incoming = incoming_lines.inspect({
-            let log_tap = log_tap.clone();
+            let debug_messages = debug_messages.clone();
+            let debug_subscribers = debug_subscribers.clone();
             move |result| match result {
-                Ok(line) => log_tap.emit_incoming(line),
+                Ok(line) => {
+                    if let Some(message) =
+                        AcpDebugMessage::from_raw_line(AcpDebugMessageDirection::Incoming, line)
+                    {
+                        broadcast_debug_message(&debug_messages, &debug_subscribers, message);
+                    }
+                }
                 Err(err) => {
-                    // I/O errors on the transport are fatal for the SDK, but
-                    // without logging them the ACP logs panel shows no trace
-                    // of why the connection died.
                     log::warn!("ACP transport read error: {err}");
                 }
             }
         });
 
         let tapped_outgoing = futures::sink::unfold(
-            (Box::pin(stdin), log_tap.clone()),
-            async move |(mut writer, log_tap), line: String| {
+            (
+                Box::pin(stdin),
+                debug_messages.clone(),
+                debug_subscribers.clone(),
+            ),
+            async move |(mut writer, debug_messages, debug_subscribers), line: String| {
                 use futures::AsyncWriteExt;
-                log_tap.emit_outgoing(&line);
+                if let Some(message) =
+                    AcpDebugMessage::from_raw_line(AcpDebugMessageDirection::Outgoing, &line)
+                {
+                    broadcast_debug_message(&debug_messages, &debug_subscribers, message);
+                }
                 let mut bytes = line.into_bytes();
                 bytes.push(b'\n');
                 writer.write_all(&bytes).await?;
-                Ok::<_, std::io::Error>((writer, log_tap))
+                Ok::<_, std::io::Error>((writer, debug_messages, debug_subscribers))
             },
         );
 
@@ -633,7 +787,8 @@ impl AcpConnection {
         });
 
         let stderr_task = cx.background_spawn({
-            let log_tap = log_tap.clone();
+            let debug_messages = debug_messages.clone();
+            let debug_subscribers = debug_subscribers.clone();
             async move {
                 let mut stderr = BufReader::new(stderr);
                 let mut line = String::new();
@@ -642,7 +797,11 @@ impl AcpConnection {
                 {
                     let trimmed = line.trim_end_matches(['\n', '\r']);
                     log::warn!("agent stderr: {trimmed}");
-                    log_tap.emit_stderr(trimmed);
+                    if let Some(message) =
+                        AcpDebugMessage::from_raw_line(AcpDebugMessageDirection::Stderr, trimmed)
+                    {
+                        broadcast_debug_message(&debug_messages, &debug_subscribers, message);
+                    }
                     line.clear();
                 }
                 Ok(())
@@ -738,6 +897,8 @@ impl AcpConnection {
             default_model,
             default_config_options,
             session_list,
+            debug_messages,
+            debug_subscribers,
             _io_task: io_task,
             _dispatch_task: dispatch_task,
             _wait_task: wait_task,
@@ -774,6 +935,8 @@ impl AcpConnection {
             default_config_options: HashMap::default(),
             child: None,
             session_list: None,
+            debug_messages: Arc::new(Mutex::new(VecDeque::new())),
+            debug_subscribers: Arc::new(Mutex::new(Vec::new())),
             _io_task: io_task,
             _dispatch_task: dispatch_task,
             _wait_task: Task::ready(Ok(())),
