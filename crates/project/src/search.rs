@@ -26,6 +26,7 @@ pub enum SearchResult {
     },
     LimitReached,
     WaitingForScan,
+    Searching,
 }
 
 #[derive(Clone, Copy, PartialEq)]

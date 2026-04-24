@@ -1849,12 +1849,12 @@ pub mod evals {
     use eval_utils::{EvalOutput, NoProcessor};
     use fs::FakeFs;
     use futures::channel::mpsc;
+    use futures::stream::StreamExt as _;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use language::Buffer;
     use language_model::{LanguageModelRegistry, SelectedModel};
     use project::Project;
     use prompt_store::PromptBuilder;
-    use smol::stream::StreamExt as _;
     use std::str::FromStr;
     use std::sync::Arc;
     use util::test::marked_text_ranges;

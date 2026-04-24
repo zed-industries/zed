@@ -106,10 +106,16 @@ pub enum Model {
         reasoning_effort: Option<ReasoningEffort>,
         #[serde(default = "default_supports_chat_completions")]
         supports_chat_completions: bool,
+        #[serde(default = "default_supports_images")]
+        supports_images: bool,
     },
 }
 
 const fn default_supports_chat_completions() -> bool {
+    true
+}
+
+const fn default_supports_images() -> bool {
     true
 }
 

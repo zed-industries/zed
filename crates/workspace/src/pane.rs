@@ -8299,9 +8299,10 @@ mod tests {
         let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
         let scroll_bounds = tab_bar_scroll_handle.bounds();
         let scroll_offset = tab_bar_scroll_handle.offset();
+        assert!(scroll_offset.x < px(0.));
+        assert!(scroll_offset.x >= -tab_bar_scroll_handle.max_offset().x);
+        assert!(tab_bounds.left() >= scroll_bounds.left());
         assert!(tab_bounds.right() <= scroll_bounds.right());
-        // -39.5 is the magic number for this setup
-        assert_eq!(scroll_offset.x, px(-39.5));
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"

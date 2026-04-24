@@ -27,6 +27,7 @@ use collections::{HashMap, HashSet};
 use encoding_rs::Encoding;
 use fs::MTime;
 use futures::channel::oneshot;
+use futures_lite::future::yield_now;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
     Task, TextStyle,
@@ -36,7 +37,6 @@ use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use settings::WorktreeId;
 use smallvec::SmallVec;
-use smol::future::yield_now;
 use std::{
     any::Any,
     borrow::Cow,
