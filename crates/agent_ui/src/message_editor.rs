@@ -14,10 +14,11 @@ use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
-    EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
+    EditorStyle, HideMouseCursorOrigin, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot,
+    ToOffset,
     actions::{Copy, Cut, Paste},
     code_context_menus::CodeContextMenu,
-    display_map::{CreaseId, CreaseSnapshot, DisplaySnapshot},
+    display_map::{CreaseId, CreaseSnapshot},
     scroll::Autoscroll,
 };
 use futures::{FutureExt as _, future::join_all};
@@ -35,7 +36,7 @@ use project::{
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
-use std::{fmt::Write, ops::Range, rc::Rc, sync::Arc};
+use std::{cmp::min, fmt::Write, ops::Range, rc::Rc, sync::Arc};
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, prelude::*};
 use util::paths::PathStyle;
@@ -1180,7 +1181,7 @@ impl MessageEditor {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(text) = self.serialized_copy_text(cx) else {
+        let Some((text, _)) = self.serialize_selection_with_mentions(false, cx) else {
             cx.propagate();
             return;
         };
@@ -1190,13 +1191,14 @@ impl MessageEditor {
     }
 
     fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((text, ranges)) = self.serialized_cut_text(cx) else {
+        let Some((text, ranges)) = self.serialize_selection_with_mentions(true, cx) else {
             cx.propagate();
             return;
         };
 
         cx.stop_propagation();
         self.editor.update(cx, |editor, cx| {
+            editor.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.change_selections(Default::default(), window, cx, |selections| {
                     selections.select_ranges(ranges);
@@ -1707,64 +1709,23 @@ impl MessageEditor {
         });
     }
 
-    fn serialized_copy_text(&self, cx: &mut App) -> Option<String> {
-        let display_snapshot = self
-            .editor
-            .update(cx, |editor, cx| editor.display_snapshot(cx));
-        let editor = self.editor.read(cx);
-        if !editor.has_non_empty_selection(&display_snapshot) {
+    fn serialize_selection_with_mentions(
+        &self,
+        expand_empty_to_line: bool,
+        cx: &mut App,
+    ) -> Option<(String, Vec<Range<MultiBufferOffset>>)> {
+        if self.mention_set.read(cx).is_empty() {
             return None;
         }
-        let ranges = editor
-            .selections
-            .all::<MultiBufferOffset>(&display_snapshot)
-            .into_iter()
-            .map(|selection| selection.start..selection.end)
-            .collect::<Vec<_>>();
-        self.serialize_ranges_with_mentions(&ranges, &display_snapshot, cx)
-    }
 
-    fn serialized_cut_text(&self, cx: &mut App) -> Option<(String, Vec<Range<MultiBufferOffset>>)> {
         let display_snapshot = self
             .editor
             .update(cx, |editor, cx| editor.display_snapshot(cx));
         let editor = self.editor.read(cx);
-        let snapshot = editor.buffer().read(cx).snapshot(cx);
-        let line_mode = editor.selections.line_mode();
-        let max_point = snapshot.max_point();
-
-        let mut point_selections = editor.selections.all::<Point>(&display_snapshot);
-        for selection in &mut point_selections {
-            let expand_to_line = selection.is_empty() || line_mode;
-            if !expand_to_line {
-                continue;
-            }
-            selection.start = Point::new(selection.start.row, 0);
-            if !selection.is_empty() && selection.end.column == 0 {
-                selection.end = std::cmp::min(max_point, selection.end);
-            } else {
-                selection.end = std::cmp::min(max_point, Point::new(selection.end.row + 1, 0));
-            }
+        if !expand_empty_to_line && !editor.has_non_empty_selection(&display_snapshot) {
+            return None;
         }
 
-        let ranges = point_selections
-            .into_iter()
-            .map(|selection| {
-                selection.start.to_offset(&snapshot)..selection.end.to_offset(&snapshot)
-            })
-            .collect::<Vec<_>>();
-
-        let text = self.serialize_ranges_with_mentions(&ranges, &display_snapshot, cx)?;
-        Some((text, ranges))
-    }
-
-    fn serialize_ranges_with_mentions(
-        &self,
-        ranges: &[Range<MultiBufferOffset>],
-        display_snapshot: &DisplaySnapshot,
-        cx: &App,
-    ) -> Option<String> {
-        let editor = self.editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let mention_set = self.mention_set.read(cx);
         let mention_ranges = display_snapshot
@@ -1782,45 +1743,55 @@ impl MessageEditor {
             })
             .collect::<Vec<_>>();
 
+        let line_mode = editor.selections.line_mode();
+        let max_point = snapshot.max_point();
+        let point_selections = editor.selections.all::<Point>(&display_snapshot);
+
         let mut text = String::new();
+        let mut ranges = Vec::with_capacity(point_selections.len());
         let mut has_mentions = false;
         let mut is_first = true;
+        let mut prev_was_entire_line = false;
 
-        for range in ranges {
+        for mut selection in point_selections {
+            let is_entire_line = (selection.is_empty() && expand_empty_to_line) || line_mode;
+            if is_entire_line {
+                selection.start = Point::new(selection.start.row, 0);
+                if !selection.is_empty() && selection.end.column == 0 {
+                    selection.end = min(max_point, selection.end);
+                } else {
+                    selection.end = min(max_point, Point::new(selection.end.row + 1, 0));
+                }
+            }
+            let range = selection.start.to_offset(&snapshot)..selection.end.to_offset(&snapshot);
+
             if is_first {
                 is_first = false;
-            } else {
+            } else if !prev_was_entire_line {
                 text.push('\n');
             }
-
-            let mut overlapping_mentions = mention_ranges
-                .iter()
-                .filter(|(start, end, _)| *start < range.end && range.start < *end)
-                .peekable();
-
-            if overlapping_mentions.peek().is_none() {
-                text.extend(snapshot.text_for_range(range.start..range.end));
-                continue;
-            }
-
-            has_mentions = true;
+            prev_was_entire_line = is_entire_line;
 
             let mut cursor = range.start;
-            for (start, end, uri) in overlapping_mentions {
+            for (start, end, uri) in mention_ranges
+                .iter()
+                .filter(|(start, end, _)| *start < range.end && range.start < *end)
+            {
                 if cursor < *start {
                     text.extend(snapshot.text_for_range(cursor..*start));
                 }
-
                 write!(text, "{}", uri.as_link()).unwrap();
                 cursor = *end;
+                has_mentions = true;
             }
-
             if cursor < range.end {
                 text.extend(snapshot.text_for_range(cursor..range.end));
             }
+
+            ranges.push(range);
         }
 
-        has_mentions.then_some(text)
+        has_mentions.then_some((text, ranges))
     }
 }
 
@@ -4094,7 +4065,8 @@ mod tests {
 
         let copied_text = source_message_editor.update(&mut cx, |message_editor, cx| {
             message_editor
-                .serialized_copy_text(cx)
+                .serialize_selection_with_mentions(false, cx)
+                .map(|(text, _)| text)
                 .expect("selection mentions should serialize")
         });
         let expected_text = format!(
@@ -4280,7 +4252,9 @@ mod tests {
         let copied = fixture
             .message_editor
             .update(&mut cx, |message_editor, cx| {
-                message_editor.serialized_copy_text(cx)
+                message_editor
+                    .serialize_selection_with_mentions(false, cx)
+                    .map(|(text, _)| text)
             });
 
         assert_eq!(copied, Some(fixture.first_uri.as_link().to_string()));
@@ -4312,7 +4286,9 @@ mod tests {
         let copied = fixture
             .message_editor
             .update(&mut cx, |message_editor, cx| {
-                message_editor.serialized_copy_text(cx)
+                message_editor
+                    .serialize_selection_with_mentions(false, cx)
+                    .map(|(text, _)| text)
             });
 
         assert_eq!(copied, None);
@@ -4470,12 +4446,12 @@ mod tests {
         let result = fixture
             .message_editor
             .update(&mut cx, |message_editor, cx| {
-                message_editor.serialized_cut_text(cx)
+                message_editor.serialize_selection_with_mentions(true, cx)
             });
 
         assert!(
             result.is_none(),
-            "serialized_cut_text should return None so the default editor cut runs"
+            "serialize_selection_with_mentions should return None so the default editor cut runs"
         );
     }
 
