@@ -81,12 +81,6 @@ pub struct MoveToEndOfLine {
     pub stop_at_soft_wraps: bool,
 }
 
-///Saves the current location to navigation history
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = editor)]
-#[serde(deny_unknown_fields)]
-pub struct SaveLocation;
-
 /// Selects from the cursor to the end of the current line.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
@@ -913,6 +907,8 @@ actions!(
         WrapSelectionsInTag,
         /// Aligns selections from different rows into the same column
         AlignSelections,
+        /// Saves the current location to navigation history.
+        SaveLocation,
     ]
 );
 
