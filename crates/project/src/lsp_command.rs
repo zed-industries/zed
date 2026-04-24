@@ -229,11 +229,32 @@ pub(crate) struct GetHover {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
 pub(crate) struct GetCompletions {
     pub position: PointUtf16,
+    /// Anchor for the request position captured when the LSP request was issued.
+    /// Used to re-derive the cursor position when the response arrives, so that
+    /// buffer edits (for example auto-indent, autoclose) applied between request
+    /// and response do not cause the completion to be validated against a stale
+    /// position.
+    pub position_anchor: Anchor,
     pub context: CompletionContext,
     pub server_id: Option<lsp::LanguageServerId>,
+    /// Snapshot of the buffer at request time. LSP-returned ranges are
+    /// interpreted in this snapshot's coordinate system and converted to
+    /// anchors, so that they follow subsequent buffer edits. Only populated on
+    /// the machine that issues the LSP request; remote/proto paths leave this
+    /// `None` and fall back to clipping against the current snapshot.
+    pub request_snapshot: Option<BufferSnapshot>,
+}
+
+impl std::fmt::Debug for GetCompletions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GetCompletions")
+            .field("position", &self.position)
+            .field("context", &self.context)
+            .field("server_id", &self.server_id)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2294,7 +2315,13 @@ impl LspCommand for GetCompletions {
         let mut completion_edits = Vec::new();
         buffer.update(&mut cx, |buffer, _cx| {
             let snapshot = buffer.snapshot();
-            let clipped_position = buffer.clip_point_utf16(Unclipped(self.position), Bias::Left);
+            // Re-derive the request position from its anchor so that buffer edits
+            // applied between sending the request and receiving the response
+            // (for example auto-indent triggered by the same keystroke that
+            // opened the completion menu) do not invalidate it.
+            let request_position = self.position_anchor.to_point_utf16(&snapshot);
+            let clipped_position =
+                snapshot.clip_point_utf16(Unclipped(request_position), Bias::Left);
 
             let mut range_for_token = None;
             completions.retain(|lsp_completion| {
@@ -2327,9 +2354,14 @@ impl LspCommand for GetCompletions {
 
                 let edit = match lsp_edit {
                     // If the language server provides a range to overwrite, then
-                    // check that the range is valid.
+                    // translate it through the request-time snapshot so that the
+                    // resulting anchors follow any edits applied in the meantime.
                     Some(completion_text_edit) => {
-                        match parse_completion_text_edit(&completion_text_edit, &snapshot) {
+                        match parse_completion_text_edit(
+                            &completion_text_edit,
+                            &snapshot,
+                            self.request_snapshot.as_ref(),
+                        ) {
                             Some(edit) => edit,
                             None => return false,
                         }
@@ -2337,7 +2369,7 @@ impl LspCommand for GetCompletions {
                     // If the language server does not provide a range, then infer
                     // the range based on the syntax tree.
                     None => {
-                        if self.position != clipped_position {
+                        if request_position != clipped_position {
                             log::info!("completion out of expected range ");
                             return false;
                         }
@@ -2354,18 +2386,32 @@ impl LspCommand for GetCompletions {
 
                         let range = if let Some(range) = default_edit_range {
                             let range = range_from_lsp(*range);
-                            let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-                            let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-                            if start != range.start.0 || end != range.end.0 {
-                                log::info!("completion out of expected range");
-                                return false;
+                            if let Some(request_snapshot) = self.request_snapshot.as_ref() {
+                                // Anchor the range in the request-time snapshot so
+                                // it resolves correctly against the (possibly
+                                // newer) current snapshot.
+                                let start =
+                                    request_snapshot.clip_point_utf16(range.start, Bias::Left);
+                                let end = request_snapshot.clip_point_utf16(range.end, Bias::Left);
+                                if start != range.start.0 || end != range.end.0 {
+                                    log::info!("completion out of expected range");
+                                    return false;
+                                }
+                                request_snapshot.anchor_before(start)
+                                    ..request_snapshot.anchor_after(end)
+                            } else {
+                                let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+                                let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+                                if start != range.start.0 || end != range.end.0 {
+                                    log::info!("completion out of expected range");
+                                    return false;
+                                }
+                                snapshot.anchor_before(start)..snapshot.anchor_after(end)
                             }
-
-                            snapshot.anchor_before(start)..snapshot.anchor_after(end)
                         } else {
                             range_for_token
                                 .get_or_insert_with(|| {
-                                    let offset = self.position.to_offset(&snapshot);
+                                    let offset = request_position.to_offset(&snapshot);
                                     let (range, kind) = snapshot.surrounding_word(
                                         offset,
                                         Some(CharScopeContext::Completion),
@@ -2467,17 +2513,20 @@ impl LspCommand for GetCompletions {
         buffer
             .update(&mut cx, |buffer, _| buffer.wait_for_version(version))
             .await?;
-        let position = message
+        let position_anchor = message
             .position
             .and_then(language::proto::deserialize_anchor)
-            .map(|p| {
-                buffer.read_with(&cx, |buffer, _| {
-                    buffer.clip_point_utf16(Unclipped(p.to_point_utf16(buffer)), Bias::Left)
-                })
-            })
             .context("invalid position")?;
+        let (position, request_snapshot) = buffer.read_with(&cx, |buffer, _| {
+            let position = buffer.clip_point_utf16(
+                Unclipped(position_anchor.to_point_utf16(buffer)),
+                Bias::Left,
+            );
+            (position, buffer.snapshot())
+        });
         Ok(Self {
             position,
+            position_anchor,
             context: CompletionContext {
                 trigger_kind: CompletionTriggerKind::INVOKED,
                 trigger_character: None,
@@ -2485,6 +2534,7 @@ impl LspCommand for GetCompletions {
             server_id: message
                 .server_id
                 .map(|id| lsp::LanguageServerId::from_proto(id)),
+            request_snapshot: Some(request_snapshot),
         })
     }
 
@@ -2545,6 +2595,7 @@ pub struct ParsedCompletionEdit {
 pub(crate) fn parse_completion_text_edit(
     edit: &lsp::CompletionTextEdit,
     snapshot: &BufferSnapshot,
+    request_snapshot: Option<&BufferSnapshot>,
 ) -> Option<ParsedCompletionEdit> {
     let (replace_range, insert_range, new_text) = match edit {
         lsp::CompletionTextEdit::Edit(edit) => (edit.range, None, &edit.new_text),
@@ -2553,31 +2604,23 @@ pub(crate) fn parse_completion_text_edit(
         }
     };
 
-    let replace_range = {
-        let range = range_from_lsp(replace_range);
-        let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-        let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-        if start != range.start.0 || end != range.end.0 {
-            log::info!(
-                "completion out of expected range, start: {start:?}, end: {end:?}, range: {range:?}"
-            );
-            return None;
-        }
-        snapshot.anchor_before(start)..snapshot.anchor_after(end)
-    };
+    // Prefer the request-time snapshot when anchoring the LSP-returned ranges:
+    // the LSP server computed the range against the buffer state it last saw,
+    // which matches this snapshot. Anchoring there then letting the anchors
+    // resolve against the current snapshot lets the range naturally follow any
+    // buffer edits (auto-indent, autoclose, etc.) applied between sending the
+    // request and receiving the response.
+    let anchor_snapshot = request_snapshot.unwrap_or(snapshot);
+
+    let replace_range = anchor_range_from_lsp(replace_range, anchor_snapshot, "completion")?;
 
     let insert_range = match insert_range {
         None => None,
-        Some(insert_range) => {
-            let range = range_from_lsp(insert_range);
-            let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-            let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-            if start != range.start.0 || end != range.end.0 {
-                log::info!("completion (insert) out of expected range");
-                return None;
-            }
-            Some(snapshot.anchor_before(start)..snapshot.anchor_after(end))
-        }
+        Some(insert_range) => Some(anchor_range_from_lsp(
+            insert_range,
+            anchor_snapshot,
+            "completion (insert)",
+        )?),
     };
 
     Some(ParsedCompletionEdit {
@@ -2585,6 +2628,23 @@ pub(crate) fn parse_completion_text_edit(
         replace_range,
         new_text: new_text.clone(),
     })
+}
+
+fn anchor_range_from_lsp(
+    lsp_range: lsp::Range,
+    snapshot: &BufferSnapshot,
+    label: &str,
+) -> Option<Range<Anchor>> {
+    let range = range_from_lsp(lsp_range);
+    let start = snapshot.clip_point_utf16(range.start, Bias::Left);
+    let end = snapshot.clip_point_utf16(range.end, Bias::Left);
+    if start != range.start.0 || end != range.end.0 {
+        log::info!(
+            "{label} out of expected range, start: {start:?}, end: {end:?}, range: {range:?}"
+        );
+        return None;
+    }
+    Some(snapshot.anchor_before(start)..snapshot.anchor_after(end))
 }
 
 #[async_trait(?Send)]
@@ -5010,5 +5070,77 @@ fn process_full_diagnostics_report(
                 registration_id,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{AppContext, TestAppContext};
+    use language::Buffer;
+    use text::{Point, ToPoint};
+
+    // Reproduces the shape of GitHub issue #54340: a completion request is
+    // issued, then the buffer is edited (as if by auto-indent) before the
+    // response arrives. The LSP response points at the pre-edit coordinates;
+    // parsing it with the request-time snapshot should produce anchors that
+    // resolve to the post-edit position, not overwrite preceding text.
+    #[gpui::test]
+    fn test_parse_completion_text_edit_follows_later_edits(cx: &mut TestAppContext) {
+        let buffer = cx.new(|cx| Buffer::local("const foo = pt.i", cx));
+
+        let request_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+        // Emulate an auto-indent shifting the whole line four columns to the
+        // right after the completion request was sent.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "    ")], None, cx);
+        });
+        let current_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+        // The LSP response is anchored in the request-time snapshot: it
+        // replaces `.i` (columns 14..16 in the original text) with `.init()`.
+        let lsp_edit = lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range {
+                start: lsp::Position::new(0, 14),
+                end: lsp::Position::new(0, 16),
+            },
+            new_text: ".init()".into(),
+        });
+
+        let parsed =
+            parse_completion_text_edit(&lsp_edit, &current_snapshot, Some(&request_snapshot))
+                .expect("edit must parse when anchored in the request-time snapshot");
+
+        let replace_start = parsed.replace_range.start.to_point(&current_snapshot);
+        let replace_end = parsed.replace_range.end.to_point(&current_snapshot);
+
+        // The range must have followed the 4-column shift, so the edit now
+        // targets `.i` at columns 18..20, not columns 14..16 (which would
+        // overwrite part of `pt`).
+        assert_eq!(replace_start, Point::new(0, 18));
+        assert_eq!(replace_end, Point::new(0, 20));
+        assert_eq!(parsed.new_text, ".init()");
+    }
+
+    // Without the request-time snapshot, the same stale range is rejected
+    // because it no longer matches the current buffer. This is the existing
+    // behavior for the proto path and serves as a regression guard.
+    #[gpui::test]
+    fn test_parse_completion_text_edit_rejects_stale_range_without_snapshot(
+        cx: &mut TestAppContext,
+    ) {
+        let buffer = cx.new(|cx| Buffer::local("const foo = pt", cx));
+        let current_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+        let lsp_edit = lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range {
+                start: lsp::Position::new(0, 18),
+                end: lsp::Position::new(0, 20),
+            },
+            new_text: ".init()".into(),
+        });
+
+        assert!(parse_completion_text_edit(&lsp_edit, &current_snapshot, None).is_none());
     }
 }
