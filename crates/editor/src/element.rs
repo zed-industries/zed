@@ -9973,11 +9973,6 @@ impl Element for EditorElement {
                     });
 
                     let mut scroll_position = snapshot.scroll_position();
-                    // Round scroll Y to the nearest device pixel so that all
-                    // positioned elements (gutter, code lines) use a consistent
-                    // vertical offset. This must NOT be written back to the
-                    // editor's scroll state — doing so would accumulate
-                    // floating-point drift across frames.
                     if !line_height.is_zero() {
                         scroll_position.y = window
                             .pixel_snap_f64(scroll_position.y * f64::from(line_height))
@@ -10597,9 +10592,6 @@ impl Element for EditorElement {
                         }
                     });
 
-                    // Round scroll X to the nearest device pixel now that
-                    // horizontal autoscroll is done. Y was already rounded
-                    // earlier, before gutter layout.
                     if !em_layout_width.is_zero() {
                         scroll_position.x = window
                             .pixel_snap_f64(scroll_position.x * f64::from(em_layout_width))
@@ -12628,7 +12620,6 @@ pub fn register_action<T: Action>(
 
 /// Shared between `prepaint` and `compute_auto_height_layout` to ensure
 /// both full and auto-height editors compute wrap widths consistently.
-
 fn calculate_wrap_width(
     soft_wrap: SoftWrap,
     editor_width: Pixels,
