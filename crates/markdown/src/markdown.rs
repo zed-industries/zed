@@ -1181,62 +1181,15 @@ impl MarkdownElement {
         rendered_text: &RenderedText,
         window: &mut Window,
     ) {
-        let start_pos = rendered_text.position_for_source_index(start);
-        let end_pos = rendered_text.position_for_source_index(end);
-        if let Some(((start_position, start_line_height), (end_position, end_line_height))) =
-            start_pos.zip(end_pos)
-        {
-            if start_position.y == end_position.y {
-                window.paint_quad(quad(
-                    Bounds::from_corners(
-                        start_position,
-                        point(end_position.x, end_position.y + end_line_height),
-                    ),
-                    Pixels::ZERO,
-                    color,
-                    Edges::default(),
-                    Hsla::transparent_black(),
-                    BorderStyle::default(),
-                ));
-            } else {
-                window.paint_quad(quad(
-                    Bounds::from_corners(
-                        start_position,
-                        point(bounds.right(), start_position.y + start_line_height),
-                    ),
-                    Pixels::ZERO,
-                    color,
-                    Edges::default(),
-                    Hsla::transparent_black(),
-                    BorderStyle::default(),
-                ));
-
-                if end_position.y > start_position.y + start_line_height {
-                    window.paint_quad(quad(
-                        Bounds::from_corners(
-                            point(bounds.left(), start_position.y + start_line_height),
-                            point(bounds.right(), end_position.y),
-                        ),
-                        Pixels::ZERO,
-                        color,
-                        Edges::default(),
-                        Hsla::transparent_black(),
-                        BorderStyle::default(),
-                    ));
-                }
-
-                window.paint_quad(quad(
-                    Bounds::from_corners(
-                        point(bounds.left(), end_position.y),
-                        point(end_position.x, end_position.y + end_line_height),
-                    ),
-                    Pixels::ZERO,
-                    color,
-                    Edges::default(),
-                    Hsla::transparent_black(),
-                    BorderStyle::default(),
-                ));
-            }
+        for bounds in rendered_text.bounds_for_source_range(bounds, start..end) {
+            window.paint_quad(quad(
+                bounds,
+                Pixels::ZERO,
+                color,
+                Edges::default(),
+                Hsla::transparent_black(),
+                BorderStyle::default(),
+            ));
         }
     }
 
@@ -2798,6 +2751,46 @@ struct RenderedFootnoteRef {
 }
 
 impl RenderedText {
+    fn bounds_for_source_range(
+        &self,
+        bounds: Bounds<Pixels>,
+        range: Range<usize>,
+    ) -> Vec<Bounds<Pixels>> {
+        let mut all_bounds = Vec::new();
+
+        let start_pos = self.position_for_source_index(range.start);
+        let end_pos = self.position_for_source_index(range.end);
+        if let Some(((start_position, start_line_height), (end_position, end_line_height))) =
+            start_pos.zip(end_pos)
+        {
+            if start_position.y == end_position.y {
+                all_bounds.push(Bounds::from_corners(
+                    start_position,
+                    point(end_position.x, end_position.y + end_line_height),
+                ));
+            } else {
+                all_bounds.push(Bounds::from_corners(
+                    start_position,
+                    point(bounds.right(), start_position.y + start_line_height),
+                ));
+
+                if end_position.y > start_position.y + start_line_height {
+                    all_bounds.push(Bounds::from_corners(
+                        point(bounds.left(), start_position.y + start_line_height),
+                        point(bounds.right(), end_position.y),
+                    ));
+                }
+
+                all_bounds.push(Bounds::from_corners(
+                    point(bounds.left(), end_position.y),
+                    point(end_position.x, end_position.y + end_line_height),
+                ));
+            }
+        }
+
+        all_bounds
+    }
+
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
         let mut lines = self.lines.iter().peekable();
         let mut fallback_line: Option<&RenderedLine> = None;
