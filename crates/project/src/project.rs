@@ -2361,13 +2361,6 @@ impl Project {
         self.collaborators.values().find(|c| c.is_host)
     }
 
-    #[inline]
-    pub fn set_worktrees_reordered(&mut self, worktrees_reordered: bool, cx: &mut App) {
-        self.worktree_store.update(cx, |store, _| {
-            store.set_worktrees_reordered(worktrees_reordered);
-        });
-    }
-
     /// Collect all worktrees, including ones that don't appear in the project panel
     #[inline]
     pub fn worktrees<'a>(

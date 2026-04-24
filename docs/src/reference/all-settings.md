@@ -3089,6 +3089,32 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 }
 ```
 
+## Instrumentation
+
+- Description: Configuration for developer-oriented instrumentation tools (profilers, tracers, etc.) that can be toggled at runtime.
+- Setting: `instrumentation`
+- Default:
+
+```json
+{
+  "instrumentation": {
+    "performance_profiler": {
+      "enabled": false
+    }
+  }
+}
+```
+
+### Performance Profiler
+
+- Description: Collects timing data for foreground and background executor tasks so they can be inspected via the `zed: open performance profiler` action. Enabling this may lead to increased memory usage, hence it's disabled by default for regular builds.
+- Setting: `instrumentation.performance_profiler.enabled`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Profiles
 
 - Description: Configuration profiles that can be temporarily applied on top of existing settings or Zed's defaults.

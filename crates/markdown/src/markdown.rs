@@ -44,7 +44,7 @@ use parser::CodeBlockMetadata;
 use parser::{
     MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown_with_options,
 };
-use pulldown_cmark::Alignment;
+use pulldown_cmark::{Alignment, BlockQuoteKind};
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
 use ui::{ScrollAxes, Scrollbars, WithScrollbar, prelude::*};
@@ -57,7 +57,29 @@ use crate::parser::CodeBlockKind;
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
-/// Defines custom style refinements for each heading level (H1-H6)
+
+#[derive(Clone, Copy, Default)]
+pub struct BlockQuoteKindColors {
+    pub note: Hsla,
+    pub tip: Hsla,
+    pub important: Hsla,
+    pub warning: Hsla,
+    pub caution: Hsla,
+}
+
+impl BlockQuoteKindColors {
+    fn for_kind(&self, kind: Option<BlockQuoteKind>, default: Hsla) -> Hsla {
+        match kind {
+            Some(BlockQuoteKind::Note) => self.note,
+            Some(BlockQuoteKind::Tip) => self.tip,
+            Some(BlockQuoteKind::Important) => self.important,
+            Some(BlockQuoteKind::Warning) => self.warning,
+            Some(BlockQuoteKind::Caution) => self.caution,
+            None => default,
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct HeadingLevelStyles {
     pub h1: Option<TextStyleRefinement>,
@@ -80,6 +102,7 @@ pub struct MarkdownStyle {
     pub link_callback: Option<LinkStyleCallback>,
     pub rule_color: Hsla,
     pub block_quote_border_color: Hsla,
+    pub block_quote_kind_colors: BlockQuoteKindColors,
     pub syntax: Arc<SyntaxTheme>,
     pub selection_background_color: Hsla,
     pub heading: StyleRefinement,
@@ -102,6 +125,7 @@ impl Default for MarkdownStyle {
             link_callback: None,
             rule_color: Default::default(),
             block_quote_border_color: Default::default(),
+            block_quote_kind_colors: Default::default(),
             syntax: Arc::new(SyntaxTheme::default()),
             selection_background_color: Default::default(),
             heading: Default::default(),
@@ -113,15 +137,32 @@ impl Default for MarkdownStyle {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum MarkdownFont {
     Agent,
     Editor,
+    Preview,
 }
 
 impl MarkdownStyle {
     pub fn themed(font: MarkdownFont, window: &Window, cx: &App) -> Self {
-        let theme_settings = ThemeSettings::get_global(cx);
         let colors = cx.theme().colors();
+        let syntax = cx.theme().syntax().clone();
+        Self::themed_with_overrides(font, colors, &syntax, window, cx)
+    }
+
+    /// Like [`Self::themed`], but takes explicit [`ThemeColors`] and
+    /// [`SyntaxTheme`] so callers (e.g. the markdown preview) can render the
+    /// markdown using a theme other than the active editor theme.
+    pub fn themed_with_overrides(
+        font: MarkdownFont,
+        colors: &theme::ThemeColors,
+        syntax: &Arc<SyntaxTheme>,
+        window: &Window,
+        cx: &App,
+    ) -> Self {
+        let theme_settings = ThemeSettings::get_global(cx);
+        let is_preview = matches!(font, MarkdownFont::Preview);
 
         let buffer_font_weight = theme_settings.buffer_font.weight;
         let (buffer_font_size, ui_font_size) = match font {
@@ -129,10 +170,16 @@ impl MarkdownStyle {
                 theme_settings.agent_buffer_font_size(cx),
                 theme_settings.agent_ui_font_size(cx),
             ),
-            MarkdownFont::Editor => (
+            MarkdownFont::Editor | MarkdownFont::Preview => (
                 theme_settings.buffer_font_size(cx),
                 theme_settings.ui_font_size(cx),
             ),
+        };
+
+        let body_font_family = if is_preview {
+            theme_settings.markdown_preview_font_family().clone()
+        } else {
+            theme_settings.ui_font.family.clone()
         };
 
         let text_color = colors.text;
@@ -141,7 +188,7 @@ impl MarkdownStyle {
         let line_height = buffer_font_size * 1.75;
 
         text_style.refine(&TextStyleRefinement {
-            font_family: Some(theme_settings.ui_font.family.clone()),
+            font_family: Some(body_font_family),
             font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
             font_features: Some(theme_settings.ui_font.features.clone()),
             font_size: Some(ui_font_size.into()),
@@ -152,10 +199,20 @@ impl MarkdownStyle {
 
         MarkdownStyle {
             base_text_style: text_style.clone(),
-            syntax: cx.theme().syntax().clone(),
+            syntax: syntax.clone(),
             selection_background_color: colors.element_selection_background,
             rule_color: colors.border,
             block_quote_border_color: colors.border,
+            block_quote_kind_colors: {
+                let status = cx.theme().status();
+                BlockQuoteKindColors {
+                    note: status.info,
+                    tip: status.success,
+                    important: status.info,
+                    warning: status.warning,
+                    caution: status.error,
+                }
+            },
             code_block_overflow_x_scroll: true,
             code_block: StyleRefinement {
                 padding: EdgesRefinement {
@@ -1126,19 +1183,48 @@ impl MarkdownElement {
     fn push_markdown_block_quote(
         &self,
         builder: &mut MarkdownElementBuilder,
+        kind: Option<pulldown_cmark::BlockQuoteKind>,
         range: &Range<usize>,
         markdown_end: usize,
     ) {
+        let border_color = self
+            .style
+            .block_quote_kind_colors
+            .for_kind(kind, self.style.block_quote_border_color);
+
+        let header = kind.map(|kind| {
+            let (icon_name, label) = match kind {
+                BlockQuoteKind::Note => (IconName::Info, "Note"),
+                BlockQuoteKind::Tip => (IconName::Sparkle, "Tip"),
+                BlockQuoteKind::Important => (IconName::Chat, "Important"),
+                BlockQuoteKind::Warning => (IconName::Warning, "Warning"),
+                BlockQuoteKind::Caution => (IconName::Stop, "Caution"),
+            };
+            h_flex()
+                .gap_1()
+                .items_center()
+                .mb_1()
+                .child(
+                    Icon::new(icon_name)
+                        .size(IconSize::Small)
+                        .color(Color::Custom(border_color)),
+                )
+                .child(
+                    Label::new(label)
+                        .color(Color::Custom(border_color))
+                        .weight(FontWeight::BOLD),
+                )
+                .into_any_element()
+        });
+
+        let block_div = div().pl_4().mb_2().border_l_4().border_color(border_color);
+        let block_div = match header {
+            Some(header) => block_div.child(header),
+            None => block_div,
+        };
+
         builder.push_text_style(self.style.block_quote.clone());
-        builder.push_div(
-            div()
-                .pl_4()
-                .mb_2()
-                .border_l_4()
-                .border_color(self.style.block_quote_border_color),
-            range,
-            markdown_end,
-        );
+        builder.push_div(block_div, range, markdown_end);
     }
 
     fn pop_markdown_block_quote(&self, builder: &mut MarkdownElementBuilder) {
@@ -1675,8 +1761,13 @@ impl Element for MarkdownElement {
                                 None,
                             );
                         }
-                        MarkdownTag::BlockQuote => {
-                            self.push_markdown_block_quote(&mut builder, range, markdown_end);
+                        MarkdownTag::BlockQuote(kind) => {
+                            self.push_markdown_block_quote(
+                                &mut builder,
+                                *kind,
+                                range,
+                                markdown_end,
+                            );
                         }
                         MarkdownTag::CodeBlock { kind, .. } => {
                             if render_mermaid_diagrams
