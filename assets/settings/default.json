@@ -975,6 +975,11 @@
     //
     // Default: true
     "diff_stats": true,
+    // Maximum length of the commit message title before a warning is shown.
+    // Set to 0 to disable.
+    //
+    // Default: 72
+    "commit_title_max_length": 72,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
@@ -1683,6 +1688,14 @@
       "prompt_format": "infer",
       "max_output_tokens": 64,
     },
+    // Controls whether Zed may collect training data when using Zed's Edit Predictions.
+    // Data is only captured when the project is detected as open source.
+    // Possible values:
+    //   - "default": use the preference previously set via the status-bar toggle,
+    //     or false if no preference has been stored.
+    //   - "yes": allow data collection for files in open-source projects.
+    //   - "no": never allow data collection.
+    "allow_data_collection": "default",
   },
   // Settings specific to journaling
   "journal": {

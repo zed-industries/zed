@@ -21,6 +21,12 @@ pub struct ReportEntry<R> {
     reason: R,
 }
 
+impl<R> ReportEntry<R> {
+    pub fn new(commit: CommitDetails, reason: R) -> Self {
+        Self { commit, reason }
+    }
+}
+
 impl<R: ToString> ReportEntry<R> {
     fn commit_cell(&self) -> String {
         let title = escape_markdown_link_text(self.commit.title());
@@ -44,6 +50,12 @@ impl<R: ToString> ReportEntry<R> {
 
     fn reason_cell(&self) -> String {
         escape_markdown_table_text(&self.reason.to_string())
+    }
+}
+
+impl ReportEntry<ReviewResult> {
+    pub fn is_unknown_error(&self) -> bool {
+        matches!(self.reason, Err(ReviewFailure::Other(_)))
     }
 }
 
@@ -109,7 +121,7 @@ impl ReportSummary {
                 .count(),
             errors: entries
                 .iter()
-                .filter(|entry| matches!(entry.reason, Err(ReviewFailure::Other(_))))
+                .filter(|entry| entry.is_unknown_error())
                 .count(),
         }
     }
@@ -147,6 +159,12 @@ pub struct Report {
 impl Report {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn from_entries(entries: impl IntoIterator<Item = ReportEntry<ReviewResult>>) -> Self {
+        Self {
+            entries: entries.into_iter().collect(),
+        }
     }
 
     pub fn add(&mut self, commit: CommitDetails, result: ReviewResult) {
@@ -320,7 +338,7 @@ mod tests {
 
     use crate::{
         checks::{ReviewFailure, ReviewSuccess},
-        git::{CommitDetails, CommitList},
+        git::{AutomatedChangeKind, CommitDetails, CommitList},
         github::{AuthorAssociation, GithubLogin, GithubUser, PullRequestReview, ReviewState},
     };
 
@@ -382,9 +400,10 @@ mod tests {
         );
         report.add(
             make_commit("ddd", "Dave", "dave@test.com", "Bump Version", ""),
-            Ok(ReviewSuccess::ZedZippyCommit(GithubLogin::new(
-                "dave".to_string(),
-            ))),
+            Ok(ReviewSuccess::ZedZippyCommit(
+                AutomatedChangeKind::VersionBump,
+                GithubLogin::new("dave".to_string()),
+            )),
         );
 
         let summary = report.summary();

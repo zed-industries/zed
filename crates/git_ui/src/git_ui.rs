@@ -17,8 +17,8 @@ use git::{
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
-    Subscription, Task, Window,
+    App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    SharedString, Subscription, Task, Window,
 };
 use menu::{Cancel, Confirm};
 use project::git_store::Repository;
@@ -270,6 +270,9 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &git::RenameBranch, window, cx| {
             rename_current_branch(workspace, window, cx);
         });
+        workspace.register_action(|workspace, _: &git::CopyBranchName, _, cx| {
+            copy_branch_name(workspace, cx);
+        });
         workspace.register_action(show_ref_picker);
         workspace.register_action(
             |workspace, action: &DiffClipboardWithSelectionData, window, cx| {
@@ -463,6 +466,20 @@ fn rename_current_branch(
     workspace.toggle_modal(window, cx, |window, cx| {
         RenameBranchModal::new(current_branch_name, repo, window, cx)
     });
+}
+
+fn copy_branch_name(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
+    let Some(panel) = workspace.panel::<GitPanel>(cx) else {
+        return;
+    };
+    let branch_name = panel.update(cx, |panel, cx| {
+        let repo = panel.active_repository.as_ref()?;
+        let repo = repo.read(cx);
+        repo.branch.as_ref().map(|branch| branch.name().to_string())
+    });
+    if let Some(name) = branch_name {
+        cx.write_to_clipboard(ClipboardItem::new_string(name));
+    }
 }
 
 struct RefPickerModal {
