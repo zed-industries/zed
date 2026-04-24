@@ -453,7 +453,6 @@ impl ProjectSearch {
                     project_search
                         .excerpts
                         .update(cx, |excerpts, cx| excerpts.clear(cx));
-                    project_search.search_state = SearchState::Running(SearchActivity::Searching);
                 })
                 .ok()?;
 
