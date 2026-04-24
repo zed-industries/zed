@@ -14,8 +14,8 @@ pub use sqlez_macros;
 pub use uuid;
 
 pub use release_channel::RELEASE_CHANNEL;
+use async_lock::Mutex;
 use release_channel::ReleaseChannel;
-use smol::lock::Mutex;
 use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
@@ -206,8 +206,7 @@ pub async fn open_db<M: Migrator + 'static>(
     let db_path = db_path(db_dir, scope);
 
     if let Some(parent) = db_path.parent()
-        && smol::fs::create_dir_all(parent)
-            .await
+        && create_dir_all(parent)
             .context("Could not create db directory")
             .log_err()
             .is_none()
@@ -264,8 +263,7 @@ async fn recover_corrupt_db<M: Migrator>(
         .as_millis();
     let backup_dir = db_dir.join(format!("{timestamp_millis}-{scope_name}"));
 
-    smol::fs::rename(scope_dir, &backup_dir)
-        .await
+    std::fs::rename(scope_dir, &backup_dir)
         .with_context(|| {
             format!(
                 "Failed to move corrupt database to {}",
@@ -279,8 +277,7 @@ async fn recover_corrupt_db<M: Migrator>(
         backup_dir.display(),
     );
 
-    smol::fs::create_dir_all(scope_dir)
-        .await
+    create_dir_all(scope_dir)
         .context("Could not recreate database directory after backup")
         .log_err()?;
 
