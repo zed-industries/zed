@@ -342,6 +342,11 @@ pub struct ThreadView {
     /// Markdown entities that currently hold search highlights, so we can clear
     /// them when the match set shrinks or the search is dismissed.
     pub highlighted_markdowns: Vec<Entity<Markdown>>,
+    /// User-message editors that currently hold search highlights, tracked for
+    /// the same reason — user-message rendering goes through a `MessageEditor`
+    /// (see `conversation_view/thread_view.rs` user-message arm), not the
+    /// markdown entity, so highlights must be applied to the editor directly.
+    pub highlighted_user_message_editors: Vec<Entity<Editor>>,
     pub search_bar: Option<Entity<search::BufferSearchBar>>,
     pub search_bar_subscription: Option<Subscription>,
 }
@@ -574,6 +579,7 @@ impl ThreadView {
             active_search_match_index: None,
             active_search_position: None,
             highlighted_markdowns: Vec::new(),
+            highlighted_user_message_editors: Vec::new(),
             search_bar: None,
             search_bar_subscription: None,
         };

@@ -4,6 +4,8 @@ use std::sync::Arc;
 use acp_thread::{AgentThreadEntry, AssistantMessageChunk, ContentBlock, ToolCallContent};
 use agent_client_protocol::schema as acp;
 use collections::{HashMap, HashSet};
+use editor::display_map::HighlightKey;
+use editor::{Anchor, Editor, MultiBufferOffset};
 use gpui::{
     App, AppContext, Context, Entity, EntityId, EventEmitter, ListOffset, SharedString, Task,
     Window, px,
@@ -16,6 +18,8 @@ use workspace::searchable::{
     SearchableItemHandle,
 };
 
+use crate::entry_view_state::EntryViewState;
+
 use super::ThreadView;
 
 /// Where inside the thread a match lives, so we can auto-expand disclosures
@@ -25,12 +29,45 @@ pub enum MatchOrigin {
     AlwaysVisible,
     ThinkingBlock { chunk_index: usize },
     ToolCallContent { id: acp::ToolCallId },
+    UserMessage,
 }
+
+/// A match in the thread is either inside a rendered markdown entity (assistant
+/// messages, thought blocks, tool-call content, plan entries, tool labels) or
+/// inside a user-message `Editor`. User messages are rendered through a
+/// `MessageEditor`, not the markdown entity that `UserMessage::content` holds,
+/// so highlights for them must be routed through the editor directly.
+#[derive(Debug, Clone)]
+pub enum MatchTarget {
+    Markdown(Entity<Markdown>),
+    Editor(Entity<Editor>),
+}
+
+impl MatchTarget {
+    fn entity_id(&self) -> EntityId {
+        match self {
+            Self::Markdown(markdown) => markdown.entity_id(),
+            Self::Editor(editor) => editor.entity_id(),
+        }
+    }
+}
+
+impl PartialEq for MatchTarget {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Markdown(a), Self::Markdown(b)) => a == b,
+            (Self::Editor(a), Self::Editor(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for MatchTarget {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadSearchMatch {
     pub entry_index: usize,
-    pub markdown: Entity<Markdown>,
+    pub target: MatchTarget,
     pub byte_range: Range<usize>,
     pub origin: MatchOrigin,
 }
@@ -86,6 +123,11 @@ impl SearchableItem for ThreadView {
         for markdown in std::mem::take(&mut self.highlighted_markdowns) {
             markdown.update(cx, |md, cx| md.clear_search_highlights(cx));
         }
+        for editor in std::mem::take(&mut self.highlighted_user_message_editors) {
+            editor.update(cx, |editor, cx| {
+                editor.clear_background_highlights(HighlightKey::BufferSearchHighlights, cx);
+            });
+        }
         self.collapse_search_auto_expanded_sections(cx);
         if had_matches {
             cx.emit(SearchEvent::MatchesInvalidated);
@@ -103,42 +145,43 @@ impl SearchableItem for ThreadView {
     ) {
         let changed = self.search_matches.as_slice() != matches;
 
-        let mut per_markdown: Vec<(Entity<Markdown>, Vec<Range<usize>>, Option<usize>)> =
-            Vec::new();
-        let mut index_map: HashMap<EntityId, usize> = HashMap::default();
-        for (global_idx, m) in matches.iter().enumerate() {
-            let group_idx = *index_map.entry(m.markdown.entity_id()).or_insert_with(|| {
-                per_markdown.push((m.markdown.clone(), Vec::new(), None));
-                per_markdown.len() - 1
-            });
-            let (_, ranges, active_local) = &mut per_markdown[group_idx];
-            ranges.push(m.byte_range.clone());
-            if Some(global_idx) == active_match_index {
-                *active_local = Some(ranges.len() - 1);
-            }
-        }
+        let per_target = group_matches_by_target(matches, active_match_index);
 
-        let new_ids: HashSet<EntityId> = per_markdown
+        let new_ids: HashSet<EntityId> = per_target
             .iter()
-            .map(|(markdown, _, _)| markdown.entity_id())
+            .map(|(target, _, _)| target.entity_id())
             .collect();
         for markdown in std::mem::take(&mut self.highlighted_markdowns) {
             if !new_ids.contains(&markdown.entity_id()) {
                 markdown.update(cx, |md, cx| md.clear_search_highlights(cx));
             }
         }
-
-        for (markdown, ranges, active_local) in &per_markdown {
-            let ranges = ranges.clone();
-            let active_local = *active_local;
-            markdown.update(cx, |md, cx| {
-                md.set_search_highlights(ranges, active_local, cx);
-            });
+        for editor in std::mem::take(&mut self.highlighted_user_message_editors) {
+            if !new_ids.contains(&editor.entity_id()) {
+                editor.update(cx, |editor, cx| {
+                    editor.clear_background_highlights(HighlightKey::BufferSearchHighlights, cx);
+                });
+            }
         }
-        self.highlighted_markdowns = per_markdown
-            .into_iter()
-            .map(|(markdown, _, _)| markdown)
-            .collect();
+
+        let mut new_highlighted_markdowns = Vec::new();
+        let mut new_highlighted_editors = Vec::new();
+        for (target, ranges, active_local) in per_target {
+            match target {
+                MatchTarget::Markdown(markdown) => {
+                    markdown.update(cx, |md, cx| {
+                        md.set_search_highlights(ranges, active_local, cx);
+                    });
+                    new_highlighted_markdowns.push(markdown);
+                }
+                MatchTarget::Editor(editor) => {
+                    apply_editor_highlights(&editor, &ranges, active_local, cx);
+                    new_highlighted_editors.push(editor);
+                }
+            }
+        }
+        self.highlighted_markdowns = new_highlighted_markdowns;
+        self.highlighted_user_message_editors = new_highlighted_editors;
 
         self.search_matches = matches.to_vec();
         self.active_search_match_index = active_match_index;
@@ -176,10 +219,10 @@ impl SearchableItem for ThreadView {
 
         self.ensure_origin_expanded(m.entry_index, &m.origin, cx);
 
-        let target_id = m.markdown.entity_id();
+        let target_id = m.target.entity_id();
         let local_index = matches[..=index]
             .iter()
-            .filter(|other| other.markdown.entity_id() == target_id)
+            .filter(|other| other.target.entity_id() == target_id)
             .count()
             - 1;
 
@@ -188,10 +231,27 @@ impl SearchableItem for ThreadView {
                 other.update(cx, |md, cx| md.set_active_search_highlight(None, cx));
             }
         }
-        m.markdown.update(cx, |md, cx| {
-            md.set_active_search_highlight(Some(local_index), cx);
-            md.request_autoscroll_to_source_index(m.byte_range.start, cx);
-        });
+        // Editor highlights capture the active index inside a color closure at
+        // insertion time, so whenever the active index changes we have to
+        // re-apply highlights for every editor — otherwise a previously-active
+        // editor would keep showing the orange "active" color on a stale match.
+        let per_target = group_matches_by_target(matches, Some(index));
+        for (target, ranges, active_local) in per_target {
+            if let MatchTarget::Editor(editor) = target {
+                apply_editor_highlights(&editor, &ranges, active_local, cx);
+            }
+        }
+        match &m.target {
+            MatchTarget::Markdown(markdown) => {
+                markdown.update(cx, |md, cx| {
+                    md.set_active_search_highlight(Some(local_index), cx);
+                    md.request_autoscroll_to_source_index(m.byte_range.start, cx);
+                });
+            }
+            MatchTarget::Editor(active_editor) => {
+                autoscroll_editor_to_range(active_editor, m.byte_range.clone(), cx);
+            }
+        }
 
         self.list_state.scroll_to(ListOffset {
             item_ix: m.entry_index,
@@ -234,32 +294,33 @@ impl SearchableItem for ThreadView {
 
         let expanded_tool_calls = self.expanded_tool_calls.clone();
         let expanded_thinking_blocks = self.expanded_thinking_blocks.clone();
+        let entry_view_state = self.entry_view_state.read(cx);
 
-        let mut entries_data: Vec<(usize, Vec<(Entity<Markdown>, String, MatchOrigin)>)> =
-            Vec::new();
+        let mut entries_data: Vec<(usize, Vec<(MatchTarget, String, MatchOrigin)>)> = Vec::new();
         for (entry_index, entry) in self.thread.read(cx).entries().iter().enumerate() {
-            let mut markdowns = Vec::new();
-            collect_searchable_markdowns(
+            let mut targets = Vec::new();
+            collect_searchable_targets(
                 entry,
                 cx,
                 include_hidden,
                 &expanded_tool_calls,
                 entry_index,
                 &expanded_thinking_blocks,
-                &mut markdowns,
+                entry_view_state,
+                &mut targets,
             );
-            if !markdowns.is_empty() {
-                entries_data.push((entry_index, markdowns));
+            if !targets.is_empty() {
+                entries_data.push((entry_index, targets));
             }
         }
         cx.background_spawn(async move {
             let mut matches = Vec::new();
-            for (entry_index, markdowns) in entries_data {
-                for (markdown, source, origin) in markdowns {
+            for (entry_index, targets) in entries_data {
+                for (target, source, origin) in targets {
                     for byte_range in query.search_str(&source) {
                         matches.push(ThreadSearchMatch {
                             entry_index,
-                            markdown: markdown.clone(),
+                            target: target.clone(),
                             byte_range,
                             origin: origin.clone(),
                         });
@@ -305,7 +366,7 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) {
         match origin {
-            MatchOrigin::AlwaysVisible => {}
+            MatchOrigin::AlwaysVisible | MatchOrigin::UserMessage => {}
             MatchOrigin::ThinkingBlock { chunk_index } => {
                 let key = (entry_index, *chunk_index);
                 if !self.expanded_thinking_blocks.contains(&key) {
@@ -343,18 +404,31 @@ impl ThreadView {
     }
 }
 
-fn collect_searchable_markdowns(
+fn collect_searchable_targets(
     entry: &AgentThreadEntry,
     cx: &App,
     include_hidden: bool,
     expanded_tool_calls: &HashSet<acp::ToolCallId>,
     entry_index: usize,
     expanded_thinking_blocks: &HashSet<(usize, usize)>,
-    out: &mut Vec<(Entity<Markdown>, String, MatchOrigin)>,
+    entry_view_state: &EntryViewState,
+    out: &mut Vec<(MatchTarget, String, MatchOrigin)>,
 ) {
     match entry {
-        AgentThreadEntry::UserMessage(message) => {
-            push_content_block(&message.content, cx, MatchOrigin::AlwaysVisible, out);
+        AgentThreadEntry::UserMessage(_message) => {
+            // User messages are rendered through a `MessageEditor`, so search
+            // the editor's buffer text directly rather than the (unrendered)
+            // markdown entity on `UserMessage::content`. The two texts diverge
+            // for image chunks — the markdown uses ``Image`` while the editor
+            // uses a mention link — so the editor text is the source of truth.
+            if let Some(editor) = entry_view_state
+                .entry(entry_index)
+                .and_then(|entry| entry.message_editor())
+                .map(|message_editor| message_editor.read(cx).editor().clone())
+            {
+                let text = editor.read(cx).text(cx);
+                out.push((MatchTarget::Editor(editor), text, MatchOrigin::UserMessage));
+            }
         }
         AgentThreadEntry::AssistantMessage(message) => {
             for (chunk_index, chunk) in message.chunks.iter().enumerate() {
@@ -406,7 +480,7 @@ fn push_content_block(
     block: &ContentBlock,
     cx: &App,
     origin: MatchOrigin,
-    out: &mut Vec<(Entity<Markdown>, String, MatchOrigin)>,
+    out: &mut Vec<(MatchTarget, String, MatchOrigin)>,
 ) {
     if let Some(markdown) = block.markdown() {
         push_markdown(markdown, cx, origin, out);
@@ -417,11 +491,80 @@ fn push_markdown(
     markdown: &Entity<Markdown>,
     cx: &App,
     origin: MatchOrigin,
-    out: &mut Vec<(Entity<Markdown>, String, MatchOrigin)>,
+    out: &mut Vec<(MatchTarget, String, MatchOrigin)>,
 ) {
     out.push((
-        markdown.clone(),
+        MatchTarget::Markdown(markdown.clone()),
         markdown.read(cx).source().to_string(),
         origin,
     ));
+}
+
+fn group_matches_by_target(
+    matches: &[ThreadSearchMatch],
+    active_match_index: Option<usize>,
+) -> Vec<(MatchTarget, Vec<Range<usize>>, Option<usize>)> {
+    let mut per_target: Vec<(MatchTarget, Vec<Range<usize>>, Option<usize>)> = Vec::new();
+    let mut index_map: HashMap<EntityId, usize> = HashMap::default();
+    for (global_idx, m) in matches.iter().enumerate() {
+        let group_idx = *index_map.entry(m.target.entity_id()).or_insert_with(|| {
+            per_target.push((m.target.clone(), Vec::new(), None));
+            per_target.len() - 1
+        });
+        let (_, ranges, active_local) = &mut per_target[group_idx];
+        ranges.push(m.byte_range.clone());
+        if Some(global_idx) == active_match_index {
+            *active_local = Some(ranges.len() - 1);
+        }
+    }
+    per_target
+}
+
+fn apply_editor_highlights(
+    editor: &Entity<Editor>,
+    ranges: &[Range<usize>],
+    active_local: Option<usize>,
+    cx: &mut Context<ThreadView>,
+) {
+    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+    let anchor_ranges: Vec<Range<Anchor>> = ranges
+        .iter()
+        .map(|range| {
+            let start = snapshot.anchor_after(MultiBufferOffset(range.start));
+            let end = snapshot.anchor_before(MultiBufferOffset(range.end));
+            start..end
+        })
+        .collect();
+    editor.update(cx, |editor, cx| {
+        editor.highlight_background(
+            HighlightKey::BufferSearchHighlights,
+            &anchor_ranges,
+            move |index, theme| {
+                if active_local == Some(*index) {
+                    theme.colors().search_active_match_background
+                } else {
+                    theme.colors().search_match_background
+                }
+            },
+            cx,
+        );
+    });
+}
+
+fn autoscroll_editor_to_range(
+    editor: &Entity<Editor>,
+    byte_range: Range<usize>,
+    cx: &mut Context<ThreadView>,
+) {
+    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+    let anchor = snapshot.anchor_before(MultiBufferOffset(byte_range.start));
+    editor.update(cx, |editor, cx| {
+        editor.request_autoscroll(
+            editor::scroll::Autoscroll::Strategy(
+                editor::scroll::AutoscrollStrategy::Center,
+                Some(anchor),
+            ),
+            cx,
+        );
+    });
 }
