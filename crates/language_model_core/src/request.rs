@@ -293,20 +293,6 @@ pub enum MessageContent {
 }
 
 impl MessageContent {
-    pub fn to_str(&self) -> Option<&str> {
-        match self {
-            MessageContent::Text(text) => Some(text.as_str()),
-            MessageContent::Thinking { text, .. } => Some(text.as_str()),
-            MessageContent::RedactedThinking(_) => None,
-            MessageContent::ToolResult(tool_result) => {
-                // Only return the first Text part as a borrowed string; multi-part
-                // callers should use `LanguageModelToolResult::text_contents` instead.
-                tool_result.content.iter().find_map(|part| part.to_str())
-            }
-            MessageContent::ToolUse(_) | MessageContent::Image(_) => None,
-        }
-    }
-
     pub fn is_empty(&self) -> bool {
         match self {
             MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
@@ -345,6 +331,12 @@ impl LanguageModelRequestMessage {
         let mut buffer = String::new();
         for content in &self.content {
             match content {
+                MessageContent::Text(text) => {
+                    buffer.push_str(text);
+                }
+                MessageContent::Thinking { text, .. } => {
+                    buffer.push_str(text);
+                }
                 MessageContent::ToolResult(tool_result) => {
                     // Walk tool-result parts directly so we don't truncate
                     // multi-part results to the first `Text` part (which is what
@@ -355,11 +347,9 @@ impl LanguageModelRequestMessage {
                         }
                     }
                 }
-                other => {
-                    if let Some(text) = other.to_str() {
-                        buffer.push_str(text);
-                    }
-                }
+                MessageContent::RedactedThinking(_)
+                | MessageContent::ToolUse(_)
+                | MessageContent::Image(_) => {}
             }
         }
         buffer
