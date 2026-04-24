@@ -359,13 +359,9 @@ impl ProjectDiff {
             );
             match branch_diff.read(cx).diff_base() {
                 DiffBase::Head => {}
-                DiffBase::Merge { .. } => diff_display_editor.set_render_diff_hunk_controls(
-                    Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                    cx,
-                ),
+                DiffBase::Merge { .. } => diff_display_editor.disable_diff_hunk_controls(cx),
             }
             diff_display_editor.rhs_editor().update(cx, |editor, cx| {
-                editor.disable_diagnostics(cx);
                 editor.set_show_diff_review_button(true, cx);
 
                 match branch_diff.read(cx).diff_base() {

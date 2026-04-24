@@ -196,7 +196,7 @@ impl GitRepository for FakeGitRepository {
         _commit: String,
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::CommitDiff>> {
-        unimplemented!()
+        async { Ok(git::repository::CommitDiff { files: Vec::new() }) }.boxed()
     }
 
     fn set_index_text(
@@ -909,25 +909,6 @@ impl GitRepository for FakeGitRepository {
                 .with_context(|| format!("failed to get blame for {:?}", path))
                 .cloned()
         })
-    }
-
-    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
-        self.file_history_paginated(path, 0, None)
-    }
-
-    fn file_history_paginated(
-        &self,
-        path: RepoPath,
-        _skip: usize,
-        _limit: Option<usize>,
-    ) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
-        async move {
-            Ok(git::repository::FileHistory {
-                entries: Vec::new(),
-                path,
-            })
-        }
-        .boxed()
     }
 
     fn stage_paths(

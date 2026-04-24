@@ -908,7 +908,13 @@ impl X11Client {
                     let paths: SmallVec<[_; 2]> = file_list
                         .lines()
                         .filter_map(|path| Url::parse(path).log_err())
-                        .filter_map(|url| url.to_file_path().log_err())
+                        .filter_map(|url| match url.to_file_path() {
+                            Ok(url) => Some(url),
+                            Err(()) => {
+                                log::error!("Failed turn {url:?} into a file path");
+                                None
+                            }
+                        })
                         .collect();
                     let input = PlatformInput::FileDrop(FileDropEvent::Entered {
                         position: state.xdnd_state.position,
