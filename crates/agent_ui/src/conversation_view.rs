@@ -9,7 +9,7 @@ use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
 use agent::{
     NativeAgentServer, NativeAgentSessionList, NoModelConfiguredError, SharedThread, ThreadStore,
 };
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
 use agent_servers::{AgentServer, GEMINI_TERMINAL_AUTH_METHOD_ID};
@@ -37,7 +37,9 @@ use gpui::{
 };
 use language::Buffer;
 use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
-use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
+use markdown::{
+    CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont, MarkdownStyle,
+};
 use parking_lot::RwLock;
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
@@ -55,7 +57,7 @@ use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
-use theme_settings::AgentFontSize;
+use theme_settings::{AgentBufferFontSize, AgentUiFontSize};
 use ui::{
     Callout, CircularProgress, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton,
     DecoratedIcon, DiffStat, Disclosure, Divider, DividerColor, IconDecoration, IconDecorationKind,
@@ -295,6 +297,20 @@ impl Conversation {
         self.threads.insert(session_id, thread);
     }
 
+    pub fn permission_options_for_tool_call<'a>(
+        &'a self,
+        session_id: &acp::SessionId,
+        tool_call_id: acp::ToolCallId,
+        cx: &'a App,
+    ) -> Option<&'a PermissionOptions> {
+        let thread = self.threads.get(session_id)?;
+        let (_, tool_call) = thread.read(cx).tool_call(&tool_call_id)?;
+        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
+            return None;
+        };
+        Some(options)
+    }
+
     pub fn pending_tool_call<'a>(
         &'a self,
         session_id: &acp::SessionId,
@@ -351,6 +367,21 @@ impl Conversation {
         Some(())
     }
 
+    pub fn authorize_with_granularity(
+        &mut self,
+        session_id: acp::SessionId,
+        tool_call_id: acp::ToolCallId,
+        selection: Option<&thread_view::PermissionSelection>,
+        is_allow: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let options =
+            self.permission_options_for_tool_call(&session_id, tool_call_id.clone(), cx)?;
+        let outcome = resolve_outcome_from_selection(options, selection, is_allow)?;
+        self.authorize_tool_call(session_id, tool_call_id, outcome, cx);
+        Some(())
+    }
+
     pub fn authorize_tool_call(
         &mut self,
         session_id: acp::SessionId,
@@ -389,6 +420,43 @@ impl Conversation {
 pub(crate) struct RootThreadUpdated;
 
 impl EventEmitter<RootThreadUpdated> for ConversationView {}
+
+fn resolve_outcome_from_selection(
+    options: &PermissionOptions,
+    selection: Option<&thread_view::PermissionSelection>,
+    is_allow: bool,
+) -> Option<SelectedPermissionOutcome> {
+    let choices = match options {
+        PermissionOptions::Dropdown(choices) => choices.as_slice(),
+        PermissionOptions::DropdownWithPatterns { choices, .. } => choices.as_slice(),
+        PermissionOptions::Flat(_) => {
+            let kind = if is_allow {
+                acp::PermissionOptionKind::AllowOnce
+            } else {
+                acp::PermissionOptionKind::RejectOnce
+            };
+            let option = options.first_option_of_kind(kind)?;
+            return Some(SelectedPermissionOutcome::new(
+                option.option_id.clone(),
+                option.kind,
+            ));
+        }
+    };
+
+    // When in per-command pattern mode, use the checked patterns.
+    if let Some(thread_view::PermissionSelection::SelectedPatterns(checked)) = selection {
+        if let Some(outcome) = options.build_outcome_for_checked_patterns(checked, is_allow) {
+            return Some(outcome);
+        }
+    }
+
+    // Use the selected granularity choice ("Always for terminal" or "Only this time").
+    let selected_index = selection
+        .and_then(|s| s.choice_index())
+        .unwrap_or_else(|| choices.len().saturating_sub(1));
+    let selected_choice = choices.get(selected_index).or(choices.last())?;
+    Some(selected_choice.build_outcome(is_allow))
+}
 
 fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
     match event {
@@ -631,7 +699,8 @@ impl ConversationView {
         let agent_server_store = project.read(cx).agent_server_store().clone();
         let subscriptions = vec![
             cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
-            cx.observe_global_in::<AgentFontSize>(window, Self::agent_ui_font_size_changed),
+            cx.observe_global_in::<AgentUiFontSize>(window, Self::agent_ui_font_size_changed),
+            cx.observe_global_in::<AgentBufferFontSize>(window, Self::agent_ui_font_size_changed),
             cx.subscribe_in(
                 &agent_server_store,
                 window,
@@ -2847,7 +2916,6 @@ pub(crate) mod tests {
     use acp_thread::StubAgentConnection;
     use action_log::ActionLog;
     use agent::{AgentTool, EditFileTool, FetchTool, TerminalTool, ToolPermissionContext};
-    use agent_client_protocol::SessionId;
     use agent_servers::FakeAcpAgentServer;
     use editor::MultiBufferOffset;
     use fs::FakeFs;
@@ -3029,7 +3097,7 @@ pub(crate) mod tests {
                     Rc::new(StubAgentServer::new(ResumeOnlyAgentConnection)),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
-                    Some(SessionId::new("resume-session")),
+                    Some(acp::SessionId::new("resume-session")),
                     None,
                     None,
                     None,
@@ -3076,7 +3144,7 @@ pub(crate) mod tests {
                 self,
                 project,
                 "RestoredAvailableCommandsConnection",
-                SessionId::new("new-session"),
+                acp::SessionId::new("new-session"),
                 cx,
             );
             Task::ready(Ok(thread))
@@ -3166,7 +3234,7 @@ pub(crate) mod tests {
                     Rc::new(StubAgentServer::new(RestoredAvailableCommandsConnection)),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
-                    Some(SessionId::new("restored-session")),
+                    Some(acp::SessionId::new("restored-session")),
                     None,
                     None,
                     None,
@@ -3248,7 +3316,7 @@ pub(crate) mod tests {
                     Rc::new(StubAgentServer::new(connection)),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
-                    Some(SessionId::new("session-1")),
+                    Some(acp::SessionId::new("session-1")),
                     None,
                     Some(PathList::new(&[PathBuf::from("/project/subdir")])),
                     None,
@@ -3355,7 +3423,7 @@ pub(crate) mod tests {
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
 
         // Simulate a previous run that persisted metadata for this session.
-        let resume_session_id = SessionId::new("persistent-session");
+        let resume_session_id = acp::SessionId::new("persistent-session");
         let stored_title: SharedString = "Persistent chat".into();
         cx.update(|_window, cx| {
             ThreadMetadataStore::global(cx).update(cx, |store, cx| {
@@ -4315,7 +4383,7 @@ pub(crate) mod tests {
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
         name: &'static str,
-        session_id: SessionId,
+        session_id: acp::SessionId,
         cx: &mut App,
     ) -> Entity<AcpThread> {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
@@ -4361,7 +4429,7 @@ pub(crate) mod tests {
                 self,
                 project,
                 "ResumeOnlyAgentConnection",
-                SessionId::new("new-session"),
+                acp::SessionId::new("new-session"),
                 cx,
             );
             Task::ready(Ok(thread))
@@ -4541,7 +4609,7 @@ pub(crate) mod tests {
                     self,
                     project,
                     action_log,
-                    SessionId::new("test"),
+                    acp::SessionId::new("test"),
                     watch::Receiver::constant(
                         acp::PromptCapabilities::new()
                             .image(true)
@@ -4621,7 +4689,7 @@ pub(crate) mod tests {
                     self.clone(),
                     project,
                     action_log,
-                    SessionId::new("new-session"),
+                    acp::SessionId::new("new-session"),
                     watch::Receiver::constant(
                         acp::PromptCapabilities::new()
                             .image(true)
@@ -6624,6 +6692,143 @@ pub(crate) mod tests {
         );
     }
 
+    fn flat_allow_deny_options() -> PermissionOptions {
+        PermissionOptions::Flat(vec![
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow"),
+                "Yes",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("deny"),
+                "No",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        ])
+    }
+
+    #[test]
+    fn resolve_outcome_from_selection_flat_allow_picks_allow_once() {
+        let options = flat_allow_deny_options();
+
+        let outcome = super::resolve_outcome_from_selection(&options, None, true).unwrap();
+
+        assert_eq!(outcome.option_id.0.as_ref(), "allow");
+        assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+    }
+
+    #[test]
+    fn resolve_outcome_from_selection_flat_deny_picks_reject_once() {
+        let options = flat_allow_deny_options();
+
+        let outcome = super::resolve_outcome_from_selection(&options, None, false).unwrap();
+
+        assert_eq!(outcome.option_id.0.as_ref(), "deny");
+        assert_eq!(outcome.option_kind, acp::PermissionOptionKind::RejectOnce);
+    }
+
+    #[test]
+    fn resolve_outcome_from_selection_flat_ignores_selection() {
+        let options = flat_allow_deny_options();
+        // Flat options never consult the granularity choice, even if one is set.
+        let selection = thread_view::PermissionSelection::Choice(42);
+
+        let outcome =
+            super::resolve_outcome_from_selection(&options, Some(&selection), true).unwrap();
+
+        assert_eq!(outcome.option_id.0.as_ref(), "allow");
+    }
+
+    #[test]
+    fn resolve_outcome_from_selection_dropdown_defaults_to_last_choice_when_no_selection() {
+        let options =
+            ToolPermissionContext::new(TerminalTool::NAME, vec!["cargo build".to_string()])
+                .build_permission_options();
+
+        let outcome = super::resolve_outcome_from_selection(&options, None, true).unwrap();
+
+        // Last choice is "Only this time" → option_id "allow".
+        assert_eq!(outcome.option_id.0.as_ref(), "allow");
+        assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+    }
+
+    #[test]
+    fn resolve_outcome_from_selection_dropdown_uses_selected_choice() {
+        let options =
+            ToolPermissionContext::new(TerminalTool::NAME, vec!["cargo build".to_string()])
+                .build_permission_options();
+        let selection = thread_view::PermissionSelection::Choice(0);
+
+        let outcome =
+            super::resolve_outcome_from_selection(&options, Some(&selection), true).unwrap();
+
+        // Choice 0 = "Always for terminal".
+        assert!(outcome.option_id.0.contains("always_allow:terminal"));
+        assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowAlways);
+    }
+
+    #[test]
+    fn resolve_outcome_from_selection_dropdown_out_of_range_falls_back_to_last() {
+        let options =
+            ToolPermissionContext::new(TerminalTool::NAME, vec!["cargo build".to_string()])
+                .build_permission_options();
+        let selection = thread_view::PermissionSelection::Choice(999);
+
+        let outcome =
+            super::resolve_outcome_from_selection(&options, Some(&selection), true).unwrap();
+
+        // choices.get(999) is None, falls back to choices.last() → "Only this time".
+        assert_eq!(outcome.option_id.0.as_ref(), "allow");
+    }
+
+    #[test]
+    fn resolve_outcome_from_selection_pattern_mode_with_empty_checked_falls_back_to_last_choice() {
+        // Pipeline commands produce `DropdownWithPatterns`, which is required for
+        // `SelectedPatterns` to be meaningful.
+        let options = ToolPermissionContext::new(
+            TerminalTool::NAME,
+            vec!["cargo test 2>&1 | tail".to_string()],
+        )
+        .build_permission_options();
+        assert!(matches!(
+            options,
+            PermissionOptions::DropdownWithPatterns { .. }
+        ));
+        // Pattern mode with zero checked patterns: `build_outcome_for_checked_patterns`
+        // returns None, so we fall through to `choice_index()` (which is None for
+        // `SelectedPatterns`) and default to `choices.last()`.
+        let selection = thread_view::PermissionSelection::SelectedPatterns(vec![]);
+
+        let outcome =
+            super::resolve_outcome_from_selection(&options, Some(&selection), true).unwrap();
+
+        assert_eq!(outcome.option_id.0.as_ref(), "allow");
+        assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+    }
+
+    #[test]
+    fn resolve_outcome_from_selection_pattern_mode_with_checked_uses_always_with_params() {
+        let options = ToolPermissionContext::new(
+            TerminalTool::NAME,
+            vec!["cargo test 2>&1 | tail".to_string()],
+        )
+        .build_permission_options();
+        assert!(matches!(
+            options,
+            PermissionOptions::DropdownWithPatterns { .. }
+        ));
+        let selection = thread_view::PermissionSelection::SelectedPatterns(vec![0]);
+
+        let outcome =
+            super::resolve_outcome_from_selection(&options, Some(&selection), true).unwrap();
+
+        assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowAlways);
+        assert!(
+            outcome.params.is_some(),
+            "checked patterns should attach terminal params"
+        );
+    }
+
     #[gpui::test]
     async fn test_manually_editing_title_updates_acp_thread_title(cx: &mut TestAppContext) {
         init_test(cx);
@@ -7247,7 +7452,7 @@ pub(crate) mod tests {
                     self,
                     project,
                     action_log,
-                    SessionId::new("close-capable-session"),
+                    acp::SessionId::new("close-capable-session"),
                     watch::Receiver::constant(
                         acp::PromptCapabilities::new()
                             .image(true)

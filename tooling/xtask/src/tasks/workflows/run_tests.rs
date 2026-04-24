@@ -52,7 +52,7 @@ pub(crate) fn run_tests() -> Workflow {
             .and_not_in_merge_queue()
             .then(clippy(Platform::Windows, None)),
         should_run_tests
-            .and_not_in_merge_queue()
+            .and_always()
             .then(clippy(Platform::Linux, None)),
         should_run_tests
             .and_not_in_merge_queue()
@@ -430,12 +430,7 @@ fn check_style() -> NamedJob {
 
 fn check_dependencies() -> NamedJob {
     fn install_cargo_machete() -> Step<Use> {
-        named::uses(
-            "taiki-e",
-            "install-action",
-            "02cc5f8ca9f2301050c0c099055816a41ee05507",
-        )
-        .add_with(("tool", "cargo-machete@0.7.0"))
+        steps::taiki_install_action("cargo-machete@0.7.0")
     }
 
     fn run_cargo_machete() -> Step<Run> {
@@ -797,7 +792,7 @@ pub(crate) fn check_scripts() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
             .add_step(run_shellcheck())
             .add_step(download_actionlint().id("get_actionlint"))

@@ -1,14 +1,14 @@
 pub mod row_chunk;
 
 use crate::{
-    DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig, PLAIN_TEXT,
-    RunnableCapture, RunnableTag, TextObject, TreeSitterOptions,
+    ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
+    PLAIN_TEXT, RunnableCapture, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
     row_chunk::RowChunks,
     syntax_map::{
-        MAX_CONTEXT_BYTES, SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures,
+        MAX_BYTES_TO_QUERY, SyntaxLayer, SyntaxMap, SyntaxMapCapture, SyntaxMapCaptures,
         SyntaxMapMatch, SyntaxMapMatches, SyntaxSnapshot, ToTreeSitterPoint,
     },
     task_context::RunnableRange,
@@ -27,6 +27,7 @@ use collections::{HashMap, HashSet};
 use encoding_rs::Encoding;
 use fs::MTime;
 use futures::channel::oneshot;
+use futures_lite::future::yield_now;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
     Task, TextStyle,
@@ -36,7 +37,6 @@ use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use settings::WorktreeId;
 use smallvec::SmallVec;
-use smol::future::yield_now;
 use std::{
     any::Any,
     borrow::Cow,
@@ -1579,16 +1579,21 @@ impl Buffer {
 
             let target_encoding = force_encoding.unwrap_or(current_encoding);
 
+            let bytes = load_bytes_task.await?;
+
+            anyhow::ensure!(
+                analyze_byte_content(&bytes) != ByteContent::Binary,
+                "Binary files are not supported"
+            );
+
             let is_unicode = target_encoding == encoding_rs::UTF_8
                 || target_encoding == encoding_rs::UTF_16LE
                 || target_encoding == encoding_rs::UTF_16BE;
 
             let (new_text, has_bom, encoding_used) = if force_encoding.is_some() && !is_unicode {
-                let bytes = load_bytes_task.await?;
                 let (cow, _had_errors) = target_encoding.decode_without_bom_handling(&bytes);
                 (cow.into_owned(), false, target_encoding)
             } else {
-                let bytes = load_bytes_task.await?;
                 let (cow, used_enc, _had_errors) = target_encoding.decode(&bytes);
 
                 let actual_has_bom = if used_enc == encoding_rs::UTF_8 {
@@ -3441,7 +3446,7 @@ impl BufferSnapshot {
             range.clone(),
             &self.text,
             TreeSitterOptions {
-                max_context_bytes: Some(MAX_CONTEXT_BYTES),
+                max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
                 max_start_depth: None,
             },
             |grammar| Some(&grammar.indents_config.as_ref()?.query),
@@ -3722,20 +3727,12 @@ impl BufferSnapshot {
 
     #[ztracing::instrument(skip_all)]
     fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures<'_>, Vec<HighlightMap>) {
-        let captures = self.syntax.captures_with_options(
-            range,
-            &self.text,
-            TreeSitterOptions {
-                max_context_bytes: Some(1024),
-                max_start_depth: None,
-            },
-            |grammar| {
-                grammar
-                    .highlights_config
-                    .as_ref()
-                    .map(|config| &config.query)
-            },
-        );
+        let captures = self.syntax.captures(range, &self.text, |grammar| {
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| &config.query)
+        });
         let highlight_maps = captures
             .grammars()
             .iter()
@@ -4628,7 +4625,7 @@ impl BufferSnapshot {
                 chunk_range.clone(),
                 &self.text,
                 TreeSitterOptions {
-                    max_context_bytes: Some(MAX_CONTEXT_BYTES),
+                    max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
                     max_start_depth: None,
                 },
                 |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),

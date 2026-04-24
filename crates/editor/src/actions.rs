@@ -849,6 +849,8 @@ actions!(
         ToggleIndentGuides,
         /// Toggles inlay hints display.
         ToggleInlayHints,
+        /// Toggles code lens display.
+        ToggleCodeLens,
         /// Toggles semantic highlights display.
         ToggleSemanticHighlights,
         /// Toggles inline values display.
@@ -905,6 +907,8 @@ actions!(
         WrapSelectionsInTag,
         /// Aligns selections from different rows into the same column
         AlignSelections,
+        /// Saves the current location to navigation history.
+        SaveLocation,
     ]
 );
 

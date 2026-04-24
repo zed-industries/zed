@@ -77,7 +77,8 @@ use language::{
     OffsetUtf16, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16,
     Toolchain, Transaction, Unclipped,
     language_settings::{
-        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, all_language_settings,
+        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, LineEndingSetting,
+        all_language_settings,
     },
     modeline, point_to_lsp,
     proto::{
@@ -1086,6 +1087,7 @@ impl LocalLspStore {
                     let mut cx = cx.clone();
                     async move {
                         this.update(&mut cx, |this, cx| {
+                            this.invalidate_code_lens();
                             cx.emit(LspStoreEvent::RefreshCodeLens);
                             this.downstream_client.as_ref().map(|(client, project_id)| {
                                 client.send(proto::RefreshCodeLens {
@@ -1178,7 +1180,7 @@ impl LocalLspStore {
                     async move {
                         let actions = params.actions.unwrap_or_default();
                         let message = params.message.clone();
-                        let (tx, rx) = smol::channel::bounded::<MessageActionItem>(1);
+                        let (tx, rx) = async_channel::bounded::<MessageActionItem>(1);
                         let level = match params.typ {
                             lsp::MessageType::ERROR => PromptLevel::Critical,
                             lsp::MessageType::WARNING => PromptLevel::Warning,
@@ -1224,7 +1226,7 @@ impl LocalLspStore {
                     let name = name.to_string();
                     let mut cx = cx.clone();
 
-                    let (tx, _) = smol::channel::bounded(1);
+                    let (tx, _) = async_channel::bounded(1);
                     let level = match params.typ {
                         lsp::MessageType::ERROR => PromptLevel::Critical,
                         lsp::MessageType::WARNING => PromptLevel::Warning,
@@ -1602,6 +1604,9 @@ impl LocalLspStore {
                     (adapters_and_servers, settings, request_timeout)
                 })
             })?;
+        let had_existing_line_endings = buffer
+            .handle
+            .read_with(cx, |buffer, _| buffer.max_point().row > 0);
 
         // handle whitespace formatting
         if settings.remove_trailing_whitespace_on_save {
@@ -1620,6 +1625,30 @@ impl LocalLspStore {
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.ensure_final_newline(cx);
             })?;
+        }
+
+        let line_ending_policy = match settings.line_ending {
+            LineEndingSetting::Detect => None,
+            LineEndingSetting::PreferLf => Some((LineEnding::Unix, true)),
+            LineEndingSetting::PreferCrlf => Some((LineEnding::Windows, true)),
+            LineEndingSetting::EnforceLf => Some((LineEnding::Unix, false)),
+            LineEndingSetting::EnforceCrlf => Some((LineEnding::Windows, false)),
+        };
+        if let Some((desired_line_ending, preserve_existing)) = line_ending_policy {
+            buffer.handle.update(cx, |buffer, cx| {
+                if buffer.line_ending() == desired_line_ending {
+                    return;
+                }
+                if preserve_existing && had_existing_line_endings {
+                    zlog::trace!(
+                        logger => "preserving existing line endings ({}) on save",
+                        buffer.line_ending().label()
+                    );
+                    return;
+                }
+                zlog::trace!(logger => "normalizing line endings to {}", desired_line_ending.label());
+                buffer.set_line_ending(desired_line_ending, cx);
+            });
         }
 
         // Formatter for `code_actions_on_format` that runs before
@@ -2986,7 +3015,6 @@ impl LocalLspStore {
         };
 
         let Ok(file_url) = lsp::Uri::from_file_path(old_path.as_path()) else {
-            debug_panic!("{old_path:?} is not parseable as an URI");
             return;
         };
         self.unregister_buffer_from_language_servers(buffer, &file_url, cx);
@@ -5544,20 +5572,20 @@ impl LspStore {
                     .await
                     .context("resolving a code action")?;
                 if let Some(edit) = action.lsp_action.edit()
-                    && (edit.changes.is_some() || edit.document_changes.is_some()) {
-                        return LocalLspStore::deserialize_workspace_edit(
-                            this.upgrade().context("no app present")?,
-                            edit.clone(),
-                            push_to_history,
-
-                            lang_server.clone(),
-                            cx,
-                        )
-                        .await;
-                    }
+                    && (edit.changes.is_some() || edit.document_changes.is_some())
+                {
+                    return LocalLspStore::deserialize_workspace_edit(
+                        this.upgrade().context("no app present")?,
+                        edit.clone(),
+                        push_to_history,
+                        lang_server.clone(),
+                        cx,
+                    )
+                    .await;
+                }
 
                 let Some(command) = action.lsp_action.command() else {
-                    return Ok(ProjectTransaction::default())
+                    return Ok(ProjectTransaction::default());
                 };
 
                 let server_capabilities = lang_server.capabilities();
@@ -5568,15 +5596,18 @@ impl LspStore {
                     .unwrap_or_default();
 
                 if !available_commands.contains(&command.command) {
-                    log::warn!("Cannot execute a command {} not listed in the language server capabilities", command.command);
-                    return Ok(ProjectTransaction::default())
+                    log::warn!(
+                        "Skipping executeCommand for {}, not listed in language server capabilities",
+                        command.command
+                    );
+                    return Ok(ProjectTransaction::default());
                 }
 
-                let request_timeout = cx.update(|app|
+                let request_timeout = cx.update(|app| {
                     ProjectSettings::get_global(app)
-                    .global_lsp_settings
-                    .get_request_timeout()
-                );
+                        .global_lsp_settings
+                        .get_request_timeout()
+                });
 
                 this.update(cx, |this, _| {
                     this.as_local_mut()
@@ -5586,12 +5617,16 @@ impl LspStore {
                 })?;
 
                 let _result = lang_server
-                    .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
-                        command: command.command.clone(),
-                        arguments: command.arguments.clone().unwrap_or_default(),
-                        ..lsp::ExecuteCommandParams::default()
-                    }, request_timeout)
-                    .await.into_response()
+                    .request::<lsp::request::ExecuteCommand>(
+                        lsp::ExecuteCommandParams {
+                            command: command.command.clone(),
+                            arguments: command.arguments.clone().unwrap_or_default(),
+                            ..lsp::ExecuteCommandParams::default()
+                        },
+                        request_timeout,
+                    )
+                    .await
+                    .into_response()
                     .context("execute command")?;
 
                 return this.update(cx, |this, _| {
@@ -6653,9 +6688,6 @@ impl LspStore {
             .into_response()
             .context("resolve completion")?;
 
-        // We must not use any data such as sortText, filterText, insertText and textEdit to edit `Completion` since they are not suppose change during resolve.
-        // Refer: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_completion
-
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
         if let CompletionSource::Lsp {
@@ -6674,6 +6706,40 @@ impl LspStore {
             );
             **lsp_completion = resolved_completion;
             *resolved = true;
+
+            // We must not use any data such as sortText, filterText, insertText and textEdit to edit `Completion` since they are not supposed to change during resolve.
+            // Refer: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_completion
+            //
+            // We still re-derive new_text here as a workaround for the specific
+            // VS Code TypeScript completion resolve flow that vtsls wraps:
+            // https://github.com/microsoft/vscode/blob/838b48504cd9a2338e2ca9e854da9cec990c4d57/extensions/typescript-language-features/src/languageFeatures/completions.ts#L218
+            //
+            // Some servers (e.g. vtsls with completeFunctionCalls) update
+            // insertText/textEdit during resolve to add snippet content like
+            // function call parentheses.
+            //
+            // vtsls resolve flow:
+            //   https://github.com/yioneko/vtsls/blob/fecf52324a30e72dfab1537047556076720c1a5f/packages/service/src/service/completion.ts#L228-L244
+            // vtsls converter (isSnippet / insertTextFormat):
+            //   https://github.com/yioneko/vtsls/blob/28e075105d7711d635ebf8aefc971bb8e1d2fe65/packages/service/src/utils/converter.ts#L149-L200
+            //
+            // NB: We only update the text content here, NOT the replace/insert
+            // ranges on `Completion`. Those ranges were converted to anchors from
+            // the original response and stay valid across buffer edits. The LSP
+            // ranges in the resolved text_edit are stale when completions are
+            // cached across keystrokes (see #34094).
+            let resolved_new_text = lsp_completion
+                .text_edit
+                .as_ref()
+                .map(|edit| match edit {
+                    lsp::CompletionTextEdit::Edit(e) => e.new_text.clone(),
+                    lsp::CompletionTextEdit::InsertAndReplace(e) => e.new_text.clone(),
+                })
+                .or_else(|| lsp_completion.insert_text.clone());
+            if let Some(mut resolved_new_text) = resolved_new_text {
+                LineEnding::normalize(&mut resolved_new_text);
+                completion.new_text = resolved_new_text;
+            }
         }
         Ok(())
     }
@@ -11918,12 +11984,17 @@ impl LspStore {
         &self,
         id: LanguageServerId,
     ) -> Option<Arc<CachedLspAdapter>> {
-        self.as_local()
-            .and_then(|local| local.language_servers.get(&id))
-            .and_then(|language_server_state| match language_server_state {
-                LanguageServerState::Running { adapter, .. } => Some(adapter.clone()),
-                _ => None,
-            })
+        if let Some(local) = self.as_local()
+            && let Some(LanguageServerState::Running { adapter, .. }) =
+                local.language_servers.get(&id)
+        {
+            return Some(adapter.clone());
+        }
+        // In remote (SSH/collab) mode there are no local `language_servers`, but
+        // `language_server_statuses` is kept in sync with the upstream and carries each
+        // server's registered name, which is enough to look the adapter up in the registry.
+        let name = &self.language_server_statuses.get(&id)?.name;
+        self.languages.adapter_for_name(name)
     }
 
     pub(super) fn update_local_worktree_language_servers(
@@ -13907,7 +13978,7 @@ pub struct LanguageServerPromptRequest {
     pub message: String,
     pub actions: Vec<MessageActionItem>,
     pub lsp_name: String,
-    pub(crate) response_channel: smol::channel::Sender<MessageActionItem>,
+    pub(crate) response_channel: async_channel::Sender<MessageActionItem>,
 }
 
 impl LanguageServerPromptRequest {
@@ -13916,7 +13987,7 @@ impl LanguageServerPromptRequest {
         message: String,
         actions: Vec<MessageActionItem>,
         lsp_name: String,
-        response_channel: smol::channel::Sender<MessageActionItem>,
+        response_channel: async_channel::Sender<MessageActionItem>,
     ) -> Self {
         let id = NEXT_PROMPT_REQUEST_ID.fetch_add(1, atomic::Ordering::AcqRel);
         LanguageServerPromptRequest {
@@ -13943,7 +14014,7 @@ impl LanguageServerPromptRequest {
         actions: Vec<MessageActionItem>,
         lsp_name: String,
     ) -> Self {
-        let (tx, _rx) = smol::channel::unbounded();
+        let (tx, _rx) = async_channel::unbounded();
         LanguageServerPromptRequest::new(level, message, actions, lsp_name, tx)
     }
 }

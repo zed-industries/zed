@@ -2,14 +2,16 @@ use std::path::Path;
 
 use crate::{FakeFs, FakeFsEntry, Fs, RemoveOptions, RenameOptions};
 use anyhow::{Context as _, Result, bail};
+use async_channel::Sender;
 use collections::{HashMap, HashSet};
+use futures::FutureExt as _;
 use futures::future::{self, BoxFuture, join_all};
 use git::repository::GitCommitTemplate;
 use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions,
+        AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
         GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
         Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
@@ -24,7 +26,6 @@ use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
-use smol::{channel::Sender, future::FutureExt as _};
 use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
@@ -48,9 +49,15 @@ pub struct FakeCommitSnapshot {
 }
 
 #[derive(Debug, Clone)]
+pub enum FakeCommitDataEntry {
+    Success(CommitData),
+    Fail(CommitData),
+}
+
+#[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
     pub commit_history: Vec<FakeCommitSnapshot>,
-    pub event_emitter: smol::channel::Sender<PathBuf>,
+    pub event_emitter: async_channel::Sender<PathBuf>,
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
     pub head_contents: HashMap<RepoPath, String>,
     pub index_contents: HashMap<RepoPath, String>,
@@ -67,11 +74,12 @@ pub struct FakeGitRepositoryState {
     pub simulated_graph_error: Option<String>,
     pub refs: HashMap<String, String>,
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
+    pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
     pub stash_entries: GitStash,
 }
 
 impl FakeGitRepositoryState {
-    pub fn new(event_emitter: smol::channel::Sender<PathBuf>) -> Self {
+    pub fn new(event_emitter: async_channel::Sender<PathBuf>) -> Self {
         FakeGitRepositoryState {
             event_emitter,
             head_contents: Default::default(),
@@ -88,6 +96,7 @@ impl FakeGitRepositoryState {
             oids: Default::default(),
             remotes: HashMap::default(),
             graph_commits: Vec::new(),
+            commit_data: Default::default(),
             commit_history: Vec::new(),
             stash_entries: Default::default(),
         }
@@ -188,7 +197,7 @@ impl GitRepository for FakeGitRepository {
         _commit: String,
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::CommitDiff>> {
-        unimplemented!()
+        async { Ok(git::repository::CommitDiff { files: Vec::new() }) }.boxed()
     }
 
     fn set_index_text(
@@ -903,25 +912,6 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn file_history(&self, path: RepoPath) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
-        self.file_history_paginated(path, 0, None)
-    }
-
-    fn file_history_paginated(
-        &self,
-        path: RepoPath,
-        _skip: usize,
-        _limit: Option<usize>,
-    ) -> BoxFuture<'_, Result<git::repository::FileHistory>> {
-        async move {
-            Ok(git::repository::FileHistory {
-                entries: Vec::new(),
-                path,
-            })
-        }
-        .boxed()
-    }
-
     fn stage_paths(
         &self,
         paths: Vec<RepoPath>,
@@ -1452,7 +1442,24 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn commit_data_reader(&self) -> Result<CommitDataReader> {
-        anyhow::bail!("commit_data_reader not supported for FakeGitRepository")
+        let fs = self.fs.clone();
+        let dot_git_path = self.dot_git_path.clone();
+        let executor = self.executor.clone();
+        Ok(CommitDataReader::for_test(executor, move |sha| {
+            fs.with_git_state(&dot_git_path, false, |state| {
+                let commit = state
+                    .commit_data
+                    .get(&sha)
+                    .context(format!("graph commit data not found for {sha}"))?;
+
+                match commit {
+                    FakeCommitDataEntry::Success(data) => Ok(data.clone()),
+                    FakeCommitDataEntry::Fail(_) => {
+                        bail!("simulated commit data read failure for {sha}")
+                    }
+                }
+            })?
+        }))
     }
 
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {

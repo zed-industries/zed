@@ -2,7 +2,7 @@ mod worktree_settings;
 
 use anyhow::Result;
 use encoding_rs;
-use fs::{FakeFs, Fs, RealFs, RemoveOptions};
+use fs::{FakeFs, Fs, PathEventKind, RealFs, RemoveOptions};
 use git::{DOT_GIT, GITIGNORE, REPO_EXCLUDE};
 use gpui::{AppContext as _, BackgroundExecutor, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
@@ -3216,6 +3216,126 @@ async fn test_linked_worktree_event_in_unregistered_common_git_dir_does_not_pani
     fs.emit_fs_event(path!("/main_repo/.git"), Some(fs::PathEventKind::Rescan));
     cx.run_until_parked();
     tree.flush_fs_events(cx).await;
+}
+
+#[gpui::test]
+async fn test_dot_git_dir_event_does_not_suppress_children(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // On Windows, modifying a file inside .git causes ReadDirectoryChangesW to also emit
+    // a Modify event for the .git directory itself (because its last-write timestamp changes).
+    // When these events arrive in the same batch, a naive ancestor-based dedup would collapse
+    // all child events into the .git directory event, losing the information about which
+    // specific files changed. This test verifies that the git-related event processing happens
+    // before the dedup, so that meaningful .git child events still trigger UpdatedGitRepositories.
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    let project_dir = Path::new(path!("/project"));
+    fs.insert_tree(
+        project_dir,
+        json!({
+            ".git": {},
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        project_dir,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let dot_git = project_dir.join(DOT_GIT);
+
+    // Case 1: Events for .git AND .git/index.lock should NOT emit UpdatedGitRepositories
+    // (index.lock is in the skipped files list)
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
+        fs.emit_fs_event(dot_git.join("index.lock"), Some(PathEventKind::Created));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            !got_git_update,
+            "should NOT emit UpdatedGitRepositories when .git batch only contains index.lock"
+        );
+    }
+
+    // Case 2: Event for just .git (bare directory event) should NOT emit UpdatedGitRepositories
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            !got_git_update,
+            "should NOT emit UpdatedGitRepositories for a bare .git directory event"
+        );
+    }
+
+    // Case 3: Events for .git AND .git/index should emit UpdatedGitRepositories
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
+        fs.emit_fs_event(dot_git.join("index"), Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            got_git_update,
+            "should emit UpdatedGitRepositories when .git batch contains index"
+        );
+    }
+
+    // Case 4: Event for .git/index only should emit UpdatedGitRepositories
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.join("index"), Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            got_git_update,
+            "should emit UpdatedGitRepositories for a .git/index event"
+        );
+    }
+}
+
+fn drain_git_repo_updates(events: &mut futures::channel::mpsc::UnboundedReceiver<Event>) -> bool {
+    let mut found = false;
+    while let Ok(event) = events.try_recv() {
+        if matches!(event, Event::UpdatedGitRepositories(_)) {
+            found = true;
+        }
+    }
+    found
 }
 
 fn init_test(cx: &mut gpui::TestAppContext) {

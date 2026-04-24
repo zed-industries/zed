@@ -144,6 +144,15 @@ pub enum FoldStatus {
     Foldable,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NavigationOverlayKey(TypeId);
+
+impl NavigationOverlayKey {
+    pub const fn unique<T: 'static>() -> Self {
+        Self(TypeId::of::<T>())
+    }
+}
+
 /// Keys for tagging text highlights.
 ///
 /// Note the order is important as it determines the priority of the highlights, lower means higher priority
@@ -168,6 +177,7 @@ pub enum HighlightKey {
     InlineAssist,
     InputComposition,
     MatchingBracket,
+    NavigationOverlay(NavigationOverlayKey),
     PendingInput,
     ProjectSearchView,
     Rename,
@@ -2258,23 +2268,38 @@ impl DisplaySnapshot {
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
             let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
-            let max_point = self.buffer_snapshot().max_point();
+            let snapshot = self.buffer_snapshot();
+            let max_point = snapshot.max_point();
             let mut closing_row = None;
+
+            // End byte of the smallest syntactic node enclosing `buffer_row`.
+            // Used to tell standalone top-level comments (which terminate the
+            // fold) apart from unindented content inside a multi-line string
+            // or block comment belonging to the folded node (which does not).
+            let foldable_node_end = {
+                let row_start = Point::new(buffer_row.0, 0);
+                let row_end = Point::new(buffer_row.0, snapshot.line_len(buffer_row));
+                snapshot
+                    .syntax_ancestor(row_start..row_end)
+                    .map(|(_, range)| range.end)
+            };
 
             for row in (buffer_row.0 + 1)..=max_point.row {
                 let line_indent = self.line_indent_for_buffer_row(MultiBufferRow(row));
                 if !line_indent.is_line_blank()
                     && line_indent.raw_len() <= start_line_indent.raw_len()
                 {
-                    if self
-                        .buffer_snapshot()
+                    let in_string_or_comment_scope = snapshot
                         .language_scope_at(Point::new(row, 0))
                         .is_some_and(|scope| {
                             matches!(
                                 scope.override_name(),
                                 Some("string") | Some("comment") | Some("comment.inclusive")
                             )
-                        })
+                        });
+                    if in_string_or_comment_scope
+                        && let Some(end) = foldable_node_end
+                        && Point::new(row, 0).to_offset(snapshot) < end
                     {
                         continue;
                     }
@@ -2557,9 +2582,9 @@ pub mod tests {
     };
     use lsp::LanguageServerId;
 
+    use futures::stream::StreamExt;
     use rand::{Rng, prelude::*};
     use settings::{SettingsContent, SettingsStore};
-    use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use text::PointUtf16;
     use theme::{LoadThemes, SyntaxTheme};

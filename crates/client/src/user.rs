@@ -220,7 +220,7 @@ impl UserStore {
                 let weak = Arc::downgrade(&client);
                 drop(client);
                 while let Some(status) = status.next().await {
-                    // if the client is dropped, the app is shutting down.
+                    // If the client is dropped, the app is shutting down.
                     let Some(client) = weak.upgrade() else {
                         return Ok(());
                     };
@@ -738,6 +738,21 @@ impl UserStore {
 
         self.configuration_by_organization
             .get(&current_organization.id)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_current_organization_configuration_for_test(
+        &mut self,
+        organization: Arc<Organization>,
+        configuration: OrganizationConfiguration,
+        cx: &mut Context<Self>,
+    ) {
+        self.current_organization = Some(organization.clone());
+        self.organizations = vec![organization.clone()];
+        self.configuration_by_organization
+            .insert(organization.id.clone(), configuration);
+        cx.emit(Event::OrganizationChanged);
+        cx.notify();
     }
 
     pub fn plan(&self) -> Option<Plan> {

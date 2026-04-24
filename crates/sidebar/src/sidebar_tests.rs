@@ -6142,6 +6142,45 @@ async fn test_archive_thread_keeps_metadata_but_hides_from_sidebar(cx: &mut Test
 }
 
 #[gpui::test]
+async fn test_archive_thread_drops_retained_conversation_view(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/project-a", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    cx.run_until_parked();
+
+    let connection = acp_thread::StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done".into()),
+    )]);
+    open_thread_with_connection(&panel, connection, cx);
+    send_message(&panel, cx);
+    let session_id = active_session_id(&panel, cx);
+    let thread_id = active_thread_id(&panel, cx);
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _| {
+        assert!(
+            is_active_session(sidebar, &session_id),
+            "expected the newly created thread to be active before archiving",
+        );
+    });
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.archive_thread(&session_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _| {
+        assert!(
+            !panel.is_retained_thread(&thread_id),
+            "archiving a thread must drop its ConversationView from retained_threads, \
+             but the archived thread id {thread_id:?} is still retained",
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
     // Tests two archive scenarios:
     // 1. Archiving a thread in a non-active workspace leaves active_entry

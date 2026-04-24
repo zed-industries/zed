@@ -249,65 +249,12 @@ impl EditorElement {
         register_action(editor, window, Editor::select_page_down);
         register_action(editor, window, Editor::select_page_up);
         register_action(editor, window, Editor::cancel);
-        register_action(editor, window, Editor::newline);
-        register_action(editor, window, Editor::newline_above);
-        register_action(editor, window, Editor::newline_below);
-        register_action(editor, window, Editor::backspace);
         register_action(editor, window, Editor::blame_hover);
-        register_action(editor, window, Editor::delete);
-        register_action(editor, window, Editor::tab);
         register_action(editor, window, Editor::next_snippet_tabstop);
         register_action(editor, window, Editor::previous_snippet_tabstop);
-        register_action(editor, window, Editor::backtab);
-        register_action(editor, window, Editor::indent);
-        register_action(editor, window, Editor::outdent);
-        register_action(editor, window, Editor::autoindent);
-        register_action(editor, window, Editor::delete_line);
-        register_action(editor, window, Editor::join_lines);
-        register_action(editor, window, Editor::sort_lines_by_length);
-        register_action(editor, window, Editor::sort_lines_case_sensitive);
-        register_action(editor, window, Editor::sort_lines_case_insensitive);
-        register_action(editor, window, Editor::reverse_lines);
-        register_action(editor, window, Editor::shuffle_lines);
-        register_action(editor, window, Editor::rotate_selections_forward);
-        register_action(editor, window, Editor::rotate_selections_backward);
-        register_action(editor, window, Editor::convert_indentation_to_spaces);
-        register_action(editor, window, Editor::convert_indentation_to_tabs);
-        register_action(editor, window, Editor::convert_to_upper_case);
-        register_action(editor, window, Editor::convert_to_lower_case);
-        register_action(editor, window, Editor::convert_to_title_case);
-        register_action(editor, window, Editor::convert_to_snake_case);
-        register_action(editor, window, Editor::convert_to_kebab_case);
-        register_action(editor, window, Editor::convert_to_upper_camel_case);
-        register_action(editor, window, Editor::convert_to_lower_camel_case);
-        register_action(editor, window, Editor::convert_to_opposite_case);
-        register_action(editor, window, Editor::convert_to_sentence_case);
-        register_action(editor, window, Editor::toggle_case);
-        register_action(editor, window, Editor::convert_to_rot13);
-        register_action(editor, window, Editor::convert_to_rot47);
-        register_action(editor, window, Editor::delete_to_previous_word_start);
-        register_action(editor, window, Editor::delete_to_previous_subword_start);
-        register_action(editor, window, Editor::delete_to_next_word_end);
-        register_action(editor, window, Editor::delete_to_next_subword_end);
-        register_action(editor, window, Editor::delete_to_beginning_of_line);
-        register_action(editor, window, Editor::delete_to_end_of_line);
-        register_action(editor, window, Editor::cut_to_end_of_line);
-        register_action(editor, window, Editor::duplicate_line_up);
-        register_action(editor, window, Editor::duplicate_line_down);
-        register_action(editor, window, Editor::duplicate_selection);
-        register_action(editor, window, Editor::move_line_up);
-        register_action(editor, window, Editor::move_line_down);
-        register_action(editor, window, Editor::transpose);
-        register_action(editor, window, Editor::rewrap);
-        register_action(editor, window, Editor::cut);
-        register_action(editor, window, Editor::kill_ring_cut);
-        register_action(editor, window, Editor::kill_ring_yank);
         register_action(editor, window, Editor::copy);
         register_action(editor, window, Editor::copy_and_trim);
         register_action(editor, window, Editor::diff_clipboard_with_selection);
-        register_action(editor, window, Editor::paste);
-        register_action(editor, window, Editor::undo);
-        register_action(editor, window, Editor::redo);
         register_action(editor, window, Editor::move_page_up);
         register_action(editor, window, Editor::move_page_down);
         register_action(editor, window, Editor::next_screen);
@@ -324,16 +271,6 @@ impl EditorElement {
         register_action(editor, window, |editor, _: &HalfPageDown, window, cx| {
             editor.scroll_screen(&ScrollAmount::Page(0.5), window, cx)
         });
-        register_action(
-            editor,
-            window,
-            |editor, HandleInput(text): &HandleInput, window, cx| {
-                if text.is_empty() {
-                    return;
-                }
-                editor.handle_input(text, window, cx);
-            },
-        );
         register_action(editor, window, |editor, _: &HalfPageUp, window, cx| {
             editor.scroll_screen(&ScrollAmount::Page(-0.5), window, cx)
         });
@@ -396,8 +333,6 @@ impl EditorElement {
         register_action(editor, window, |editor, action, window, cx| {
             editor.find_previous_match(action, window, cx).log_err();
         });
-        register_action(editor, window, Editor::toggle_comments);
-        register_action(editor, window, Editor::toggle_block_comments);
         register_action(editor, window, Editor::select_larger_syntax_node);
         register_action(editor, window, Editor::select_smaller_syntax_node);
         register_action(editor, window, Editor::select_next_syntax_node);
@@ -408,7 +343,6 @@ impl EditorElement {
             Editor::select_to_start_of_larger_syntax_node,
         );
         register_action(editor, window, Editor::select_to_end_of_larger_syntax_node);
-        register_action(editor, window, Editor::unwrap_syntax_node);
         register_action(editor, window, Editor::move_to_start_of_larger_syntax_node);
         register_action(editor, window, Editor::move_to_end_of_larger_syntax_node);
         register_action(editor, window, Editor::select_enclosing_symbol);
@@ -490,6 +424,7 @@ impl EditorElement {
         register_action(editor, window, Editor::unfold_all);
         register_action(editor, window, Editor::fold_selected_ranges);
         register_action(editor, window, Editor::set_mark);
+        register_action(editor, window, Editor::save_location);
         register_action(editor, window, Editor::swap_selection_ends);
         register_action(editor, window, Editor::show_completions);
         register_action(editor, window, Editor::show_word_completions);
@@ -502,6 +437,7 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_relative_line_numbers);
         register_action(editor, window, Editor::toggle_indent_guides);
         register_action(editor, window, Editor::toggle_inlay_hints);
+        register_action(editor, window, Editor::toggle_code_lens_action);
         register_action(editor, window, Editor::toggle_semantic_highlights);
         register_action(editor, window, Editor::toggle_edit_predictions);
         if editor.read(cx).diagnostics_enabled() {
@@ -544,77 +480,11 @@ impl EditorElement {
         register_action(editor, window, Editor::go_to_next_reference);
         register_action(editor, window, Editor::go_to_previous_symbol);
         register_action(editor, window, Editor::go_to_next_symbol);
-
-        register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.format(action, window, cx) {
-                editor.detach_and_notify_err(task, window, cx);
-            } else {
-                cx.propagate();
-            }
-        });
-        if editor.read(cx).can_format_selections(cx) {
-            register_action(editor, window, |editor, action, window, cx| {
-                if let Some(task) = editor.format_selections(action, window, cx) {
-                    editor.detach_and_notify_err(task, window, cx);
-                } else {
-                    cx.propagate();
-                }
-            });
-        }
-        register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.organize_imports(action, window, cx) {
-                editor.detach_and_notify_err(task, window, cx);
-            } else {
-                cx.propagate();
-            }
-        });
         register_action(editor, window, Editor::restart_language_server);
         register_action(editor, window, Editor::stop_language_server);
         register_action(editor, window, Editor::show_character_palette);
         register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.confirm_completion(action, window, cx) {
-                editor.detach_and_notify_err(task, window, cx);
-            } else {
-                cx.propagate();
-            }
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.confirm_completion_replace(action, window, cx) {
-                editor.detach_and_notify_err(task, window, cx);
-            } else {
-                cx.propagate();
-            }
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.confirm_completion_insert(action, window, cx) {
-                editor.detach_and_notify_err(task, window, cx);
-            } else {
-                cx.propagate();
-            }
-        });
-        register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.compose_completion(action, window, cx) {
-                editor.detach_and_notify_err(task, window, cx);
-            } else {
-                cx.propagate();
-            }
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.confirm_code_action(action, window, cx) {
-                editor.detach_and_notify_err(task, window, cx);
-            } else {
-                cx.propagate();
-            }
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.rename(action, window, cx) {
-                editor.detach_and_notify_err(task, window, cx);
-            } else {
-                cx.propagate();
-            }
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.confirm_rename(action, window, cx) {
                 editor.detach_and_notify_err(task, window, cx);
             } else {
                 cx.propagate();
@@ -636,21 +506,8 @@ impl EditorElement {
         register_action(editor, window, Editor::context_menu_next);
         register_action(editor, window, Editor::context_menu_last);
         register_action(editor, window, Editor::display_cursor_names);
-        register_action(editor, window, Editor::unique_lines_case_insensitive);
-        register_action(editor, window, Editor::unique_lines_case_sensitive);
-        register_action(editor, window, Editor::accept_next_word_edit_prediction);
-        register_action(editor, window, Editor::accept_next_line_edit_prediction);
-        register_action(editor, window, Editor::accept_edit_prediction);
-        register_action(editor, window, Editor::restore_file);
-        register_action(editor, window, Editor::git_restore);
-        register_action(editor, window, Editor::restore_and_next);
-        register_action(editor, window, Editor::apply_all_diff_hunks);
-        register_action(editor, window, Editor::apply_selected_diff_hunks);
         register_action(editor, window, Editor::open_active_item_in_terminal);
-        register_action(editor, window, Editor::reload_file);
         register_action(editor, window, Editor::spawn_nearest_task);
-        register_action(editor, window, Editor::insert_uuid_v4);
-        register_action(editor, window, Editor::insert_uuid_v7);
         register_action(editor, window, Editor::open_selections_in_multibuffer);
         register_action(editor, window, Editor::toggle_bookmark);
         register_action(editor, window, Editor::go_to_next_bookmark);
@@ -660,9 +517,156 @@ impl EditorElement {
         register_action(editor, window, Editor::enable_breakpoint);
         register_action(editor, window, Editor::disable_breakpoint);
         register_action(editor, window, Editor::toggle_read_only);
-        register_action(editor, window, Editor::align_selections);
-        if editor.read(cx).enable_wrap_selections_in_tag(cx) {
-            register_action(editor, window, Editor::wrap_selections_in_tag);
+        register_action(editor, window, Editor::reload_file);
+
+        if !editor.read(cx).read_only(cx) {
+            register_action(editor, window, Editor::newline);
+            register_action(editor, window, Editor::newline_above);
+            register_action(editor, window, Editor::newline_below);
+            register_action(editor, window, Editor::backspace);
+            register_action(editor, window, Editor::delete);
+            register_action(editor, window, Editor::tab);
+            register_action(editor, window, Editor::backtab);
+            register_action(editor, window, Editor::indent);
+            register_action(editor, window, Editor::outdent);
+            register_action(editor, window, Editor::autoindent);
+            register_action(editor, window, Editor::delete_line);
+            register_action(editor, window, Editor::join_lines);
+            register_action(editor, window, Editor::sort_lines_by_length);
+            register_action(editor, window, Editor::sort_lines_case_sensitive);
+            register_action(editor, window, Editor::sort_lines_case_insensitive);
+            register_action(editor, window, Editor::unique_lines_case_insensitive);
+            register_action(editor, window, Editor::unique_lines_case_sensitive);
+            register_action(editor, window, Editor::reverse_lines);
+            register_action(editor, window, Editor::shuffle_lines);
+            register_action(editor, window, Editor::rotate_selections_forward);
+            register_action(editor, window, Editor::rotate_selections_backward);
+            register_action(editor, window, Editor::convert_indentation_to_spaces);
+            register_action(editor, window, Editor::convert_indentation_to_tabs);
+            register_action(editor, window, Editor::convert_to_upper_case);
+            register_action(editor, window, Editor::convert_to_lower_case);
+            register_action(editor, window, Editor::convert_to_title_case);
+            register_action(editor, window, Editor::convert_to_snake_case);
+            register_action(editor, window, Editor::convert_to_kebab_case);
+            register_action(editor, window, Editor::convert_to_upper_camel_case);
+            register_action(editor, window, Editor::convert_to_lower_camel_case);
+            register_action(editor, window, Editor::convert_to_opposite_case);
+            register_action(editor, window, Editor::convert_to_sentence_case);
+            register_action(editor, window, Editor::toggle_case);
+            register_action(editor, window, Editor::convert_to_rot13);
+            register_action(editor, window, Editor::convert_to_rot47);
+            register_action(editor, window, Editor::delete_to_previous_word_start);
+            register_action(editor, window, Editor::delete_to_previous_subword_start);
+            register_action(editor, window, Editor::delete_to_next_word_end);
+            register_action(editor, window, Editor::delete_to_next_subword_end);
+            register_action(editor, window, Editor::delete_to_beginning_of_line);
+            register_action(editor, window, Editor::delete_to_end_of_line);
+            register_action(editor, window, Editor::cut_to_end_of_line);
+            register_action(editor, window, Editor::duplicate_line_up);
+            register_action(editor, window, Editor::duplicate_line_down);
+            register_action(editor, window, Editor::duplicate_selection);
+            register_action(editor, window, Editor::move_line_up);
+            register_action(editor, window, Editor::move_line_down);
+            register_action(editor, window, Editor::transpose);
+            register_action(editor, window, Editor::rewrap);
+            register_action(editor, window, Editor::cut);
+            register_action(editor, window, Editor::kill_ring_cut);
+            register_action(editor, window, Editor::kill_ring_yank);
+            register_action(editor, window, Editor::paste);
+            register_action(editor, window, Editor::undo);
+            register_action(editor, window, Editor::redo);
+            register_action(editor, window, Editor::toggle_comments);
+            register_action(editor, window, Editor::toggle_block_comments);
+            register_action(editor, window, Editor::unwrap_syntax_node);
+            register_action(editor, window, Editor::accept_next_word_edit_prediction);
+            register_action(editor, window, Editor::accept_next_line_edit_prediction);
+            register_action(editor, window, Editor::accept_edit_prediction);
+            register_action(editor, window, Editor::restore_file);
+            register_action(editor, window, Editor::git_restore);
+            register_action(editor, window, Editor::restore_and_next);
+            register_action(editor, window, Editor::apply_all_diff_hunks);
+            register_action(editor, window, Editor::apply_selected_diff_hunks);
+            register_action(editor, window, Editor::insert_uuid_v4);
+            register_action(editor, window, Editor::insert_uuid_v7);
+            register_action(editor, window, Editor::align_selections);
+            if editor.read(cx).enable_wrap_selections_in_tag(cx) {
+                register_action(editor, window, Editor::wrap_selections_in_tag);
+            }
+            register_action(
+                editor,
+                window,
+                |editor, HandleInput(text): &HandleInput, window, cx| {
+                    if text.is_empty() {
+                        return;
+                    }
+                    editor.handle_input(text, window, cx);
+                },
+            );
+            register_action(editor, window, |editor, action, window, cx| {
+                if let Some(task) = editor.format(action, window, cx) {
+                    editor.detach_and_notify_err(task, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            });
+            if editor.read(cx).can_format_selections(cx) {
+                register_action(editor, window, |editor, action, window, cx| {
+                    if let Some(task) = editor.format_selections(action, window, cx) {
+                        editor.detach_and_notify_err(task, window, cx);
+                    } else {
+                        cx.propagate();
+                    }
+                });
+            }
+            register_action(editor, window, |editor, action, window, cx| {
+                if let Some(task) = editor.organize_imports(action, window, cx) {
+                    editor.detach_and_notify_err(task, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            });
+            register_action(editor, window, |editor, action, window, cx| {
+                if let Some(task) = editor.confirm_completion(action, window, cx) {
+                    editor.detach_and_notify_err(task, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            });
+            register_action(editor, window, |editor, action, window, cx| {
+                if let Some(task) = editor.confirm_completion_replace(action, window, cx) {
+                    editor.detach_and_notify_err(task, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            });
+            register_action(editor, window, |editor, action, window, cx| {
+                if let Some(task) = editor.confirm_completion_insert(action, window, cx) {
+                    editor.detach_and_notify_err(task, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            });
+            register_action(editor, window, |editor, action, window, cx| {
+                if let Some(task) = editor.confirm_code_action(action, window, cx) {
+                    editor.detach_and_notify_err(task, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            });
+            register_action(editor, window, |editor, action, window, cx| {
+                if let Some(task) = editor.rename(action, window, cx) {
+                    editor.detach_and_notify_err(task, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            });
+            register_action(editor, window, |editor, action, window, cx| {
+                if let Some(task) = editor.confirm_rename(action, window, cx) {
+                    editor.detach_and_notify_err(task, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            });
         }
     }
 
@@ -894,7 +898,8 @@ impl EditorElement {
             let hitbox = &position_map.gutter_hitbox;
 
             if event.position.x <= hitbox.bounds.right() - gutter_right_padding
-                && editor.collaboration_hub.is_none()
+                // Don't show the gutter_context_menu in collab notes
+                && editor.project.is_some()
             {
                 let point_for_position = position_map.point_for_position(event.position);
                 editor.set_gutter_context_menu(
@@ -1393,7 +1398,7 @@ impl EditorElement {
             indicator.is_active && start_row == valid_point.row()
         });
 
-        let breakpoint_indicator = if gutter_hovered
+        let gutter_hover_button = if gutter_hovered
             && !is_on_diff_review_button_row
             && split_side != Some(SplitSide::Left)
         {
@@ -1438,13 +1443,16 @@ impl EditorElement {
                 editor.gutter_hover_button.1 = None;
                 None
             }
+        } else if editor.has_mouse_context_menu() {
+            editor.gutter_hover_button.1 = None;
+            editor.gutter_hover_button.0
         } else {
             editor.gutter_hover_button.1 = None;
             None
         };
 
-        if &breakpoint_indicator != &editor.gutter_hover_button.0 {
-            editor.gutter_hover_button.0 = breakpoint_indicator;
+        if &gutter_hover_button != &editor.gutter_hover_button.0 {
+            editor.gutter_hover_button.0 = gutter_hover_button;
             cx.notify();
         }
 
@@ -1953,6 +1961,106 @@ impl EditorElement {
         cursor_layouts
     }
 
+    fn layout_navigation_overlays(
+        &self,
+        snapshot: &EditorSnapshot,
+        visible_display_row_range: Range<DisplayRow>,
+        line_layouts: &[LineWithInvisibles],
+        text_hitbox: &Hitbox,
+        content_origin: gpui::Point<Pixels>,
+        scroll_position: gpui::Point<ScrollOffset>,
+        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+        line_height: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<NavigationOverlayPaintCommand> {
+        let mut overlay_sets = self
+            .editor
+            .read(cx)
+            .navigation_overlay_sets()
+            .iter()
+            .map(|(key, overlays)| (*key, overlays.clone()))
+            .collect::<Vec<_>>();
+        if overlay_sets.is_empty() {
+            return Vec::new();
+        }
+        overlay_sets.sort_by_key(|(key, _)| *key);
+
+        let layout_context = NavigationOverlayLayoutContext {
+            display_snapshot: &snapshot.display_snapshot,
+            visible_display_row_range: &visible_display_row_range,
+            line_layouts,
+            text_align: self.style.text.text_align,
+            content_width: text_hitbox.size.width,
+            content_origin,
+            scroll_position,
+            scroll_pixel_position,
+            line_height,
+            editor_font: self.style.text.font(),
+            editor_font_size: self.style.text.font_size.to_pixels(window.rem_size()),
+        };
+        let mut navigation_overlay_paint_commands = Vec::new();
+
+        for (_, overlays) in overlay_sets {
+            for overlay in overlays.as_ref() {
+                Self::layout_navigation_label(
+                    overlay,
+                    &layout_context,
+                    window,
+                    cx,
+                    &mut navigation_overlay_paint_commands,
+                );
+            }
+        }
+
+        navigation_overlay_paint_commands
+    }
+
+    fn layout_navigation_label(
+        overlay: &crate::NavigationTargetOverlay,
+        context: &NavigationOverlayLayoutContext<'_>,
+        window: &mut Window,
+        cx: &mut App,
+        paint_commands: &mut Vec<NavigationOverlayPaintCommand>,
+    ) {
+        let label = &overlay.label;
+        let label_display_point = overlay
+            .target_range
+            .start
+            .to_display_point(context.display_snapshot);
+        let label_row = label_display_point.row();
+        if !context.visible_display_row_range.contains(&label_row) {
+            return;
+        }
+
+        let row_index = label_row.minus(context.visible_display_row_range.start) as usize;
+        let row_layout = &context.line_layouts[row_index];
+        let label_column = label_display_point.column().min(row_layout.len as u32) as usize;
+        let label_x = row_layout.x_for_index(label_column)
+            + row_layout.alignment_offset(context.text_align, context.content_width)
+            - context.scroll_pixel_position.x.into()
+            + label.x_offset;
+        let label_y = ((label_row.as_f64() - context.scroll_position.y)
+            * ScrollPixelOffset::from(context.line_height))
+        .into();
+        let label_text_size = (context.editor_font_size * label.scale_factor.max(0.0)).max(px(1.0));
+        let origin = context.content_origin + point(label_x, label_y);
+
+        let mut element = div()
+            .block_mouse_except_scroll()
+            .font(context.editor_font.clone())
+            .text_size(label_text_size)
+            .text_color(label.text_color)
+            .line_height(context.line_height)
+            .child(label.text.clone())
+            .into_any_element();
+        element.prepaint_as_root(origin, AvailableSpace::min_size(), window, cx);
+
+        paint_commands.push(NavigationOverlayPaintCommand::Label(
+            NavigationLabelLayout { element, origin },
+        ));
+    }
+
     fn layout_scrollbars(
         &self,
         snapshot: &EditorSnapshot,
@@ -2229,7 +2337,8 @@ impl EditorElement {
         line_height: Pixels,
         gutter_dimensions: &GutterDimensions,
         gutter_settings: crate::editor_settings::Gutter,
-        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+        scroll_position: gpui::Point<ScrollOffset>,
+        start_row: DisplayRow,
         gutter_hitbox: &Hitbox,
         window: &mut Window,
         cx: &mut App,
@@ -2243,10 +2352,10 @@ impl EditorElement {
                 );
                 let crease_toggle_size = crease_toggle.layout_as_root(available_space, window, cx);
 
+                let display_row = DisplayRow(start_row.0 + ix as u32);
                 let position = point(
                     gutter_dimensions.width - gutter_dimensions.right_padding,
-                    ix as f32 * line_height
-                        - (scroll_pixel_position.y % ScrollPixelOffset::from(line_height)).into(),
+                    line_height * (display_row.as_f64() - scroll_position.y) as f32,
                 );
                 let centering_offset = point(
                     (gutter_dimensions.fold_area_width() - crease_toggle_size.width) / 2.,
@@ -2278,6 +2387,8 @@ impl EditorElement {
         line_height: Pixels,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+        scroll_position: gpui::Point<ScrollOffset>,
+        start_row: DisplayRow,
         em_width: Pixels,
         window: &mut Window,
         cx: &mut App,
@@ -2301,8 +2412,8 @@ impl EditorElement {
                 };
                 let position = point(
                     Pixels::from(scroll_pixel_position.x) + line.width + padding,
-                    ix as f32 * line_height
-                        - (scroll_pixel_position.y % ScrollPixelOffset::from(line_height)).into(),
+                    line_height
+                        * (DisplayRow(start_row.0 + ix as u32).as_f64() - scroll_position.y) as f32,
                 );
                 let centering_offset = point(px(0.), (line_height - size.height) / 2.);
                 let origin = content_origin + position + centering_offset;
@@ -2323,6 +2434,7 @@ impl EditorElement {
         gutter_hitbox: &Hitbox,
         display_rows: Range<DisplayRow>,
         snapshot: &EditorSnapshot,
+        scroll_position: gpui::Point<ScrollOffset>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<(DisplayDiffHunk, Option<Hitbox>)> {
@@ -2335,8 +2447,13 @@ impl EditorElement {
         if let GitGutterSetting::TrackedFiles = git_gutter_setting {
             for (hunk, hitbox) in &mut display_hunks {
                 if matches!(hunk, DisplayDiffHunk::Unfolded { .. }) {
-                    let hunk_bounds =
-                        Self::diff_hunk_bounds(snapshot, line_height, gutter_hitbox.bounds, hunk);
+                    let hunk_bounds = Self::diff_hunk_bounds(
+                        scroll_position,
+                        line_height,
+                        gutter_hitbox.bounds,
+                        hunk,
+                        snapshot,
+                    );
                     *hitbox = Some(window.insert_hitbox(hunk_bounds, HitboxBehavior::BlockMouse));
                 }
             }
@@ -2537,7 +2654,9 @@ impl EditorElement {
 
         let icon_size = ui::IconSize::XSmall;
         let mut button = self.editor.update(cx, |editor, cx| {
-            editor.available_code_actions.as_ref()?;
+            if !editor.has_available_code_actions_for_selection() {
+                return None;
+            }
             let active = editor
                 .context_menu
                 .borrow()
@@ -2864,6 +2983,7 @@ impl EditorElement {
         buffer_rows: &[RowInfo],
         em_width: Pixels,
         scroll_position: gpui::Point<ScrollOffset>,
+        start_row: DisplayRow,
         line_height: Pixels,
         gutter_hitbox: &Hitbox,
         max_width: Option<Pixels>,
@@ -2888,7 +3008,6 @@ impl EditorElement {
         } else {
             AvailableSpace::MaxContent
         };
-        let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
         let start_x = em_width;
 
         let mut last_used_color: Option<(Hsla, Oid)> = None;
@@ -2913,8 +3032,8 @@ impl EditorElement {
                     cx,
                 )?;
 
-                let start_y = ix as f32 * line_height
-                    - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height));
+                let start_y = line_height
+                    * (DisplayRow(start_row.0 + ix as u32).as_f64() - scroll_position.y) as f32;
                 let absolute_offset = gutter_hitbox.origin + point(start_x, start_y);
 
                 element.prepaint_as_root(
@@ -3305,6 +3424,7 @@ impl EditorElement {
         em_width: Pixels,
         line_height: Pixels,
         scroll_position: gpui::Point<ScrollOffset>,
+        start_row: DisplayRow,
         buffer_rows: &[RowInfo],
         window: &mut Window,
         cx: &mut App,
@@ -3314,8 +3434,6 @@ impl EditorElement {
         }
 
         let editor_font_size = self.style.text.font_size.to_pixels(window.rem_size()) * 1.2;
-
-        let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
 
         let max_line_number_length = self
             .editor
@@ -3379,8 +3497,8 @@ impl EditorElement {
 
                 let position = point(
                     git_gutter_width + px(1.),
-                    ix as f32 * line_height
-                        - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height))
+                    line_height
+                        * (DisplayRow(start_row.0 + ix as u32).as_f64() - scroll_position.y) as f32
                         + px(1.),
                 );
                 let origin = gutter_hitbox.origin + position;
@@ -4055,6 +4173,7 @@ impl EditorElement {
                     && !row_block_types.contains_key(&(row - 1))
                     && element_height_in_lines == 1
                 {
+                    // Render inline at end of line (for diagnostic blocks that fit)
                     x_offset = line_width + margin;
                     row = row - 1;
                     is_block = false;
@@ -4624,7 +4743,10 @@ impl EditorElement {
         let mut rows = Vec::<StickyHeader>::new();
 
         for item in editor.sticky_headers.iter().flatten() {
-            let start_point = item.range.start.to_point(snapshot.buffer_snapshot());
+            let start_point = item
+                .source_range_for_text
+                .start
+                .to_point(snapshot.buffer_snapshot());
             let end_point = item.range.end.to_point(snapshot.buffer_snapshot());
 
             let sticky_row = snapshot
@@ -5858,7 +5980,7 @@ impl EditorElement {
 
     fn paint_background(&self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
         window.paint_layer(layout.hitbox.bounds, |window| {
-            let scroll_top = layout.position_map.snapshot.scroll_position().y;
+            let scroll_top = layout.position_map.scroll_position.y;
             let gutter_bg = cx.theme().colors().editor_gutter_background;
             window.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
             window.paint_quad(fill(
@@ -6018,10 +6140,10 @@ impl EditorElement {
                         cx.theme().colors().editor_wrap_guide
                     };
                     window.paint_quad(fill(
-                        Bounds {
+                        window.pixel_snap_bounds(Bounds {
                             origin: point(*guide_x, layout.position_map.text_hitbox.origin.y),
                             size: size(px(1.), layout.position_map.text_hitbox.size.height),
-                        },
+                        }),
                         color,
                     ));
                 }
@@ -6087,10 +6209,10 @@ impl EditorElement {
             if let Some(requested_line_width) = settings.visible_line_width(indent_guide.active) {
                 if let Some(color) = line_color {
                     window.paint_quad(fill(
-                        Bounds {
+                        window.pixel_snap_bounds(Bounds {
                             origin: indent_guide.origin,
                             size: size(px(requested_line_width as f32), indent_guide.length),
-                        },
+                        }),
                         color,
                     ));
                     line_indicator_width = requested_line_width as f32;
@@ -6100,13 +6222,13 @@ impl EditorElement {
             if let Some(color) = background_color {
                 let width = indent_guide.single_indent_width - px(line_indicator_width);
                 window.paint_quad(fill(
-                    Bounds {
+                    window.pixel_snap_bounds(Bounds {
                         origin: point(
                             indent_guide.origin.x + px(line_indicator_width),
                             indent_guide.origin.y,
                         ),
                         size: size(width, indent_guide.length),
-                    },
+                    }),
                     color,
                 ));
             }
@@ -6184,10 +6306,11 @@ impl EditorElement {
                 let hunk_to_paint = match hunk {
                     DisplayDiffHunk::Folded { .. } => {
                         let hunk_bounds = Self::diff_hunk_bounds(
-                            &layout.position_map.snapshot,
+                            layout.position_map.scroll_position,
                             line_height,
                             layout.gutter_hitbox.bounds,
                             hunk,
+                            &layout.position_map.snapshot,
                         );
                         Some((
                             hunk_bounds,
@@ -6278,12 +6401,12 @@ impl EditorElement {
     }
 
     fn diff_hunk_bounds(
-        snapshot: &EditorSnapshot,
+        scroll_position: gpui::Point<ScrollOffset>,
         line_height: Pixels,
         gutter_bounds: Bounds<Pixels>,
         hunk: &DisplayDiffHunk,
+        snapshot: &EditorSnapshot,
     ) -> Bounds<Pixels> {
-        let scroll_position = snapshot.scroll_position();
         let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
         let gutter_strip_width = Self::gutter_strip_width(line_height);
 
@@ -6526,6 +6649,7 @@ impl EditorElement {
                 self.paint_document_colors(layout, window);
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
                 self.paint_redactions(layout, window);
+                self.paint_navigation_overlays(layout, window, cx);
                 self.paint_cursors(layout, window, cx);
                 self.paint_inline_diagnostics(layout, window, cx);
                 self.paint_inline_blame(layout, window, cx);
@@ -6712,10 +6836,10 @@ impl EditorElement {
             + sticky_headers.lines.last().unwrap().offset
             + layout.position_map.line_height;
         let separator_height = px(1.);
-        let border_bounds = Bounds::from_corners(
+        let border_bounds = window.pixel_snap_bounds(Bounds::from_corners(
             point(layout.gutter_hitbox.bounds.left(), border_top),
             point(text_bounds.right(), border_top + separator_height),
-        );
+        ));
         window.paint_quad(fill(border_bounds, cx.theme().colors().border_variant));
 
         layout.sticky_headers = Some(sticky_headers);
@@ -6754,6 +6878,20 @@ impl EditorElement {
                     layout,
                     window,
                 );
+            }
+        });
+    }
+
+    fn paint_navigation_overlays(
+        &mut self,
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.with_element_namespace("navigation_overlays", |window| {
+            for command in &mut layout.navigation_overlay_paint_commands {
+                let NavigationOverlayPaintCommand::Label(label) = command;
+                label.element.paint(window, cx);
             }
         });
     }
@@ -8229,21 +8367,34 @@ pub(crate) fn header_jump_data(
 ) -> JumpData {
     let multibuffer_snapshot = editor_snapshot.buffer_snapshot();
     let buffer = first_excerpt.buffer(multibuffer_snapshot);
-    let (jump_anchor, jump_buffer) = if let Some(anchor) =
+    let (jump_anchor, jump_buffer, excerpt_start) = if let Some(anchor) =
         latest_selection_anchors.get(&first_excerpt.buffer_id())
         && let Some((jump_anchor, selection_buffer)) =
             multibuffer_snapshot.anchor_to_buffer_anchor(*anchor)
     {
-        (jump_anchor, selection_buffer)
+        let jump_offset = text::ToOffset::to_offset(&jump_anchor, selection_buffer);
+        let selection_excerpt_start = multibuffer_snapshot
+            .excerpts_for_buffer(jump_anchor.buffer_id)
+            .find(|excerpt| {
+                let start = text::ToOffset::to_offset(&excerpt.context.start, selection_buffer);
+                let end = text::ToOffset::to_offset(&excerpt.context.end, selection_buffer);
+                start <= jump_offset && jump_offset <= end
+            })
+            .map(|excerpt| excerpt.context.start)
+            .unwrap_or(first_excerpt.range.context.start);
+        (jump_anchor, selection_buffer, selection_excerpt_start)
     } else {
-        (first_excerpt.range.primary.start, buffer)
+        (
+            first_excerpt.range.primary.start,
+            buffer,
+            first_excerpt.range.context.start,
+        )
     };
-    let excerpt_start = first_excerpt.range.context.start;
     let jump_position = language::ToPoint::to_point(&jump_anchor, jump_buffer);
     let rows_from_excerpt_start = if jump_anchor == excerpt_start {
         0
     } else {
-        let excerpt_start_point = language::ToPoint::to_point(&excerpt_start, buffer);
+        let excerpt_start_point = language::ToPoint::to_point(&excerpt_start, jump_buffer);
         jump_position.row.saturating_sub(excerpt_start_point.row)
     };
 
@@ -9550,8 +9701,8 @@ pub struct EditorRequestLayoutState {
 
 impl EditorRequestLayoutState {
     // In ideal conditions we only need one more subsequent prepaint call for resize to take effect.
-    // i.e. MAX_PREPAINT_DEPTH = 2, but since moving blocks inline (place_near), more lines from
-    // below get exposed, and we end up querying blocks for those lines too in subsequent renders.
+    // i.e. MAX_PREPAINT_DEPTH = 2, but placing near blocks can expose more lines from below, and
+    // we end up querying blocks for those lines too in subsequent renders.
     // Setting MAX_PREPAINT_DEPTH = 3, passes all tests. Just to be on the safe side we set it to 5, so
     // that subsequent shrinking does not lead to incorrect block placing.
     const MAX_PREPAINT_DEPTH: usize = 5;
@@ -9845,6 +9996,11 @@ impl Element for EditorElement {
                     });
 
                     let mut scroll_position = snapshot.scroll_position();
+                    if !line_height.is_zero() {
+                        scroll_position.y = window
+                            .pixel_snap_f64(scroll_position.y * f64::from(line_height))
+                            / f64::from(line_height);
+                    }
                     // The scroll position is a fractional point, the whole number of which represents
                     // the top of the window in terms of display rows.
                     // We add clipped_top_in_lines to skip rows that are clipped by parent containers,
@@ -10167,6 +10323,7 @@ impl Element for EditorElement {
                                 em_width,
                                 line_height,
                                 scroll_position,
+                                start_row,
                                 &row_infos,
                                 window,
                                 cx,
@@ -10199,6 +10356,7 @@ impl Element for EditorElement {
                         &gutter_hitbox,
                         start_row..end_row,
                         &snapshot,
+                        scroll_position,
                         window,
                         cx,
                     );
@@ -10453,9 +10611,15 @@ impl Element for EditorElement {
                                 cx,
                             )
                         {
-                            scroll_position = new_scroll_position;
+                            scroll_position.x = new_scroll_position.x;
                         }
                     });
+
+                    if !em_layout_width.is_zero() {
+                        scroll_position.x = window
+                            .pixel_snap_f64(scroll_position.x * f64::from(em_layout_width))
+                            / f64::from(em_layout_width);
+                    }
 
                     let scroll_pixel_position = point(
                         scroll_position.x * f64::from(em_layout_width),
@@ -10508,6 +10672,8 @@ impl Element for EditorElement {
                                 line_height,
                                 content_origin,
                                 scroll_pixel_position,
+                                scroll_position,
+                                start_row,
                                 em_width,
                                 window,
                                 cx,
@@ -10615,6 +10781,7 @@ impl Element for EditorElement {
                         &row_infos,
                         em_width,
                         scroll_position,
+                        start_row,
                         line_height,
                         &gutter_hitbox,
                         gutter_dimensions.git_blame_entries_width,
@@ -10679,6 +10846,18 @@ impl Element for EditorElement {
                         em_advance,
                         autoscroll_containing_element,
                         &redacted_ranges,
+                        window,
+                        cx,
+                    );
+                    let navigation_overlay_paint_commands = self.layout_navigation_overlays(
+                        &snapshot,
+                        start_row..end_row,
+                        &line_layouts,
+                        &text_hitbox,
+                        content_origin,
+                        scroll_position,
+                        scroll_pixel_position,
+                        line_height,
                         window,
                         cx,
                     );
@@ -10886,7 +11065,8 @@ impl Element for EditorElement {
                             line_height,
                             &gutter_dimensions,
                             gutter_settings,
-                            scroll_pixel_position,
+                            scroll_position,
+                            start_row,
                             &gutter_hitbox,
                             window,
                             cx,
@@ -11068,6 +11248,7 @@ impl Element for EditorElement {
                         spacer_blocks,
                         cursors,
                         visible_cursors,
+                        navigation_overlay_paint_commands,
                         selections,
                         edit_prediction_popover,
                         diff_hunk_controls,
@@ -11285,6 +11466,7 @@ pub struct EditorLayout {
     redacted_ranges: Vec<Range<DisplayPoint>>,
     cursors: Vec<(DisplayPoint, Hsla)>,
     visible_cursors: Vec<CursorLayout>,
+    navigation_overlay_paint_commands: Vec<NavigationOverlayPaintCommand>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     test_indicators: Vec<AnyElement>,
     bookmarks: Vec<AnyElement>,
@@ -11967,7 +12149,7 @@ impl PointForPosition {
 impl PositionMap {
     pub(crate) fn point_for_position(&self, position: gpui::Point<Pixels>) -> PointForPosition {
         let text_bounds = self.text_hitbox.bounds;
-        let scroll_position = self.snapshot.scroll_position();
+        let scroll_position = self.scroll_position;
         let position = position - text_bounds.origin;
         let y = position.y.max(px(0.)).min(self.size.height);
         let x = position.x + (scroll_position.x as f32 * self.em_layout_width);
@@ -12021,7 +12203,7 @@ impl PositionMap {
         line: &LineWithInvisibles,
     ) -> PointForPosition {
         let text_bounds = self.text_hitbox.bounds;
-        let scroll_position = self.snapshot.scroll_position();
+        let scroll_position = self.scroll_position;
         let position = position - text_bounds.origin;
         let x = position.x + (scroll_position.x as f32 * self.em_layout_width);
 
@@ -12115,6 +12297,32 @@ pub struct IndentGuideLayout {
     settings: IndentGuideSettings,
 }
 
+enum NavigationOverlayPaintCommand {
+    Label(NavigationLabelLayout),
+}
+
+struct NavigationLabelLayout {
+    element: AnyElement,
+    #[cfg_attr(not(test), allow(dead_code))]
+    origin: gpui::Point<Pixels>,
+}
+
+struct NavigationOverlayLayoutContext<'a> {
+    display_snapshot: &'a DisplaySnapshot,
+    visible_display_row_range: &'a Range<DisplayRow>,
+    line_layouts: &'a [LineWithInvisibles],
+    text_align: TextAlign,
+    content_width: Pixels,
+    content_origin: gpui::Point<Pixels>,
+    scroll_position: gpui::Point<ScrollOffset>,
+    scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
+    line_height: Pixels,
+    editor_font: Font,
+    editor_font_size: Pixels,
+}
+
+const LABEL_LINE_HEIGHT_PADDING_PX: f32 = 2.0;
+
 pub struct CursorLayout {
     origin: gpui::Point<Pixels>,
     block_width: Pixels,
@@ -12207,7 +12415,7 @@ impl CursorLayout {
                 .bg(self.color)
                 .text_size(text_size)
                 .px_0p5()
-                .line_height(text_size + px(2.))
+                .line_height(text_size + px(LABEL_LINE_HEIGHT_PADDING_PX))
                 .text_color(cursor_name.color)
                 .child(cursor_name.string)
                 .into_any_element();
@@ -12219,7 +12427,7 @@ impl CursorLayout {
     }
 
     pub fn paint(&mut self, origin: gpui::Point<Pixels>, window: &mut Window, cx: &mut App) {
-        let bounds = self.bounds(origin);
+        let bounds = window.pixel_snap_bounds(self.bounds(origin));
 
         //Draw background or border quad
         let cursor = if matches!(self.shape, CursorShape::Hollow) {
@@ -12509,7 +12717,8 @@ fn compute_auto_height_layout(
 mod tests {
     use super::*;
     use crate::{
-        Editor, MultiBuffer, SelectionEffects,
+        Editor, HighlightKey, MultiBuffer, NavigationOverlayKey, NavigationOverlayLabel,
+        NavigationTargetOverlay, SelectionEffects,
         display_map::{BlockPlacement, BlockProperties},
         editor_tests::{init_test, update_test_language_settings},
     };
@@ -12519,6 +12728,38 @@ mod tests {
     use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
     use util::test::sample_text;
+
+    enum PrimaryNavigationOverlay {}
+
+    const PRIMARY_NAVIGATION_OVERLAY_KEY: NavigationOverlayKey =
+        NavigationOverlayKey::unique::<PrimaryNavigationOverlay>();
+
+    fn navigation_overlay(
+        label_text: &'static str,
+        target_range: Range<Anchor>,
+        covered_text_range: Option<Range<Anchor>>,
+    ) -> NavigationTargetOverlay {
+        NavigationTargetOverlay {
+            target_range,
+            label: NavigationOverlayLabel {
+                text: SharedString::from(label_text),
+                text_color: Hsla::black(),
+                x_offset: Pixels::ZERO,
+                scale_factor: 1.0,
+            },
+            covered_text_range,
+        }
+    }
+
+    fn navigation_label_layouts(state: &EditorLayout) -> Vec<&NavigationLabelLayout> {
+        state
+            .navigation_overlay_paint_commands
+            .iter()
+            .map(|command| match command {
+                NavigationOverlayPaintCommand::Label(label) => label,
+            })
+            .collect()
+    }
 
     const fn placeholder_hitbox() -> Hitbox {
         use gpui::HitboxId;
@@ -12646,6 +12887,109 @@ mod tests {
                 "Soft wrapped editor should have no horizontal scrolling!"
             );
         }
+    }
+
+    #[gpui::test]
+    fn test_navigation_overlay_covered_text_highlights_are_replaced(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("overlay replacement", cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let editor = window.root(cx).unwrap();
+
+        editor.update(cx, |editor, cx| {
+            let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+            let target_start = buffer_snapshot.anchor_after(Point::new(0, 0));
+            let target_end = buffer_snapshot.anchor_after(Point::new(0, 7));
+            let covered_text_end = buffer_snapshot.anchor_after(Point::new(0, 2));
+
+            editor.set_navigation_overlays(
+                PRIMARY_NAVIGATION_OVERLAY_KEY,
+                vec![navigation_overlay(
+                    "ov",
+                    target_start..target_end,
+                    Some(target_start..covered_text_end),
+                )],
+                cx,
+            );
+            assert!(
+                editor
+                    .text_highlights(
+                        HighlightKey::NavigationOverlay(PRIMARY_NAVIGATION_OVERLAY_KEY),
+                        cx,
+                    )
+                    .is_some()
+            );
+
+            editor.set_navigation_overlays(
+                PRIMARY_NAVIGATION_OVERLAY_KEY,
+                vec![navigation_overlay("ov", target_start..target_end, None)],
+                cx,
+            );
+            assert!(
+                editor
+                    .text_highlights(
+                        HighlightKey::NavigationOverlay(PRIMARY_NAVIGATION_OVERLAY_KEY),
+                        cx,
+                    )
+                    .is_none()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_navigation_overlay_repositions_when_editor_width_changes(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+        let text = "jump target overlay ".repeat(16);
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&text, cx);
+            let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+            editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+            editor
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+
+        editor.update(cx, |editor, cx| {
+            let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+            let target_start = buffer_snapshot.anchor_after(Point::new(0, 30));
+            let target_end = buffer_snapshot.anchor_after(Point::new(0, 40));
+
+            editor.set_navigation_overlays(
+                PRIMARY_NAVIGATION_OVERLAY_KEY,
+                vec![navigation_overlay("jj", target_start..target_end, None)],
+                cx,
+            );
+        });
+
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+        let (_, wide_state) = cx.draw(Default::default(), size(px(520.), px(260.)), |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+        let (_, narrow_state) = cx.draw(Default::default(), size(px(140.), px(260.)), |_, _| {
+            EditorElement::new(&editor, style.clone())
+        });
+
+        let wide_label_layouts = navigation_label_layouts(&wide_state);
+        let narrow_label_layouts = navigation_label_layouts(&narrow_state);
+
+        assert_eq!(wide_label_layouts.len(), 1);
+        assert_eq!(narrow_label_layouts.len(), 1);
+
+        let wide_label_origin = wide_label_layouts[0].origin;
+        let narrow_label_origin = narrow_label_layouts[0].origin;
+
+        assert!(
+            narrow_label_origin.y > wide_label_origin.y,
+            "expected inline label to move to a later wrapped row when the editor narrows"
+        );
+        assert!(
+            narrow_label_origin.x < wide_label_origin.x,
+            "expected inline label to recompute its horizontal position for the wrapped row"
+        );
     }
 
     #[gpui::test]

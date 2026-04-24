@@ -418,7 +418,7 @@
     },
   },
   {
-    "context": "VimControl && vim_mode == helix_normal && !menu",
+    "context": "VimControl && vim_mode == helix_normal && !menu && !BufferSearchBar",
     "bindings": {
       "j": ["vim::Down", { "display_lines": true }],
       "down": ["vim::Down", { "display_lines": true }],
@@ -436,7 +436,7 @@
     },
   },
   {
-    "context": "vim_mode == helix_select && !menu",
+    "context": "vim_mode == helix_select && !menu && !BufferSearchBar",
     "bindings": {
       "escape": "vim::SwitchToHelixNormalMode",
     },
@@ -507,6 +507,7 @@
       "shift-l": "pane::ActivateNextItem", // not a helix default
       "g p": "pane::ActivatePreviousItem",
       "shift-h": "pane::ActivatePreviousItem", // not a helix default
+      "g w": "vim::HelixJumpToWord",
       "g .": "vim::HelixGotoLastModification",
       "g o": "editor::ToggleSelectedDiffHunks", // Zed specific
       "g shift-o": "git::ToggleStaged", // Zed specific
@@ -544,8 +545,8 @@
       "m": "vim::PushHelixMatch",
       "]": ["vim::PushHelixNext", { "around": true }],
       "[": ["vim::PushHelixPrevious", { "around": true }],
+      "ctrl-s": "editor::SaveLocation",
       "g q": "vim::PushRewrap",
-      "g w": "vim::PushRewrap", // not a helix default & clashes with helix `goto_word`
     },
   },
   {
@@ -934,6 +935,14 @@
       "[ b": "pane::ActivatePreviousItem",
       "] shift-b": "pane::ActivateLastItem",
       "[ shift-b": ["pane::ActivateItem", 0],
+      "space f": "file_finder::Toggle",
+      "space /": "pane::DeploySearch",
+      "space shift-s": "project_symbols::Toggle",
+      "space w h": "workspace::ActivatePaneLeft",
+      "space w j": "workspace::ActivatePaneDown",
+      "space w k": "workspace::ActivatePaneUp",
+      "space w l": "workspace::ActivatePaneRight",
+	  "space w q": "pane::CloseActiveItem",
     },
   },
   {

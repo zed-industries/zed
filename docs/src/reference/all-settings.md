@@ -450,6 +450,24 @@ When enabled, this setting will automatically close tabs for files that have bee
 
 Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
+## Code Lens
+
+- Description: Whether and how to display code lenses from language servers. Code lenses show contextual information such as reference counts, implementations, and other metadata provided by the language server.
+- Setting: `code_lens`
+- Default: `off`
+
+**Options**
+
+1. `off`: Do not query and display code lenses.
+2. `on`: Display code lenses from language servers above code elements.
+3. `menu`: Display code lenses in the code action menu.
+
+```json [settings]
+{
+  "code_lens": "on"
+}
+```
+
 ## Confirm Quit
 
 - Description: Whether or not to prompt the user to confirm before closing the application.
@@ -1618,6 +1636,56 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 `boolean` values
 
+## Line Ending
+
+- Description: How line endings should be handled for new files and during format and save. This can be specified on a per-language basis.
+- Setting: `line_ending`
+- Default: `detect`
+
+**Options**
+
+1. To detect existing line endings and otherwise use the platform default (`lf` on Unix, `crlf` on Windows), set it to `detect`:
+
+```json [settings]
+{
+  "line_ending": "detect"
+}
+```
+
+2. To prefer LF (`\n`) for new files and files with no existing line ending, use `prefer_lf`:
+
+```json [settings]
+{
+  "line_ending": "prefer_lf"
+}
+```
+
+3. To prefer CRLF (`\r\n`) for new files and files with no existing line ending, use `prefer_crlf`:
+
+```json [settings]
+{
+  "line_ending": "prefer_crlf"
+}
+```
+
+4. To enforce LF (`\n`) during format and save, use `enforce_lf`:
+
+```json [settings]
+{
+  "line_ending": "enforce_lf"
+}
+```
+
+5. To enforce CRLF (`\r\n`) during format and save, use `enforce_crlf`:
+
+```json [settings]
+{
+  "line_ending": "enforce_crlf"
+}
+```
+
+The [`.editorconfig`](https://editorconfig.org) `end_of_line` property overrides this setting and behaves like `enforce_lf` or `enforce_crlf`.
+
 ## Expand Excerpt Lines
 
 - Description: The default number of lines to expand excerpts in the multibuffer by
@@ -2356,6 +2424,38 @@ Example:
 }
 ```
 
+## Go to Definition Scroll Strategy
+
+- Description: How to scroll the target into view when navigating to a definition or reference (e.g. {#action editor::GoToDefinition}, {#action editor::GoToTypeDefinition}, {#action editor::FindAllReferences}).
+- Setting: `go_to_definition_scroll_strategy`
+- Default: `"center"`
+
+**Options**
+
+1. Vertically center the target in the viewport (default):
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "center"
+}
+```
+
+2. Scroll the minimum amount needed to make the target visible:
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "minimum"
+}
+```
+
+3. Scroll so the target appears near the top of the viewport:
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "top"
+}
+```
+
 ## Hard Tabs
 
 - Description: Whether to indent lines using tab characters or multiple spaces.
@@ -2772,6 +2872,7 @@ The following settings can be overridden for each specific language:
 
 - [`enable_language_server`](#enable-language-server)
 - [`ensure_final_newline_on_save`](#ensure-final-newline-on-save)
+- [`line_ending`](#line-ending)
 - [`format_on_save`](#format-on-save)
 - [`formatter`](#formatter)
 - [`hard_tabs`](#hard-tabs)
@@ -3019,6 +3120,32 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
   "on_last_window_closed": "quit_app"
 }
 ```
+
+## Instrumentation
+
+- Description: Configuration for developer-oriented instrumentation tools (profilers, tracers, etc.) that can be toggled at runtime.
+- Setting: `instrumentation`
+- Default:
+
+```json
+{
+  "instrumentation": {
+    "performance_profiler": {
+      "enabled": false
+    }
+  }
+}
+```
+
+### Performance Profiler
+
+- Description: Collects timing data for foreground and background executor tasks so they can be inspected via the `zed: open performance profiler` action. Enabling this may lead to increased memory usage, hence it's disabled by default for regular builds.
+- Setting: `instrumentation.performance_profiler.enabled`
+- Default: `false`
+
+**Options**
+
+`boolean` values
 
 ## Profiles
 

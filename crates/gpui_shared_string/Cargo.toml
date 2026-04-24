@@ -8,10 +8,9 @@ edition.workspace = true
 path = "gpui_shared_string.rs"
 
 [dependencies]
-derive_more.workspace = true
-gpui_util.workspace = true
 schemars.workspace = true
 serde.workspace = true
+smol_str = "0.3.6"
 
 [lints]
 workspace = true

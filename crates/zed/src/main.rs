@@ -5,7 +5,7 @@ mod reliability;
 mod zed;
 
 use agent::{SharedThread, ThreadStore};
-use agent_client_protocol;
+use agent_client_protocol::schema as acp;
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::Parser;
@@ -337,7 +337,7 @@ fn main() {
         session_id.clone(),
         KeyValueStore::from_app_db(&app_db),
     ));
-
+    let background_executor = app.background_executor();
     crashes::init(
         InitCrashHandler {
             session_id,
@@ -358,6 +358,7 @@ fn main() {
         |task| {
             app.background_executor().spawn(task).detach();
         },
+        move |duration| background_executor.timer(duration),
     );
 
     let (open_listener, mut open_rx) = OpenListener::new();
@@ -990,7 +991,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                     let shared_thread = SharedThread::from_bytes(&response.thread_data)?;
                     let db_thread = shared_thread.to_db_thread();
-                    let session_id = agent_client_protocol::SessionId::new(session_id);
+                    let session_id = acp::SessionId::new(session_id);
 
                     let save_session_id = session_id.clone();
 
