@@ -7,8 +7,7 @@ use crate::project_diff::{self, BranchDiff, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
-    file_history_view::FileHistoryView, git_panel_settings::GitPanelSettings, git_status_icon,
-    repository_selector::RepositorySelector,
+    git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
 use alacritty_terminal::vte::ansi;
@@ -1306,26 +1305,6 @@ impl GitPanel {
                 })
                 .ok();
             self.focus_handle.focus(window, cx);
-
-            Some(())
-        });
-    }
-
-    fn file_history(&mut self, _: &git::FileHistory, window: &mut Window, cx: &mut Context<Self>) {
-        maybe!({
-            let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
-            let active_repo = self.active_repository.as_ref()?;
-            let repo_path = entry.repo_path.clone();
-            let git_store = self.project.read(cx).git_store();
-
-            FileHistoryView::open(
-                repo_path,
-                git_store.downgrade(),
-                active_repo.downgrade(),
-                self.workspace.clone(),
-                window,
-                cx,
-            );
 
             Some(())
         });
@@ -4343,6 +4322,18 @@ impl GitPanel {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });
 
+        let max_title_length = GitPanelSettings::get_global(cx).commit_title_max_length;
+        let title_exceeds_limit = if max_title_length > 0 {
+            self.commit_editor
+                .read(cx)
+                .text(cx)
+                .lines()
+                .next()
+                .is_some_and(|title| title.len() > max_title_length)
+        } else {
+            false
+        };
+
         let footer = v_flex()
             .child(PanelRepoFooter::new(
                 display_name,
@@ -4350,15 +4341,41 @@ impl GitPanel {
                 head_commit,
                 Some(git_panel),
             ))
+            .when(title_exceeds_limit, |this| {
+                this.child(
+                    h_flex()
+                        .px_2()
+                        .py_1()
+                        .gap_1()
+                        .border_t_1()
+                        .border_color(cx.theme().status().warning_border)
+                        .bg(cx.theme().status().warning_background.opacity(0.5))
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::XSmall)
+                                .color(Color::Warning),
+                        )
+                        .child(
+                            Label::new(format!(
+                                "Commit message title exceeds {max_title_length}-character limit."
+                            ))
+                            .size(LabelSize::Small),
+                        ),
+                )
+            })
             .child(
                 panel_editor_container(window, cx)
                     .id("commit-editor-container")
+                    .cursor_text()
                     .relative()
                     .w_full()
                     .h(max_height + footer_size)
                     .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .cursor_text()
+                    .border_color(if title_exceeds_limit {
+                        cx.theme().status().warning_border
+                    } else {
+                        cx.theme().colors().border
+                    })
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         window.focus(&this.commit_editor.focus_handle(cx), cx);
                     }))
@@ -4939,57 +4956,46 @@ impl GitPanel {
         let toggle_state = self.header_state(header.header);
         let section = header.header;
         let weak = cx.weak_entity();
-        let show_checkbox_persistently = !matches!(&toggle_state, ToggleState::Unselected);
 
         h_flex()
             .id(id)
-            .group(group_name.clone())
+            .cursor_pointer()
+            .group(group_name)
             .h(self.list_item_height())
             .w_full()
-            .items_center()
             .pl_3()
             .pr_1()
-            .gap_1p5()
+            .gap_2()
+            .justify_between()
+            .hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
             .border_1()
             .border_r_2()
             .child(
-                h_flex().flex_1().child(
-                    Label::new(header.title())
-                        .color(Color::Muted)
-                        .size(LabelSize::Small)
-                        .line_height_style(LineHeightStyle::UiLabel)
-                        .single_line(),
-                ),
+                Label::new(header.title())
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
             )
             .child(
-                div()
-                    .flex_none()
-                    .cursor_pointer()
-                    .child(
-                        Checkbox::new(checkbox_id, toggle_state)
-                            .disabled(!has_write_access)
-                            .fill()
-                            .elevation(ElevationIndex::Surface)
-                            .on_click_ext(move |_, _, window, cx| {
-                                if !has_write_access {
-                                    return;
-                                }
-
-                                weak.update(cx, |this, cx| {
-                                    this.toggle_staged_for_entry(
-                                        &GitListEntry::Header(GitHeaderEntry { header: section }),
-                                        window,
-                                        cx,
-                                    );
-                                    cx.stop_propagation();
-                                })
-                                .ok();
-                            }),
-                    )
-                    .when(!show_checkbox_persistently, |this| {
-                        this.visible_on_hover(group_name)
-                    }),
+                Checkbox::new(checkbox_id, toggle_state)
+                    .disabled(!has_write_access)
+                    .fill()
+                    .elevation(ElevationIndex::Surface),
             )
+            .on_click(move |_, window, cx| {
+                if !has_write_access {
+                    return;
+                }
+
+                weak.update(cx, |this, cx| {
+                    this.toggle_staged_for_entry(
+                        &GitListEntry::Header(GitHeaderEntry { header: section }),
+                        window,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                })
+                .ok();
+            })
             .into_any_element()
     }
 
@@ -5041,8 +5047,11 @@ impl GitPanel {
                 .separator()
                 .action("Open Diff", menu::Confirm.boxed_clone())
                 .action("Open File", menu::SecondaryConfirm.boxed_clone())
-                .separator()
-                .action_disabled_when(is_created, "View File History", Box::new(git::FileHistory))
+                .when(!is_created, |context_menu| {
+                    context_menu
+                        .separator()
+                        .action("View File History", Box::new(git::FileHistory))
+                })
         });
         self.selected_entry = Some(ix);
         self.set_context_menu(context_menu, position, window, cx);
@@ -5688,6 +5697,17 @@ impl GitPanel {
     }
 }
 
+impl GitPanel {
+    pub fn selected_file_history_target(&self) -> Option<(Entity<Repository>, RepoPath)> {
+        let entry = self.get_selected_entry()?.status_entry()?;
+        let repository = self.active_repository.clone()?;
+        if entry.status.is_created() {
+            return None;
+        }
+        Some((repository, entry.repo_path.clone()))
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 impl GitPanel {
     pub fn new_test(
@@ -5756,7 +5776,6 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::close_panel))
             .on_action(cx.listener(Self::open_diff))
             .on_action(cx.listener(Self::open_file))
-            .on_action(cx.listener(Self::file_history))
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::expand_commit_editor))
@@ -6123,10 +6142,6 @@ impl RenderOnce for PanelRepoFooter {
             util::truncate_and_trailoff(branch_name.trim_ascii(), branch_display_len)
         };
 
-        let repo_selector_trigger = Button::new("repo-selector", truncated_repo_name)
-            .size(ButtonSize::None)
-            .label_size(LabelSize::Small);
-
         let repo_selector = PopoverMenu::new("repository-switcher")
             .menu({
                 let project = project;
@@ -6136,8 +6151,9 @@ impl RenderOnce for PanelRepoFooter {
                 }
             })
             .trigger_with_tooltip(
-                repo_selector_trigger
-                    .when(single_repo, |this| this.disabled(true).color(Color::Muted))
+                Button::new("repo-selector", truncated_repo_name)
+                    .size(ButtonSize::None)
+                    .label_size(LabelSize::Small)
                     .truncate(true),
                 move |_, cx| {
                     if single_repo {
@@ -6179,7 +6195,7 @@ impl RenderOnce for PanelRepoFooter {
             });
 
         h_flex()
-            .h(px(36.))
+            .h_9()
             .w_full()
             .px_2()
             .justify_between()
@@ -6196,14 +6212,14 @@ impl RenderOnce for PanelRepoFooter {
                             Color::Muted
                         },
                     ))
-                    .child(repo_selector)
-                    .when(show_separator, |this| {
-                        this.child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().colors().icon_muted.opacity(0.5))
-                                .child("/"),
-                        )
+                    .when(!single_repo, |this| {
+                        this.child(repo_selector).when(show_separator, |this| {
+                            this.child(
+                                Label::new("/").size(LabelSize::Small).color(Color::Custom(
+                                    cx.theme().colors().text_muted.opacity(0.4),
+                                )),
+                            )
+                        })
                     })
                     .child(branch_selector),
             )

@@ -2361,13 +2361,6 @@ impl Project {
         self.collaborators.values().find(|c| c.is_host)
     }
 
-    #[inline]
-    pub fn set_worktrees_reordered(&mut self, worktrees_reordered: bool, cx: &mut App) {
-        self.worktree_store.update(cx, |store, _| {
-            store.set_worktrees_reordered(worktrees_reordered);
-        });
-    }
-
     /// Collect all worktrees, including ones that don't appear in the project panel
     #[inline]
     pub fn worktrees<'a>(
@@ -5231,7 +5224,7 @@ impl Project {
         envelope: TypedEnvelope<proto::LanguageServerPromptRequest>,
         mut cx: AsyncApp,
     ) -> Result<proto::LanguageServerPromptResponse> {
-        let (tx, rx) = smol::channel::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         let actions: Vec<_> = envelope
             .payload
             .actions

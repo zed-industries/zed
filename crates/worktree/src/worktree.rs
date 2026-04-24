@@ -29,8 +29,9 @@ use gpui::{
     Task,
 };
 use ignore::IgnoreStack;
-use language::DiskState;
+use language::{ByteContent, DiskState, FILE_ANALYSIS_BYTES, analyze_byte_content};
 
+use async_channel::{self, Sender};
 use parking_lot::Mutex;
 use paths::{local_settings_folder_name, local_vscode_folder_name};
 use postage::{
@@ -45,7 +46,6 @@ use rpc::{
 pub use settings::WorktreeId;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smallvec::{SmallVec, smallvec};
-use smol::channel::{self, Sender};
 use std::{
     any::Any,
     borrow::Borrow as _,
@@ -127,8 +127,8 @@ impl fmt::Debug for LoadedBinaryFile {
 
 pub struct LocalWorktree {
     snapshot: LocalSnapshot,
-    scan_requests_tx: channel::Sender<ScanRequest>,
-    path_prefixes_to_scan_tx: channel::Sender<PathPrefixScanRequest>,
+    scan_requests_tx: async_channel::Sender<ScanRequest>,
+    path_prefixes_to_scan_tx: async_channel::Sender<PathPrefixScanRequest>,
     is_scanning: (watch::Sender<bool>, watch::Receiver<bool>),
     snapshot_subscriptions: VecDeque<(usize, oneshot::Sender<()>)>,
     _background_scanner_tasks: Vec<Task<()>>,
@@ -483,8 +483,8 @@ impl Worktree {
                     .block_on(snapshot.insert_entry(entry, fs.as_ref()));
             }
 
-            let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
-            let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
+            let (scan_requests_tx, scan_requests_rx) = async_channel::unbounded();
+            let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = async_channel::unbounded();
             let mut worktree = LocalWorktree {
                 share_private_files,
                 next_entry_id,
@@ -1119,8 +1119,8 @@ impl LocalWorktree {
     }
 
     fn restart_background_scanners(&mut self, cx: &Context<Worktree>) {
-        let (scan_requests_tx, scan_requests_rx) = channel::unbounded();
-        let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = channel::unbounded();
+        let (scan_requests_tx, scan_requests_rx) = async_channel::unbounded();
+        let (path_prefixes_to_scan_tx, path_prefixes_to_scan_rx) = async_channel::unbounded();
         self.scan_requests_tx = scan_requests_tx;
         self.path_prefixes_to_scan_tx = path_prefixes_to_scan_tx;
 
@@ -1138,8 +1138,8 @@ impl LocalWorktree {
 
     fn start_background_scanner(
         &mut self,
-        scan_requests_rx: channel::Receiver<ScanRequest>,
-        path_prefixes_to_scan_rx: channel::Receiver<PathPrefixScanRequest>,
+        scan_requests_rx: async_channel::Receiver<ScanRequest>,
+        path_prefixes_to_scan_rx: async_channel::Receiver<PathPrefixScanRequest>,
         cx: &Context<Worktree>,
     ) {
         let snapshot = self.snapshot();
@@ -3929,8 +3929,8 @@ struct BackgroundScanner {
     fs_case_sensitive: bool,
     status_updates_tx: UnboundedSender<ScanState>,
     executor: BackgroundExecutor,
-    scan_requests_rx: channel::Receiver<ScanRequest>,
-    path_prefixes_to_scan_rx: channel::Receiver<PathPrefixScanRequest>,
+    scan_requests_rx: async_channel::Receiver<ScanRequest>,
+    path_prefixes_to_scan_rx: async_channel::Receiver<PathPrefixScanRequest>,
     next_entry_id: Arc<AtomicUsize>,
     phase: BackgroundScannerPhase,
     watcher: Arc<dyn Watcher>,
@@ -4035,7 +4035,7 @@ impl BackgroundScanner {
             Box::pin(futures::stream::pending())
         };
 
-        let (scan_job_tx, scan_job_rx) = channel::unbounded();
+        let (scan_job_tx, scan_job_rx) = async_channel::unbounded();
         {
             let mut state = self.state.lock().await;
             state.snapshot.scan_id += 1;
@@ -4494,7 +4494,7 @@ impl BackgroundScanner {
 
         self.state.lock().await.snapshot.scan_id += 1;
 
-        let (scan_job_tx, scan_job_rx) = channel::unbounded();
+        let (scan_job_tx, scan_job_rx) = async_channel::unbounded();
         log::debug!(
             "received fs events {:?}",
             relative_paths
@@ -4559,7 +4559,7 @@ impl BackgroundScanner {
                 .await;
             (state.snapshot.clone(), ignore_stack, abs_path)
         };
-        let (scan_job_tx, scan_job_rx) = channel::unbounded();
+        let (scan_job_tx, scan_job_rx) = async_channel::unbounded();
         self.update_ignore_statuses_for_paths(
             scan_job_tx,
             prev_snapshot,
@@ -4571,7 +4571,7 @@ impl BackgroundScanner {
     }
 
     async fn forcibly_load_paths(&self, paths: &[Arc<RelPath>]) -> bool {
-        let (scan_job_tx, scan_job_rx) = channel::unbounded();
+        let (scan_job_tx, scan_job_rx) = async_channel::unbounded();
         {
             let mut state = self.state.lock().await;
             let root_path = state.snapshot.abs_path.clone();
@@ -4614,7 +4614,7 @@ impl BackgroundScanner {
     async fn scan_dirs(
         &self,
         enable_progress_updates: bool,
-        scan_jobs_rx: channel::Receiver<ScanJob>,
+        scan_jobs_rx: async_channel::Receiver<ScanJob>,
     ) {
         if self
             .status_updates_tx
@@ -5138,7 +5138,7 @@ impl BackgroundScanner {
         prev_snapshot: LocalSnapshot,
         ignores_to_update: Vec<(Arc<Path>, IgnoreStack)>,
     ) {
-        let (ignore_queue_tx, ignore_queue_rx) = channel::unbounded();
+        let (ignore_queue_tx, ignore_queue_rx) = async_channel::unbounded();
         {
             for (parent_abs_path, ignore_stack) in ignores_to_update {
                 ignore_queue_tx
@@ -6337,8 +6337,6 @@ impl fs::Watcher for NullWatcher {
     }
 }
 
-const FILE_ANALYSIS_BYTES: usize = 1024;
-
 async fn decode_file_text(
     fs: &dyn Fs,
     abs_path: &Path,
@@ -6451,163 +6449,6 @@ fn decode_byte_full(
             Ok((s, enc, false))
         }
     }
-}
-
-#[derive(Debug, PartialEq)]
-enum ByteContent {
-    Utf16Le,
-    Utf16Be,
-    Binary,
-    Unknown,
-}
-
-// Heuristic check using null byte distribution plus a generic text-likeness
-// heuristic. This prefers UTF-16 when many bytes are NUL and otherwise
-// distinguishes between text-like and binary-like content.
-fn analyze_byte_content(bytes: &[u8]) -> ByteContent {
-    if bytes.len() < 2 {
-        return ByteContent::Unknown;
-    }
-
-    if is_known_binary_header(bytes) {
-        return ByteContent::Binary;
-    }
-
-    let limit = bytes.len().min(FILE_ANALYSIS_BYTES);
-    let mut even_null_count = 0usize;
-    let mut odd_null_count = 0usize;
-    let mut non_text_like_count = 0usize;
-
-    for (i, &byte) in bytes[..limit].iter().enumerate() {
-        if byte == 0 {
-            if i % 2 == 0 {
-                even_null_count += 1;
-            } else {
-                odd_null_count += 1;
-            }
-            non_text_like_count += 1;
-            continue;
-        }
-
-        let is_text_like = match byte {
-            b'\t' | b'\n' | b'\r' | 0x0C => true,
-            0x20..=0x7E => true,
-            // Treat bytes that are likely part of UTF-8 or single-byte encodings as text-like.
-            0x80..=0xBF | 0xC2..=0xF4 => true,
-            _ => false,
-        };
-
-        if !is_text_like {
-            non_text_like_count += 1;
-        }
-    }
-
-    let total_null_count = even_null_count + odd_null_count;
-
-    // If there are no NUL bytes at all, this is overwhelmingly likely to be text.
-    if total_null_count == 0 {
-        return ByteContent::Unknown;
-    }
-
-    let has_significant_nulls = total_null_count >= limit / 16;
-    let nulls_skew_to_even = even_null_count > odd_null_count * 4;
-    let nulls_skew_to_odd = odd_null_count > even_null_count * 4;
-
-    if has_significant_nulls {
-        let sample = &bytes[..limit];
-
-        // UTF-16BE ASCII: [0x00, char] — nulls at even positions (high byte first)
-        // UTF-16LE ASCII: [char, 0x00] — nulls at odd positions (low byte first)
-
-        if nulls_skew_to_even && is_plausible_utf16_text(sample, false) {
-            return ByteContent::Utf16Be;
-        }
-
-        if nulls_skew_to_odd && is_plausible_utf16_text(sample, true) {
-            return ByteContent::Utf16Le;
-        }
-
-        return ByteContent::Binary;
-    }
-
-    if non_text_like_count * 100 < limit * 8 {
-        ByteContent::Unknown
-    } else {
-        ByteContent::Binary
-    }
-}
-
-fn is_known_binary_header(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"%PDF-") // PDF
-        || bytes.starts_with(b"PK\x03\x04") // ZIP local header
-        || bytes.starts_with(b"PK\x05\x06") // ZIP end of central directory
-        || bytes.starts_with(b"PK\x07\x08") // ZIP spanning/splitting
-        || bytes.starts_with(b"\x89PNG\r\n\x1a\n") // PNG
-        || bytes.starts_with(b"\xFF\xD8\xFF") // JPEG
-        || bytes.starts_with(b"GIF87a") // GIF87a
-        || bytes.starts_with(b"GIF89a") // GIF89a
-        || bytes.starts_with(b"IWAD") // Doom IWAD archive
-        || bytes.starts_with(b"PWAD") // Doom PWAD archive
-        || bytes.starts_with(b"RIFF") // WAV, AVI, WebP
-        || bytes.starts_with(b"OggS") // OGG (Vorbis, Opus, FLAC)
-        || bytes.starts_with(b"fLaC") // FLAC
-        || bytes.starts_with(b"ID3") // MP3 with ID3v2 tag
-        || bytes.starts_with(b"\xFF\xFB") // MP3 frame sync (MPEG1 Layer3)
-        || bytes.starts_with(b"\xFF\xFA") // MP3 frame sync (MPEG1 Layer3)
-        || bytes.starts_with(b"\xFF\xF3") // MP3 frame sync (MPEG2 Layer3)
-        || bytes.starts_with(b"\xFF\xF2") // MP3 frame sync (MPEG2 Layer3)
-}
-
-// Null byte skew alone is not enough to identify UTF-16 -- binary formats with
-// small 16-bit values (like PCM audio) produce the same pattern. Decode the
-// bytes as UTF-16 and reject if too many code units land in control character
-// ranges or form unpaired surrogates, which real text almost never contains.
-fn is_plausible_utf16_text(bytes: &[u8], little_endian: bool) -> bool {
-    let mut suspicious_count = 0usize;
-    let mut total = 0usize;
-
-    let mut i = 0;
-    while let Some(code_unit) = read_u16(bytes, i, little_endian) {
-        total += 1;
-
-        match code_unit {
-            0x0009 | 0x000A | 0x000C | 0x000D => {}
-            // C0/C1 control characters and non-characters
-            0x0000..=0x001F | 0x007F..=0x009F | 0xFFFE | 0xFFFF => suspicious_count += 1,
-            0xD800..=0xDBFF => {
-                let next_offset = i + 2;
-                let has_low_surrogate = read_u16(bytes, next_offset, little_endian)
-                    .is_some_and(|next| (0xDC00..=0xDFFF).contains(&next));
-                if has_low_surrogate {
-                    total += 1;
-                    i += 2;
-                } else {
-                    suspicious_count += 1;
-                }
-            }
-            // Lone low surrogate without a preceding high surrogate
-            0xDC00..=0xDFFF => suspicious_count += 1,
-            _ => {}
-        }
-
-        i += 2;
-    }
-
-    if total == 0 {
-        return false;
-    }
-
-    // Real UTF-16 text has near-zero control characters; binary data with
-    // small 16-bit values typically exceeds 5%. 2% provides a safe margin.
-    suspicious_count * 100 < total * 2
-}
-
-fn read_u16(bytes: &[u8], offset: usize, little_endian: bool) -> Option<u16> {
-    let pair = [*bytes.get(offset)?, *bytes.get(offset + 1)?];
-    if little_endian {
-        return Some(u16::from_le_bytes(pair));
-    }
-    Some(u16::from_be_bytes(pair))
 }
 
 #[cfg(test)]

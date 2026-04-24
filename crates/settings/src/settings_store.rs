@@ -286,13 +286,8 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 impl SettingsStore {
     pub fn new(cx: &mut App, default_settings: &str) -> Self {
-        Self::new_with_semantic_tokens(cx, default_settings)
-    }
-
-    pub fn new_with_semantic_tokens(cx: &mut App, default_settings: &str) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
-        let default_settings: SettingsContent =
-            SettingsContent::parse_json_with_comments(default_settings).unwrap();
+        let default_settings = Self::parse_default_settings(default_settings).unwrap();
         if !cx.has_global::<DefaultSemanticTokenRules>() {
             cx.set_global::<DefaultSemanticTokenRules>(
                 crate::parse_json_with_comments::<SemanticTokenRules>(
@@ -897,10 +892,23 @@ impl SettingsStore {
         default_settings_content: &str,
         cx: &mut App,
     ) -> Result<()> {
-        self.default_settings =
-            SettingsContent::parse_json_with_comments(default_settings_content)?.into();
+        self.default_settings = Self::parse_default_settings(default_settings_content)?.into();
         self.recompute_values(None, cx);
         Ok(())
+    }
+
+    /// Parses the default settings JSON and folds any `dev`/`nightly`/`preview`/`stable`
+    /// release-channel overrides and `macos`/`linux`/`windows` platform overrides into
+    /// the returned [`SettingsContent`].
+    ///
+    /// Unlike user settings, default settings are used directly as the base for all
+    /// merges, so overrides must be resolved up front.
+    fn parse_default_settings(default_settings: &str) -> Result<SettingsContent> {
+        let parsed = UserSettingsContent::parse_json_with_comments(default_settings)?;
+        let mut merged = (*parsed.content).clone();
+        merged.merge_from_option(parsed.for_release_channel());
+        merged.merge_from_option(parsed.for_os());
+        Ok(merged)
     }
 
     /// Sets the user settings via a JSON string.
@@ -1773,6 +1781,33 @@ mod tests {
                     migration_status: MigrationStatus::NotNeeded
                 }
             ]
+        );
+    }
+
+    #[gpui::test]
+    fn test_default_settings_release_channel_overrides(cx: &mut App) {
+        assert_eq!(
+            *release_channel::RELEASE_CHANNEL,
+            release_channel::ReleaseChannel::Dev,
+            "tests expect the dev release channel",
+        );
+
+        let mut defaults: serde_json::Value =
+            crate::parse_json_with_comments(&default_settings()).unwrap();
+        let root = defaults
+            .as_object_mut()
+            .expect("default settings must be a JSON object");
+        root.insert("dev".into(), serde_json::json!({ "auto_update": false }));
+        root.insert("stable".into(), serde_json::json!({ "auto_update": true }));
+        let defaults_with_overrides = serde_json::to_string(&defaults).unwrap();
+
+        let mut store = SettingsStore::new(cx, &defaults_with_overrides);
+        store.register_setting::<AutoUpdateSetting>();
+
+        assert_eq!(
+            store.get::<AutoUpdateSetting>(None),
+            &AutoUpdateSetting { auto_update: false },
+            "dev override from default settings should apply",
         );
     }
 

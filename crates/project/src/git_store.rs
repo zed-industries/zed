@@ -310,7 +310,7 @@ pub struct JobInfo {
 
 struct CommitDataHandler {
     _task: Task<()>,
-    commit_data_request: smol::channel::Sender<Oid>,
+    commit_data_request: async_channel::Sender<Oid>,
     completion_senders: HashMap<Oid, oneshot::Sender<Arc<CommitData>>>,
     pending_requests: HashSet<Oid>,
 }
@@ -584,7 +584,6 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_compare_checkpoints);
         client.add_entity_request_handler(Self::handle_diff_checkpoints);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
-        client.add_entity_request_handler(Self::handle_file_history);
         client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
@@ -1265,30 +1264,6 @@ impl GitStore {
                 }
             }
         })
-    }
-
-    pub fn file_history(
-        &self,
-        repo: &Entity<Repository>,
-        path: RepoPath,
-        cx: &mut App,
-    ) -> Task<Result<git::repository::FileHistory>> {
-        let rx = repo.update(cx, |repo, _| repo.file_history(path));
-
-        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
-    }
-
-    pub fn file_history_paginated(
-        &self,
-        repo: &Entity<Repository>,
-        path: RepoPath,
-        skip: usize,
-        limit: Option<usize>,
-        cx: &mut App,
-    ) -> Task<Result<git::repository::FileHistory>> {
-        let rx = repo.update(cx, |repo, _| repo.file_history_paginated(path, skip, limit));
-
-        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 
     pub fn get_permalink_to_line(
@@ -2949,40 +2924,6 @@ impl GitStore {
         })
     }
 
-    async fn handle_file_history(
-        this: Entity<Self>,
-        envelope: TypedEnvelope<proto::GitFileHistory>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::GitFileHistoryResponse> {
-        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
-        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-        let path = RepoPath::from_proto(&envelope.payload.path)?;
-        let skip = envelope.payload.skip as usize;
-        let limit = envelope.payload.limit.map(|l| l as usize);
-
-        let file_history = repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.file_history_paginated(path, skip, limit)
-            })
-            .await??;
-
-        Ok(proto::GitFileHistoryResponse {
-            entries: file_history
-                .entries
-                .into_iter()
-                .map(|entry| proto::FileHistoryEntry {
-                    sha: entry.sha.to_string(),
-                    subject: entry.subject.to_string(),
-                    message: entry.message.to_string(),
-                    commit_timestamp: entry.commit_timestamp,
-                    author_name: entry.author_name.to_string(),
-                    author_email: entry.author_email.to_string(),
-                })
-                .collect(),
-            path: file_history.path.to_proto(),
-        })
-    }
-
     async fn handle_reset(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitReset>,
@@ -4270,14 +4211,15 @@ impl Repository {
             })
             .shared();
 
+        // todo(git_graph_remote): Make this subscription on both remote/local repo
         cx.subscribe_self(move |this, event: &RepositoryEvent, _| match event {
             RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
-                if this.scan_id > 1 {
+                if this.scan_id > 2 {
                     this.initial_graph_data.clear();
                 }
             }
             RepositoryEvent::StashEntriesChanged => {
-                if this.scan_id > 1 {
+                if this.scan_id > 2 {
                     this.initial_graph_data
                         .retain(|(log_source, _), _| *log_source != LogSource::All);
                 }
@@ -4858,55 +4800,6 @@ impl Repository {
         })
     }
 
-    pub fn file_history(
-        &mut self,
-        path: RepoPath,
-    ) -> oneshot::Receiver<Result<git::repository::FileHistory>> {
-        self.file_history_paginated(path, 0, None)
-    }
-
-    pub fn file_history_paginated(
-        &mut self,
-        path: RepoPath,
-        skip: usize,
-        limit: Option<usize>,
-    ) -> oneshot::Receiver<Result<git::repository::FileHistory>> {
-        let id = self.id;
-        self.send_job(None, move |git_repo, _cx| async move {
-            match git_repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.file_history_paginated(path, skip, limit).await
-                }
-                RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
-                    let response = client
-                        .request(proto::GitFileHistory {
-                            project_id: project_id.0,
-                            repository_id: id.to_proto(),
-                            path: path.to_proto(),
-                            skip: skip as u64,
-                            limit: limit.map(|l| l as u64),
-                        })
-                        .await?;
-                    Ok(git::repository::FileHistory {
-                        entries: response
-                            .entries
-                            .into_iter()
-                            .map(|entry| git::repository::FileHistoryEntry {
-                                sha: entry.sha.into(),
-                                subject: entry.subject.into(),
-                                message: entry.message.into(),
-                                commit_timestamp: entry.commit_timestamp,
-                                author_name: entry.author_name.into(),
-                                author_email: entry.author_email.into(),
-                            })
-                            .collect(),
-                        path: RepoPath::from_proto(&response.path)?,
-                    })
-                }
-            }
-        })
-    }
-
     pub fn get_graph_data(
         &self,
         log_source: LogSource,
@@ -4919,7 +4812,7 @@ impl Repository {
         &mut self,
         log_source: LogSource,
         search_args: SearchCommitArgs,
-        request_tx: smol::channel::Sender<Oid>,
+        request_tx: async_channel::Sender<Oid>,
         cx: &mut Context<Self>,
     ) {
         let repository_state = self.repository_state.clone();
@@ -5019,7 +4912,7 @@ impl Repository {
         cx: &mut AsyncApp,
     ) -> Result<(), SharedString> {
         let (request_tx, request_rx) =
-            smol::channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
+            async_channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
 
         let task = cx.background_executor().spawn({
             let log_source = log_source.clone();
@@ -5136,8 +5029,8 @@ impl Repository {
 
     fn open_commit_data_handler(&self, cx: &Context<Self>) -> CommitDataHandler {
         let state = self.repository_state.clone();
-        let (result_tx, result_rx) = smol::channel::bounded::<(Oid, CommitData)>(64);
-        let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
+        let (result_tx, result_rx) = async_channel::bounded::<(Oid, CommitData)>(64);
+        let (request_tx, request_rx) = async_channel::unbounded::<Oid>();
 
         let foreground_task = cx.spawn(async move |this, cx| {
             while let Ok((sha, commit_data)) = result_rx.recv().await {
