@@ -1767,8 +1767,10 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::NewEntry);
     }
 
-    pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {
-        self.connection.set_title(&self.session_id, cx).is_some()
+    pub fn can_set_title(&mut self, _cx: &mut Context<Self>) -> bool {
+        // set_title() always persists locally even when the connection doesn't
+        // propagate to the remote server, so we only need to exclude subagents.
+        self.parent_session_id.is_none()
     }
 
     pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) -> Task<Result<()>> {

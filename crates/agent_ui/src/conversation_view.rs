@@ -7014,9 +7014,13 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_title_editor_is_read_only_when_set_title_unsupported(cx: &mut TestAppContext) {
+    async fn test_title_editor_is_editable_even_when_connection_does_not_support_set_title(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
 
+        // ResumeOnlyAgentConnection does not implement set_title(), but the title
+        // editor should still be writable so users can rename threads locally.
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::new(ResumeOnlyAgentConnection), cx).await;
 
@@ -7025,8 +7029,8 @@ pub(crate) mod tests {
 
         title_editor.read_with(cx, |editor, cx| {
             assert!(
-                editor.read_only(cx),
-                "Title editor should be read-only when the connection does not support set_title"
+                !editor.read_only(cx),
+                "Title editor should be editable for non-subagent threads"
             );
         });
     }
