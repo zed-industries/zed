@@ -834,13 +834,18 @@ fn resolve_file_history_target(
 ) -> Option<(RepositoryId, LogSource)> {
     if let Some(panel) = workspace.panel::<ProjectPanel>(cx)
         && panel.read(cx).focus_handle(cx).contains_focused(window, cx)
-        && let Some(project_path) = panel.read(cx).selected_file_project_path(cx)
+        && let Some(project_path) = panel.read(cx).selected_entry_project_path(cx)
     {
         let git_store = workspace.project().read(cx).git_store();
         let (repo, repo_path) = git_store
             .read(cx)
             .repository_and_path_for_project_path(&project_path, cx)?;
-        return Some((repo.read(cx).id, LogSource::File(repo_path)));
+        let log_source = if repo_path.is_empty() {
+            LogSource::All
+        } else {
+            LogSource::File(repo_path)
+        };
+        return Some((repo.read(cx).id, log_source));
     }
 
     if let Some(panel) = workspace.panel::<git_ui::git_panel::GitPanel>(cx)

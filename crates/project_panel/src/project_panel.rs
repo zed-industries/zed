@@ -1062,8 +1062,7 @@ impl ProjectPanel {
                 let has_git_repo = git_store
                     .repository_and_path_for_project_path(&project_path, cx)
                     .is_some();
-                let has_file_history = !is_dir
-                    && has_git_repo
+                let has_file_history = has_git_repo
                     && !git_store
                         .project_path_git_status(&project_path, cx)
                         .is_some_and(|status| status.is_created());
@@ -1144,7 +1143,7 @@ impl ProjectPanel {
                                     })
                                     .action("Add to .gitignore", Box::new(git::AddToGitignore))
                                     .when(has_file_history, |menu| {
-                                        menu.action("View File History", Box::new(git::FileHistory))
+                                        menu.action("View History", Box::new(git::FileHistory))
                                     })
                             })
                             .when(!should_hide_rename, |menu| {
@@ -3791,11 +3790,11 @@ impl ProjectPanel {
         Some((worktree.read(cx), entry))
     }
 
-    pub fn selected_file_project_path(&self, cx: &App) -> Option<ProjectPath> {
+    pub fn selected_entry_project_path(&self, cx: &App) -> Option<ProjectPath> {
         let (worktree, entry) = self.selected_sub_entry(cx)?;
         Some(ProjectPath {
             worktree_id: worktree.read(cx).id(),
-            path: entry.is_file().then(|| entry.path.clone())?,
+            path: entry.path.clone(),
         })
     }
 
