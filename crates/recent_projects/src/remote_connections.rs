@@ -10,7 +10,6 @@ use extension_host::ExtensionStore;
 use futures::{FutureExt as _, channel::oneshot, select};
 use gpui::{AppContext, AsyncApp, PromptLevel, WindowHandle};
 
-use language::Point;
 use project::trusted_worktrees;
 use remote::{
     DockerConnectionOptions, Interactive, RemoteConnection, RemoteConnectionOptions,
@@ -97,6 +96,7 @@ impl From<Connection> for RemoteConnectionOptions {
                     container_id: conn.container_id,
                     upload_binary_over_docker_exec: false,
                     use_podman: conn.use_podman,
+                    remote_env: conn.remote_env,
                 })
             }
         }
@@ -132,8 +132,8 @@ pub async fn open_remote_project(
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
-) -> Result<()> {
-    let created_new_window = open_options.replace_window.is_none();
+) -> Result<WindowHandle<MultiWorkspace>> {
+    let created_new_window = open_options.requesting_window.is_none();
 
     let (existing, open_visible) = find_existing_workspace(
         &paths,
@@ -160,7 +160,7 @@ pub async fn open_remote_project(
             let open_results = existing_window
                 .update(cx, |multi_workspace, window, cx| {
                     window.activate_window();
-                    multi_workspace.activate(existing_workspace.clone(), cx);
+                    multi_workspace.activate(existing_workspace.clone(), None, window, cx);
                     existing_workspace.update(cx, |workspace, cx| {
                         workspace.open_paths(
                             resolved_paths,
@@ -193,7 +193,7 @@ pub async fn open_remote_project(
                 .collect::<Vec<_>>();
             navigate_to_positions(&existing_window, items, &paths_with_positions, cx);
 
-            return Ok(());
+            return Ok(existing_window);
         }
         // If the remote connection is dead (e.g. server not running after failed reconnect),
         // fall through to establish a fresh connection instead of showing an error.
@@ -202,7 +202,7 @@ pub async fn open_remote_project(
         );
     }
 
-    let (window, initial_workspace) = if let Some(window) = open_options.replace_window {
+    let (window, initial_workspace) = if let Some(window) = open_options.requesting_window {
         let workspace = window.update(cx, |multi_workspace, _, _| {
             multi_workspace.workspace().clone()
         })?;
@@ -341,7 +341,7 @@ pub async fn open_remote_project(
                         .update(cx, |_, window, _| window.remove_window())
                         .ok();
                 }
-                return Ok(());
+                return Ok(window);
             }
         };
 
@@ -436,7 +436,7 @@ pub async fn open_remote_project(
             });
         })
         .ok();
-    Ok(())
+    Ok(window)
 }
 
 pub fn navigate_to_positions(
@@ -458,7 +458,12 @@ pub fn navigate_to_positions(
                     active_editor.update(cx, |editor, cx| {
                         let row = row.saturating_sub(1);
                         let col = path.column.unwrap_or(0).saturating_sub(1);
-                        editor.go_to_singleton_buffer_point(Point::new(row, col), window, cx);
+                        let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+                            return;
+                        };
+                        let buffer_snapshot = buffer.read(cx).snapshot();
+                        let point = buffer_snapshot.point_from_external_input(row, col);
+                        editor.go_to_singleton_buffer_point(point, window, cx);
                     });
                 })
                 .ok();
@@ -850,7 +855,7 @@ mod tests {
             paths,
             app_state,
             workspace::OpenOptions {
-                replace_window: Some(window),
+                requesting_window: Some(window),
                 ..Default::default()
             },
             &mut async_cx,

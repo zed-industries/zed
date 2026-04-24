@@ -3,7 +3,6 @@ use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::{Addon, Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
-use feature_flags::{FeatureFlagAppExt as _, GitGraphFeatureFlag};
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
@@ -204,6 +203,7 @@ impl CommitView {
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
 
             editor.disable_inline_diagnostics();
+            editor.set_show_bookmarks(false, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_diff_review_button(true, cx);
             editor.set_expand_all_diff_hunks(cx);
@@ -212,7 +212,7 @@ impl CommitView {
 
             editor.insert_blocks(
                 [BlockProperties {
-                    placement: BlockPlacement::Above(editor::Anchor::min()),
+                    placement: BlockPlacement::Above(editor::Anchor::Min),
                     height: Some(1),
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| gpui::Empty.into_any_element()),
@@ -223,7 +223,10 @@ impl CommitView {
                     editor
                         .buffer()
                         .read(cx)
-                        .buffer_anchor_to_anchor(&message_buffer, Anchor::MAX, cx)
+                        .snapshot(cx)
+                        .anchor_in_buffer(Anchor::max_for_buffer(
+                            message_buffer.read(cx).remote_id(),
+                        ))
                         .map(|anchor| BlockProperties {
                             placement: BlockPlacement::Below(anchor),
                             height: Some(1),
@@ -414,38 +417,7 @@ impl CommitView {
     }
 
     fn calculate_changed_lines(&self, cx: &App) -> (u32, u32) {
-        let snapshot = self.multibuffer.read(cx).snapshot(cx);
-        let mut total_additions = 0u32;
-        let mut total_deletions = 0u32;
-
-        let mut seen_buffers = std::collections::HashSet::new();
-        for (_, buffer, _) in snapshot.excerpts() {
-            let buffer_id = buffer.remote_id();
-            if !seen_buffers.insert(buffer_id) {
-                continue;
-            }
-
-            let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
-                continue;
-            };
-
-            let base_text = diff.base_text();
-
-            for hunk in diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer) {
-                let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
-                total_additions += added_rows;
-
-                let base_start = base_text
-                    .offset_to_point(hunk.diff_base_byte_range.start)
-                    .row;
-                let base_end = base_text.offset_to_point(hunk.diff_base_byte_range.end).row;
-                let deleted_rows = base_end.saturating_sub(base_start);
-
-                total_deletions += deleted_rows;
-            }
-        }
-
-        (total_additions, total_deletions)
+        self.multibuffer.read(cx).snapshot(cx).total_changed_lines()
     }
 
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -524,10 +496,11 @@ impl CommitView {
             .when(self.stash.is_none(), |this| {
                 this.child(
                     Button::new("sha", "Commit SHA")
-                        .icon(copy_icon)
-                        .icon_color(copy_icon_color)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::Small)
+                        .start_icon(
+                            Icon::new(copy_icon)
+                                .size(IconSize::Small)
+                                .color(copy_icon_color),
+                        )
                         .tooltip({
                             let commit_sha = commit_sha.clone();
                             move |_, cx| {
@@ -1072,21 +1045,19 @@ impl Render for CommitViewToolbar {
                     }),
             )
             .when(!is_stash, |this| {
-                this.when(cx.has_flag::<GitGraphFeatureFlag>(), |this| {
-                    this.child(
-                        IconButton::new("show-in-git-graph", IconName::GitGraph)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Show in Git Graph"))
-                            .on_click(move |_, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(crate::git_panel::OpenAtCommit {
-                                        sha: sha_for_graph.clone(),
-                                    }),
-                                    cx,
-                                );
-                            }),
-                    )
-                })
+                this.child(
+                    IconButton::new("show-in-git-graph", IconName::GitGraph)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Show in Git Graph"))
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::git_panel::OpenAtCommit {
+                                    sha: sha_for_graph.clone(),
+                                }),
+                                cx,
+                            );
+                        }),
+                )
                 .children(remote_info.map(|(provider_name, url)| {
                     let icon = match provider_name.as_str() {
                         "GitHub" => IconName::Github,

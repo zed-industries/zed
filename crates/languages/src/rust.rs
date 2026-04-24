@@ -3,12 +3,13 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use futures::lock::OwnedMutexGuard;
-use gpui::{App, AppContext, AsyncApp, SharedString, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
+use project::lsp_store::lsp_ext_command;
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
@@ -31,11 +32,10 @@ use util::merge_json_value_into;
 use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
-use crate::LanguageDir;
-use crate::language_settings::language_settings;
+use crate::language_settings::LanguageSettings;
 
 pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
-    let content = LanguageDir::get("rust/semantic_token_rules.json")
+    let content = grammars::get_file("rust/semantic_token_rules.json")
         .expect("missing rust/semantic_token_rules.json");
     let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
     settings::parse_json_with_comments::<SemanticTokenRules>(json)
@@ -202,6 +202,7 @@ impl RustLspAdapter {
     async fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz => "tar.gz",
+            AssetKind::TarBz2 => "tar.bz2",
             AssetKind::Gz => "gz",
             AssetKind::Zip => "zip",
         };
@@ -262,12 +263,7 @@ impl LspAdapter for RustLspAdapter {
         Some("rust-analyzer/flycheck".into())
     }
 
-    fn process_diagnostics(
-        &self,
-        params: &mut lsp::PublishDiagnosticsParams,
-        _: LanguageServerId,
-        _: Option<&'_ Buffer>,
-    ) {
+    fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams, _: LanguageServerId) {
         static REGEX: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"(?m)`([^`]+)\n`$").expect("Failed to create REGEX"));
 
@@ -613,20 +609,60 @@ impl LspAdapter for RustLspAdapter {
             .lsp
             .get(&SERVER_NAME)
             .is_some_and(|s| s.enable_lsp_tasks);
-        if enable_lsp_tasks {
-            let experimental = json!({
-                "runnables": {
-                    "kinds": [ "cargo", "shell" ],
-                },
-            });
-            if let Some(original_experimental) = &mut original.capabilities.experimental {
-                merge_json_value_into(experimental, original_experimental);
-            } else {
-                original.capabilities.experimental = Some(experimental);
+
+        let mut experimental = json!({
+            "commands": {
+                "commands": [
+                    "rust-analyzer.showReferences",
+                    "rust-analyzer.gotoLocation",
+                    "rust-analyzer.triggerParameterHints",
+                    "rust-analyzer.rename",
+                ]
             }
+        });
+
+        if enable_lsp_tasks {
+            merge_json_value_into(
+                json!({
+                    "runnables": {
+                        "kinds": [ "cargo", "shell" ],
+                    },
+                    "commands": {
+                        "commands": [
+                            "rust-analyzer.runSingle",
+                        ]
+                    }
+                }),
+                &mut experimental,
+            );
+        }
+
+        if let Some(original_experimental) = &mut original.capabilities.experimental {
+            merge_json_value_into(experimental, original_experimental);
+        } else {
+            original.capabilities.experimental = Some(experimental);
         }
 
         Ok(original)
+    }
+
+    fn client_command(
+        &self,
+        command_name: &str,
+        arguments: &[serde_json::Value],
+    ) -> Option<ClientCommand> {
+        match command_name {
+            "rust-analyzer.showReferences" => Some(ClientCommand::ShowLocations),
+            "rust-analyzer.runSingle" => {
+                let first_arg = arguments.first()?;
+                let runnable =
+                    serde_json::from_value::<lsp_ext_command::Runnable>(first_arg.clone()).ok()?;
+                let template =
+                    lsp_ext_command::runnable_to_task_template(runnable.label, runnable.args);
+                Some(ClientCommand::ScheduleTask(template))
+            }
+            _ => None,
+        }
     }
 }
 
@@ -706,7 +742,7 @@ impl LspInstaller for RustLspAdapter {
         } = version;
         let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
         let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
+            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
             AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
         };
 
@@ -898,23 +934,16 @@ impl ContextProvider for RustContextProvider {
 
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn language::File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         const CUSTOM_TARGET_DIR: &str = "RUST_TARGET_DIR";
 
-        let language_sets = language_settings(Some("Rust".into()), file.as_ref(), cx);
-        let package_to_run = language_sets
-            .tasks
-            .variables
-            .get(DEFAULT_RUN_NAME_STR)
-            .cloned();
-        let custom_target_dir = language_sets
-            .tasks
-            .variables
-            .get(CUSTOM_TARGET_DIR)
-            .cloned();
+        let language = LanguageName::new_static("Rust");
+        let settings = LanguageSettings::resolve(buffer.map(|b| b.read(cx)), Some(&language), cx);
+        let package_to_run = settings.tasks.variables.get(DEFAULT_RUN_NAME_STR).cloned();
+        let custom_target_dir = settings.tasks.variables.get(CUSTOM_TARGET_DIR).cloned();
         let run_task_args = if let Some(package_to_run) = package_to_run {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
@@ -1280,8 +1309,8 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             None => return Ok(None),
         };
         let path = match RustLspAdapter::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
-            AssetKind::Zip => path.join("rust-analyzer.exe"), // zip contains a .exe
+            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => path, // Tar and gzip extract in place.
+            AssetKind::Zip => path.join("rust-analyzer.exe"),             // zip contains a .exe
         };
 
         anyhow::Ok(Some(LanguageServerBinary {
@@ -1364,7 +1393,7 @@ mod tests {
                 },
             ],
         };
-        RustLspAdapter.process_diagnostics(&mut params, LanguageServerId(0), None);
+        RustLspAdapter.process_diagnostics(&mut params, LanguageServerId(0));
 
         assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
 
@@ -1554,10 +1583,10 @@ mod tests {
                 "await.as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
                 6..18,
                 vec![
-                    (6..18, HighlightId(2)),
-                    (20..23, HighlightId(1)),
-                    (33..40, HighlightId(0)),
-                    (45..46, HighlightId(0))
+                    (6..18, HighlightId::new(2)),
+                    (20..23, HighlightId::new(1)),
+                    (33..40, HighlightId::new(0)),
+                    (45..46, HighlightId::new(0))
                 ],
             ))
         );
@@ -1584,12 +1613,12 @@ mod tests {
                 "pub fn as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
                 7..19,
                 vec![
-                    (0..3, HighlightId(1)),
-                    (4..6, HighlightId(1)),
-                    (7..19, HighlightId(2)),
-                    (21..24, HighlightId(1)),
-                    (34..41, HighlightId(0)),
-                    (46..47, HighlightId(0))
+                    (0..3, HighlightId::new(1)),
+                    (4..6, HighlightId::new(1)),
+                    (7..19, HighlightId::new(2)),
+                    (21..24, HighlightId::new(1)),
+                    (34..41, HighlightId::new(0)),
+                    (46..47, HighlightId::new(0))
                 ],
             ))
         );
@@ -1610,7 +1639,7 @@ mod tests {
             Some(CodeLabel::new(
                 "inner_value: String".to_string(),
                 6..11,
-                vec![(0..11, HighlightId(3)), (13..19, HighlightId(0))],
+                vec![(0..11, HighlightId::new(3)), (13..19, HighlightId::new(0))],
             ))
         );
 
@@ -1637,8 +1666,8 @@ mod tests {
                 vec![
                     (10..13, HighlightId::TABSTOP_INSERT_ID),
                     (16..19, HighlightId::TABSTOP_INSERT_ID),
-                    (0..7, HighlightId(2)),
-                    (7..8, HighlightId(2)),
+                    (0..7, HighlightId::new(2)),
+                    (7..8, HighlightId::new(2)),
                 ],
             ))
         );
@@ -1665,8 +1694,8 @@ mod tests {
                 0..4,
                 vec![
                     (5..9, HighlightId::TABSTOP_REPLACE_ID),
-                    (0..3, HighlightId(2)),
-                    (3..4, HighlightId(2)),
+                    (0..3, HighlightId::new(2)),
+                    (3..4, HighlightId::new(2)),
                 ],
             ))
         );
@@ -1694,8 +1723,8 @@ mod tests {
                 vec![
                     (7..10, HighlightId::TABSTOP_REPLACE_ID),
                     (13..16, HighlightId::TABSTOP_INSERT_ID),
-                    (0..2, HighlightId(1)),
-                    (3..6, HighlightId(1)),
+                    (0..2, HighlightId::new(1)),
+                    (3..6, HighlightId::new(1)),
                 ],
             ))
         );
@@ -1723,8 +1752,8 @@ mod tests {
                 vec![
                     (4..8, HighlightId::TABSTOP_REPLACE_ID),
                     (12..16, HighlightId::TABSTOP_REPLACE_ID),
-                    (0..3, HighlightId(1)),
-                    (9..11, HighlightId(1)),
+                    (0..3, HighlightId::new(1)),
+                    (9..11, HighlightId::new(1)),
                 ],
             ))
         );

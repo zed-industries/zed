@@ -17,8 +17,7 @@ use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
     ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
     ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
-    ExtensionLanguageServerProxy, ExtensionSlashCommandProxy, ExtensionSnippetProxy,
-    ExtensionThemeProxy,
+    ExtensionLanguageServerProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions};
 use futures::future::join_all;
@@ -55,8 +54,9 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use task::TaskTemplates;
 use url::Url;
-use util::{ResultExt, paths::RemotePathBuf};
+use util::{ResultExt, paths::RemotePathBuf, rel_path::PathExt};
 use wasm_host::{
     WasmExtension, WasmHost,
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
@@ -1208,9 +1208,6 @@ impl ExtensionStore {
             for locator in extension.manifest.debug_locators.keys() {
                 self.proxy.unregister_debug_locator(locator.clone());
             }
-            for command_name in extension.manifest.slash_commands.keys() {
-                self.proxy.unregister_slash_command(command_name.clone());
-            }
         }
 
         self.wasm_extensions
@@ -1247,13 +1244,16 @@ impl ExtensionStore {
             }));
             themes_to_add.extend(extension.manifest.themes.iter().map(|theme_path| {
                 let mut path = self.installed_dir.clone();
-                path.extend([Path::new(extension_id.as_ref()), theme_path.as_path()]);
+                path.extend([Path::new(extension_id.as_ref()), theme_path.as_std_path()]);
                 path
             }));
             icon_themes_to_add.extend(extension.manifest.icon_themes.iter().map(
                 |icon_theme_path| {
                     let mut path = self.installed_dir.clone();
-                    path.extend([Path::new(extension_id.as_ref()), icon_theme_path.as_path()]);
+                    path.extend([
+                        Path::new(extension_id.as_ref()),
+                        icon_theme_path.as_std_path(),
+                    ]);
 
                     let mut icons_root_path = self.installed_dir.clone();
                     icons_root_path.extend([Path::new(extension_id.as_ref())]);
@@ -1285,19 +1285,11 @@ impl ExtensionStore {
             ]);
 
             // Load semantic token rules if present in the language directory.
-            let rules_path = language_path.join("semantic_token_rules.json");
-            if let Ok(rules_json) = std::fs::read_to_string(&rules_path) {
-                match serde_json_lenient::from_str::<SemanticTokenRules>(&rules_json) {
-                    Ok(rules) => {
-                        semantic_token_rules_to_add.push((language_name.clone(), rules));
-                    }
-                    Err(err) => {
-                        log::error!(
-                            "Failed to parse semantic token rules from {}: {err:#}",
-                            rules_path.display()
-                        );
-                    }
-                }
+            let rules_path = language_path.join(SemanticTokenRules::FILE_NAME);
+            if std::fs::exists(&rules_path).is_ok_and(|exists| exists)
+                && let Some(rules) = SemanticTokenRules::load(&rules_path).log_err()
+            {
+                semantic_token_rules_to_add.push((language_name.clone(), rules));
             }
 
             self.proxy.register_language(
@@ -1306,11 +1298,11 @@ impl ExtensionStore {
                 language.matcher.clone(),
                 language.hidden,
                 Arc::new(move || {
-                    let config = std::fs::read_to_string(language_path.join("config.toml"))?;
-                    let config: LanguageConfig = ::toml::from_str(&config)?;
+                    let config =
+                        LanguageConfig::load(language_path.join(LanguageConfig::FILE_NAME))?;
                     let queries = load_plugin_queries(&language_path);
                     let context_provider =
-                        std::fs::read_to_string(language_path.join("tasks.json"))
+                        std::fs::read_to_string(language_path.join(TaskTemplates::FILE_NAME))
                             .ok()
                             .and_then(|contents| {
                                 let definitions =
@@ -1435,21 +1427,6 @@ impl ExtensionStore {
                                 language.clone(),
                             );
                         }
-                    }
-
-                    for (slash_command_name, slash_command) in &manifest.slash_commands {
-                        this.proxy.register_slash_command(
-                            extension.clone(),
-                            extension::SlashCommand {
-                                name: slash_command_name.to_string(),
-                                description: slash_command.description.to_string(),
-                                // We don't currently expose this as a configurable option, as it currently drives
-                                // the `menu_text` on the `SlashCommand` trait, which is not used for slash commands
-                                // defined in extensions, as they are not able to be added to the menu.
-                                tooltip_text: String::new(),
-                                requires_argument: slash_command.requires_argument,
-                            },
-                        );
                     }
 
                     for id in manifest.context_servers.keys() {
@@ -1580,13 +1557,13 @@ impl ExtensionStore {
                 if !fs_metadata.is_dir {
                     continue;
                 }
-                let language_config_path = language_path.join("config.toml");
+                let language_config_path = language_path.join(LanguageConfig::FILE_NAME);
                 let config = fs.load(&language_config_path).await.with_context(|| {
                     format!("loading language config from {language_config_path:?}")
                 })?;
                 let config = ::toml::from_str::<LanguageConfig>(&config)?;
 
-                let relative_path = relative_path.to_path_buf();
+                let relative_path = relative_path.to_rel_path_buf()?;
                 if !extension_manifest.languages.contains(&relative_path) {
                     extension_manifest.languages.push(relative_path.clone());
                 }
@@ -1595,7 +1572,7 @@ impl ExtensionStore {
                     config.name.clone(),
                     ExtensionIndexLanguageEntry {
                         extension: extension_id.clone(),
-                        path: relative_path,
+                        path: relative_path.as_std_path().to_path_buf(),
                         matcher: config.matcher,
                         hidden: config.hidden,
                         grammar: config.grammar,
@@ -1619,7 +1596,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let relative_path = relative_path.to_path_buf();
+                let relative_path = relative_path.to_rel_path_buf()?;
                 if !extension_manifest.themes.contains(&relative_path) {
                     extension_manifest.themes.push(relative_path.clone());
                 }
@@ -1629,7 +1606,7 @@ impl ExtensionStore {
                         theme_name.into(),
                         ExtensionIndexThemeEntry {
                             extension: extension_id.clone(),
-                            path: relative_path.clone(),
+                            path: relative_path.as_std_path().to_path_buf(),
                         },
                     );
                 }
@@ -1651,7 +1628,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let relative_path = relative_path.to_path_buf();
+                let relative_path = relative_path.to_rel_path_buf()?;
                 if !extension_manifest.icon_themes.contains(&relative_path) {
                     extension_manifest.icon_themes.push(relative_path.clone());
                 }
@@ -1661,7 +1638,7 @@ impl ExtensionStore {
                         icon_theme_name.into(),
                         ExtensionIndexIconThemeEntry {
                             extension: extension_id.clone(),
-                            path: relative_path.clone(),
+                            path: relative_path.as_std_path().to_path_buf(),
                         },
                     );
                 }
@@ -1703,7 +1680,7 @@ impl ExtensionStore {
         cx.background_spawn(async move {
             const EXTENSION_TOML: &str = "extension.toml";
             const EXTENSION_WASM: &str = "extension.wasm";
-            const CONFIG_TOML: &str = "config.toml";
+            const CONFIG_TOML: &str = LanguageConfig::FILE_NAME;
 
             if is_dev {
                 let manifest_toml = toml::to_string(&loaded_extension.manifest)?;
@@ -1747,15 +1724,15 @@ impl ExtensionStore {
             }
 
             for (adapter_name, meta) in loaded_extension.manifest.debug_adapters.iter() {
-                let schema_path = &extension::build_debug_adapter_schema_path(adapter_name, meta);
+                let schema_path = extension::build_debug_adapter_schema_path(adapter_name, meta)?;
 
-                if fs.is_file(&src_dir.join(schema_path)).await {
+                if fs.is_file(&src_dir.join(&schema_path)).await {
                     if let Some(parent) = schema_path.parent() {
                         fs.create_dir(&tmp_dir.join(parent)).await?
                     }
                     fs.copy_file(
-                        &src_dir.join(schema_path),
-                        &tmp_dir.join(schema_path),
+                        &src_dir.join(&schema_path),
+                        &tmp_dir.join(&schema_path),
                         fs::CopyOptions::default(),
                     )
                     .await?

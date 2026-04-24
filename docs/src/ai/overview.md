@@ -18,7 +18,9 @@ Zed's AI features run inside a native, GPU-accelerated application built in Rust
 
 ## Agentic editing
 
-The [Agent Panel](./agent-panel.md) is where you work with AI agents. Agents can read files, edit code, run terminal commands, search the web, and access diagnostics through [built-in tools](./tools.md).
+The [Threads Sidebar](./parallel-agents.md#threads-sidebar) is where you organize agent work. Start a thread, give it a task, and the agent reads, edits, and runs code in your project. You can run multiple threads at once, each using a different agent and working against different projects. See [Tools](./tools.md) for the capabilities available to Zed's built-in agent.
+
+The [Agent Panel](./agent-panel.md) is the conversation view for the active thread. Use it to send prompts, review changes, add context, and interact with the agent as it works.
 
 You can extend agents with additional tools through [MCP servers](./mcp.md), control what they can access with [tool permissions](./tool-permissions.md), and shape their behavior with [rules](./rules.md).
 
@@ -30,13 +32,10 @@ The [Inline Assistant](./inline-assistant.md) works differently: select code or 
 
 The default provider is Zeta, Zed's open-source model trained on open data. You can also use GitHub Copilot, or Codestral.
 
-## Text threads
-
-[Text Threads](./text-threads.md) are conversations with models inside any buffer. They work like a regular editor with your keybindings, multiple cursors, and standard editing features. Content is organized into message blocks with roles (You, Assistant, System).
-
 ## Getting started
 
 - [Configuration](./configuration.md): Connect to Anthropic, OpenAI, Ollama, Google AI, or other LLM providers.
+- [Parallel Agents](./parallel-agents.md): Run multiple threads at once with the Threads Sidebar.
 - [External Agents](./external-agents.md): Run Claude Agent, Codex, Aider, or other external agents inside Zed.
 - [Subscription](./subscription.md): Zed's hosted models and billing.
 - [Privacy and Security](./privacy-and-security.md): How Zed handles data when using AI features.

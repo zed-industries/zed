@@ -20,18 +20,13 @@ pub async fn run_context_retrieval(
     example_progress: &ExampleProgress,
     mut cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    if example.prompt_inputs.is_some() {
-        if example.spec.repository_url.is_empty() {
-            return Ok(());
-        }
-
-        if example
-            .prompt_inputs
-            .as_ref()
-            .is_some_and(|inputs| !inputs.related_files.is_empty())
-        {
-            return Ok(());
-        }
+    if example
+        .prompt_inputs
+        .as_ref()
+        .is_some_and(|inputs| inputs.related_files.is_some())
+        || example.spec.repository_url.is_empty()
+    {
+        return Ok(());
     }
 
     run_load_project(example, app_state.clone(), example_progress, cx.clone()).await?;
@@ -72,7 +67,7 @@ pub async fn run_context_retrieval(
     step_progress.set_info(format!("{} excerpts", excerpt_count), InfoStyle::Normal);
 
     if let Some(prompt_inputs) = example.prompt_inputs.as_mut() {
-        prompt_inputs.related_files = context_files;
+        prompt_inputs.related_files = Some(context_files);
     }
     Ok(())
 }

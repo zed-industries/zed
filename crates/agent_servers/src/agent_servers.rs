@@ -9,80 +9,75 @@ use collections::{HashMap, HashSet};
 pub use custom::*;
 use fs::Fs;
 use http_client::read_no_proxy_from_env;
-use project::agent_server_store::AgentServerStore;
+use project::{AgentId, Project, agent_server_store::AgentServerStore};
 
 use acp_thread::AgentConnection;
+use agent_client_protocol::schema as acp_schema;
 use anyhow::Result;
-use gpui::{App, AppContext, Entity, SharedString, Task};
-use project::Project;
+use gpui::{App, AppContext, Entity, Task};
 use settings::SettingsStore;
 use std::{any::Any, rc::Rc, sync::Arc};
 
-pub use acp::AcpConnection;
+#[cfg(any(test, feature = "test-support"))]
+pub use acp::test_support::{
+    FakeAcpAgentServer, FakeAcpConnectionHarness, connect_fake_acp_connection,
+};
+pub use acp::{AcpConnection, GEMINI_TERMINAL_AUTH_METHOD_ID};
 
 pub struct AgentServerDelegate {
     store: Entity<AgentServerStore>,
-    project: Entity<Project>,
-    status_tx: Option<watch::Sender<SharedString>>,
     new_version_available: Option<watch::Sender<Option<String>>>,
 }
 
 impl AgentServerDelegate {
     pub fn new(
         store: Entity<AgentServerStore>,
-        project: Entity<Project>,
-        status_tx: Option<watch::Sender<SharedString>>,
         new_version_tx: Option<watch::Sender<Option<String>>>,
     ) -> Self {
         Self {
             store,
-            project,
-            status_tx,
             new_version_available: new_version_tx,
         }
-    }
-
-    pub fn project(&self) -> &Entity<Project> {
-        &self.project
     }
 }
 
 pub trait AgentServer: Send {
     fn logo(&self) -> ui::IconName;
-    fn name(&self) -> SharedString;
+    fn agent_id(&self) -> AgentId;
     fn connect(
         &self,
         delegate: AgentServerDelegate,
+        project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>>;
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any>;
 
-    fn default_mode(&self, _cx: &App) -> Option<agent_client_protocol::SessionModeId> {
+    fn default_mode(&self, _cx: &App) -> Option<acp_schema::SessionModeId> {
         None
     }
 
     fn set_default_mode(
         &self,
-        _mode_id: Option<agent_client_protocol::SessionModeId>,
+        _mode_id: Option<acp_schema::SessionModeId>,
         _fs: Arc<dyn Fs>,
         _cx: &mut App,
     ) {
     }
 
-    fn default_model(&self, _cx: &App) -> Option<agent_client_protocol::ModelId> {
+    fn default_model(&self, _cx: &App) -> Option<acp_schema::ModelId> {
         None
     }
 
     fn set_default_model(
         &self,
-        _model_id: Option<agent_client_protocol::ModelId>,
+        _model_id: Option<acp_schema::ModelId>,
         _fs: Arc<dyn Fs>,
         _cx: &mut App,
     ) {
     }
 
-    fn favorite_model_ids(&self, _cx: &mut App) -> HashSet<agent_client_protocol::ModelId> {
+    fn favorite_model_ids(&self, _cx: &mut App) -> HashSet<acp_schema::ModelId> {
         HashSet::default()
     }
 
@@ -101,16 +96,16 @@ pub trait AgentServer: Send {
 
     fn favorite_config_option_value_ids(
         &self,
-        _config_id: &agent_client_protocol::SessionConfigId,
+        _config_id: &acp_schema::SessionConfigId,
         _cx: &mut App,
-    ) -> HashSet<agent_client_protocol::SessionConfigValueId> {
+    ) -> HashSet<acp_schema::SessionConfigValueId> {
         HashSet::default()
     }
 
     fn toggle_favorite_config_option_value(
         &self,
-        _config_id: agent_client_protocol::SessionConfigId,
-        _value_id: agent_client_protocol::SessionConfigValueId,
+        _config_id: acp_schema::SessionConfigId,
+        _value_id: acp_schema::SessionConfigValueId,
         _should_be_favorite: bool,
         _fs: Arc<dyn Fs>,
         _cx: &App,
@@ -119,7 +114,7 @@ pub trait AgentServer: Send {
 
     fn toggle_favorite_model(
         &self,
-        _model_id: agent_client_protocol::ModelId,
+        _model_id: acp_schema::ModelId,
         _should_be_favorite: bool,
         _fs: Arc<dyn Fs>,
         _cx: &App,

@@ -8,10 +8,10 @@ use editor::{
 use gpui::{AppContext, Entity, Focusable, WeakEntity};
 use language::{BufferId, Diagnostic, DiagnosticEntryRef, LanguageRegistry};
 use lsp::DiagnosticSeverity;
-use markdown::{Markdown, MarkdownElement};
+use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
 use settings::Settings;
-use text::{AnchorRangeExt, Point};
-use theme::ThemeSettings;
+use text::Point;
+use theme_settings::ThemeSettings;
 use ui::{CopyButton, prelude::*};
 use util::maybe;
 
@@ -206,7 +206,7 @@ impl DiagnosticBlock {
                 (status_colors.warning_background, status_colors.warning)
             }
             DiagnosticSeverity::INFORMATION => (status_colors.info_background, status_colors.info),
-            DiagnosticSeverity::HINT => (status_colors.hint_background, status_colors.info),
+            DiagnosticSeverity::HINT => (status_colors.hint_background, status_colors.hint),
             _ => (status_colors.ignored_background, status_colors.ignored),
         };
         let settings = ThemeSettings::get_global(cx);
@@ -239,8 +239,7 @@ impl DiagnosticBlock {
                         diagnostics_markdown_style(bcx.window, cx),
                     )
                     .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     })
                     .on_url_click({
@@ -290,23 +289,12 @@ impl DiagnosticBlock {
                 .nth(ix)
             {
                 let multibuffer = editor.buffer().read(cx);
-                let Some(snapshot) = multibuffer
-                    .buffer(buffer_id)
-                    .map(|entity| entity.read(cx).snapshot())
-                else {
+                if let Some(anchor_range) = multibuffer
+                    .snapshot(cx)
+                    .buffer_anchor_range_to_anchor_range(diagnostic.range)
+                {
+                    Self::jump_to(editor, anchor_range, window, cx);
                     return;
-                };
-
-                for (excerpt_id, range) in multibuffer.excerpts_for_buffer(buffer_id, cx) {
-                    if range.context.overlaps(&diagnostic.range, &snapshot) {
-                        Self::jump_to(
-                            editor,
-                            Anchor::range_in_buffer(excerpt_id, diagnostic.range),
-                            window,
-                            cx,
-                        );
-                        return;
-                    }
                 }
             }
         } else if let Some(diagnostic) = editor

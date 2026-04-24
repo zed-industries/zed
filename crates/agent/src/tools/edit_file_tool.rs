@@ -6,16 +6,15 @@ use crate::{
     edit_agent::{EditAgent, EditAgentOutputEvent, EditFormat},
 };
 use acp_thread::Diff;
-use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result};
-use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use indoc::formatdoc;
 use language::language_settings::{self, FormatOnSave};
 use language::{LanguageRegistry, ToPoint};
-use language_model::LanguageModelToolResultContent;
+use language_model::{CompletionIntent, LanguageModelToolResultContent};
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
@@ -261,7 +260,7 @@ impl AgentTool for EditFileTool {
                     let abs_path = project.read(cx).absolute_path(&project_path, cx);
                     if let Some(abs_path) = abs_path.clone() {
                         event_stream.update_fields(
-                            ToolCallUpdateFields::new()
+                            acp::ToolCallUpdateFields::new()
                                 .locations(vec![acp::ToolCallLocation::new(abs_path)]),
                         );
                     }
@@ -410,7 +409,7 @@ impl AgentTool for EditFileTool {
                                     range.start.to_point(&buffer.snapshot()).row
                                 }));
                                 if let Some(abs_path) = abs_path.clone() {
-                                    event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path).line(line)]));
+                                    event_stream.update_fields(acp::ToolCallUpdateFields::new().locations(vec![acp::ToolCallLocation::new(abs_path).line(line)]));
                                 }
                                 emitted_location = true;
                             }
@@ -419,17 +418,6 @@ impl AgentTool for EditFileTool {
                         EditAgentOutputEvent::AmbiguousEditRange(ranges) => ambiguous_ranges = ranges,
                         EditAgentOutputEvent::ResolvingEditRange(range) => {
                             diff.update(cx, |card, cx| card.reveal_range(range.clone(), cx));
-                            // if !emitted_location {
-                            //     let line = buffer.update(cx, |buffer, _cx| {
-                            //         range.start.to_point(&buffer.snapshot()).row
-                            //     }).ok();
-                            //     if let Some(abs_path) = abs_path.clone() {
-                            //         event_stream.update_fields(ToolCallUpdateFields {
-                            //             locations: Some(vec![ToolCallLocation { path: abs_path, line }]),
-                            //             ..Default::default()
-                            //         });
-                            //     }
-                            // }
                         }
                     }
                 }
@@ -437,11 +425,7 @@ impl AgentTool for EditFileTool {
                 output.await?;
 
                 let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
-                    let settings = language_settings::language_settings(
-                        buffer.language().map(|l| l.name()),
-                        buffer.file(),
-                        cx,
-                    );
+                    let settings = language_settings::LanguageSettings::for_buffer(buffer, cx);
                     settings.format_on_save != FormatOnSave::Off
                 });
 
@@ -1204,7 +1188,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert!(stream_rx.try_next().is_err());
+        assert!(stream_rx.try_recv().is_err());
 
         // Test 4: Path with .zed in the middle should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1267,7 +1251,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert!(stream_rx.try_next().is_err());
+        assert!(stream_rx.try_recv().is_err());
 
         // 5.3: Normal in-project path with allow — no confirmation needed
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1284,7 +1268,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert!(stream_rx.try_next().is_err());
+        assert!(stream_rx.try_recv().is_err());
 
         // 5.4: With Confirm default, non-project paths still prompt
         cx.update(|cx| {
@@ -1374,7 +1358,10 @@ mod tests {
 
         event
             .response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
         authorize_task.await.unwrap();
     }
@@ -1599,8 +1586,8 @@ mod tests {
         assert!(result.is_err(), "Tool should fail when policy denies");
         assert!(
             !matches!(
-                stream_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                stream_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Deny policy should not emit symlink authorization prompt",
         );
@@ -1671,7 +1658,7 @@ mod tests {
             } else {
                 auth.await.unwrap();
                 assert!(
-                    stream_rx.try_next().is_err(),
+                    stream_rx.try_recv().is_err(),
                     "Failed for case: {} - path: {} - expected no confirmation but got one",
                     description,
                     path
@@ -1782,7 +1769,7 @@ mod tests {
             } else {
                 auth.await.unwrap();
                 assert!(
-                    stream_rx.try_next().is_err(),
+                    stream_rx.try_recv().is_err(),
                     "Failed for case: {} - path: {} - expected no confirmation but got one",
                     description,
                     path
@@ -1875,7 +1862,7 @@ mod tests {
                 stream_rx.expect_authorization().await;
             } else {
                 assert!(
-                    stream_rx.try_next().is_err(),
+                    stream_rx.try_recv().is_err(),
                     "Failed for case: {} - path: {} - expected no confirmation but got one",
                     description,
                     path
@@ -1976,7 +1963,7 @@ mod tests {
             })
             .await
             .unwrap();
-            assert!(stream_rx.try_next().is_err());
+            assert!(stream_rx.try_recv().is_err());
         }
     }
 
