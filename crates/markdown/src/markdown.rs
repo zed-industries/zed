@@ -3022,6 +3022,13 @@ mod tests {
         render_markdown_with_language_registry(markdown, None, cx)
     }
 
+    fn render_markdown_with_bounds(
+        markdown: &str,
+        cx: &mut TestAppContext,
+    ) -> (RenderedText, Bounds<Pixels>) {
+        render_markdown_with_options_and_bounds(markdown, None, MarkdownOptions::default(), cx)
+    }
+
     fn render_markdown_with_language_registry(
         markdown: &str,
         language_registry: Option<Arc<LanguageRegistry>>,
@@ -3036,6 +3043,15 @@ mod tests {
         options: MarkdownOptions,
         cx: &mut TestAppContext,
     ) -> RenderedText {
+        render_markdown_with_options_and_bounds(markdown, language_registry, options, cx).0
+    }
+
+    fn render_markdown_with_options_and_bounds(
+        markdown: &str,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        options: MarkdownOptions,
+        cx: &mut TestAppContext,
+    ) -> (RenderedText, Bounds<Pixels>) {
         struct TestWindow;
 
         impl Render for TestWindow {
@@ -3057,7 +3073,7 @@ mod tests {
             )
         });
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
+        let (rendered, hitbox) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
             |_window, _cx| {
@@ -3069,7 +3085,7 @@ mod tests {
                 )
             },
         );
-        rendered.text
+        (rendered.text, *hitbox)
     }
 
     #[gpui::test]
@@ -3615,6 +3631,50 @@ mod tests {
                     source_ix
                 );
             }
+        }
+    }
+
+    #[gpui::test]
+    fn test_bounds_for_source_range_skips_gaps_between_rendered_lines(cx: &mut TestAppContext) {
+        let source = "First\n\nSecond";
+        let (rendered, draw_bounds) = render_markdown_with_bounds(source, cx);
+        let highlight_bounds = rendered.bounds_for_source_range(draw_bounds, 0..source.len());
+        assert_eq!(highlight_bounds.len(), rendered.lines.len());
+
+        for (line, highlight_bounds) in rendered.lines.iter().zip(highlight_bounds.iter()) {
+            let line_bounds = line.layout.bounds();
+            assert_eq!(highlight_bounds.top(), line_bounds.top());
+            assert_eq!(
+                highlight_bounds.bottom(),
+                line_bounds.top() + line.layout.line_height()
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_bounds_for_source_range_returns_one_bound_per_soft_wrap_row(cx: &mut TestAppContext) {
+        let sentence = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, \
+            sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.";
+        let source = [sentence, sentence, sentence, sentence].join(" ");
+        let (rendered, draw_bounds) = render_markdown_with_bounds(&source, cx);
+        let line = &rendered.lines[0];
+        let line_bounds = line.layout.bounds();
+        let line_height = line.layout.line_height();
+        let wrapped_line = line.layout.line_layout_for_index(0).unwrap();
+        let visual_row_count = wrapped_line.wrap_boundaries().len() + 1;
+
+        let highlight_bounds = rendered.bounds_for_source_range(draw_bounds, 0..source.len());
+        assert_eq!(highlight_bounds.len(), visual_row_count);
+
+        let mut row_top = line_bounds.top();
+        for (row_index, row_bounds) in highlight_bounds.iter().enumerate() {
+            assert_eq!(row_bounds.top(), row_top);
+            assert_eq!(row_bounds.bottom(), row_top + line_height);
+            assert!(
+                row_bounds.size.width > Pixels::ZERO,
+                "row {row_index} should have a non-empty highlight"
+            );
+            row_top += line_height;
         }
     }
 
