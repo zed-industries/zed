@@ -617,6 +617,7 @@ So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_K
 ### OpenCode {#opencode}
 
 OpenCode offers multiple ways to access AI models:
+
 - [OpenCode Zen](https://opencode.ai/zen/): a pay-as-you-go subscription with access to a large number of tested and verified models
 - [OpenCode Zen Free](https://opencode.ai/docs/zen/#pricing): free access to a limited set of models, with data and feedback collected to improve the models
 - [OpenCode Go](https://opencode.ai/go): a low-cost monthly subscription with access to a validated set of open coding models
@@ -670,6 +671,7 @@ The Zed agent comes pre-configured with OpenCode models. If you wish to use newe
 ```
 
 The available configuration options for custom models are:
+
 - `name` (required): model id used by OpenCode, for example `glm-9000`
 - `display_name` (optional): human-readable model name shown in the UI, for example `Custom GLM 9000`
 - `max_tokens` (required): maximum model context window size, for example `1000000`
