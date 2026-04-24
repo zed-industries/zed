@@ -7590,15 +7590,18 @@ impl Editor {
 
             let version = buffer_snapshot.version().clone();
 
-            if !invalidate {
-                if let Some(cached) = self.code_action_cache.buffers.get(&buffer_id) {
-                    if cached.version == version
-                        && cached.fetched_rows.start <= visible_rows.start
-                        && cached.fetched_rows.end >= visible_rows.end
-                    {
-                        continue;
-                    }
-                }
+            let cache_covers_visible_rows = !invalidate
+                && self
+                    .code_action_cache
+                    .buffers
+                    .get(&buffer_id)
+                    .is_some_and(|cached| {
+                        cached.version == version
+                            && cached.fetched_rows.start <= visible_rows.start
+                            && cached.fetched_rows.end >= visible_rows.end
+                    });
+            if cache_covers_visible_rows {
+                continue;
             }
 
             let visible_row_count = visible_rows.end - visible_rows.start;
