@@ -35,6 +35,12 @@ pub enum Direction {
     Down,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollBehavior {
+    RevealSelected,
+    Preserve,
+}
+
 actions!(
     picker,
     [
@@ -687,9 +693,19 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_matches_with_options(query, ScrollBehavior::RevealSelected, window, cx);
+    }
+
+    pub fn update_matches_with_options(
+        &mut self,
+        query: String,
+        scroll: ScrollBehavior,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let delegate_pending_update_matches = self.delegate.update_matches(query, window, cx);
 
-        self.matches_updated(window, cx);
+        self.matches_updated(scroll, window, cx);
         // This struct ensures that we can synchronously drop the task returned by the
         // delegate's `update_matches` method and the task that the picker is spawning.
         // If we simply capture the delegate's task into the picker's task, when the picker's
@@ -709,19 +725,41 @@ impl<D: PickerDelegate> Picker<D> {
                 })?;
                 delegate_pending_update_matches.await;
                 this.update_in(cx, |this, window, cx| {
-                    this.matches_updated(window, cx);
+                    this.matches_updated(scroll, window, cx);
                 })
             }),
         });
     }
 
-    fn matches_updated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let ElementContainer::List(state) = &mut self.element_container {
-            state.reset(self.delegate.match_count());
+    fn matches_updated(
+        &mut self,
+        scroll: ScrollBehavior,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let match_count = self.delegate.match_count();
+        match &mut self.element_container {
+            ElementContainer::List(state) => match scroll {
+                ScrollBehavior::RevealSelected => {
+                    state.reset(match_count);
+                    let index = self.delegate.selected_index();
+                    self.scroll_to_item_index(index);
+                }
+                ScrollBehavior::Preserve => {
+                    let saved_anchor = state.logical_scroll_top();
+                    let old_count = state.item_count();
+                    state.splice(0..old_count, match_count);
+                    state.scroll_to(saved_anchor);
+                }
+            },
+            ElementContainer::UniformList(_) => match scroll {
+                ScrollBehavior::RevealSelected => {
+                    let index = self.delegate.selected_index();
+                    self.scroll_to_item_index(index);
+                }
+                ScrollBehavior::Preserve => {}
+            },
         }
-
-        let index = self.delegate.selected_index();
-        self.scroll_to_item_index(index);
         self.pending_update_matches = None;
         if let Some(secondary) = self.confirm_on_update.take() {
             self.do_confirm(secondary, window, cx);
@@ -954,6 +992,14 @@ mod tests {
                     .child(ui::Label::new(format!("Item {ix}"))),
             )
         }
+    }
+
+    fn draw_picker(picker: &gpui::Entity<Picker<TestDelegate>>, cx: &mut gpui::VisualTestContext) {
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(240.), px(120.)),
+            |_, _| picker.clone().into_any_element(),
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) {
