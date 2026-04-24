@@ -454,13 +454,13 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use futures::stream::StreamExt as _;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use language::FakeLspAdapter;
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
-    use smol::stream::StreamExt as _;
     use util::{path, rel_path::rel_path};
     use workspace::{AppState, MultiWorkspace, Workspace};
 

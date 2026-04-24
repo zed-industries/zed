@@ -3,6 +3,7 @@ use crate::stash::GitStash;
 use crate::status::{DiffTreeType, GitStatus, StatusCode, TreeDiff};
 use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
+use async_channel::Sender;
 use collections::HashMap;
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
@@ -15,7 +16,6 @@ use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smallvec::SmallVec;
-use smol::channel::Sender;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use text::LineEnding;
 
@@ -123,7 +123,7 @@ struct CommitDataRequest {
 }
 
 pub struct CommitDataReader {
-    request_tx: smol::channel::Sender<CommitDataRequest>,
+    request_tx: async_channel::Sender<CommitDataRequest>,
     _task: Task<()>,
 }
 
@@ -3068,7 +3068,7 @@ impl GitRepository for RealGitRepository {
     fn commit_data_reader(&self) -> Result<CommitDataReader> {
         let git_binary = self.git_binary()?;
 
-        let (request_tx, request_rx) = smol::channel::bounded::<CommitDataRequest>(64);
+        let (request_tx, request_rx) = async_channel::bounded::<CommitDataRequest>(64);
 
         let task = self.executor.spawn(async move {
             if let Err(error) = run_commit_data_reader(git_binary, request_rx).await {
@@ -3094,7 +3094,7 @@ impl GitRepository for RealGitRepository {
 
 async fn run_commit_data_reader(
     git: GitBinary,
-    request_rx: smol::channel::Receiver<CommitDataRequest>,
+    request_rx: async_channel::Receiver<CommitDataRequest>,
 ) -> Result<()> {
     let mut process = git
         .build_command(&["cat-file", "--batch"])

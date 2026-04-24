@@ -192,6 +192,12 @@ pub struct EditorSettingsContent {
     /// Default: FindAllReferences
     pub go_to_definition_fallback: Option<GoToDefinitionFallback>,
 
+    /// How to scroll the target into view when navigating to a definition or reference
+    /// (e.g. Go to Definition, Go to Type Definition, Find All References).
+    ///
+    /// Default: center
+    pub go_to_definition_scroll_strategy: Option<GoToDefinitionScrollStrategy>,
+
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
 
@@ -797,6 +803,34 @@ pub enum GoToDefinitionFallback {
     /// Looks up references of the same symbol instead.
     #[default]
     FindAllReferences,
+}
+
+/// How to scroll the target into view when navigating to a definition or reference.
+///
+/// Default: center
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GoToDefinitionScrollStrategy {
+    /// Vertically center the target in the viewport.
+    #[default]
+    Center,
+    /// Scroll the minimum amount needed to make the target visible.
+    Minimum,
+    /// Scroll so the target appears near the top of the viewport.
+    Top,
 }
 
 /// Determines when the mouse cursor should be hidden in an editor or input box.

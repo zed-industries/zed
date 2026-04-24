@@ -17,6 +17,40 @@ pub enum ApiProtocol {
     Google,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum OpenCodeSubscription {
+    Zen,
+    Go,
+    Free,
+}
+
+impl OpenCodeSubscription {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Zen => "Zen",
+            Self::Go => "Go",
+            Self::Free => "Free",
+        }
+    }
+
+    pub fn id_prefix(&self) -> &'static str {
+        match self {
+            Self::Zen => "zen",
+            Self::Go => "go",
+            Self::Free => "free",
+        }
+    }
+
+    pub fn api_path_suffix(&self) -> &'static str {
+        match self {
+            Self::Zen | Self::Free => "",
+            Self::Go => "/go",
+        }
+    }
+}
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
@@ -86,20 +120,26 @@ pub enum Model {
     MiniMaxM2_5Free,
     #[serde(rename = "glm-5")]
     Glm5,
+    #[serde(rename = "glm-5.1")]
+    Glm5_1,
     #[serde(rename = "kimi-k2.5")]
     KimiK2_5,
-    #[serde(rename = "mimo-v2-pro-free")]
-    MimoV2ProFree,
-    #[serde(rename = "mimo-v2-omni-free")]
-    MimoV2OmniFree,
-    #[serde(rename = "mimo-v2-flash-free")]
-    MimoV2FlashFree,
-    #[serde(rename = "trinity-large-preview-free")]
-    TrinityLargePreviewFree,
+    #[serde(rename = "kimi-k2.6")]
+    KimiK2_6,
+    #[serde(rename = "minimax-m2.7")]
+    MiniMaxM2_7,
+    #[serde(rename = "mimo-v2-pro")]
+    MimoV2Pro,
+    #[serde(rename = "mimo-v2-omni")]
+    MimoV2Omni,
     #[serde(rename = "big-pickle")]
     BigPickle,
     #[serde(rename = "nemotron-3-super-free")]
     Nemotron3SuperFree,
+    #[serde(rename = "qwen3.5-plus")]
+    Qwen3_5Plus,
+    #[serde(rename = "qwen3.6-plus")]
+    Qwen3_6Plus,
 
     // -- Custom model --
     #[serde(rename = "custom")]
@@ -109,12 +149,56 @@ pub enum Model {
         max_tokens: u64,
         max_output_tokens: Option<u64>,
         protocol: ApiProtocol,
+        custom_model_api_url: Option<String>,
     },
 }
 
 impl Model {
     pub fn default_fast() -> Self {
         Self::ClaudeHaiku4_5
+    }
+
+    pub fn default_go() -> Self {
+        Self::KimiK2_5
+    }
+
+    pub fn default_go_fast() -> Self {
+        Self::MiniMaxM2_5
+    }
+
+    pub fn default_free() -> Self {
+        Self::BigPickle
+    }
+
+    pub fn default_free_fast() -> Self {
+        Self::MiniMaxM2_5Free
+    }
+
+    pub fn available_subscriptions(&self) -> &'static [OpenCodeSubscription] {
+        match self {
+            // Models available in both Zen and Go
+            Self::Glm5
+            | Self::Glm5_1
+            | Self::KimiK2_6
+            | Self::KimiK2_5
+            | Self::MiniMaxM2_5
+            | Self::Qwen3_5Plus
+            | Self::Qwen3_6Plus => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
+
+            // Go-only models
+            Self::MiniMaxM2_7 | Self::MimoV2Pro | Self::MimoV2Omni => &[OpenCodeSubscription::Go],
+
+            // Free models
+            Self::MiniMaxM2_5Free | Self::Nemotron3SuperFree | Self::BigPickle => {
+                &[OpenCodeSubscription::Free]
+            }
+
+            // Custom models get their subscription from settings, not from here
+            Self::Custom { .. } => &[],
+
+            // All other built-in models are Zen-only
+            _ => &[OpenCodeSubscription::Zen],
+        }
     }
 
     pub fn id(&self) -> &str {
@@ -151,11 +235,14 @@ impl Model {
             Self::MiniMaxM2_5 => "minimax-m2.5",
             Self::MiniMaxM2_5Free => "minimax-m2.5-free",
             Self::Glm5 => "glm-5",
+            Self::Glm5_1 => "glm-5.1",
             Self::KimiK2_5 => "kimi-k2.5",
-            Self::MimoV2ProFree => "mimo-v2-pro-free",
-            Self::MimoV2OmniFree => "mimo-v2-omni-free",
-            Self::MimoV2FlashFree => "mimo-v2-flash-free",
-            Self::TrinityLargePreviewFree => "trinity-large-preview-free",
+            Self::KimiK2_6 => "kimi-k2.6",
+            Self::MiniMaxM2_7 => "minimax-m2.7",
+            Self::MimoV2Pro => "mimo-v2-pro",
+            Self::MimoV2Omni => "mimo-v2-omni",
+            Self::Qwen3_5Plus => "qwen3.5-plus",
+            Self::Qwen3_6Plus => "qwen3.6-plus",
             Self::BigPickle => "big-pickle",
             Self::Nemotron3SuperFree => "nemotron-3-super-free",
 
@@ -197,11 +284,14 @@ impl Model {
             Self::MiniMaxM2_5 => "MiniMax M2.5",
             Self::MiniMaxM2_5Free => "MiniMax M2.5 Free",
             Self::Glm5 => "GLM 5",
+            Self::Glm5_1 => "GLM 5.1",
             Self::KimiK2_5 => "Kimi K2.5",
-            Self::MimoV2ProFree => "MiMo V2 Pro Free",
-            Self::MimoV2OmniFree => "MiMo V2 Omni Free",
-            Self::MimoV2FlashFree => "MiMo V2 Flash Free",
-            Self::TrinityLargePreviewFree => "Trinity Large Preview Free",
+            Self::KimiK2_6 => "Kimi K2.6",
+            Self::MiniMaxM2_7 => "MiniMax M2.7",
+            Self::MimoV2Pro => "MiMo V2 Pro",
+            Self::MimoV2Omni => "MiMo V2 Omni",
+            Self::Qwen3_5Plus => "Qwen3.5 Plus",
+            Self::Qwen3_6Plus => "Qwen3.6 Plus",
             Self::BigPickle => "Big Pickle",
             Self::Nemotron3SuperFree => "Nemotron 3 Super Free",
 
@@ -211,8 +301,18 @@ impl Model {
         }
     }
 
-    pub fn protocol(&self) -> ApiProtocol {
+    pub fn protocol(&self, subscription: OpenCodeSubscription) -> ApiProtocol {
         match self {
+            // Models offered by OpenCode have the same configuration across subscriptions
+            //  with one outlier: non-free MiniMax models
+            Self::MiniMaxM2_7 | Self::MiniMaxM2_5 => {
+                if subscription == OpenCodeSubscription::Zen {
+                    ApiProtocol::OpenAiChat
+                } else {
+                    ApiProtocol::Anthropic
+                }
+            }
+
             Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
             | Self::ClaudeOpus4_5
@@ -241,14 +341,15 @@ impl Model {
 
             Self::Gemini3_1Pro | Self::Gemini3Flash => ApiProtocol::Google,
 
-            Self::MiniMaxM2_5
-            | Self::MiniMaxM2_5Free
+            Self::MiniMaxM2_5Free
             | Self::Glm5
+            | Self::Glm5_1
             | Self::KimiK2_5
-            | Self::MimoV2ProFree
-            | Self::MimoV2OmniFree
-            | Self::MimoV2FlashFree
-            | Self::TrinityLargePreviewFree
+            | Self::KimiK2_6
+            | Self::MimoV2Pro
+            | Self::MimoV2Omni
+            | Self::Qwen3_5Plus
+            | Self::Qwen3_6Plus
             | Self::BigPickle
             | Self::Nemotron3SuperFree => ApiProtocol::OpenAiChat,
 
@@ -259,10 +360,12 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         match self {
             // Anthropic models
-            Self::ClaudeOpus4_7 | Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => 1_000_000,
-            Self::ClaudeOpus4_5 | Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4 => 200_000,
+            Self::ClaudeOpus4_7 => 1_000_000,
+            Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => 1_000_000,
+            Self::ClaudeSonnet4_5 => 1_000_000,
+            Self::ClaudeOpus4_5 | Self::ClaudeHaiku4_5 => 200_000,
             Self::ClaudeOpus4_1 => 200_000,
-            Self::ClaudeHaiku4_5 => 200_000,
+            Self::ClaudeSonnet4 => 1_000_000,
             Self::Claude3_5Haiku => 200_000,
 
             // OpenAI models
@@ -281,14 +384,15 @@ impl Model {
             Self::Gemini3Flash => 1_048_576,
 
             // OpenAI-compatible models
-            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 196_608,
-            Self::Glm5 => 200_000,
-            Self::KimiK2_5 => 262_144,
-            Self::MimoV2ProFree => 1_048_576,
-            Self::MimoV2OmniFree | Self::MimoV2FlashFree => 262_144,
-            Self::TrinityLargePreviewFree => 131_072,
+            Self::MiniMaxM2_7 => 204_800,
+            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 204_800,
+            Self::Glm5 | Self::Glm5_1 => 204_800,
+            Self::KimiK2_6 | Self::KimiK2_5 => 262_144,
+            Self::MimoV2Pro => 1_048_576,
+            Self::MimoV2Omni => 262_144,
+            Self::Qwen3_5Plus | Self::Qwen3_6Plus => 262_144,
             Self::BigPickle => 200_000,
-            Self::Nemotron3SuperFree => 262_144,
+            Self::Nemotron3SuperFree => 204_800,
 
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -298,12 +402,12 @@ impl Model {
         match self {
             // Anthropic models
             Self::ClaudeOpus4_7 | Self::ClaudeOpus4_6 => Some(128_000),
-            Self::ClaudeSonnet4_6 => Some(64_000),
             Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_1
+            | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeHaiku4_5 => Some(64_000),
+            | Self::ClaudeHaiku4_5
+            | Self::ClaudeSonnet4 => Some(64_000),
+            Self::ClaudeOpus4_1 => Some(32_000),
             Self::Claude3_5Haiku => Some(8_192),
 
             // OpenAI models
@@ -327,12 +431,14 @@ impl Model {
             Self::Gemini3_1Pro | Self::Gemini3Flash => Some(65_536),
 
             // OpenAI-compatible models
-            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(65_536),
-            Self::Glm5 | Self::BigPickle => Some(128_000),
-            Self::KimiK2_5 => Some(65_536),
-            Self::MimoV2ProFree => Some(131_072),
-            Self::MimoV2OmniFree | Self::MimoV2FlashFree => Some(65_536),
-            Self::TrinityLargePreviewFree | Self::Nemotron3SuperFree => Some(16_384),
+            Self::MiniMaxM2_7 => Some(131_072),
+            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(131_072),
+            Self::Glm5 | Self::Glm5_1 => Some(131_072),
+            Self::BigPickle => Some(128_000),
+            Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
+            Self::Qwen3_5Plus | Self::Qwen3_6Plus => Some(65_536),
+            Self::Nemotron3SuperFree => Some(128_000),
+            Self::MimoV2Pro | Self::MimoV2Omni => Some(64_000),
 
             Self::Custom {
                 max_output_tokens, ..
@@ -377,15 +483,20 @@ impl Model {
             // Google models support images
             Self::Gemini3_1Pro | Self::Gemini3Flash => true,
 
-            // OpenAI-compatible models — conservative default
+            // OpenAI-compatible models with image support
+            Self::KimiK2_6
+            | Self::KimiK2_5
+            | Self::MimoV2Omni
+            | Self::Qwen3_5Plus
+            | Self::Qwen3_6Plus => true,
+
+            // OpenAI-compatible models without image support
             Self::MiniMaxM2_5
             | Self::MiniMaxM2_5Free
             | Self::Glm5
-            | Self::KimiK2_5
-            | Self::MimoV2ProFree
-            | Self::MimoV2OmniFree
-            | Self::MimoV2FlashFree
-            | Self::TrinityLargePreviewFree
+            | Self::Glm5_1
+            | Self::MiniMaxM2_7
+            | Self::MimoV2Pro
             | Self::BigPickle
             | Self::Nemotron3SuperFree => false,
 
@@ -400,12 +511,12 @@ impl Model {
     }
 }
 
-/// Stream generate content for Google models via OpenCode Zen.
+/// Stream generate content for Google models via OpenCode.
 ///
 /// Unlike `google_ai::stream_generate_content()`, this uses:
 /// - `/v1/models/{model}` path (not `/v1beta/models/{model}`)
 /// - `Authorization: Bearer` header (not `key=` query param)
-pub async fn stream_generate_content_zen(
+pub async fn stream_generate_content(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
@@ -451,7 +562,7 @@ pub async fn stream_generate_content_zen(
         let mut text = String::new();
         response.body_mut().read_to_string(&mut text).await?;
         Err(anyhow!(
-            "error during streamGenerateContent via OpenCode Zen, status code: {:?}, body: {}",
+            "error during streamGenerateContent via OpenCode, status code: {:?}, body: {}",
             response.status(),
             text
         ))

@@ -2582,9 +2582,9 @@ pub mod tests {
     };
     use lsp::LanguageServerId;
 
+    use futures::stream::StreamExt;
     use rand::{Rng, prelude::*};
     use settings::{SettingsContent, SettingsStore};
-    use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use text::PointUtf16;
     use theme::{LoadThemes, SyntaxTheme};

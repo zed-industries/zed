@@ -235,13 +235,42 @@ pub struct ProjectSearch {
     active_query: Option<SearchQuery>,
     last_search_query_text: Option<String>,
     search_id: usize,
-    no_results: Option<bool>,
-    limit_reached: bool,
-    waiting_for_scan: bool,
+    search_state: SearchState,
     search_history_cursor: SearchHistoryCursor,
     search_included_history_cursor: SearchHistoryCursor,
     search_excluded_history_cursor: SearchHistoryCursor,
     _excerpts_subscription: Subscription,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SearchState {
+    #[default]
+    Idle,
+    Running(SearchActivity),
+    Completed(SearchCompletion),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SearchActivity {
+    Searching,
+    WaitingForScan,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SearchCompletion {
+    NoResults,
+    Results { limit_reached: bool },
+}
+
+impl SearchState {
+    fn limit_reached(self) -> bool {
+        matches!(
+            self,
+            SearchState::Completed(SearchCompletion::Results {
+                limit_reached: true
+            })
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -298,9 +327,7 @@ impl ProjectSearch {
             active_query: None,
             last_search_query_text: None,
             search_id: 0,
-            no_results: None,
-            limit_reached: false,
-            waiting_for_scan: false,
+            search_state: SearchState::Idle,
             search_history_cursor: Default::default(),
             search_included_history_cursor: Default::default(),
             search_excluded_history_cursor: Default::default(),
@@ -323,9 +350,11 @@ impl ProjectSearch {
                 active_query: self.active_query.clone(),
                 last_search_query_text: self.last_search_query_text.clone(),
                 search_id: self.search_id,
-                no_results: self.no_results,
-                limit_reached: self.limit_reached,
-                waiting_for_scan: false,
+                search_state: if self.pending_search.is_some() {
+                    SearchState::Idle
+                } else {
+                    self.search_state
+                },
                 search_history_cursor: self.search_history_cursor.clone(),
                 search_included_history_cursor: self.search_included_history_cursor.clone(),
                 search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
@@ -413,6 +442,7 @@ impl ProjectSearch {
         self.search_id += 1;
         self.active_query = Some(query);
         self.match_ranges.clear();
+        self.search_state = SearchState::Running(SearchActivity::Searching);
         self.pending_search = Some(cx.spawn(async move |project_search, cx| {
             let SearchResults { rx, _task_handle } = search;
 
@@ -423,19 +453,16 @@ impl ProjectSearch {
                     project_search
                         .excerpts
                         .update(cx, |excerpts, cx| excerpts.clear(cx));
-                    project_search.no_results = Some(true);
-                    project_search.limit_reached = false;
-                    project_search.waiting_for_scan = false;
                 })
                 .ok()?;
 
             let mut limit_reached = false;
             while let Some(results) = matches.next().await {
-                let (buffers_with_ranges, has_reached_limit, is_waiting_for_scan) = cx
+                let (buffers_with_ranges, has_reached_limit, search_activity) = cx
                     .background_executor()
                     .spawn(async move {
                         let mut limit_reached = false;
-                        let mut waiting_for_scan = false;
+                        let mut search_activity = None;
                         let mut buffers_with_ranges = Vec::with_capacity(results.len());
                         for result in results {
                             match result {
@@ -446,18 +473,21 @@ impl ProjectSearch {
                                     limit_reached = true;
                                 }
                                 project::search::SearchResult::WaitingForScan => {
-                                    waiting_for_scan = true;
+                                    search_activity = Some(SearchActivity::WaitingForScan);
+                                }
+                                project::search::SearchResult::Searching => {
+                                    search_activity = Some(SearchActivity::Searching);
                                 }
                             }
                         }
-                        (buffers_with_ranges, limit_reached, waiting_for_scan)
+                        (buffers_with_ranges, limit_reached, search_activity)
                     })
                     .await;
                 limit_reached |= has_reached_limit;
-                if is_waiting_for_scan {
+                if let Some(search_activity) = search_activity {
                     project_search
                         .update(cx, |project_search, cx| {
-                            project_search.waiting_for_scan = true;
+                            project_search.search_state = SearchState::Running(search_activity);
                             cx.notify();
                         })
                         .ok()?;
@@ -483,7 +513,7 @@ impl ProjectSearch {
                 while let Some(new_ranges) = new_ranges.next().await {
                     // `new_ranges.next().await` likely never gets hit while still pending so `async_task`
                     // will not reschedule, starving other front end tasks, insert a yield point for that here
-                    smol::future::yield_now().await;
+                    futures_lite::future::yield_now().await;
                     project_search
                         .update(cx, |project_search, cx| {
                             project_search.match_ranges.extend(new_ranges);
@@ -495,11 +525,11 @@ impl ProjectSearch {
 
             project_search
                 .update(cx, |project_search, cx| {
-                    if !project_search.match_ranges.is_empty() {
-                        project_search.no_results = Some(false);
-                    }
-                    project_search.limit_reached = limit_reached;
-                    project_search.waiting_for_scan = false;
+                    project_search.search_state = if project_search.match_ranges.is_empty() {
+                        SearchState::Completed(SearchCompletion::NoResults)
+                    } else {
+                        SearchState::Completed(SearchCompletion::Results { limit_reached })
+                    };
                     project_search.pending_search.take();
                     cx.notify();
                 })
@@ -531,36 +561,26 @@ impl Render for ProjectSearchView {
                 .child(self.results_editor.clone())
         } else {
             let model = self.entity.read(cx);
-            let has_no_results = model.no_results.unwrap_or(false);
-            let is_search_underway = model.pending_search.is_some();
-            let is_waiting_for_scan = model.waiting_for_scan;
 
-            let heading_text = if is_waiting_for_scan {
-                "Loading project…"
-            } else if is_search_underway {
-                "Searching…"
-            } else if has_no_results {
-                "No Results"
-            } else {
-                "Search All Files"
+            let heading_text = match model.search_state {
+                SearchState::Running(SearchActivity::WaitingForScan) => "Loading project…",
+                SearchState::Running(SearchActivity::Searching) => "Searching…",
+                SearchState::Completed(SearchCompletion::NoResults) => "No Results",
+                _ => "Search All Files",
             };
 
             let heading_text = div()
                 .justify_center()
                 .child(Label::new(heading_text).size(LabelSize::Large));
 
-            let page_content: Option<AnyElement> = if let Some(no_results) = model.no_results {
-                if model.pending_search.is_none() && no_results {
-                    Some(
-                        Label::new("No results found in this project for the provided query")
-                            .size(LabelSize::Small)
-                            .into_any_element(),
-                    )
-                } else {
-                    None
-                }
-            } else {
-                Some(self.landing_text_minor(cx).into_any_element())
+            let page_content: Option<AnyElement> = match model.search_state {
+                SearchState::Idle => Some(self.landing_text_minor(cx).into_any_element()),
+                SearchState::Completed(SearchCompletion::NoResults) => Some(
+                    Label::new("No results found in this project for the provided query")
+                        .size(LabelSize::Small)
+                        .into_any_element(),
+                ),
+                _ => None,
             };
 
             let page_content = page_content.map(|text| div().child(text));
@@ -2179,16 +2199,19 @@ impl Render for ProjectSearchBar {
         };
         let theme_colors = cx.theme().colors();
         let project_search = search.entity.read(cx);
-        let limit_reached = project_search.limit_reached;
+        let limit_reached = project_search.search_state.limit_reached();
         let is_search_underway = project_search.pending_search.is_some();
 
         let color_override = match (
-            &project_search.pending_search,
-            project_search.no_results,
+            project_search.search_state,
             &project_search.active_query,
             &project_search.last_search_query_text,
         ) {
-            (None, Some(true), Some(q), Some(p)) if q.as_str() == p => Some(Color::Error),
+            (
+                SearchState::Completed(SearchCompletion::NoResults),
+                Some(query),
+                Some(previous_query),
+            ) if query.as_str() == previous_query => Some(Color::Error),
             _ => None,
         };
 

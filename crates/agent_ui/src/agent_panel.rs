@@ -7123,4 +7123,42 @@ mod tests {
             );
         });
     }
+
+    /// Regression test: NewThread must produce a connected thread even when
+    /// the PromptStore fails to initialize (e.g. LMDB permission error).
+    /// Before the fix, `NativeAgentServer::connect` propagated the
+    /// PromptStore error with `?`, which put every new ConversationView
+    /// into LoadError and made it impossible to start any native-agent
+    /// thread.
+    #[gpui::test]
+    async fn test_new_thread_with_prompt_store_error(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        // NativeAgentServer::connect needs a global Fs.
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|_, cx| {
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+        cx.run_until_parked();
+
+        // Dispatch NewThread, which goes through the real NativeAgentServer
+        // path. In tests the PromptStore LMDB open fails with
+        // "Permission denied"; the fix (.log_err() instead of ?) lets
+        // the connection succeed anyway.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.new_thread(&NewThread, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                panel.active_conversation_view().is_some(),
+                "panel should have a conversation view after NewThread"
+            );
+            assert!(
+                panel.active_agent_thread(cx).is_some(),
+                "panel should have an active, connected agent thread"
+            );
+        });
+    }
 }

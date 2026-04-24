@@ -1180,7 +1180,7 @@ impl LocalLspStore {
                     async move {
                         let actions = params.actions.unwrap_or_default();
                         let message = params.message.clone();
-                        let (tx, rx) = smol::channel::bounded::<MessageActionItem>(1);
+                        let (tx, rx) = async_channel::bounded::<MessageActionItem>(1);
                         let level = match params.typ {
                             lsp::MessageType::ERROR => PromptLevel::Critical,
                             lsp::MessageType::WARNING => PromptLevel::Warning,
@@ -1226,7 +1226,7 @@ impl LocalLspStore {
                     let name = name.to_string();
                     let mut cx = cx.clone();
 
-                    let (tx, _) = smol::channel::bounded(1);
+                    let (tx, _) = async_channel::bounded(1);
                     let level = match params.typ {
                         lsp::MessageType::ERROR => PromptLevel::Critical,
                         lsp::MessageType::WARNING => PromptLevel::Warning,
@@ -13978,7 +13978,7 @@ pub struct LanguageServerPromptRequest {
     pub message: String,
     pub actions: Vec<MessageActionItem>,
     pub lsp_name: String,
-    pub(crate) response_channel: smol::channel::Sender<MessageActionItem>,
+    pub(crate) response_channel: async_channel::Sender<MessageActionItem>,
 }
 
 impl LanguageServerPromptRequest {
@@ -13987,7 +13987,7 @@ impl LanguageServerPromptRequest {
         message: String,
         actions: Vec<MessageActionItem>,
         lsp_name: String,
-        response_channel: smol::channel::Sender<MessageActionItem>,
+        response_channel: async_channel::Sender<MessageActionItem>,
     ) -> Self {
         let id = NEXT_PROMPT_REQUEST_ID.fetch_add(1, atomic::Ordering::AcqRel);
         LanguageServerPromptRequest {
@@ -14014,7 +14014,7 @@ impl LanguageServerPromptRequest {
         actions: Vec<MessageActionItem>,
         lsp_name: String,
     ) -> Self {
-        let (tx, _rx) = smol::channel::unbounded();
+        let (tx, _rx) = async_channel::unbounded();
         LanguageServerPromptRequest::new(level, message, actions, lsp_name, tx)
     }
 }
