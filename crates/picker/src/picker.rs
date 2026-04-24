@@ -699,13 +699,13 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn update_matches_with_options(
         &mut self,
         query: String,
-        scroll: ScrollBehavior,
+        scroll_behavior: ScrollBehavior,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let delegate_pending_update_matches = self.delegate.update_matches(query, window, cx);
 
-        self.matches_updated(scroll, window, cx);
+        self.matches_updated(scroll_behavior, window, cx);
         // This struct ensures that we can synchronously drop the task returned by the
         // delegate's `update_matches` method and the task that the picker is spawning.
         // If we simply capture the delegate's task into the picker's task, when the picker's
@@ -725,7 +725,7 @@ impl<D: PickerDelegate> Picker<D> {
                 })?;
                 delegate_pending_update_matches.await;
                 this.update_in(cx, |this, window, cx| {
-                    this.matches_updated(scroll, window, cx);
+                    this.matches_updated(scroll_behavior, window, cx);
                 })
             }),
         });
@@ -733,26 +733,25 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn matches_updated(
         &mut self,
-        scroll: ScrollBehavior,
+        scroll_behavior: ScrollBehavior,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let match_count = self.delegate.match_count();
         match &mut self.element_container {
-            ElementContainer::List(state) => match scroll {
+            ElementContainer::List(state) => match scroll_behavior {
                 ScrollBehavior::RevealSelected => {
                     state.reset(match_count);
                     let index = self.delegate.selected_index();
                     self.scroll_to_item_index(index);
                 }
                 ScrollBehavior::Preserve => {
-                    let saved_anchor = state.logical_scroll_top();
-                    let old_count = state.item_count();
-                    state.splice(0..old_count, match_count);
-                    state.scroll_to(saved_anchor);
+                    let offset = state.logical_scroll_top();
+                    state.reset(match_count);
+                    state.scroll_to(offset);
                 }
             },
-            ElementContainer::UniformList(_) => match scroll {
+            ElementContainer::UniformList(_) => match scroll_behavior {
                 ScrollBehavior::RevealSelected => {
                     let index = self.delegate.selected_index();
                     self.scroll_to_item_index(index);
