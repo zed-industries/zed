@@ -2334,6 +2334,71 @@ mod tests {
         assert!(project_b_entries.iter().all(|m| !m.archived));
     }
 
+    // Regression test for the race between `ThreadStore::reload` and
+    // `migrate_thread_metadata`. `ThreadStore::new` constructs with an empty
+    // in-memory cache and kicks off `reload()` as a fire-and-forget task. If
+    // `migrate_thread_metadata` reads `ThreadStore::entries()` before that
+    // reload completes, it observes an empty iterator and no-ops, even though
+    // the on-disk legacy DB has threads to migrate. In production this
+    // manifests as "my old threads disappeared after upgrading": the threads
+    // are still in the legacy `threads.db`, but never make it into
+    // `sidebar_threads`, so the new sidebar UI can't see them.
+    #[gpui::test]
+    async fn test_migration_awaits_thread_store_reload(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Seed the legacy threads DB via the ThreadStore (the only public
+        // save path in this crate), then park to make sure the rows are on
+        // disk and `ThreadStore`'s in-memory cache is populated.
+        let project_paths = PathList::new(&[Path::new("/project-a")]);
+        let now = Utc::now();
+        for i in 0..3 {
+            let save_task = cx.update(|cx| {
+                let thread_store = ThreadStore::global(cx);
+                let session_id = format!("legacy-session-{i}");
+                let title = format!("Legacy Thread {i}");
+                let updated_at = now + chrono::Duration::seconds(i as i64);
+                let paths = project_paths.clone();
+                thread_store.update(cx, |store, cx| {
+                    store.save_thread(
+                        acp::SessionId::new(session_id),
+                        make_db_thread(&title, updated_at),
+                        paths,
+                        cx,
+                    )
+                })
+            });
+            save_task.await.unwrap();
+            cx.run_until_parked();
+        }
+
+        // Re-initialize `ThreadStore` so its in-memory cache is freshly empty
+        // and a new async `reload` task is kicked off. This reproduces the
+        // cold-boot state where the migration runs before the store has
+        // populated itself from disk. The on-disk legacy DB still has the
+        // three threads we saved above.
+        cx.update(|cx| ThreadStore::init_global(cx));
+
+        // Crucially: do NOT run_until_parked here. If we parked, the reload
+        // would complete, ThreadStore::entries() would return the 3 rows, and
+        // the race would be hidden. We want the migration to run with
+        // `ThreadStore::entries()` still returning an empty iterator.
+        run_store_migrations(cx);
+
+        let list = cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.read(cx).entries().cloned().collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            list.len(),
+            3,
+            "Expected migration to pick up all 3 legacy threads even when \
+             ThreadStore::reload has not yet completed, but got {} entries",
+            list.len()
+        );
+    }
+
     #[gpui::test]
     async fn test_empty_thread_events_do_not_create_metadata(cx: &mut TestAppContext) {
         init_test(cx);
