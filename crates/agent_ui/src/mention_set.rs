@@ -186,11 +186,6 @@ impl MentionSet {
         self.mentions.drain()
     }
 
-    #[cfg(test)]
-    pub fn has_thread_store(&self) -> bool {
-        self.thread_store.is_some()
-    }
-
     pub fn confirm_mention_completion(
         &mut self,
         crease_text: SharedString,
