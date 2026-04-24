@@ -7,6 +7,8 @@ after next main merge, test this:
 - https://github.com/zed-industries/zed/pull/49802 (project_panel: Add diagnostic count badges and color priority)
 - outline UI ("document_symbols": "on"). (enable this and test) (https://github.com/zed-industries/zed/pull/48780)
 - https://github.com/zed-industries/zed/pull/49624 (git_ui: Show uncommitted change count badge on git panel icon)
+- Zoom the editor font size with your scroll wheel. Hold `cmd` (macOS) or `ctrl` (Linux/Windows) and scroll to resize.
+Enable it with the new `mouse_wheel_zoom` setting.
 - https://github.com/zed-industries/zed/pull/51000 (git_ui: Add file and folder icons to the Git panel)
 - https://github.com/zed-industries/zed/pull/50777 (editor: Go to previous and next symbol actions)
 - Added scroll-to-top and scroll-to-bottom keybindings for markdown preview (gg /G in Vim mode,cmd-up /cmd-down on macOS,ctrl-home /ctrl-end on Linux/Windows). ([#50460](https://github.com/zed-industries/zed/pull/50460) ; thanks [dremnik](https://github.com/dremnik) )
