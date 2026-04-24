@@ -277,18 +277,21 @@ impl DevContainerManifest {
                 let Ok(docker_compose_manifest) = self.docker_compose_manifest().await else {
                     return None;
                 };
-                let Ok((_, main_service)) = find_primary_service(&docker_compose_manifest, self)
+                let Ok((service_name, main_service)) =
+                    find_primary_service(&docker_compose_manifest, self)
                 else {
                     return None;
                 };
-                main_service.build.and_then(|b| {
-                    let compose_file = docker_compose_manifest.files.first()?;
-                    resolve_compose_dockerfile(
-                        compose_file,
-                        b.context.as_deref(),
-                        b.dockerfile.as_deref()?,
-                    )
-                })
+                let build = main_service.build?;
+                let dockerfile = build.dockerfile?;
+                let anchor = find_compose_file_declaring_build(
+                    &docker_compose_manifest.files,
+                    &service_name,
+                    self.fs.as_ref(),
+                )
+                .await
+                .or_else(|| docker_compose_manifest.files.first().cloned())?;
+                resolve_compose_dockerfile(&anchor, build.context.as_deref(), &dockerfile)
             }
             DevContainerBuildType::None => None,
         }
@@ -859,7 +862,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             .map(|relative| normalize_path(&self.config_directory.join(relative)))
             .collect::<Vec<PathBuf>>();
 
-        let Some(config) = self
+        let Some(mut config) = self
             .docker_client
             .get_docker_compose_config(&docker_compose_full_paths)
             .await?
@@ -867,6 +870,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             log::error!("Output could not deserialize into DockerComposeConfig");
             return Err(DevContainerError::DevContainerParseFailed);
         };
+        normalize_build_contexts(&mut config, &docker_compose_full_paths, self.fs.as_ref()).await;
         Ok(DockerComposeResources {
             files: docker_compose_full_paths,
             config,
@@ -2539,6 +2543,136 @@ fn compose_fragment_declares_name(contents: &str) -> bool {
         return false;
     };
     h.contains_key(&yaml_rust2::Yaml::String("name".to_string()))
+}
+
+/// Returns true when this compose fragment declares a `build:` key for the
+/// named service at `services.<service_name>.build`.
+fn compose_fragment_declares_service_build(contents: &str, service_name: &str) -> bool {
+    let Ok(docs) = yaml_rust2::YamlLoader::load_from_str(contents) else {
+        return false;
+    };
+    let Some(yaml_rust2::Yaml::Hash(root)) = docs.into_iter().next() else {
+        return false;
+    };
+    let services = match root.get(&yaml_rust2::Yaml::String("services".to_string())) {
+        Some(yaml_rust2::Yaml::Hash(services)) => services,
+        _ => return false,
+    };
+    let service = match services.get(&yaml_rust2::Yaml::String(service_name.to_string())) {
+        Some(yaml_rust2::Yaml::Hash(service)) => service,
+        _ => return false,
+    };
+    service.contains_key(&yaml_rust2::Yaml::String("build".to_string()))
+}
+
+/// Extracts the raw `services.<name>.build.context` string from a compose
+/// fragment, preserving any relative path as written. `docker compose config`
+/// normalizes relative contexts against the project root rather than the
+/// declaring fragment, so callers must read the raw value to recover the
+/// author's intent.
+fn compose_fragment_build_context(contents: &str, service_name: &str) -> Option<String> {
+    let docs = yaml_rust2::YamlLoader::load_from_str(contents).ok()?;
+    let Some(yaml_rust2::Yaml::Hash(root)) = docs.into_iter().next() else {
+        return None;
+    };
+    let services = match root.get(&yaml_rust2::Yaml::String("services".to_string())) {
+        Some(yaml_rust2::Yaml::Hash(services)) => services,
+        _ => return None,
+    };
+    let service = match services.get(&yaml_rust2::Yaml::String(service_name.to_string())) {
+        Some(yaml_rust2::Yaml::Hash(service)) => service,
+        _ => return None,
+    };
+    let build = match service.get(&yaml_rust2::Yaml::String("build".to_string())) {
+        Some(yaml_rust2::Yaml::Hash(build)) => build,
+        _ => return None,
+    };
+    match build.get(&yaml_rust2::Yaml::String("context".to_string())) {
+        Some(yaml_rust2::Yaml::String(context)) => Some(context.clone()),
+        _ => None,
+    }
+}
+
+/// Rewrites each service's `build.context` in-place using the raw value read
+/// from the compose fragment that declares the build. `docker compose config`
+/// resolves a relative `context` in an override file against the project root
+/// (the first `-f` file's directory) rather than the declaring fragment, so
+/// the merged output loses the author's intent; this function restores it so
+/// every downstream consumer of `DockerComposeConfig` sees a correctly
+/// anchored absolute path. Services whose declaring fragment cannot be
+/// located, loaded, or parsed are left unchanged.
+async fn normalize_build_contexts(
+    config: &mut DockerComposeConfig,
+    compose_files: &[PathBuf],
+    fs: &dyn Fs,
+) {
+    for (service_name, service) in config.services.iter_mut() {
+        let Some(build) = service.build.as_mut() else {
+            continue;
+        };
+        let Some(anchor) = find_compose_file_declaring_build(compose_files, service_name, fs).await
+        else {
+            continue;
+        };
+        let Ok(contents) = fs.load(&anchor).await else {
+            continue;
+        };
+        let Some(raw_context) = compose_fragment_build_context(&contents, service_name) else {
+            continue;
+        };
+        // Compose expands `${VAR}` interpolation at merge time, so treating a
+        // raw value like `${PROJECT_ROOT}/src` as a literal path would produce
+        // a bogus result so trust the merged value in that case.
+        if raw_context.contains('$') {
+            continue;
+        }
+        let raw_path = PathBuf::from(&raw_context);
+        let normalized = if raw_path.is_absolute() {
+            raw_path
+        } else if let Some(anchor_dir) = anchor.parent() {
+            normalize_path(&anchor_dir.join(&raw_path))
+        } else {
+            raw_path
+        };
+        build.context = Some(normalized.display().to_string());
+    }
+}
+
+/// Walks the compose files in reverse merge order (last file wins) and returns
+/// the first that declares a `build:` for the primary service. This anchor is
+/// used to resolve the Dockerfile path relative to the build context.
+/// Unreadable or unparseable fragments are skipped silently.
+async fn find_compose_file_declaring_build(
+    compose_files: &[PathBuf],
+    service_name: &str,
+    fs: &dyn Fs,
+) -> Option<PathBuf> {
+    for file in compose_files.iter().rev() {
+        let path_display = file.display().to_string();
+        let contents = match fs.load(file).await {
+            Ok(contents) => contents,
+            Err(err) => {
+                log::warn!(
+                    "dev_container: could not read compose fragment `{path_display}` while locating build declaration for service `{service_name}`: {err:?}"
+                );
+                continue;
+            }
+        };
+        if compose_fragment_declares_service_build(&contents, service_name) {
+            log::debug!(
+                "dev_container: anchoring compose build resolution to `{path_display}` (declares services.{service_name}.build)"
+            );
+            return Some(file.clone());
+        }
+    }
+    let rendered = compose_files
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>();
+    log::warn!(
+        "dev_container: no compose fragment in {rendered:?} declares services.{service_name}.build; falling back to first file"
+    );
+    None
 }
 
 /// Extracts the short feature ID from a full feature reference string.
@@ -4471,6 +4605,59 @@ ENV DOCKER_BUILDKIT=1
     }
 
     #[gpui::test]
+    async fn test_dockerfile_location_with_multi_file_compose_override(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+
+        let given_devcontainer_contents = r#"
+            {
+              "name": "Test",
+              "dockerComposeFile": [
+                "../docker-compose.yml",
+                "docker-compose.devcontainer.yml"
+              ],
+              "service": "web",
+              "workspaceFolder": "/code"
+            }
+            "#;
+        let (deps, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        // Seed the compose fragments so `find_compose_file_declaring_build`
+        // can identify the override as the file that owns the `build:` block.
+        deps.fs
+            .insert_tree(
+                TEST_PROJECT_PATH,
+                serde_json::json!({
+                    "docker-compose.yml": "services:\n  web:\n    image: placeholder\n",
+                    ".devcontainer": {
+                        "docker-compose.devcontainer.yml": concat!(
+                            "services:\n",
+                            "  web:\n",
+                            "    build:\n",
+                            "      context: ..\n",
+                            "      dockerfile: docker/django/Dockerfile\n",
+                        ),
+                    },
+                }),
+            )
+            .await;
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let expected = PathBuf::from(TEST_PROJECT_PATH)
+            .join("docker")
+            .join("django")
+            .join("Dockerfile");
+        assert_eq!(
+            devcontainer_manifest.dockerfile_location().await,
+            Some(expected)
+        );
+    }
+
+    #[gpui::test]
     async fn test_spawns_devcontainer_with_docker_compose_and_no_update_uid(
         cx: &mut TestAppContext,
     ) {
@@ -5934,6 +6121,44 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
                         DockerComposeService {
                             image: Some("test_image:latest".to_string()),
                             command: vec!["sleep".to_string(), "infinity".to_string()],
+                            ..Default::default()
+                        },
+                    )]),
+                    ..Default::default()
+                }));
+            }
+            if config_files.len() == 2
+                && config_files.get(0) == Some(&project_path.join("docker-compose.yml"))
+                && config_files.get(1)
+                    == Some(
+                        &project_path
+                            .join(".devcontainer")
+                            .join("docker-compose.devcontainer.yml"),
+                    )
+            {
+                let resolved_context = project_path
+                    .parent()
+                    .unwrap_or(&project_path)
+                    .display()
+                    .to_string();
+                return Ok(Some(DockerComposeConfig {
+                    name: None,
+                    services: HashMap::from([(
+                        "web".to_string(),
+                        DockerComposeService {
+                            build: Some(DockerComposeServiceBuild {
+                                context: Some(resolved_context),
+                                dockerfile: Some(
+                                    PathBuf::from("docker")
+                                        .join("django")
+                                        .join("Dockerfile")
+                                        .display()
+                                        .to_string(),
+                                ),
+                                args: None,
+                                additional_contexts: None,
+                                target: None,
+                            }),
                             ..Default::default()
                         },
                     )]),
