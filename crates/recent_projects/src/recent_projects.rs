@@ -29,7 +29,7 @@ use gpui::{
 };
 
 use picker::{
-    Picker, PickerDelegate, ScrollBehavior,
+    Direction, Picker, PickerDelegate, ScrollBehavior,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
 use project::{Worktree, git_store::Repository};
@@ -733,13 +733,8 @@ impl RecentProjects {
                             });
                         });
                         picker.delegate.open_folders = get_open_folders(workspace.read(cx), cx);
-                        picker.delegate.snap_selection_to_first_non_header_match = false;
-                        picker.update_matches_with_options(
-                            picker.query(cx),
-                            ScrollBehavior::Preserve,
-                            window,
-                            cx,
-                        );
+                        let query = picker.query(cx);
+                        picker.update_matches(query, window, cx);
                     }
                 }
                 Some(ProjectPickerEntry::ProjectGroup(hit)) => {
@@ -753,13 +748,8 @@ impl RecentProjects {
                             return;
                         }
                         picker.delegate.remove_project_group(key, window, cx);
-                        picker.delegate.snap_selection_to_first_non_header_match = false;
-                        picker.update_matches_with_options(
-                            picker.query(cx),
-                            ScrollBehavior::Preserve,
-                            window,
-                            cx,
-                        );
+                        let query = picker.query(cx);
+                        picker.update_matches(query, window, cx);
                     }
                 }
                 Some(ProjectPickerEntry::RecentProject(_)) => {
@@ -2142,23 +2132,35 @@ impl RecentProjectsDelegate {
                     .await
                     .unwrap_or_default();
                 this.update_in(cx, move |picker, window, cx| {
+                    let prefer_previous = picker.is_scrolled_to_end() == Some(true);
                     picker.delegate.set_workspaces(workspaces);
                     picker.delegate.snap_selection_to_first_non_header_match = false;
-                    let match_count = picker.delegate.match_count();
-                    let new_selected = if ix == 0 {
-                        0
-                    } else if ix + 1 == match_count || picker.is_scrolled_to_end() == Some(true) {
-                        ix - 1
-                    } else {
-                        ix
-                    };
-                    picker.delegate.set_selected_index(new_selected, window, cx);
                     picker.update_matches_with_options(
                         picker.query(cx),
                         ScrollBehavior::Preserve,
                         window,
                         cx,
                     );
+                    let match_count = picker.delegate.match_count();
+                    if match_count > 0 {
+                        let candidate_index = if prefer_previous {
+                            ix.saturating_sub(1).min(match_count - 1)
+                        } else {
+                            ix.min(match_count - 1)
+                        };
+                        let fallback_direction = if prefer_previous {
+                            Direction::Up
+                        } else {
+                            Direction::Down
+                        };
+                        picker.set_selected_index(
+                            candidate_index,
+                            Some(fallback_direction),
+                            false,
+                            window,
+                            cx,
+                        );
+                    }
                     // After deleting a project, we want to update the history manager to reflect the change.
                     // But we do not emit a update event when user opens a project, because it's handled in `workspace::load_workspace`.
                     if let Some(history_manager) = HistoryManager::global(cx) {
