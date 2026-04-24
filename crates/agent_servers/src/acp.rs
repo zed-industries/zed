@@ -76,7 +76,7 @@ pub struct AcpDebugMessage {
 }
 
 impl AcpDebugMessage {
-    pub fn from_raw_line(direction: AcpDebugMessageDirection, line: &str) -> Option<Self> {
+    fn parse(direction: AcpDebugMessageDirection, line: &str) -> Option<Self> {
         if direction == AcpDebugMessageDirection::Stderr {
             return Some(Self {
                 direction,
@@ -144,27 +144,56 @@ impl AcpDebugMessage {
     }
 }
 
-fn broadcast_debug_message(
-    debug_messages: &Arc<Mutex<VecDeque<AcpDebugMessage>>>,
-    debug_subscribers: &Arc<Mutex<Vec<async_channel::Sender<AcpDebugMessage>>>>,
-    message: AcpDebugMessage,
-) {
-    {
-        let mut debug_messages = debug_messages
+#[derive(Default)]
+struct AcpDebugLogState {
+    messages: VecDeque<AcpDebugMessage>,
+    subscribers: Vec<async_channel::Sender<AcpDebugMessage>>,
+}
+
+#[derive(Clone, Default)]
+struct AcpDebugLog {
+    state: Arc<Mutex<AcpDebugLogState>>,
+}
+
+impl AcpDebugLog {
+    fn subscribe(
+        &self,
+    ) -> (
+        Vec<AcpDebugMessage>,
+        async_channel::Receiver<AcpDebugMessage>,
+    ) {
+        let mut state = self
+            .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if debug_messages.len() == MAX_DEBUG_BACKLOG_MESSAGES {
-            debug_messages.pop_front();
-        }
-        debug_messages.push_back(message.clone());
+        let backlog = state.messages.iter().cloned().collect();
+        let (sender, receiver) = async_channel::unbounded();
+        state.subscribers.push(sender);
+        (backlog, receiver)
     }
 
-    let mut debug_subscribers = debug_subscribers
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    debug_subscribers.retain(|sender| !sender.is_closed());
-    for sender in debug_subscribers.iter() {
-        sender.try_send(message.clone()).log_err();
+    fn record_line(&self, direction: AcpDebugMessageDirection, line: &str) {
+        let Some(message) = AcpDebugMessage::parse(direction, line) else {
+            return;
+        };
+        self.record_message(message);
+    }
+
+    fn record_message(&self, message: AcpDebugMessage) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        if state.messages.len() == MAX_DEBUG_BACKLOG_MESSAGES {
+            state.messages.pop_front();
+        }
+        state.messages.push_back(message.clone());
+
+        state.subscribers.retain(|sender| !sender.is_closed());
+        for sender in &state.subscribers {
+            sender.try_send(message.clone()).log_err();
+        }
     }
 }
 
@@ -367,8 +396,7 @@ pub struct AcpConnection {
     default_config_options: HashMap<String, String>,
     child: Option<Child>,
     session_list: Option<Rc<AcpSessionList>>,
-    debug_messages: Arc<Mutex<VecDeque<AcpDebugMessage>>>,
-    debug_subscribers: Arc<Mutex<Vec<async_channel::Sender<AcpDebugMessage>>>>,
+    debug_log: AcpDebugLog,
     _io_task: Task<()>,
     _dispatch_task: Task<()>,
     _wait_task: Task<Result<()>>,
@@ -619,19 +647,7 @@ impl AcpConnection {
         Vec<AcpDebugMessage>,
         async_channel::Receiver<AcpDebugMessage>,
     ) {
-        let backlog = self
-            .debug_messages
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .iter()
-            .cloned()
-            .collect();
-        let (sender, receiver) = async_channel::unbounded();
-        self.debug_subscribers
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(sender);
-        (backlog, receiver)
+        self.debug_log.subscribe()
     }
 
     pub async fn stdio(
@@ -713,21 +729,13 @@ impl AcpConnection {
         // Set up the foreground dispatch channel for bridging Send handler
         // closures to the !Send foreground thread.
         let (dispatch_tx, dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
-        let debug_messages = Arc::new(Mutex::new(VecDeque::new()));
-        let debug_subscribers = Arc::new(Mutex::new(Vec::new()));
+        let debug_log = AcpDebugLog::default();
 
         let incoming_lines = futures::io::BufReader::new(stdout).lines();
         let tapped_incoming = incoming_lines.inspect({
-            let debug_messages = debug_messages.clone();
-            let debug_subscribers = debug_subscribers.clone();
+            let debug_log = debug_log.clone();
             move |result| match result {
-                Ok(line) => {
-                    if let Some(message) =
-                        AcpDebugMessage::from_raw_line(AcpDebugMessageDirection::Incoming, line)
-                    {
-                        broadcast_debug_message(&debug_messages, &debug_subscribers, message);
-                    }
-                }
+                Ok(line) => debug_log.record_line(AcpDebugMessageDirection::Incoming, line),
                 Err(err) => {
                     log::warn!("ACP transport read error: {err}");
                 }
@@ -735,22 +743,14 @@ impl AcpConnection {
         });
 
         let tapped_outgoing = futures::sink::unfold(
-            (
-                Box::pin(stdin),
-                debug_messages.clone(),
-                debug_subscribers.clone(),
-            ),
-            async move |(mut writer, debug_messages, debug_subscribers), line: String| {
+            (Box::pin(stdin), debug_log.clone()),
+            async move |(mut writer, debug_log), line: String| {
                 use futures::AsyncWriteExt;
-                if let Some(message) =
-                    AcpDebugMessage::from_raw_line(AcpDebugMessageDirection::Outgoing, &line)
-                {
-                    broadcast_debug_message(&debug_messages, &debug_subscribers, message);
-                }
+                debug_log.record_line(AcpDebugMessageDirection::Outgoing, &line);
                 let mut bytes = line.into_bytes();
                 bytes.push(b'\n');
                 writer.write_all(&bytes).await?;
-                Ok::<_, std::io::Error>((writer, debug_messages, debug_subscribers))
+                Ok::<_, std::io::Error>((writer, debug_log))
             },
         );
 
@@ -788,8 +788,7 @@ impl AcpConnection {
         });
 
         let stderr_task = cx.background_spawn({
-            let debug_messages = debug_messages.clone();
-            let debug_subscribers = debug_subscribers.clone();
+            let debug_log = debug_log.clone();
             async move {
                 let mut stderr = BufReader::new(stderr);
                 let mut line = String::new();
@@ -798,11 +797,7 @@ impl AcpConnection {
                 {
                     let trimmed = line.trim_end_matches(['\n', '\r']);
                     log::warn!("agent stderr: {trimmed}");
-                    if let Some(message) =
-                        AcpDebugMessage::from_raw_line(AcpDebugMessageDirection::Stderr, trimmed)
-                    {
-                        broadcast_debug_message(&debug_messages, &debug_subscribers, message);
-                    }
+                    debug_log.record_line(AcpDebugMessageDirection::Stderr, trimmed);
                     line.clear();
                 }
                 Ok(())
@@ -898,8 +893,7 @@ impl AcpConnection {
             default_model,
             default_config_options,
             session_list,
-            debug_messages,
-            debug_subscribers,
+            debug_log,
             _io_task: io_task,
             _dispatch_task: dispatch_task,
             _wait_task: wait_task,
@@ -936,8 +930,7 @@ impl AcpConnection {
             default_config_options: HashMap::default(),
             child: None,
             session_list: None,
-            debug_messages: Arc::new(Mutex::new(VecDeque::new())),
-            debug_subscribers: Arc::new(Mutex::new(Vec::new())),
+            debug_log: AcpDebugLog::default(),
             _io_task: io_task,
             _dispatch_task: dispatch_task,
             _wait_task: Task::ready(Ok(())),
