@@ -297,6 +297,15 @@ impl MarkdownStyle {
         }
     }
 
+    pub fn with_buffer_font(mut self, cx: &App) -> Self {
+        let theme_settings = ThemeSettings::get_global(cx);
+        self.base_text_style.font_family = theme_settings.buffer_font.family.clone();
+        self.base_text_style.font_fallbacks = theme_settings.buffer_font.fallbacks.clone();
+        self.base_text_style.font_features = theme_settings.buffer_font.features.clone();
+        self.base_text_style.font_weight = theme_settings.buffer_font.weight;
+        self
+    }
+
     pub fn with_muted_text(mut self, cx: &App) -> Self {
         let colors = cx.theme().colors();
         self.base_text_style.color = colors.text_muted;
