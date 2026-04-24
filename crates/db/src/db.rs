@@ -13,8 +13,8 @@ pub use sqlez;
 pub use sqlez_macros;
 pub use uuid;
 
-pub use release_channel::RELEASE_CHANNEL;
 use async_lock::Mutex;
+pub use release_channel::RELEASE_CHANNEL;
 use release_channel::ReleaseChannel;
 use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
