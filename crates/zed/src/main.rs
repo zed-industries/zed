@@ -1975,8 +1975,7 @@ fn run_restart_helper(wait_pid: u32, open_path: PathBuf) -> Result<()> {
         }
 
         match io::Error::last_os_error().raw_os_error() {
-            Some(libc::ESRCH) => break,
-            Some(libc::EPERM) => std::thread::sleep(Duration::from_millis(100)),
+            Some(libc::ESRCH) | Some(libc::EPERM) => break,
             Some(error) => {
                 return Err(anyhow::anyhow!(
                     "failed to query process {wait_pid}: {}",
