@@ -17,6 +17,7 @@ use crate::project_search::ProjectSearchBar;
 
 pub mod buffer_search;
 pub mod project_search;
+pub mod quick_search;
 pub(crate) mod search_bar;
 pub mod search_status_button;
 
@@ -24,6 +25,7 @@ pub fn init(cx: &mut App) {
     menu::init();
     buffer_search::init(cx);
     project_search::init(cx);
+    quick_search::init(cx);
 }
 
 actions!(
@@ -84,6 +86,10 @@ pub enum SearchOption {
     OneMatchPerLine,
     Backwards,
 }
+
+const REPLACE_PLACEHOLDER: &str = "Replace in project…";
+const INCLUDE_PLACEHOLDER: &str = "Include: e.g. src/**/*.rs";
+const EXCLUDE_PLACEHOLDER: &str = "Exclude: e.g. vendor/*, *.lock";
 
 pub enum SearchSource<'a, 'b> {
     Buffer,

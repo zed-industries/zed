@@ -776,6 +776,11 @@ impl<D: PickerDelegate> Picker<D> {
                 .top_0()
                 .left_0(),
             )
+            .when(!self.delegate.select_on_hover(), |this| {
+                this.on_mouse_down(MouseButton::Left, |_, window, _cx| {
+                    window.prevent_default();
+                })
+            })
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.handle_click(ix, event.modifiers().secondary(), window, cx)
             }))
