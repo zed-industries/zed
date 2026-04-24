@@ -6381,6 +6381,9 @@ impl LspStore {
 
             let language = buffer.read(cx).language().cloned();
 
+            let request_snapshot = buffer.read(cx).snapshot();
+            let position_anchor = request_snapshot.anchor_after(position);
+
             let buffer = buffer.clone();
 
             cx.spawn(async move |this, cx| {
@@ -6390,8 +6393,10 @@ impl LspStore {
                         .map(|(id, server_name)| {
                             let request = GetCompletions {
                                 position,
+                                position_anchor,
                                 context: context.clone(),
                                 server_id: Some(id),
+                                request_snapshot: Some(request_snapshot.clone()),
                             };
                             let buffer = buffer.clone();
                             let language = language.clone();
@@ -6485,13 +6490,17 @@ impl LspStore {
                                 None => false,
                             }
                         }).fuse();
+                        let request_snapshot = buffer.read(cx).snapshot();
+                        let position_anchor = request_snapshot.anchor_after(position);
                         let mut lsp_request = lsp_store.request_lsp(
                             buffer.clone(),
                             LanguageServerToQuery::Other(server_id),
                             GetCompletions {
                                 position,
+                                position_anchor,
                                 context: context.clone(),
                                 server_id: Some(server_id),
+                                request_snapshot: Some(request_snapshot),
                             },
                             cx,
                         ).fuse();
@@ -10484,7 +10493,7 @@ impl LspStore {
             })?;
 
             if let Some(text_edit) = completion.text_edit.as_ref() {
-                let edit = parse_completion_text_edit(text_edit, &buffer_snapshot);
+                let edit = parse_completion_text_edit(text_edit, &buffer_snapshot, None);
 
                 if let Some(mut edit) = edit {
                     LineEnding::normalize(&mut edit.new_text);
