@@ -3860,9 +3860,6 @@ impl Editor {
         cx.emit(EditorEvent::SelectionsChanged { local });
 
         let selections = &self.selections.disjoint_anchors_arc();
-        if selections.len() == 1 {
-            cx.emit(SearchEvent::ActiveMatchChanged)
-        }
         if local && let Some(buffer_snapshot) = buffer.as_singleton() {
             let inmemory_selections = selections
                 .iter()
@@ -9258,9 +9255,9 @@ impl Editor {
             }))
             .tooltip(move |_window, cx| {
                 Tooltip::with_meta_in(
-                    "Remove bookmark",
+                    "Remove Bookmark",
                     Some(&ToggleBookmark),
-                    SharedString::from("Right-click for more options."),
+                    SharedString::from("Right-click for more options"),
                     &focus_handle,
                     cx,
                 )
@@ -9546,15 +9543,16 @@ impl Editor {
         };
         let primary_action_text = "Unset breakpoint";
         let focus_handle = self.focus_handle.clone();
+        let has_context_menu = self.has_mouse_context_menu();
 
         let meta = if is_rejected {
             SharedString::from("No executable code is associated with this line.")
         } else if !breakpoint.is_disabled() {
             SharedString::from(format!(
-                "{alt_as_text}click to disable,\nright-click for more options."
+                "{alt_as_text}-click to disable\nright-click for more options"
             ))
         } else {
-            SharedString::from("Right-click for more options.")
+            SharedString::from("Right-click for more options")
         };
         IconButton::new(("breakpoint_indicator", row.0 as usize), icon)
             .icon_size(IconSize::XSmall)
@@ -9584,14 +9582,16 @@ impl Editor {
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
                 editor.set_gutter_context_menu(row, Some(position), event.position(), window, cx);
             }))
-            .tooltip(move |_window, cx| {
-                Tooltip::with_meta_in(
-                    primary_action_text,
-                    Some(&ToggleBreakpoint),
-                    meta.clone(),
-                    &focus_handle,
-                    cx,
-                )
+            .when(!has_context_menu, |button| {
+                button.tooltip(move |_window, cx| {
+                    Tooltip::with_meta_in(
+                        primary_action_text,
+                        Some(&ToggleBreakpoint),
+                        meta.clone(),
+                        &focus_handle,
+                        cx,
+                    )
+                })
             })
     }
 
@@ -9637,10 +9637,10 @@ impl Editor {
                 };
                 match self {
                     Intent::SetBookmark => format!(
-                        "{alt_as_text}click to add a breakpoint,\nright-click for more options."
+                        "{alt_as_text}-click to add a breakpoint\nright-click for more options"
                     ),
                     Intent::SetBreakpoint => format!(
-                        "{alt_as_text}click to add a bookmark,\nright-click for more options."
+                        "{alt_as_text}-click to add a bookmark\nright-click for more options"
                     ),
                 }
             }
@@ -9667,6 +9667,7 @@ impl Editor {
         };
 
         let focus_handle = self.focus_handle.clone();
+        let has_context_menu = self.has_mouse_context_menu();
         IconButton::new(("add_breakpoint_button", row.0 as usize), intent.icon())
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
@@ -9695,14 +9696,16 @@ impl Editor {
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
                 editor.set_gutter_context_menu(row, Some(position), event.position(), window, cx);
             }))
-            .tooltip(move |_window, cx| {
-                Tooltip::with_meta_in(
-                    intent.as_str(),
-                    Some(&ToggleBreakpoint),
-                    intent.secondary_and_options(),
-                    &focus_handle,
-                    cx,
-                )
+            .when(!has_context_menu, |button| {
+                button.tooltip(move |_window, cx| {
+                    Tooltip::with_meta_in(
+                        intent.as_str(),
+                        Some(&ToggleBreakpoint),
+                        intent.secondary_and_options(),
+                        &focus_handle,
+                        cx,
+                    )
+                })
             })
     }
 
@@ -16010,7 +16013,7 @@ impl Editor {
         }
     }
 
-    fn navigation_entry(
+    pub(crate) fn navigation_entry(
         &self,
         cursor_anchor: Anchor,
         cx: &mut Context<Self>,
