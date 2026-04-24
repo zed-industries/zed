@@ -2144,6 +2144,15 @@ impl RecentProjectsDelegate {
                 this.update_in(cx, move |picker, window, cx| {
                     picker.delegate.set_workspaces(workspaces);
                     picker.delegate.snap_selection_to_first_non_header_match = false;
+                    let match_count = picker.delegate.match_count();
+                    let new_selected = if ix == 0 {
+                        0
+                    } else if ix + 1 == match_count || picker.is_scrolled_to_end() == Some(true) {
+                        ix - 1
+                    } else {
+                        ix
+                    };
+                    picker.delegate.set_selected_index(new_selected, window, cx);
                     picker.update_matches_with_options(
                         picker.query(cx),
                         ScrollBehavior::Preserve,

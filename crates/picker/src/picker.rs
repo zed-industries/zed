@@ -789,6 +789,13 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    pub fn is_scrolled_to_end(&self) -> Option<bool> {
+        match &self.element_container {
+            ElementContainer::List(state) => state.is_scrolled_to_end(),
+            ElementContainer::UniformList(scroll_handle) => scroll_handle.is_scrolled_to_end(),
+        }
+    }
+
     fn render_element(
         &self,
         window: &mut Window,
@@ -991,14 +998,6 @@ mod tests {
                     .child(ui::Label::new(format!("Item {ix}"))),
             )
         }
-    }
-
-    fn draw_picker(picker: &gpui::Entity<Picker<TestDelegate>>, cx: &mut gpui::VisualTestContext) {
-        cx.draw(
-            gpui::point(px(0.), px(0.)),
-            gpui::size(px(240.), px(120.)),
-            |_, _| picker.clone().into_any_element(),
-        );
     }
 
     fn init_test(cx: &mut TestAppContext) {

@@ -399,6 +399,21 @@ impl ListState {
         self.0.borrow().items.summary().count
     }
 
+    /// Whether the list is scrolled to the end, or `None` if the list is
+    /// not scrollable.
+    pub fn is_scrolled_to_end(&self) -> Option<bool> {
+        let state = self.0.borrow();
+        let bounds = state.last_layout_bounds?;
+        let padding = state.last_padding.unwrap_or_default();
+        let content_height = state.items.summary().height + padding.top + padding.bottom;
+        let scroll_max = (content_height - bounds.size.height).max(px(0.));
+        if scroll_max <= px(0.) {
+            return None;
+        }
+        let scroll_top = state.scroll_top(&state.logical_scroll_top());
+        Some(scroll_top >= scroll_max)
+    }
+
     /// Inform the list state that the items in `old_range` have been replaced
     /// by `count` new items that must be recalculated.
     pub fn splice(&self, old_range: Range<usize>, count: usize) {
