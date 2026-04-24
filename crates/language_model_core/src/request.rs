@@ -338,9 +338,6 @@ impl LanguageModelRequestMessage {
                     buffer.push_str(text);
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    // Walk tool-result parts directly so we don't truncate
-                    // multi-part results to the first `Text` part (which is what
-                    // `MessageContent::to_str` returns for a borrowed string).
                     for part in &tool_result.content {
                         if let LanguageModelToolResultContent::Text(text) = part {
                             buffer.push_str(text);

@@ -390,9 +390,6 @@ pub fn into_mistral(
                             // Tool use is not supported in User messages for Mistral
                         }
                         MessageContent::ToolResult(tool_result) => {
-                            // Mistral's tool role only accepts a single string. Text parts
-                            // are concatenated; each non-text part contributes a placeholder
-                            // line (matching the original single-element behavior).
                             let mut text_parts: Vec<String> = Vec::new();
                             for part in &tool_result.content {
                                 match part {
