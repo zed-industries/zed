@@ -1666,6 +1666,12 @@ impl Panel for TerminalPanel {
     fn activation_priority(&self) -> u32 {
         2
     }
+
+    fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.terminal.get_or_insert_default().button = Some(false);
+        }))
+    }
 }
 
 struct TerminalProvider(Entity<TerminalPanel>);
