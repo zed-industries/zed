@@ -94,8 +94,8 @@ pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
 use collections::{HashMap, HashSet, IndexSet};
 use gpui::{
-    App, Context, Entity, EntityId, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle,
-    WeakEntity,
+    App, Context, Entity, EntityId, Font, HighlightStyle, Hsla, LineLayout, Pixels,
+    UnderlineStyle, WeakEntity,
 };
 use language::{
     LanguageAwareStyling, Point, Subscription as BufferSubscription,
@@ -119,6 +119,7 @@ use ztracing::instrument;
 
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
+use std::collections::BTreeMap;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -1811,6 +1812,16 @@ impl DisplaySnapshot {
             },
         )
         .flat_map(|chunk| {
+            let parent_highlight_style = chunk
+                .parent_syntax_highlight_ids
+                .iter()
+                .filter_map(|id| editor_style.syntax.get(*id))
+                .find_map(|style| style.background_color)
+                .map(|bg| HighlightStyle {
+                    background_color: Some(bg),
+                    ..Default::default()
+                });
+
             let syntax_highlight_style = chunk
                 .syntax_highlight_id
                 .and_then(|id| editor_style.syntax.get(id).cloned());
@@ -1860,6 +1871,7 @@ impl DisplaySnapshot {
                 });
 
             let style = [
+                parent_highlight_style,
                 syntax_highlight_style,
                 chunk_highlight,
                 diagnostic_highlight,
@@ -1908,17 +1920,26 @@ impl DisplaySnapshot {
                 continue;
             }
 
+            let parent_style = chunk
+                .parent_syntax_highlight_ids
+                .iter()
+                .filter_map(|id| syntax_theme.get(*id))
+                .find_map(|style| style.background_color)
+                .map(|bg| HighlightStyle {
+                    background_color: Some(bg),
+                    ..Default::default()
+                });
+
             let syntax_style = chunk
                 .syntax_highlight_id
                 .and_then(|id| syntax_theme.get(id).cloned());
 
             let overlay_style = chunk.highlight_style;
 
-            let combined = match (syntax_style, overlay_style) {
-                (Some(syntax), Some(overlay)) => Some(syntax.highlight(overlay)),
-                (some @ Some(_), None) | (None, some @ Some(_)) => some,
-                (None, None) => None,
-            };
+            let combined = [parent_style, syntax_style, overlay_style]
+                .into_iter()
+                .flatten()
+                .reduce(|acc, style| acc.highlight(style));
 
             if let Some(style) = combined {
                 highlights.push((offset..offset + chunk_len, style));
@@ -1926,6 +1947,34 @@ impl DisplaySnapshot {
             offset += chunk_len;
         }
         highlights
+    }
+
+    /// Returns display rows that should have a full-width background color
+    /// from parent syntax captures (e.g., fenced code blocks in markdown).
+    pub fn syntax_background_rows(
+        &self,
+        display_rows: Range<DisplayRow>,
+        syntax_theme: &theme::SyntaxTheme,
+    ) -> BTreeMap<DisplayRow, Hsla> {
+        let mut result = BTreeMap::new();
+
+        for row_idx in display_rows.start.0..display_rows.end.0 {
+            let row = DisplayRow(row_idx);
+            for chunk in self.chunks(row..row.next_row(), LanguageAwareStyling { tree_sitter: true, diagnostics: false }, HighlightStyles::default()) {
+                let background = chunk
+                    .parent_syntax_highlight_ids
+                    .iter()
+                    .filter_map(|id| syntax_theme.get(*id))
+                    .find_map(|style| style.background_color);
+
+                if let Some(bg_color) = background {
+                    result.insert(row, bg_color);
+                    break;
+                }
+            }
+        }
+
+        result
     }
 
     #[instrument(skip_all)]

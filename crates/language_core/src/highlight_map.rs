@@ -9,6 +9,9 @@ pub struct HighlightId(NonZeroU32);
 impl HighlightId {
     pub const TABSTOP_INSERT_ID: HighlightId = HighlightId(NonZeroU32::new(u32::MAX - 1).unwrap());
     pub const TABSTOP_REPLACE_ID: HighlightId = HighlightId(NonZeroU32::new(u32::MAX - 2).unwrap());
+    /// Sentinel for captures that have no theme style. Used to preserve stack
+    /// depth so parent-vs-child nesting is tracked correctly.
+    pub const TRANSPARENT: HighlightId = HighlightId(NonZeroU32::new(u32::MAX - 3).unwrap());
 
     pub fn new(capture_id: u32) -> Self {
         Self(NonZeroU32::new(capture_id + 1).unwrap_or(NonZeroU32::MAX))

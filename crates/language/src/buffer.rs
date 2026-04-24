@@ -525,6 +525,10 @@ pub struct Chunk<'a> {
     pub text: &'a str,
     /// The syntax highlighting style of the chunk.
     pub syntax_highlight_id: Option<HighlightId>,
+    /// Syntax highlight IDs from parent captures in the highlight stack,
+    /// ordered from outermost to innermost (excluding the deepest capture
+    /// which is stored in `syntax_highlight_id`).
+    pub parent_syntax_highlight_ids: SmallVec<[HighlightId; 1]>,
     /// The highlight style that has been applied to this chunk in
     /// the editor.
     pub highlight_style: Option<HighlightStyle>,
@@ -5600,10 +5604,10 @@ impl<'a> BufferChunks<'a> {
                     && range.start >= capture.node.start_byte()
                 {
                     let next_capture_end = capture.node.end_byte();
-                    if range.start < next_capture_end
-                        && let Some(capture_id) =
-                            highlights.highlight_maps[capture.grammar_index].get(capture.index)
-                    {
+                    if range.start < next_capture_end {
+                        let capture_id = highlights.highlight_maps[capture.grammar_index]
+                            .get(capture.index)
+                            .unwrap_or(HighlightId::TRANSPARENT);
                         highlights.stack.push((next_capture_end, capture_id));
                     }
                     highlights.next_capture.take();
@@ -5737,13 +5741,12 @@ impl<'a> Iterator for BufferChunks<'a> {
                     next_capture_start = capture.node.start_byte();
                     break;
                 } else {
-                    let highlight_id =
-                        highlights.highlight_maps[capture.grammar_index].get(capture.index);
-                    if let Some(highlight_id) = highlight_id {
-                        highlights
-                            .stack
-                            .push((capture.node.end_byte(), highlight_id));
-                    }
+                    let highlight_id = highlights.highlight_maps[capture.grammar_index]
+                        .get(capture.index)
+                        .unwrap_or(HighlightId::TRANSPARENT);
+                    highlights
+                        .stack
+                        .push((capture.node.end_byte(), highlight_id));
                     highlights.next_capture = highlights.captures.next();
                 }
             }
@@ -5776,11 +5779,33 @@ impl<'a> Iterator for BufferChunks<'a> {
                 .min(next_capture_start)
                 .min(next_diagnostic_endpoint);
             let mut highlight_id = None;
-            if let Some(highlights) = self.highlights.as_ref()
-                && let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last()
-            {
-                chunk_end = chunk_end.min(*parent_capture_end);
-                highlight_id = Some(*parent_highlight_id);
+            let mut parent_syntax_highlight_ids = SmallVec::new();
+            if let Some(highlights) = self.highlights.as_ref() {
+                if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
+                    chunk_end = chunk_end.min(*parent_capture_end);
+                    if *parent_highlight_id != HighlightId::TRANSPARENT {
+                        highlight_id = Some(*parent_highlight_id);
+                    }
+                }
+                if highlights.stack.len() > 1 {
+                    for &(_, id) in &highlights.stack[..highlights.stack.len() - 1] {
+                        if id != HighlightId::TRANSPARENT {
+                            parent_syntax_highlight_ids.push(id);
+                        }
+                    }
+                } else if highlights.stack.len() == 1 {
+                    // Single-entry stack: the capture is both deepest and parent.
+                    // Include it in parents so syntax_background_rows can paint
+                    // full-width backgrounds (e.g., code_fence_content on empty
+                    // lines). This is safe because inline captures (code_span)
+                    // always have >=2 stack entries thanks to TRANSPARENT pushes
+                    // for their container captures (paragraph, heading, etc.).
+                    if let Some(&(_, id)) = highlights.stack.first() {
+                        if id != HighlightId::TRANSPARENT {
+                            parent_syntax_highlight_ids.push(id);
+                        }
+                    }
+                }
             }
             let bit_start = chunk_start - self.chunks.offset();
             let bit_end = chunk_end - self.chunks.offset();
@@ -5800,6 +5825,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             Some(Chunk {
                 text: slice,
                 syntax_highlight_id: highlight_id,
+                parent_syntax_highlight_ids,
                 underline: self.underline,
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),

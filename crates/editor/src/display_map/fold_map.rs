@@ -6,6 +6,7 @@ use super::{
 };
 use gpui::{AnyElement, App, ElementId, HighlightStyle, Pixels, SharedString, Stateful, Window};
 use language::{Edit, HighlightId, LanguageAwareStyling, Point};
+use smallvec::SmallVec;
 use multi_buffer::{
     Anchor, AnchorRangeExt, MBTextSummary, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
     RowInfo, ToOffset,
@@ -1393,6 +1394,8 @@ pub struct Chunk<'a> {
     pub text: &'a str,
     /// The syntax highlighting style of the chunk.
     pub syntax_highlight_id: Option<HighlightId>,
+    /// Syntax highlight IDs from parent captures in the highlight stack.
+    pub parent_syntax_highlight_ids: SmallVec<[HighlightId; 1]>,
     /// The highlight style that has been applied to this chunk in
     /// the editor.
     pub highlight_style: Option<HighlightStyle>,
@@ -1594,6 +1597,7 @@ impl<'a> Iterator for FoldChunks<'a> {
                 chars: chunk.chars,
                 newlines: chunk.newlines,
                 syntax_highlight_id: chunk.syntax_highlight_id,
+                parent_syntax_highlight_ids: chunk.parent_syntax_highlight_ids.clone(),
                 highlight_style: chunk.highlight_style,
                 diagnostic_severity: chunk.diagnostic_severity,
                 is_unnecessary: chunk.is_unnecessary,

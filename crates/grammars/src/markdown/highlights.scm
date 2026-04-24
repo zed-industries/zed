@@ -43,6 +43,9 @@
   (info_string)
 ] @punctuation.embedded.markup
 
+(fenced_code_block
+  (code_fence_content) @text.literal.block.markup)
+
 (link_reference_definition) @link_text.markup
 
 (link_destination) @link_uri.markup
