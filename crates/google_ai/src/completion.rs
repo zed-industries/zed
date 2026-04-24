@@ -313,29 +313,6 @@ impl GoogleEventMapper {
     }
 }
 
-/// Count tokens for a Google AI model using tiktoken. This is synchronous;
-/// callers should spawn it on a background thread if needed.
-pub fn count_google_tokens(request: LanguageModelRequest) -> Result<u64> {
-    let messages = request
-        .messages
-        .into_iter()
-        .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-            role: match message.role {
-                Role::User => "user".into(),
-                Role::Assistant => "assistant".into(),
-                Role::System => "system".into(),
-            },
-            content: Some(message.string_contents()),
-            name: None,
-            function_call: None,
-        })
-        .collect::<Vec<_>>();
-
-    // Tiktoken doesn't yet support these models, so we manually use the
-    // same tokenizer as GPT-4.
-    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
-}
-
 fn update_usage(usage: &mut UsageMetadata, new: &UsageMetadata) {
     if let Some(prompt_token_count) = new.prompt_token_count {
         usage.prompt_token_count = Some(prompt_token_count);

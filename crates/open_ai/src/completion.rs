@@ -18,7 +18,7 @@ use crate::responses::{
     StreamEvent as ResponsesStreamEvent,
 };
 use crate::{
-    FunctionContent, FunctionDefinition, ImageUrl, MessagePart, Model, ReasoningEffort,
+    FunctionContent, FunctionDefinition, ImageUrl, MessagePart, ReasoningEffort,
     ResponseStreamEvent, ToolCall, ToolCallContent,
 };
 
@@ -802,68 +802,6 @@ fn token_usage_from_response_usage(usage: &ResponsesUsage) -> TokenUsage {
     }
 }
 
-pub fn collect_tiktoken_messages(
-    request: LanguageModelRequest,
-) -> Vec<tiktoken_rs::ChatCompletionRequestMessage> {
-    request
-        .messages
-        .into_iter()
-        .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-            role: match message.role {
-                Role::User => "user".into(),
-                Role::Assistant => "assistant".into(),
-                Role::System => "system".into(),
-            },
-            content: Some(message.string_contents()),
-            name: None,
-            function_call: None,
-        })
-        .collect::<Vec<_>>()
-}
-
-/// Count tokens for an OpenAI model. This is synchronous; callers should spawn
-/// it on a background thread if needed.
-pub fn count_open_ai_tokens(request: LanguageModelRequest, model: Model) -> Result<u64> {
-    let messages = collect_tiktoken_messages(request);
-    match model {
-        Model::Custom { max_tokens, .. } => {
-            let model = if max_tokens >= 100_000 {
-                // If the max tokens is 100k or more, it likely uses the o200k_base tokenizer
-                "gpt-4o"
-            } else {
-                // Otherwise fallback to gpt-4, since only cl100k_base and o200k_base are
-                // supported with this tiktoken method
-                "gpt-4"
-            };
-            tiktoken_rs::num_tokens_from_messages(model, &messages)
-        }
-        // Currently supported by tiktoken_rs
-        // Sometimes tiktoken-rs is behind on model support. If that is the case, make a new branch
-        // arm with an override. We enumerate all supported models here so that we can check if new
-        // models are supported yet or not.
-        Model::ThreePointFiveTurbo
-        | Model::Four
-        | Model::FourTurbo
-        | Model::FourOmniMini
-        | Model::FourPointOneNano
-        | Model::O1
-        | Model::O3
-        | Model::O3Mini
-        | Model::Five
-        | Model::FiveCodex
-        | Model::FiveMini
-        | Model::FiveNano => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
-        // GPT-5.1, 5.2, 5.2-codex, 5.3-codex, 5.4, and 5.4-pro don't have dedicated tiktoken support; use gpt-5 tokenizer
-        Model::FivePointOne
-        | Model::FivePointTwo
-        | Model::FivePointTwoCodex
-        | Model::FivePointThreeCodex
-        | Model::FivePointFour
-        | Model::FivePointFourPro => tiktoken_rs::num_tokens_from_messages("gpt-5", &messages),
-    }
-    .map(|tokens| tokens as u64)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::responses::{
@@ -911,34 +849,6 @@ mod tests {
             call_id: Some("call_123".to_string()),
             arguments: args.map(|s| s.to_string()).unwrap_or_default(),
         })
-    }
-
-    #[test]
-    fn tiktoken_rs_support() {
-        let request = LanguageModelRequest {
-            thread_id: None,
-            prompt_id: None,
-            intent: None,
-            messages: vec![LanguageModelRequestMessage {
-                role: Role::User,
-                content: vec![MessageContent::Text("message".into())],
-                cache: false,
-                reasoning_details: None,
-            }],
-            tools: vec![],
-            tool_choice: None,
-            stop: vec![],
-            temperature: None,
-            thinking_allowed: true,
-            thinking_effort: None,
-            speed: None,
-        };
-
-        // Validate that all models are supported by tiktoken-rs
-        for model in <Model as strum::IntoEnumIterator>::iter() {
-            let count = count_open_ai_tokens(request.clone(), model).unwrap();
-            assert!(count > 0);
-        }
     }
 
     #[test]

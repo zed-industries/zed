@@ -3,9 +3,8 @@ use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME,
     CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody, CompletionEvent, CompletionRequestStatus,
-    CountTokensBody, CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME, ListModelsResponse,
-    OUTDATED_LLM_TOKEN_HEADER_NAME, SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME,
-    ZED_VERSION_HEADER_NAME,
+    EXPIRED_LLM_TOKEN_HEADER_NAME, ListModelsResponse, OUTDATED_LLM_TOKEN_HEADER_NAME,
+    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt,
@@ -13,7 +12,7 @@ use futures::{
     stream::{self, BoxStream},
 };
 use google_ai::GoogleModelMode;
-use gpui::{App, AppContext, AsyncApp, Context, Task};
+use gpui::{AppContext, AsyncApp, Context, Task};
 use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{
     AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
@@ -40,15 +39,11 @@ use std::task::Poll;
 use std::time::Duration;
 use thiserror::Error;
 
-use anthropic::completion::{
-    AnthropicEventMapper, count_anthropic_tokens_with_tiktoken, into_anthropic,
-};
+use anthropic::completion::{AnthropicEventMapper, into_anthropic};
 use google_ai::completion::{GoogleEventMapper, into_google};
 use open_ai::completion::{
-    OpenAiEventMapper, OpenAiResponseEventMapper, count_open_ai_tokens, into_open_ai,
-    into_open_ai_response,
+    OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
 };
-use x_ai::completion::count_xai_tokens;
 
 const PROVIDER_ID: LanguageModelProviderId = ZED_CLOUD_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = ZED_CLOUD_PROVIDER_NAME;
@@ -371,85 +366,6 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             cloud_llm_client::LanguageModelProvider::OpenAi
             | cloud_llm_client::LanguageModelProvider::XAi
             | cloud_llm_client::LanguageModelProvider::Google => None,
-        }
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        match self.model.provider {
-            cloud_llm_client::LanguageModelProvider::Anthropic => cx
-                .background_spawn(async move { count_anthropic_tokens_with_tiktoken(request) })
-                .boxed(),
-            cloud_llm_client::LanguageModelProvider::OpenAi => {
-                let model = match open_ai::Model::from_id(&self.model.id.0) {
-                    Ok(model) => model,
-                    Err(err) => return async move { Err(anyhow!(err)) }.boxed(),
-                };
-                cx.background_spawn(async move { count_open_ai_tokens(request, model) })
-                    .boxed()
-            }
-            cloud_llm_client::LanguageModelProvider::XAi => {
-                let model = match x_ai::Model::from_id(&self.model.id.0) {
-                    Ok(model) => model,
-                    Err(err) => return async move { Err(anyhow!(err)) }.boxed(),
-                };
-                cx.background_spawn(async move { count_xai_tokens(request, model) })
-                    .boxed()
-            }
-            cloud_llm_client::LanguageModelProvider::Google => {
-                let http_client = self.http_client.clone();
-                let token_provider = self.token_provider.clone();
-                let model_id = self.model.id.to_string();
-                let generate_content_request =
-                    into_google(request, model_id.clone(), GoogleModelMode::Default);
-                let auth_context = token_provider.auth_context(cx);
-                async move {
-                    let token = token_provider.acquire_token(auth_context).await?;
-
-                    let request_body = CountTokensBody {
-                        provider: cloud_llm_client::LanguageModelProvider::Google,
-                        model: model_id,
-                        provider_request: serde_json::to_value(&google_ai::CountTokensRequest {
-                            generate_content_request,
-                        })?,
-                    };
-                    let request = http_client::Request::builder()
-                        .method(Method::POST)
-                        .uri(
-                            http_client
-                                .build_zed_llm_url("/count_tokens", &[])?
-                                .as_ref(),
-                        )
-                        .header("Content-Type", "application/json")
-                        .header("Authorization", format!("Bearer {token}"))
-                        .body(serde_json::to_string(&request_body)?.into())?;
-                    let mut response = http_client.send(request).await?;
-                    let status = response.status();
-                    let headers = response.headers().clone();
-                    let mut response_body = String::new();
-                    response
-                        .body_mut()
-                        .read_to_string(&mut response_body)
-                        .await?;
-
-                    if status.is_success() {
-                        let response_body: CountTokensResponse =
-                            serde_json::from_str(&response_body)?;
-
-                        Ok(response_body.tokens as u64)
-                    } else {
-                        Err(anyhow!(ApiError {
-                            status,
-                            body: response_body,
-                            headers
-                        }))
-                    }
-                }
-                .boxed()
-            }
         }
     }
 

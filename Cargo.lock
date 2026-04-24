@@ -650,7 +650,6 @@ dependencies = [
  "serde_json",
  "strum 0.27.2",
  "thiserror 2.0.17",
- "tiktoken-rs",
 ]
 
 [[package]]
@@ -661,9 +660,9 @@ checksum = "34cd60c5e3152cef0a592f1b296f1cc93715d89d2551d85315828c3a09575ff4"
 
 [[package]]
 name = "anyhow"
-version = "1.0.100"
+version = "1.0.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
+checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "approx"
@@ -2166,9 +2165,9 @@ dependencies = [
 
 [[package]]
 name = "bstr"
-version = "1.12.0"
+version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "234113d19d0d7d613b40e86fb654acf958910802bcceab913a4f9e7cda03b1a4"
+checksum = "63044e1ae8e69f3b5a92c736ca6269b8d12fa7efe39bf34ddb06d102cf0e2cab"
 dependencies = [
  "memchr",
  "regex-automata",
@@ -7477,7 +7476,6 @@ dependencies = [
  "serde",
  "serde_json",
  "strum 0.27.2",
- "tiktoken-rs",
 ]
 
 [[package]]
@@ -9502,7 +9500,6 @@ dependencies = [
  "settings",
  "smol",
  "strum 0.27.2",
- "tiktoken-rs",
  "tokio",
  "ui",
  "ui_input",
@@ -9530,7 +9527,6 @@ dependencies = [
  "serde_json",
  "smol",
  "thiserror 2.0.17",
- "x_ai",
 ]
 
 [[package]]
@@ -11694,7 +11690,6 @@ dependencies = [
  "serde_json",
  "strum 0.27.2",
  "thiserror 2.0.17",
- "tiktoken-rs",
 ]
 
 [[package]]
@@ -14336,9 +14331,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.12.2"
+version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "843bc0191f75f3e22651ae5f1e72939ab2f72a4bc30fa80a066bd66edefc24d4"
+checksum = "e10754a14b9137dd7b1e3e5b0493cc9171fdd105e0ab477f51b72e7f3ac0e276"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -17791,20 +17786,6 @@ dependencies = [
  "quick-error 2.0.1",
  "weezl",
  "zune-jpeg",
-]
-
-[[package]]
-name = "tiktoken-rs"
-version = "0.9.1"
-source = "git+https://github.com/zed-industries/tiktoken-rs?rev=2570c4387a8505fb8f1d3f3557454b474f1e8271#2570c4387a8505fb8f1d3f3557454b474f1e8271"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "bstr",
- "fancy-regex 0.16.2",
- "lazy_static",
- "regex",
- "rustc-hash 1.1.0",
 ]
 
 [[package]]
@@ -21857,11 +21838,9 @@ name = "x_ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "language_model_core",
  "schemars",
  "serde",
  "strum 0.27.2",
- "tiktoken-rs",
 ]
 
 [[package]]
