@@ -1170,7 +1170,11 @@ async fn target_info_from_abs_path(
         command.envs(envs);
     }
     let output = command
-        .current_dir(abs_path.parent().ok_or_else(|| anyhow::anyhow!("failed to get parent directory"))?)
+        .current_dir(
+            abs_path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("failed to get parent directory"))?,
+        )
         .arg("metadata")
         .arg("--no-deps")
         .arg("--format-version")

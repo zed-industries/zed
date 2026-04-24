@@ -25,10 +25,9 @@ use indoc::indoc;
 use language::{
     BracketPair, BracketPairConfig,
     Capability::ReadWrite,
-    ContextLocation,
-    ContextProvider,
-    DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings, LanguageConfig,
-    LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries, LanguageToolchainStore, Override, Point,
+    ContextLocation, ContextProvider, DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings,
+    LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries,
+    LanguageToolchainStore, Override, Point,
     language_settings::{
         CompletionSettingsContent, FormatterList, LanguageSettingsContent, LspInsertMode,
     },
@@ -59,7 +58,6 @@ use std::{borrow::Cow, sync::Arc};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
     iter,
-    sync::Arc,
     sync::atomic::{self, AtomicUsize},
 };
 use task::TaskVariables;
@@ -26455,9 +26453,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_toggle_code_actions_build_tasks_context_error_notifies(
-    cx: &mut TestAppContext,
-) {
+async fn test_toggle_code_actions_build_tasks_context_error_notifies(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     struct FailingContextProvider;
@@ -26481,11 +26477,8 @@ async fn test_toggle_code_actions_build_tasks_context_error_notifies(
     );
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({ "main.rs": "fn main() {}" }),
-    )
-    .await;
+    fs.insert_tree(path!("/a"), json!({ "main.rs": "fn main() {}" }))
+        .await;
 
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
@@ -26498,9 +26491,9 @@ async fn test_toggle_code_actions_build_tasks_context_error_notifies(
         .unwrap();
 
     let worktree_id = workspace.update_in(&mut cx, |workspace, _, cx| {
-        workspace
-            .project()
-            .update(cx, |project, cx| project.worktrees(cx).next().unwrap().read(cx).id())
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
     });
 
     let editor = workspace
@@ -26514,7 +26507,9 @@ async fn test_toggle_code_actions_build_tasks_context_error_notifies(
 
     editor.update_in(&mut cx, |editor, window, cx| {
         let buffer = editor.buffer().read(cx).as_singleton().unwrap();
-        buffer.update(cx, |buffer, cx| buffer.set_language(Some(language.clone()), cx));
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(language.clone()), cx)
+        });
 
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         editor.runnables.insert(

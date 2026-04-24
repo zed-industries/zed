@@ -7048,7 +7048,10 @@ impl Editor {
                     let buffer = buffer.clone();
                     async move |editor, cx| {
                         let task_context = match workspace {
-                            Some(ws) => task_context_task.await.notify_workspace_async_err(ws, cx).flatten(),
+                            Some(ws) => task_context_task
+                                .await
+                                .notify_workspace_async_err(ws, cx)
+                                .flatten(),
                             None => task_context_task.await.ok().flatten(),
                         };
 

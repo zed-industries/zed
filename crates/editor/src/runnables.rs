@@ -410,9 +410,7 @@ impl Editor {
                 task_store.task_context_for_location(captured_variables, location, cx)
             })
         });
-        cx.background_spawn(async move {
-            task.await.ok().flatten()
-        })
+        cx.background_spawn(async move { task.await.ok().flatten() })
     }
 
     pub fn lsp_task_sources(
