@@ -37367,3 +37367,44 @@ fn setup_syntax_highlighting_with_theme(
         );
     });
 }
+
+#[gpui::test]
+async fn test_toggle_diagnostics_persists_across_settings_change(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            editor.diagnostics_enabled(),
+            "diagnostics should start enabled by default"
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_diagnostics(&actions::ToggleDiagnostics, window, cx);
+        assert!(
+            !editor.diagnostics_enabled(),
+            "diagnostics should be disabled after toggle"
+        );
+    });
+
+    update_test_editor_settings(&mut cx, &|settings| {
+        settings.cursor_blink = Some(false);
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, _, _| {
+        assert!(
+            !editor.diagnostics_enabled(),
+            "diagnostics should remain disabled after settings change"
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_diagnostics(&actions::ToggleDiagnostics, window, cx);
+        assert!(
+            editor.diagnostics_enabled(),
+            "diagnostics should be re-enabled after second toggle"
+        );
+    });
+}

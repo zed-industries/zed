@@ -1178,7 +1178,6 @@ pub struct Editor {
     select_syntax_node_history: SelectSyntaxNodeHistory,
     ime_transaction: Option<TransactionId>,
     pub diagnostics_max_severity: DiagnosticSeverity,
-    diagnostics_manually_toggled: bool,
     active_diagnostics: ActiveDiagnostic,
     show_inline_diagnostics: bool,
     inline_diagnostics_update: Task<()>,
@@ -2463,7 +2462,6 @@ impl Editor {
             inline_diagnostics: Vec::new(),
             soft_wrap_mode_override,
             diagnostics_max_severity,
-            diagnostics_manually_toggled: false,
             hard_wrap: None,
             completion_provider: project.clone().map(|project| Rc::new(project) as _),
             semantics_provider: project
@@ -20582,22 +20580,20 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if !self.diagnostics_enabled() {
-            return;
-        }
+        let diagnostics_enabled =
+            self.diagnostics_enabled() && self.diagnostics_max_severity != DiagnosticSeverity::Off;
+        self.diagnostics_enabled = !diagnostics_enabled;
 
-        let new_severity = if self.diagnostics_max_severity == DiagnosticSeverity::Off {
-            self.diagnostics_manually_toggled = false;
+        let new_severity = if self.diagnostics_enabled {
             EditorSettings::get_global(cx)
                 .diagnostics_max_severity
                 .filter(|severity| severity != &DiagnosticSeverity::Off)
                 .unwrap_or(DiagnosticSeverity::Hint)
         } else {
-            self.diagnostics_manually_toggled = true;
             DiagnosticSeverity::Off
         };
         self.set_max_diagnostics_severity(new_severity, cx);
-        if self.diagnostics_max_severity == DiagnosticSeverity::Off {
+        if self.diagnostics_enabled {
             self.active_diagnostics = ActiveDiagnostic::None;
             self.inline_diagnostics_update = Task::ready(());
             self.inline_diagnostics.clear();
@@ -25336,7 +25332,7 @@ impl Editor {
         let accents_changed = new_accents != self.accent_data;
         self.accent_data = new_accents;
 
-        if self.diagnostics_enabled() && !self.diagnostics_manually_toggled {
+        if self.diagnostics_enabled() {
             let new_severity = EditorSettings::get_global(cx)
                 .diagnostics_max_severity
                 .unwrap_or(DiagnosticSeverity::Hint);
