@@ -2279,7 +2279,11 @@ impl Editor {
                             editor.update_lsp_data(Some(buffer_id), window, cx);
                             editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                             refresh_linked_ranges(editor, window, cx);
-                            editor.refresh_code_actions_for_viewport(CodeActionRefreshReason::ProvidersChanged, window, cx);
+                            editor.refresh_code_actions_for_viewport(
+                                CodeActionRefreshReason::ProvidersChanged,
+                                window,
+                                cx,
+                            );
                             editor.refresh_document_highlights(cx);
                         }
                     }
@@ -7435,7 +7439,11 @@ impl Editor {
         }
 
         self.code_action_providers.push(provider);
-        self.refresh_code_actions_for_viewport(CodeActionRefreshReason::ProvidersChanged, window, cx);
+        self.refresh_code_actions_for_viewport(
+            CodeActionRefreshReason::ProvidersChanged,
+            window,
+            cx,
+        );
     }
 
     pub fn remove_code_action_provider(
@@ -7446,7 +7454,11 @@ impl Editor {
     ) {
         self.code_action_providers
             .retain(|provider| provider.id() != id);
-        self.refresh_code_actions_for_viewport(CodeActionRefreshReason::ProvidersChanged, window, cx);
+        self.refresh_code_actions_for_viewport(
+            CodeActionRefreshReason::ProvidersChanged,
+            window,
+            cx,
+        );
     }
 
     pub fn code_actions_enabled_for_toolbar(&self, cx: &App) -> bool {
@@ -7611,12 +7623,12 @@ impl Editor {
             let fetch_end_row = (visible_rows.end + margin).min(max_row + 1);
 
             let fetch_end_last_row = (fetch_end_row.saturating_sub(1)).min(max_row);
-            let fetch_start_offset = buffer_snapshot.point_to_offset(
-                text::Point::new(fetch_start_row, 0),
-            );
-            let fetch_end_offset = buffer_snapshot.point_to_offset(
-                text::Point::new(fetch_end_last_row, buffer_snapshot.line_len(fetch_end_last_row)),
-            );
+            let fetch_start_offset =
+                buffer_snapshot.point_to_offset(text::Point::new(fetch_start_row, 0));
+            let fetch_end_offset = buffer_snapshot.point_to_offset(text::Point::new(
+                fetch_end_last_row,
+                buffer_snapshot.line_len(fetch_end_last_row),
+            ));
 
             let start_anchor = buffer_snapshot.anchor_before(fetch_start_offset);
             let end_anchor = buffer_snapshot.anchor_after(fetch_end_offset);
@@ -7652,50 +7664,46 @@ impl Editor {
 
                     let all_results = future::join_all(tasks).await;
 
-                    editor.update(cx, |editor, cx| {
-                        let buffer_snapshot = buffer_handle.read(cx).snapshot();
-                        let current_version =
-                            buffer_snapshot.version().clone();
-                        let fetch_start_row =
-                            start_anchor.to_point(&buffer_snapshot).row;
-                        let fetch_end_row =
-                            end_anchor.to_point(&buffer_snapshot).row + 1;
-                        let fetch_rows = fetch_start_row..fetch_end_row;
+                    editor
+                        .update(cx, |editor, cx| {
+                            let buffer_snapshot = buffer_handle.read(cx).snapshot();
+                            let current_version = buffer_snapshot.version().clone();
+                            let fetch_start_row = start_anchor.to_point(&buffer_snapshot).row;
+                            let fetch_end_row = end_anchor.to_point(&buffer_snapshot).row + 1;
+                            let fetch_rows = fetch_start_row..fetch_end_row;
 
-                        let mut cached_actions = Vec::new();
-                        for (provider, provider_actions) in
-                            providers.iter().zip(all_results)
-                        {
-                            if let Some(provider_actions) = provider_actions.log_err() {
-                                for action in provider_actions {
-                                    let diagnostic_row_range =
-                                        extract_diagnostic_row_range(&action);
-                                    let start_point =
-                                        action.range.start.to_point(&buffer_snapshot);
-                                    let end_point =
-                                        action.range.end.to_point(&buffer_snapshot);
-                                    cached_actions.push(CachedCodeAction {
-                                        row_range: start_point.row..end_point.row + 1,
-                                        diagnostic_row_range,
-                                        available: AvailableCodeAction {
-                                            action,
-                                            provider: provider.clone(),
-                                        },
-                                    });
+                            let mut cached_actions = Vec::new();
+                            for (provider, provider_actions) in providers.iter().zip(all_results) {
+                                if let Some(provider_actions) = provider_actions.log_err() {
+                                    for action in provider_actions {
+                                        let diagnostic_row_range =
+                                            extract_diagnostic_row_range(&action);
+                                        let start_point =
+                                            action.range.start.to_point(&buffer_snapshot);
+                                        let end_point = action.range.end.to_point(&buffer_snapshot);
+                                        cached_actions.push(CachedCodeAction {
+                                            row_range: start_point.row..end_point.row + 1,
+                                            diagnostic_row_range,
+                                            available: AvailableCodeAction {
+                                                action,
+                                                provider: provider.clone(),
+                                            },
+                                        });
+                                    }
                                 }
                             }
-                        }
 
-                        editor.code_action_cache.buffers.insert(
-                            buffer_id,
-                            BufferCodeActions {
-                                version: current_version,
-                                fetched_rows: fetch_rows,
-                                actions: cached_actions,
-                            },
-                        );
-                        cx.notify();
-                    }).log_err();
+                            editor.code_action_cache.buffers.insert(
+                                buffer_id,
+                                BufferCodeActions {
+                                    version: current_version,
+                                    fetched_rows: fetch_rows,
+                                    actions: cached_actions,
+                                },
+                            );
+                            cx.notify();
+                        })
+                        .log_err();
                 }
             });
 
@@ -25163,7 +25171,11 @@ impl Editor {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
-                self.refresh_code_actions_for_viewport(CodeActionRefreshReason::BufferEdited, window, cx);
+                self.refresh_code_actions_for_viewport(
+                    CodeActionRefreshReason::BufferEdited,
+                    window,
+                    cx,
+                );
                 self.refresh_single_line_folds(window, cx);
                 let snapshot = self.snapshot(window, cx);
                 self.refresh_matching_bracket_highlights(&snapshot, cx);
