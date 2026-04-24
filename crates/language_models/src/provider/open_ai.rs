@@ -326,6 +326,8 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FivePointThreeCodex
             | Model::FivePointFour
             | Model::FivePointFourPro
+            | Model::FivePointFive
+            | Model::FivePointFivePro
             | Model::O1
             | Model::O3 => true,
             Model::ThreePointFiveTurbo
