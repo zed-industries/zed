@@ -198,10 +198,23 @@ impl AcpTools {
         self.selected_connection = self
             .selected_connection
             .clone()
-            .filter(|agent_id| self.watched_connections.contains_key(agent_id))
+            .filter(|agent_id| self.should_keep_selected_connection(agent_id, cx))
             .or_else(|| self.watched_connections.keys().next().cloned());
         self.expanded.clear();
         cx.notify();
+    }
+
+    fn should_keep_selected_connection(&self, agent_id: &AgentId, cx: &App) -> bool {
+        self.watched_connections.contains_key(agent_id)
+            || self
+                .connection_store
+                .as_ref()
+                .is_some_and(|connection_store| {
+                    connection_store
+                        .read(cx)
+                        .connection_status(&Agent::from(agent_id.clone()), cx)
+                        != AgentConnectionStatus::Disconnected
+                })
     }
 
     fn select_connection(&mut self, agent_id: Option<AgentId>, cx: &mut Context<Self>) {
@@ -766,12 +779,23 @@ impl Render for AcpTools {
                             .into_any()
                     }
                 }
-                None => h_flex()
-                    .size_full()
-                    .justify_center()
-                    .items_center()
-                    .child("No active connection")
-                    .into_any(),
+                None => match self.selected_connection_status(cx) {
+                    Some(AgentConnectionStatus::Connecting) => h_flex()
+                        .size_full()
+                        .justify_center()
+                        .items_center()
+                        .child(format!(
+                            "Reconnecting to {}",
+                            self.selected_connection_label()
+                        ))
+                        .into_any(),
+                    _ => h_flex()
+                        .size_full()
+                        .justify_center()
+                        .items_center()
+                        .child("No active connection")
+                        .into_any(),
+                },
             })
     }
 }
