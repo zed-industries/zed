@@ -1,5 +1,5 @@
 use crate::diagnostics::{DiagnosticsOptions, codeblock_fence_for_path, collect_diagnostics};
-use acp_thread::{MentionUri, selection_name};
+use acp_thread::{MentionRestoreBehavior, MentionUri, selection_name};
 use agent::{ThreadStore, outline};
 use agent_client_protocol::schema as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
@@ -116,6 +116,64 @@ impl MentionSet {
 
     pub fn insert_mention(&mut self, crease_id: CreaseId, uri: MentionUri, task: MentionTask) {
         self.mentions.insert(crease_id, (uri, task));
+    }
+
+    /// Builds a mention task for a mention being restored from a serialized
+    /// `acp::ContentBlock` (e.g. on draft reload or when a worktree is spawned
+    /// and the draft is rehydrated into the new workspace's editor).
+    ///
+    /// If the URI's [`MentionRestoreBehavior`] is `UseSerialized`, returns
+    /// `None` and callers should wrap the serialized text directly.
+    ///
+    /// Otherwise, re-resolves against current project state. When
+    /// re-resolution fails and the behavior allows falling back, the returned
+    /// task resolves to the serialized text so the user doesn't lose context.
+    pub fn resolve_for_restore(
+        &mut self,
+        mention_uri: &MentionUri,
+        serialized_text: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<Mention>>> {
+        let behavior = mention_uri.restore_behavior();
+        let MentionRestoreBehavior::Reevaluate {
+            fallback_to_serialized,
+        } = behavior
+        else {
+            return None;
+        };
+
+        let resolve_task = match mention_uri.clone() {
+            MentionUri::Diagnostics {
+                include_errors,
+                include_warnings,
+            } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
+            MentionUri::GitDiff { base_ref } => {
+                self.confirm_mention_for_git_diff(base_ref.into(), cx)
+            }
+            // Other variants are `UseSerialized` per `restore_behavior`; the
+            // early return above handles them.
+            _ => return None,
+        };
+
+        if !fallback_to_serialized {
+            return Some(resolve_task);
+        }
+
+        let serialized_text = serialized_text.to_string();
+        Some(cx.spawn(async move |_, _| {
+            match resolve_task.await {
+                Ok(mention) => Ok(mention),
+                Err(err) => {
+                    log::warn!(
+                        "failed to re-evaluate mention on restore, falling back to serialized text: {err:#}"
+                    );
+                    Ok(Mention::Text {
+                        content: serialized_text,
+                        tracked_buffers: Vec::new(),
+                    })
+                }
+            }
+        }))
     }
 
     /// Creates the appropriate confirmation task for a mention based on its URI type.
@@ -727,6 +785,134 @@ mod tests {
             }
             other => panic!("Expected selection mention to resolve as text, got {other:?}"),
         }
+    }
+
+    #[gpui::test]
+    async fn test_restore_git_diff_reevaluates_against_current_project(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "file.rs": "fn main() {}\n",
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main"]);
+
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        cx.run_until_parked();
+
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None, None));
+
+        // Simulate restoring a branch-diff mention whose serialized text was
+        // captured in a *different* project. The restored mention should
+        // re-resolve against the current project's active repository, so the
+        // stale text must not leak through.
+        let stale_serialized_text = "this diff came from a different worktree";
+        let task = mention_set
+            .update(cx, |mention_set, cx| {
+                mention_set.resolve_for_restore(
+                    &MentionUri::GitDiff {
+                        base_ref: "main".to_string(),
+                    },
+                    stale_serialized_text,
+                    cx,
+                )
+            })
+            .expect("GitDiff mentions should always request re-evaluation on restore");
+
+        let mention = task.await.expect("resolution should succeed");
+        match mention {
+            Mention::Text { content, .. } => {
+                assert_ne!(
+                    content, stale_serialized_text,
+                    "restored GitDiff mention must not reuse the serialized text verbatim"
+                );
+            }
+            other => panic!("expected a text mention, got {other:?}"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_restore_git_diff_falls_back_to_serialized_text_when_no_repo(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        // No `.git` directory here, so the project has no active repository.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file.rs": "fn main() {}\n"}))
+            .await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        cx.run_until_parked();
+
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None, None));
+
+        let serialized_text = "diff captured from the original workspace";
+        let task = mention_set
+            .update(cx, |mention_set, cx| {
+                mention_set.resolve_for_restore(
+                    &MentionUri::GitDiff {
+                        base_ref: "main".to_string(),
+                    },
+                    serialized_text,
+                    cx,
+                )
+            })
+            .expect("GitDiff mentions should always request re-evaluation on restore");
+
+        let mention = task.await.expect("fallback should succeed");
+        match mention {
+            Mention::Text { content, .. } => {
+                assert_eq!(
+                    content, serialized_text,
+                    "fallback should preserve the user's serialized context when re-evaluation fails"
+                );
+            }
+            other => panic!("expected a text mention, got {other:?}"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_restore_returns_none_for_serialized_only_uri_types(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file.rs": ""})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let mention_set = cx.new(|_cx| MentionSet::new(project.downgrade(), None, None));
+
+        mention_set.update(cx, |mention_set, cx| {
+            let task = mention_set.resolve_for_restore(
+                &MentionUri::File {
+                    abs_path: path!("/project/file.rs").into(),
+                },
+                "some file contents",
+                cx,
+            );
+            assert!(
+                task.is_none(),
+                "File mentions should use serialized text on restore (see MentionRestoreBehavior)"
+            );
+
+            let task = mention_set.resolve_for_restore(
+                &MentionUri::Selection {
+                    abs_path: Some(path!("/project/file.rs").into()),
+                    line_range: 0..=0,
+                },
+                "selection text",
+                cx,
+            );
+            assert!(
+                task.is_none(),
+                "Selection mentions are point-in-time snapshots and must not be re-resolved"
+            );
+        });
     }
 }
 

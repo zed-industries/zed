@@ -324,6 +324,50 @@ impl MentionUri {
         MentionLink(self)
     }
 
+    /// Describes how a mention should be restored when deserializing a message
+    /// back into the editor (e.g. after reopening a thread or spawning a new
+    /// worktree).
+    ///
+    /// Some mention kinds derive their text from live project state (the
+    /// currently active git repo, LSP diagnostics, etc.). For those, simply
+    /// trusting the serialized text is wrong if the project has changed since
+    /// the mention was originally resolved. Other mention kinds (a pasted
+    /// image, a captured selection) are inherently point-in-time snapshots,
+    /// and their serialized text is authoritative.
+    pub fn restore_behavior(&self) -> MentionRestoreBehavior {
+        match self {
+            // Derived from live project state; re-evaluate on restore so that
+            // the mention reflects the project we're restoring into rather
+            // than the project it was originally captured from. Fall back to
+            // the serialized text if re-evaluation fails (e.g. no active repo).
+            MentionUri::Diagnostics { .. } | MentionUri::GitDiff { .. } => {
+                MentionRestoreBehavior::Reevaluate {
+                    fallback_to_serialized: true,
+                }
+            }
+
+            // Point-in-time snapshots; serialized text is authoritative.
+            MentionUri::PastedImage { .. }
+            | MentionUri::Selection { .. }
+            | MentionUri::TerminalSelection { .. } => MentionRestoreBehavior::UseSerialized,
+
+            // These *could* also be re-evaluated against the current project
+            // (buffer contents may have changed, a rule may have been edited,
+            // a fetched page may have updated), but re-evaluation either
+            // requires additional state (e.g. MergeConflict, which is built
+            // from a workflow action rather than by querying the project) or
+            // has side effects we don't want on restore (re-fetching URLs).
+            // For now, keep today's behavior of trusting the serialized text.
+            MentionUri::File { .. }
+            | MentionUri::Directory { .. }
+            | MentionUri::Symbol { .. }
+            | MentionUri::Rule { .. }
+            | MentionUri::Thread { .. }
+            | MentionUri::Fetch { .. }
+            | MentionUri::MergeConflict { .. } => MentionRestoreBehavior::UseSerialized,
+        }
+    }
+
     pub fn to_uri(&self) -> Url {
         match self {
             MentionUri::File { abs_path } => {
@@ -426,6 +470,22 @@ impl MentionUri {
             }
         }
     }
+}
+
+/// Describes how a [`MentionUri`] should be handled when restoring a
+/// mention from a serialized `acp::ContentBlock`.
+///
+/// See [`MentionUri::restore_behavior`] for details.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MentionRestoreBehavior {
+    /// Re-evaluate this mention against the current project state instead of
+    /// trusting the serialized text. If re-evaluation fails and
+    /// `fallback_to_serialized` is true, use the serialized text instead of
+    /// dropping the mention.
+    Reevaluate { fallback_to_serialized: bool },
+
+    /// Use the serialized text as-is.
+    UseSerialized,
 }
 
 pub struct MentionLink<'a>(&'a MentionUri);
