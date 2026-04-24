@@ -45,9 +45,8 @@ impl OpenCodeSubscription {
 
     pub fn api_path_suffix(&self) -> &'static str {
         match self {
-            Self::Zen => "",
+            Self::Zen | Self::Free => "",
             Self::Go => "/go",
-            Self::Free => "",
         }
     }
 }
@@ -178,9 +177,13 @@ impl Model {
     pub fn available_subscriptions(&self) -> &'static [OpenCodeSubscription] {
         match self {
             // Models available in both Zen and Go
-            Self::Glm5 | Self::Glm5_1 | Self::KimiK2_6 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus | Self::Qwen3_6Plus => {
-                &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go]
-            }
+            Self::Glm5
+            | Self::Glm5_1
+            | Self::KimiK2_6
+            | Self::KimiK2_5
+            | Self::MiniMaxM2_5
+            | Self::Qwen3_5Plus
+            | Self::Qwen3_6Plus => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
 
             // Go-only models
             Self::MiniMaxM2_7 | Self::MimoV2Pro | Self::MimoV2Omni => &[OpenCodeSubscription::Go],
@@ -481,7 +484,11 @@ impl Model {
             Self::Gemini3_1Pro | Self::Gemini3Flash => true,
 
             // OpenAI-compatible models with image support
-            Self::KimiK2_6 | Self::KimiK2_5 | Self::MimoV2Omni | Self::Qwen3_5Plus | Self::Qwen3_6Plus => true,
+            Self::KimiK2_6
+            | Self::KimiK2_5
+            | Self::MimoV2Omni
+            | Self::Qwen3_5Plus
+            | Self::Qwen3_6Plus => true,
 
             // OpenAI-compatible models without image support
             Self::MiniMaxM2_5

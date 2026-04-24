@@ -174,20 +174,18 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         if Self::subscription_enabled(OpenCodeSubscription::Go, cx) {
             // If both Go and Zen are enabled, prefer Go since it's not pay-as-you-go
-            Some(self.create_language_model(
-                opencode::Model::default_go(),
-                OpenCodeSubscription::Go,
-            ))
+            Some(
+                self.create_language_model(opencode::Model::default_go(), OpenCodeSubscription::Go),
+            )
         } else if Self::subscription_enabled(OpenCodeSubscription::Zen, cx) {
-            Some(self.create_language_model(
-                opencode::Model::default(),
-                OpenCodeSubscription::Zen,
-            ))
+            Some(self.create_language_model(opencode::Model::default(), OpenCodeSubscription::Zen))
         } else if Self::subscription_enabled(OpenCodeSubscription::Free, cx) {
-            Some(self.create_language_model(
-                opencode::Model::default_free(),
-                OpenCodeSubscription::Free,
-            ))
+            Some(
+                self.create_language_model(
+                    opencode::Model::default_free(),
+                    OpenCodeSubscription::Free,
+                ),
+            )
         } else {
             None
         }
@@ -201,10 +199,12 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
                 OpenCodeSubscription::Go,
             ))
         } else if Self::subscription_enabled(OpenCodeSubscription::Zen, cx) {
-            Some(self.create_language_model(
-                opencode::Model::default_fast(),
-                OpenCodeSubscription::Zen,
-            ))
+            Some(
+                self.create_language_model(
+                    opencode::Model::default_fast(),
+                    OpenCodeSubscription::Zen,
+                ),
+            )
         } else if Self::subscription_enabled(OpenCodeSubscription::Free, cx) {
             Some(self.create_language_model(
                 opencode::Model::default_free_fast(),
@@ -243,9 +243,7 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
             let subscription = match model.subscription {
                 Some(settings::OpenCodeModelSubscription::Go) => OpenCodeSubscription::Go,
                 Some(settings::OpenCodeModelSubscription::Free) => OpenCodeSubscription::Free,
-                Some(settings::OpenCodeModelSubscription::Zen) | None => {
-                    OpenCodeSubscription::Zen
-                }
+                Some(settings::OpenCodeModelSubscription::Zen) | None => OpenCodeSubscription::Zen,
             };
             if !Self::subscription_enabled(subscription, cx) {
                 continue;
@@ -308,13 +306,18 @@ struct InjectHeaderClient {
 }
 
 impl HttpClient for InjectHeaderClient {
-    fn user_agent(&self) -> Option<&http::HeaderValue> { self.inner.user_agent() }
-    fn proxy(&self) -> Option<&http_client::Url> { self.inner.proxy() }
+    fn user_agent(&self) -> Option<&http::HeaderValue> {
+        self.inner.user_agent()
+    }
+    fn proxy(&self) -> Option<&http_client::Url> {
+        self.inner.proxy()
+    }
     fn send(
         &self,
         mut req: http::Request<AsyncBody>,
     ) -> futures::future::BoxFuture<'static, anyhow::Result<http::Response<AsyncBody>>> {
-        req.headers_mut().insert(self.name.clone(), self.value.clone());
+        req.headers_mut()
+            .insert(self.name.clone(), self.value.clone());
         self.inner.send(req)
     }
 }
@@ -322,16 +325,20 @@ impl HttpClient for InjectHeaderClient {
 impl OpenCodeLanguageModel {
     fn base_api_url(&self, cx: &AsyncApp) -> SharedString {
         // Custom models can override the API URL
-        if let opencode::Model::Custom { custom_model_api_url: Some(url), .. } = &self.model {
+        if let opencode::Model::Custom {
+            custom_model_api_url: Some(url),
+            ..
+        } = &self.model
+        {
             if !url.is_empty() {
                 return url.clone().into();
             }
         }
 
         // Combine base URL with subscription path suffix
-        let base = self.state.read_with(cx, |_, cx| {
-            OpenCodeLanguageModelProvider::api_url(cx)
-        });
+        let base = self
+            .state
+            .read_with(cx, |_, cx| OpenCodeLanguageModelProvider::api_url(cx));
 
         let suffix = self.subscription.api_path_suffix();
         let base_str = base.as_ref().trim_end_matches('/');
@@ -581,12 +588,13 @@ impl LanguageModel for OpenCodeLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let http_client = if let Some(ref thread_id) = request.thread_id {
+        let http_client = if let Some(ref thread_id) = request.thread_id
+            && let Ok(value) = http::HeaderValue::from_str(thread_id)
+        {
             Arc::new(InjectHeaderClient {
                 inner: self.http_client.clone(),
                 name: http::HeaderName::from_static("x-opencode-session"),
-                value: http::HeaderValue::from_str(thread_id)
-                    .expect("thread_id is always a valid header value"),
+                value,
             })
         } else {
             self.http_client.clone()
@@ -823,52 +831,48 @@ impl Render for ConfigurationView {
                 .child(Label::new("Subscriptions:").color(Color::Muted))
                 .child(
                     Switch::new("opencode-show-zen-models", show_zen.into())
-                    .label("Show Zen models")
-                    .label_position(SwitchLabelPosition::End)
-                    .on_click(cx.listener(|this, state, window, cx| {
-                        this.set_subscription_enabled(
-                            OpenCodeSubscription::Zen,
-                            matches!(state, ToggleState::Selected),
-                            window,
-                            cx,
-                        );
-                    })),
+                        .label("Show Zen models")
+                        .label_position(SwitchLabelPosition::End)
+                        .on_click(cx.listener(|this, state, window, cx| {
+                            this.set_subscription_enabled(
+                                OpenCodeSubscription::Zen,
+                                matches!(state, ToggleState::Selected),
+                                window,
+                                cx,
+                            );
+                        })),
                 )
                 .child(
                     Switch::new("opencode-show-go-models", show_go.into())
-                    .label("Show Go models")
-                    .label_position(SwitchLabelPosition::End)
-                    .on_click(cx.listener(|this, state, window, cx| {
-                        this.set_subscription_enabled(
-                            OpenCodeSubscription::Go,
-                            matches!(state, ToggleState::Selected),
-                            window,
-                            cx,
-                        );
-                    })),
+                        .label("Show Go models")
+                        .label_position(SwitchLabelPosition::End)
+                        .on_click(cx.listener(|this, state, window, cx| {
+                            this.set_subscription_enabled(
+                                OpenCodeSubscription::Go,
+                                matches!(state, ToggleState::Selected),
+                                window,
+                                cx,
+                            );
+                        })),
                 )
                 .child(
                     Switch::new("opencode-show-free-models", show_free.into())
-                    .label("Show Free models")
-                    .label_position(SwitchLabelPosition::End)
-                    .on_click(cx.listener(|this, state, window, cx| {
-                        this.set_subscription_enabled(
-                            OpenCodeSubscription::Free,
-                            matches!(state, ToggleState::Selected),
-                            window,
-                            cx,
-                        );
-                    })),
+                        .label("Show Free models")
+                        .label_position(SwitchLabelPosition::End)
+                        .on_click(cx.listener(|this, state, window, cx| {
+                            this.set_subscription_enabled(
+                                OpenCodeSubscription::Free,
+                                matches!(state, ToggleState::Selected),
+                                window,
+                                cx,
+                            );
+                        })),
                 );
 
             let no_subscriptions_warning = if !show_zen && !show_go && !show_free {
-                Some(
-                    Banner::new()
-                        .severity(Severity::Warning)
-                        .child(Label::new(
-                            "No subscriptions enabled. Enable at least one subscription to use OpenCode.",
-                        )),
-                )
+                Some(Banner::new().severity(Severity::Warning).child(Label::new(
+                    "No subscriptions enabled. Enable at least one subscription to use OpenCode.",
+                )))
             } else {
                 None
             };
