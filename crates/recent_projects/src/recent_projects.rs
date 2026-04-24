@@ -733,8 +733,13 @@ impl RecentProjects {
                             });
                         });
                         picker.delegate.open_folders = get_open_folders(workspace.read(cx), cx);
-                        let query = picker.query(cx);
-                        picker.update_matches(query, window, cx);
+                        picker.delegate.snap_selection_to_first_non_header_match = false;
+                        picker.update_matches_with_options(
+                            picker.query(cx),
+                            ScrollBehavior::Preserve,
+                            window,
+                            cx,
+                        );
                     }
                 }
                 Some(ProjectPickerEntry::ProjectGroup(hit)) => {
@@ -748,8 +753,13 @@ impl RecentProjects {
                             return;
                         }
                         picker.delegate.remove_project_group(key, window, cx);
-                        let query = picker.query(cx);
-                        picker.update_matches(query, window, cx);
+                        picker.delegate.snap_selection_to_first_non_header_match = false;
+                        picker.update_matches_with_options(
+                            picker.query(cx),
+                            ScrollBehavior::Preserve,
+                            window,
+                            cx,
+                        );
                     }
                 }
                 Some(ProjectPickerEntry::RecentProject(_)) => {
@@ -814,8 +824,7 @@ pub struct RecentProjectsDelegate {
     selected_index: usize,
     render_paths: bool,
     create_new_window: bool,
-    // Flag to reset index when there is a new query vs not reset index when user delete an item
-    reset_selected_match_index: bool,
+    snap_selection_to_first_non_header_match: bool,
     has_any_non_local_projects: bool,
     project_connection_options: Option<RemoteConnectionOptions>,
     focus_handle: FocusHandle,
@@ -843,7 +852,7 @@ impl RecentProjectsDelegate {
             selected_index: 0,
             create_new_window,
             render_paths,
-            reset_selected_match_index: true,
+            snap_selection_to_first_non_header_match: true,
             has_any_non_local_projects: project_connection_options.is_some(),
             project_connection_options,
             focus_handle,
@@ -1067,14 +1076,14 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         self.filtered_entries = entries;
 
-        if self.reset_selected_match_index {
+        if self.snap_selection_to_first_non_header_match {
             self.selected_index = self
                 .filtered_entries
                 .iter()
                 .position(|e| !matches!(e, ProjectPickerEntry::Header(_)))
                 .unwrap_or(0);
         }
-        self.reset_selected_match_index = true;
+        self.snap_selection_to_first_non_header_match = true;
         Task::ready(())
     }
 
@@ -2134,10 +2143,7 @@ impl RecentProjectsDelegate {
                     .unwrap_or_default();
                 this.update_in(cx, move |picker, window, cx| {
                     picker.delegate.set_workspaces(workspaces);
-                    picker
-                        .delegate
-                        .set_selected_index(ix.saturating_sub(1), window, cx);
-                    picker.delegate.reset_selected_match_index = false;
+                    picker.delegate.snap_selection_to_first_non_header_match = false;
                     picker.update_matches_with_options(
                         picker.query(cx),
                         ScrollBehavior::Preserve,
