@@ -265,6 +265,34 @@ impl MarkdownStyle {
                 }),
                 ..Default::default()
             },
+            heading_level_styles: matches!(font, MarkdownFont::Agent).then_some(
+                HeadingLevelStyles {
+                    h1: Some(TextStyleRefinement {
+                        font_size: Some(rems(1.15).into()),
+                        ..Default::default()
+                    }),
+                    h2: Some(TextStyleRefinement {
+                        font_size: Some(rems(1.1).into()),
+                        ..Default::default()
+                    }),
+                    h3: Some(TextStyleRefinement {
+                        font_size: Some(rems(1.05).into()),
+                        ..Default::default()
+                    }),
+                    h4: Some(TextStyleRefinement {
+                        font_size: Some(rems(1.).into()),
+                        ..Default::default()
+                    }),
+                    h5: Some(TextStyleRefinement {
+                        font_size: Some(rems(0.95).into()),
+                        ..Default::default()
+                    }),
+                    h6: Some(TextStyleRefinement {
+                        font_size: Some(rems(0.875).into()),
+                        ..Default::default()
+                    }),
+                },
+            ),
             ..Default::default()
         }
     }
