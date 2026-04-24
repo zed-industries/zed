@@ -18,6 +18,7 @@ use project::agent_server_store::{AgentServerCommand, AgentServerStore};
 use project::{AgentId, Project};
 use remote::remote_client::Interactive;
 use serde::Deserialize;
+use smol::channel;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::rc::Rc;
@@ -145,7 +146,7 @@ impl AcpDebugMessage {
 
 fn broadcast_debug_message(
     debug_messages: &Arc<Mutex<VecDeque<AcpDebugMessage>>>,
-    debug_subscribers: &Arc<Mutex<Vec<smol::channel::Sender<AcpDebugMessage>>>>,
+    debug_subscribers: &Arc<Mutex<Vec<channel::Sender<AcpDebugMessage>>>>,
     message: AcpDebugMessage,
 ) {
     {
@@ -367,7 +368,7 @@ pub struct AcpConnection {
     child: Option<Child>,
     session_list: Option<Rc<AcpSessionList>>,
     debug_messages: Arc<Mutex<VecDeque<AcpDebugMessage>>>,
-    debug_subscribers: Arc<Mutex<Vec<smol::channel::Sender<AcpDebugMessage>>>>,
+    debug_subscribers: Arc<Mutex<Vec<channel::Sender<AcpDebugMessage>>>>,
     _io_task: Task<()>,
     _dispatch_task: Task<()>,
     _wait_task: Task<Result<()>>,
@@ -414,13 +415,13 @@ pub struct AcpSession {
 
 pub struct AcpSessionList {
     connection: ConnectionTo<Agent>,
-    updates_tx: smol::channel::Sender<acp_thread::SessionListUpdate>,
-    updates_rx: smol::channel::Receiver<acp_thread::SessionListUpdate>,
+    updates_tx: channel::Sender<acp_thread::SessionListUpdate>,
+    updates_rx: channel::Receiver<acp_thread::SessionListUpdate>,
 }
 
 impl AcpSessionList {
     fn new(connection: ConnectionTo<Agent>) -> Self {
-        let (tx, rx) = smol::channel::unbounded();
+        let (tx, rx) = channel::unbounded();
         Self {
             connection,
             updates_tx: tx,
@@ -481,7 +482,7 @@ impl AgentSessionList for AcpSessionList {
     fn watch(
         &self,
         _cx: &mut App,
-    ) -> Option<smol::channel::Receiver<acp_thread::SessionListUpdate>> {
+    ) -> Option<channel::Receiver<acp_thread::SessionListUpdate>> {
         Some(self.updates_rx.clone())
     }
 
@@ -616,7 +617,7 @@ impl AcpConnection {
         &self,
     ) -> (
         Vec<AcpDebugMessage>,
-        smol::channel::Receiver<AcpDebugMessage>,
+        channel::Receiver<AcpDebugMessage>,
     ) {
         let backlog = self
             .debug_messages
@@ -625,7 +626,7 @@ impl AcpConnection {
             .iter()
             .cloned()
             .collect();
-        let (sender, receiver) = smol::channel::unbounded();
+        let (sender, receiver) = channel::unbounded();
         self.debug_subscribers
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
