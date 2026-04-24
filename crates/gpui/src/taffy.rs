@@ -388,27 +388,22 @@ fn snap_measured_size_to_device_pixels(size: Size<Pixels>, scale_factor: f32) ->
     size.map(|d| ceil_to_device_pixel(d.0.max(0.0), scale_factor))
 }
 
-fn border_width_to_taffy(
-    width: AbsoluteLength,
-    rem_size: Pixels,
-    scale_factor: f32,
-) -> taffy::style::LengthPercentage {
-    taffy::style::LengthPercentage::length(round_stroke_to_device_pixel(
-        width.to_pixels(rem_size).0,
-        scale_factor,
-    ))
-}
-
 fn border_widths_to_taffy(
     widths: &Edges<AbsoluteLength>,
     rem_size: Pixels,
     scale_factor: f32,
 ) -> TaffyRect<taffy::style::LengthPercentage> {
+    let snap = |w: &AbsoluteLength| {
+        taffy::style::LengthPercentage::length(round_stroke_to_device_pixel(
+            w.to_pixels(rem_size).0,
+            scale_factor,
+        ))
+    };
     TaffyRect {
-        top: border_width_to_taffy(widths.top, rem_size, scale_factor),
-        right: border_width_to_taffy(widths.right, rem_size, scale_factor),
-        bottom: border_width_to_taffy(widths.bottom, rem_size, scale_factor),
-        left: border_width_to_taffy(widths.left, rem_size, scale_factor),
+        top: snap(&widths.top),
+        right: snap(&widths.right),
+        bottom: snap(&widths.bottom),
+        left: snap(&widths.left),
     }
 }
 

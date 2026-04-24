@@ -11,7 +11,8 @@ use crate::{
     MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
     PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, ScaledPixels, Scene, Shadow,
+    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
+    ScaledPixels, Scene, Shadow,
     SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
     SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
     TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
@@ -2322,22 +2323,13 @@ impl Window {
     /// Snaps a bounds' origin and size to the nearest device pixel.
     #[inline]
     pub fn pixel_snap_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
-        Bounds {
-            origin: point(
-                self.pixel_snap(bounds.origin.x),
-                self.pixel_snap(bounds.origin.y),
-            ),
-            size: size(
-                self.pixel_snap(bounds.size.width),
-                self.pixel_snap(bounds.size.height),
-            ),
-        }
+        bounds.map(|c| self.pixel_snap(c))
     }
 
     /// Snaps a point's coordinates to the nearest device pixel.
     #[inline]
     pub fn pixel_snap_point(&self, position: Point<Pixels>) -> Point<Pixels> {
-        point(self.pixel_snap(position.x), self.pixel_snap(position.y))
+        position.map(|c| self.pixel_snap(c))
     }
 
     #[inline]
@@ -2361,12 +2353,7 @@ impl Window {
 
     #[inline]
     fn snap_border_widths(&self, edges: Edges<Pixels>) -> Edges<ScaledPixels> {
-        Edges {
-            top: self.snap_stroke(edges.top),
-            right: self.snap_stroke(edges.right),
-            bottom: self.snap_stroke(edges.bottom),
-            left: self.snap_stroke(edges.left),
-        }
+        edges.map(|e| self.snap_stroke(*e))
     }
 
     /// Floors the near edge and ceils the far edge, producing a strict superset of the raw region.
@@ -3456,7 +3443,6 @@ impl Window {
         let opacity = self.element_opacity();
         let snapped_bounds = self.snap_bounds(quad.bounds);
         let snapped_border_widths = self.snap_border_widths(quad.border_widths);
-
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
             bounds: snapped_bounds,
@@ -3504,10 +3490,7 @@ impl Window {
             style.thickness
         };
         let bounds = Bounds {
-            origin: point(
-                ScaledPixels(round_to_device_pixel(origin.x.0, scale_factor)),
-                ScaledPixels(round_to_device_pixel(origin.y.0, scale_factor)),
-            ),
+            origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
             size: size(self.snap_stroke(width), self.snap_stroke(height)),
         };
         let element_opacity = self.element_opacity();
@@ -3537,10 +3520,7 @@ impl Window {
         let scale_factor = self.scale_factor();
         let height = style.thickness;
         let bounds = Bounds {
-            origin: point(
-                ScaledPixels(round_to_device_pixel(origin.x.0, scale_factor)),
-                ScaledPixels(round_to_device_pixel(origin.y.0, scale_factor)),
-            ),
+            origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
             size: size(self.snap_stroke(width), self.snap_stroke(height)),
         };
         let opacity = self.element_opacity();
@@ -3578,13 +3558,17 @@ impl Window {
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
 
-        let subpixel_variant = Point {
-            x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS_X as f32).floor() as u8,
-            // Keep vertical glyph rasterization stable while scrolling. Y-position is
-            // snapped at quad placement time, so varying Y subpixel glyph variants only
-            // introduces frame-to-frame wobble.
-            y: 0,
-        };
+        let quantized_origin = Point::new(
+            round_half_toward_zero(glyph_origin.x.0 * SUBPIXEL_VARIANTS_X as f32)
+                / SUBPIXEL_VARIANTS_X as f32,
+            round_half_toward_zero(glyph_origin.y.0 * SUBPIXEL_VARIANTS_Y as f32)
+                / SUBPIXEL_VARIANTS_Y as f32,
+        );
+        let subpixel_variant = Point::new(
+            (quantized_origin.x.fract() * SUBPIXEL_VARIANTS_X as f32) as u8,
+            (quantized_origin.y.fract() * SUBPIXEL_VARIANTS_Y as f32) as u8,
+        );
+        let integer_origin = quantized_origin.map(|c| ScaledPixels(c.trunc()));
         let subpixel_rendering = self.should_use_subpixel_rendering(font_id, font_size);
         let params = RenderGlyphParams {
             font_id,
@@ -3606,17 +3590,9 @@ impl Window {
                 })?
                 .expect("Callback above only errors or returns Some");
             let bounds = Bounds {
-                // X uses floor because subpixel_variant.x captures the fractional
-                // part — the glyph raster already contains the sub-pixel shift.
-                // Y uses round because there is no Y subpixel variant (y: 0),
-                // so rounding gives the most accurate integer placement.
-                origin: point(
-                    glyph_origin.x.floor(),
-                    ScaledPixels(round_half_toward_zero(glyph_origin.y.0)),
-                ) + raster_bounds.origin.map(Into::into),
+                origin: integer_origin + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
-
             let content_mask = self.snapped_content_mask();
 
             if subpixel_rendering {
@@ -3682,11 +3658,12 @@ impl Window {
 
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
+        let integer_origin =
+            glyph_origin.map(|c| ScaledPixels(round_half_toward_zero(c.0)));
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
             font_size,
-            // We don't render emojis with subpixel variants.
             subpixel_variant: Default::default(),
             scale_factor,
             is_emoji: true,
@@ -3704,12 +3681,7 @@ impl Window {
                 .expect("Callback above only errors or returns Some");
 
             let bounds = Bounds {
-                // See comment in paint_glyph: floor for X (subpixel variant),
-                // round for Y (no subpixel variant).
-                origin: point(
-                    glyph_origin.x.floor(),
-                    ScaledPixels(round_half_toward_zero(glyph_origin.y.0)),
-                ) + raster_bounds.origin.map(Into::into),
+                origin: integer_origin + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.snapped_content_mask();
