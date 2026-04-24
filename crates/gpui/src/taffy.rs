@@ -30,7 +30,8 @@ struct NodeContext {
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
-    snapped_content_bounds: FxHashMap<LayoutId, Bounds<f32>>,
+    /// Unrounded absolute border-box top-left per-node coordinate in device pixels.
+    absolute_outer_origins: FxHashMap<LayoutId, Point<f32>>,
     computed_layouts: FxHashSet<LayoutId>,
     layout_bounds_scratch_space: Vec<LayoutId>,
 }
@@ -44,7 +45,7 @@ impl TaffyLayoutEngine {
         TaffyLayoutEngine {
             taffy,
             absolute_layout_bounds: FxHashMap::default(),
-            snapped_content_bounds: FxHashMap::default(),
+            absolute_outer_origins: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
             layout_bounds_scratch_space: Vec::new(),
         }
@@ -53,7 +54,7 @@ impl TaffyLayoutEngine {
     pub fn clear(&mut self) {
         self.taffy.clear();
         self.absolute_layout_bounds.clear();
-        self.snapped_content_bounds.clear();
+        self.absolute_outer_origins.clear();
         self.computed_layouts.clear();
     }
 
@@ -177,7 +178,7 @@ impl TaffyLayoutEngine {
             stack.push(id);
             while let Some(id) = stack.pop() {
                 self.absolute_layout_bounds.remove(&id);
-                self.snapped_content_bounds.remove(&id);
+                self.absolute_outer_origins.remove(&id);
                 stack.extend(
                     self.taffy
                         .children(id.into())
@@ -229,9 +230,9 @@ impl TaffyLayoutEngine {
                         untransform(available_space.height),
                     );
 
-                    let a: Size<Pixels> =
+                    let measured_size: Size<Pixels> =
                         (node_context.measure)(known_dimensions, available_space, window, cx);
-                    size(a.width.0 * scale_factor, a.height.0 * scale_factor).into()
+                    snap_measured_size_to_device_pixels(measured_size, scale_factor).into()
                 },
             )
             .expect(EXPECT_MESSAGE);
@@ -239,175 +240,109 @@ impl TaffyLayoutEngine {
 
     // Pixel snapping
     //
-    // Painting primitives at non-integer pixel coordinates produces
-    // blurry output. We snap all coordinates to integer pixels
-    // so that painted geometry lands exactly on physical boundaries.
+    // Painting primitives at non-integer pixel coordinates produces blurry
+    // output. Pixel snapping converts layout coordinates into integer
+    // device-pixel coordinates so painted edges land exactly on physical
+    // pixel boundaries.
     //
     // Non-integer coordinates can arise for several reasons, including:
-    //   - Text layout, flex layout, percentage-based sizing, etc. can
-    //     produce fractional element sizes, which propagate into the
-    //     positions and sizes of surrounding & parent elements.
-    //   - At fractional scale factors (e.g. 125%, 150%) integer values
-    //     of logical pixels map to non-integer values of device pixels.
+    //   - flex distribution, percentages, centering, and text measurement
+    //     can produce fractional element sizes and positions;
+    //   - at fractional scale factors (for example 125% or 150%), integer
+    //     logical-pixel values can map to non-integer device-pixel values.
     //
-    // Rounding happens in device-pixel space (after multiplying by
-    // scale_factor). This way, the rounding actually has the effect of
-    // snapping the coordinates to physical pixel coordinates. We divide
-    // by scale_factor before returning the values back to GPUI.
+    // We pixel-snap by rounding in device-pixel space, after multiplying
+    // by `scale_factor`, so that snapping targets physical pixels. Bounds
+    // are divided by `scale_factor` before being returned to GPUI.
     //
-    // Midpoints are rounded toward zero. This is a stylistic choice;
-    // we'd like a 1px line at 150% scale to render as 1dp rather than 2dp.
+    // Midpoints are rounded toward zero. This is a stylistic choice: a
+    // 1-logical-pixel line at 150% scale should render as 1 dp rather than
+    // 2 dp.
     //
-    // Scroll transforms and other non-Taffy primitives are snapped in
-    // window.rs. This code only snaps Taffy-owned box geometry.
+    // Pixel snapping is done in two phases:
     //
-    // We want pixel snapping to satisfy three properties:
+    //  1. Pre-layout metric snapping. Before Taffy computes layout, all
+    //     authored absolute lengths are rounded in `to_taffy`. This
+    //     includes borders, padding, gaps, and explicit sizes.
+    //     Custom-measured leaf nodes have their measured sizes rounded up
+    //     to integer device-pixel lengths.
     //
-    //  1. Edge closure: siblings that touch in the unrounded layout
-    //     should still touch after snapping. A `size_full` child must
-    //     exactly reach the parent's snapped content edge.
-    //  2. Placement stability: translating a parent in absolute
-    //     space must not change a child's snapped position relative to
-    //     the parent.
-    //  3. Velocity coherence: during smooth resize, sibling children
-    //     should move at the same apparent rate — avoiding the jarring
-    //     effect where one child jumps a pixel while another doesn't.
+    //  2. Post-layout edge snapping. After Taffy resolves the tree, layout
+    //     relationships such as flex shares, grid tracks, percentages, and
+    //     centering can produce new fractional edge positions. Boxes now
+    //     have edges in absolute coordinates, and snapping must decide
+    //     where those edges land on the device-pixel grid.
     //
-    // We achieve this with relative edge rounding: each child's
-    // corners are rounded independently in the parent's content-area
-    // coordinate system. Siblings sharing an edge feed the same raw
-    // position into the rounding function, so they agree on the shared
-    // edge (edge closure). Because the rounding is relative to the
-    // parent's content area, translating the parent doesn't change
-    // any child's snapped position (placement stability).
+    // Ideally, post-layout snapping would satisfy:
     //
-    // Compared to the previous proportional rescaling approach
-    // (which multiplied each corner by `snapped_size / raw_size`
-    // before rounding), this avoids position-dependent rounding:
-    // rescaling made children further from the origin accumulate
-    // larger fractional shifts, so they crossed pixel boundaries
-    // at different rates. Direct rounding removes that coupling —
-    // whether a centered child jumps on a given resize step depends
-    // only on the parity of `(container_width - content_width)` in
-    // device pixels, not on the child's absolute offset.
+    //  - Edge closure. Two raw layout edges at the same absolute position
+    //    should snap to the same pixel column.
+    //  - Translation stability. A component's internal geometry should not
+    //    change when it moves to a new absolute position.
     //
-    // Elements whose content widths differ by an odd number of dp
-    // will still alternate their jumps (one jumps while the other
-    // stays, then vice versa). This is irreducible: `(W - C) / 2`
-    // changes by 0.5dp per 1dp of container resize, and opposite
-    // parities put the two offsets on opposite sides of the nearest
-    // integer.
+    // These goals are in tension because rounding is not associative.
+    // The simple local schemes make different tradeoffs:
     //
-    // A size_full child's far edge may differ from the parent's
-    // snapped content edge by up to 1dp. This is because the
-    // child's far edge is `round(raw_content_width)` while the
-    // parent's snapped content width is derived from independently
-    // rounded bounds and border/padding insets, and these can
-    // disagree by 1dp.
+    //  - Absolute edge rounding gives each window coordinate one answer,
+    //    so coincident edges always close globally. But a span's snapped
+    //    length is `round(far) - round(near)`, which may change by 1 dp
+    //    as its absolute origin moves.
     //
-    // **Snapping a node's own content box:**
+    //  - Parent-relative edge rounding rounds each child inside its
+    //    parent's coordinate space. This guarantees translation stability,
+    //    but a shared edge reached through different parents can
+    //    accumulate different rounding, causing non-closure between
+    //    cousins.
     //
-    //   Border and padding widths are snapped as independent lengths
-    //   (not proportionally rescaled), because they are authored visual
-    //   thicknesses that should not depend on the parent's total size.
-    //   Borders use a "never vanish" rule (at least 1dp if nonzero);
-    //   padding rounds normally.
+    //  - Length rounding rounds each width, height, and thickness
+    //    independently and then places boxes from those rounded lengths.
+    //    Sizes stay stable under translation, but neighboring boxes derive
+    //    their shared boundary from different sources, so closure is not
+    //    guaranteed.
     //
-    //   TODO: This currently duplicates the rounding logic from
-    //   `paint_quad` / `Window::snap_border_widths` so that layout and
-    //   rendering agree on where content starts. Ideally layout would
-    //   be the single authority on snapped border widths, and paint
-    //   would consume the already-snapped values.
+    // We apply absolute edge rounding for each element's outer box in
+    // post-layout rounding to preserve closure. Border and padding widths
+    // are not touched by post-layout rounding; they keep their pre-layout
+    // rounded value so that they remain stable under translation.
     //
+    // This gives both closure and translation stability in the case that
+    // all local metrics are integer device-pixel lengths. Pre-layout
+    // rounding covers that in most cases. The exception is metrics
+    // resolved by layout relationships, such as percentages. Outer box
+    // edges will still close globally, and painted border widths are still
+    // snapped independently, but the raw content-box origin can carry a
+    // 1dp residual into descendants.
 
     pub fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
         if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
             return layout;
         }
 
-        let parent_id = self.taffy.parent(id.0);
-
-        let snapped_bounds = if let Some(parent_id) = parent_id {
-            let parent_id = LayoutId::from(parent_id);
-            self.layout_bounds(parent_id, scale_factor);
-            let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
-            let parent_layout = self.taffy.layout(parent_id.into()).expect(EXPECT_MESSAGE);
-            let snapped_parent_content_bounds = *self
-                .snapped_content_bounds
-                .get(&parent_id)
-                .expect("parent content bounds should be cached");
-
-            let parent_inset = parent_layout.border + parent_layout.padding;
-            let parent_raw_content_inset = point(parent_inset.left, parent_inset.top);
-
-            // Round each corner independently in parent-content-relative
-            // coordinates. Siblings sharing an edge feed the same raw
-            // value (from taffy's cumulative layout) into round, so
-            // they always agree on the shared edge.
-            let raw_content_origin = Point::from(layout.location) - parent_raw_content_inset;
-            Bounds::new(raw_content_origin, layout.size.into())
-                .map_corners(|corner| corner.map(round_half_toward_zero))
-                + snapped_parent_content_bounds.origin
-        } else {
-            // Since there's no parent, round edges directly.
-            let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
-            Bounds::new(Point::from(layout.location), layout.size.into())
-                .map_corners(|corner| corner.map(round_half_toward_zero))
-        };
-
         let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+        let absolute_outer_origin = match self.taffy.parent(id.0) {
+            Some(parent_id) => {
+                let parent_id = LayoutId::from(parent_id);
+                self.layout_bounds(parent_id, scale_factor);
+                let parent_origin = *self
+                    .absolute_outer_origins
+                    .get(&parent_id)
+                    .expect("parent absolute outer origin should be cached");
+                parent_origin + Point::from(layout.location)
+            }
+            None => Point::from(layout.location),
+        };
+        self.absolute_outer_origins.insert(id, absolute_outer_origin);
 
-        // Compute this node's snapped content box — the rectangle its
-        // children will be placed within. Border and padding are snapped
-        // as independent lengths (not proportionally rescaled) to match
-        // what paint_quad renders. See the TODO above about this coupling.
-        let snapped_content_bounds = Bounds::from_corners(
-            point(
-                snapped_bounds.origin.x
-                    + snapped_inner_inset(layout.border.left, layout.padding.left),
-                snapped_bounds.origin.y
-                    + snapped_inner_inset(layout.border.top, layout.padding.top),
-            ),
-            point(
-                snapped_bounds.right()
-                    - snapped_inner_inset(layout.border.right, layout.padding.right),
-                snapped_bounds.bottom()
-                    - snapped_inner_inset(layout.border.bottom, layout.padding.bottom),
-            ),
+        let absolute_far = absolute_outer_origin + Point::from(Size::from(layout.size));
+        let snapped_bounds = Bounds::from_corners(
+            absolute_outer_origin.map(round_half_toward_zero),
+            absolute_far.map(round_half_toward_zero),
         );
-        self.snapped_content_bounds
-            .insert(id, snapped_content_bounds);
 
         let bounds = (snapped_bounds / scale_factor).map(Pixels);
         self.absolute_layout_bounds.insert(id, bounds);
         bounds
     }
-}
-
-/// Computes the snapped inset from an element's outer edge to its content
-/// edge on one side, combining border and padding.
-fn snapped_inner_inset(raw_border: f32, raw_padding: f32) -> f32 {
-    // Borders use snapped_nonzero_length (rounds to at least 1dp if
-    // nonzero, so borders never vanish). Padding rounds normally.
-    snapped_nonzero_length(raw_border) + snapped_length(raw_padding)
-}
-
-/// Rounds a length to integer device pixels, clamping negatives to zero.
-fn snapped_length(raw_length: f32) -> f32 {
-    round_half_toward_zero(raw_length.max(0.0))
-}
-
-/// Rounds a length to integer device pixels, but ensures that any nonzero
-/// input produces at least 1dp. This prevents thin borders from rounding
-/// down to zero and disappearing.
-fn snapped_nonzero_length(raw_length: f32) -> f32 {
-    let snapped = snapped_length(raw_length);
-    if raw_length == 0.0 {
-        0.0
-    } else {
-        snapped.max(1.0)
-    }
-}
 
 /// A unique identifier for a layout node, generated when requesting a layout from Taffy
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -437,6 +372,10 @@ impl From<LayoutId> for NodeId {
     fn from(layout_id: LayoutId) -> NodeId {
         layout_id.0
     }
+}
+
+fn snap_measured_size_to_device_pixels(size: Size<Pixels>, scale_factor: f32) -> Size<f32> {
+    size.map(|d| (d.0 * scale_factor).max(0.0).ceil())
 }
 
 trait ToTaffy<Output> {
@@ -529,9 +468,9 @@ impl ToTaffy<taffy::style::Style> for Style {
 
 impl ToTaffy<f32> for AbsoluteLength {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> f32 {
-        // Pre-round to integer device pixels so that Taffy's flex algorithm
-        // works with snapped values. Taffy's cumulative edge-based post-pass
-        // then ensures gap-free abutment between siblings.
+        // Pre-round to integer device pixels so that Taffy's layout algorithms
+        // work with snapped values. GPUI's post-layout edge pass then decides
+        // final edge placement.
         // NOTE: no `.max(0.0)` here — negative values are valid (e.g. margins).
         round_half_toward_zero(self.to_pixels(rem_size).0 * scale_factor)
     }
@@ -680,6 +619,36 @@ where
         TaffySize {
             width: size.width.into(),
             height: size.height.into(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn measured_sizes_are_snapped_to_integer_device_pixels() {
+        assert_eq!(
+            snap_measured_size_to_device_pixels(size(Pixels(7.), Pixels(13.25)), 1.5),
+            size(11., 20.)
+        );
+    }
+
+    #[test]
+    fn integer_device_pixel_lengths_are_translation_stable() {
+        let snapped = snap_measured_size_to_device_pixels(size(Pixels(7.), Pixels(13.25)), 1.5);
+        let fractional_origins = [0.1, 0.49, 0.5, 0.51, 0.9];
+
+        for origin in fractional_origins {
+            assert_eq!(
+                round_half_toward_zero(origin + snapped.width) - round_half_toward_zero(origin),
+                snapped.width
+            );
+            assert_eq!(
+                round_half_toward_zero(origin + snapped.height) - round_half_toward_zero(origin),
+                snapped.height
+            );
         }
     }
 }
