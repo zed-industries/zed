@@ -3483,14 +3483,15 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
+        let thickness = self.snap_stroke(style.thickness);
         let height = if style.wavy {
-            style.thickness * 3.
+            ScaledPixels(thickness.0 * 3.)
         } else {
-            style.thickness
+            thickness
         };
         let bounds = Bounds {
             origin: origin.map(|c| ScaledPixels(round_to_device_pixel(c.0, scale_factor))),
-            size: size(self.snap_stroke(width), self.snap_stroke(height)),
+            size: size(self.snap_stroke(width), height),
         };
         let element_opacity = self.element_opacity();
 
@@ -3500,7 +3501,7 @@ impl Window {
             bounds,
             content_mask: self.snapped_content_mask(),
             color: style.color.unwrap_or_default().opacity(element_opacity),
-            thickness: self.snap_stroke(style.thickness),
+            thickness,
             wavy: if style.wavy { 1 } else { 0 },
         });
     }

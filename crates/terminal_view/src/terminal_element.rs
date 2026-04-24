@@ -185,15 +185,14 @@ impl LayoutRect {
         let position = {
             let alac_point = self.point;
             point(
-                (origin.x + alac_point.column as f32 * dimensions.cell_width).floor(),
+                origin.x + alac_point.column as f32 * dimensions.cell_width,
                 origin.y + alac_point.line as f32 * dimensions.line_height,
             )
         };
-        let size = point(
-            (dimensions.cell_width * self.num_of_cells as f32).ceil(),
+        let size = size(
+            dimensions.cell_width * self.num_of_cells as f32,
             dimensions.line_height,
-        )
-        .into();
+        );
 
         window.paint_quad(fill(Bounds::new(position, size), self.color));
     }
@@ -959,13 +958,15 @@ impl Element for TerminalElement {
                 let (dimensions, line_height_px) = {
                     let rem_size = window.rem_size();
                     let font_pixels = text_style.font_size.to_pixels(rem_size);
-                    let line_height = f32::from(font_pixels) * line_height;
+                    let line_height = window.pixel_snap(px(f32::from(font_pixels) * line_height));
                     let font_id = cx.text_system().resolve_font(&text_style.font());
 
-                    let cell_width = text_system
-                        .advance(font_id, font_pixels, 'm')
-                        .unwrap()
-                        .width;
+                    let cell_width = window.pixel_snap(
+                        text_system
+                            .advance(font_id, font_pixels, 'm')
+                            .unwrap()
+                            .width,
+                    );
                     gutter = cell_width;
 
                     let mut size = bounds.size;
@@ -982,7 +983,7 @@ impl Element for TerminalElement {
                     origin.x += gutter;
 
                     (
-                        TerminalBounds::new(px(line_height), cell_width, Bounds { origin, size }),
+                        TerminalBounds::new(line_height, cell_width, Bounds { origin, size }),
                         line_height,
                     )
                 };
