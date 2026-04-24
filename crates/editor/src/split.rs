@@ -433,6 +433,17 @@ impl SplittableEditor {
         self.lhs.as_ref().map(|s| &s.editor)
     }
 
+    pub fn update_editors(
+        &self,
+        cx: &mut Context<Self>,
+        f: impl Fn(&mut Editor, &mut Context<Editor>),
+    ) {
+        if let Some(lhs) = &self.lhs {
+            lhs.editor.update(cx, &f);
+        }
+        self.rhs_editor.update(cx, &f);
+    }
+
     pub fn diff_view_style(&self) -> DiffViewStyle {
         self.diff_view_style
     }
@@ -446,15 +457,18 @@ impl SplittableEditor {
         render_diff_hunk_controls: RenderDiffHunkControlsFn,
         cx: &mut Context<Self>,
     ) {
-        self.rhs_editor.update(cx, |editor, cx| {
+        self.update_editors(cx, |editor, cx| {
             editor.set_render_diff_hunk_controls(render_diff_hunk_controls.clone(), cx);
         });
+    }
 
-        if let Some(lhs) = &self.lhs {
-            lhs.editor.update(cx, |editor, cx| {
-                editor.set_render_diff_hunk_controls(render_diff_hunk_controls.clone(), cx);
-            });
-        }
+    pub fn disable_diff_hunk_controls(&self, cx: &mut Context<Self>) {
+        let empty_controls = Arc::new(|_, _: &_, _, _, _, _: &_, _: &mut _, _: &mut _| {
+            gpui::Empty.into_any_element()
+        });
+        self.update_editors(cx, |editor, cx| {
+            editor.set_render_diff_hunk_controls(empty_controls.clone(), cx);
+        });
     }
 
     fn focused_side(&self) -> SplitSide {
@@ -491,6 +505,7 @@ impl SplittableEditor {
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_runnables();
             editor.disable_inline_diagnostics();
+            editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor.start_temporary_diff_override();
             editor
@@ -586,6 +601,7 @@ impl SplittableEditor {
             editor.disable_lsp_data();
             editor.disable_runnables();
             editor.disable_diagnostics(cx);
+            editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
         });
@@ -2125,14 +2141,9 @@ mod tests {
                 window,
                 cx,
             );
-            editor.rhs_editor.update(cx, |editor, cx| {
+            editor.update_editors(cx, |editor, cx| {
                 editor.set_soft_wrap_mode(soft_wrap, cx);
             });
-            if let Some(lhs) = &editor.lhs {
-                lhs.editor.update(cx, |editor, cx| {
-                    editor.set_soft_wrap_mode(soft_wrap, cx);
-                });
-            }
             editor
         });
         (editor, cx)

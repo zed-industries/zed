@@ -4343,6 +4343,18 @@ impl GitPanel {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });
 
+        let max_title_length = GitPanelSettings::get_global(cx).commit_title_max_length;
+        let title_exceeds_limit = if max_title_length > 0 {
+            self.commit_editor
+                .read(cx)
+                .text(cx)
+                .lines()
+                .next()
+                .is_some_and(|title| title.len() > max_title_length)
+        } else {
+            false
+        };
+
         let footer = v_flex()
             .child(PanelRepoFooter::new(
                 display_name,
@@ -4350,15 +4362,41 @@ impl GitPanel {
                 head_commit,
                 Some(git_panel),
             ))
+            .when(title_exceeds_limit, |this| {
+                this.child(
+                    h_flex()
+                        .px_2()
+                        .py_1()
+                        .gap_1()
+                        .border_t_1()
+                        .border_color(cx.theme().status().warning_border)
+                        .bg(cx.theme().status().warning_background.opacity(0.5))
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::XSmall)
+                                .color(Color::Warning),
+                        )
+                        .child(
+                            Label::new(format!(
+                                "Commit message title exceeds {max_title_length}-character limit."
+                            ))
+                            .size(LabelSize::Small),
+                        ),
+                )
+            })
             .child(
                 panel_editor_container(window, cx)
                     .id("commit-editor-container")
+                    .cursor_text()
                     .relative()
                     .w_full()
                     .h(max_height + footer_size)
                     .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .cursor_text()
+                    .border_color(if title_exceeds_limit {
+                        cx.theme().status().warning_border
+                    } else {
+                        cx.theme().colors().border
+                    })
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         window.focus(&this.commit_editor.focus_handle(cx), cx);
                     }))
@@ -4939,57 +4977,46 @@ impl GitPanel {
         let toggle_state = self.header_state(header.header);
         let section = header.header;
         let weak = cx.weak_entity();
-        let show_checkbox_persistently = !matches!(&toggle_state, ToggleState::Unselected);
 
         h_flex()
             .id(id)
-            .group(group_name.clone())
+            .cursor_pointer()
+            .group(group_name)
             .h(self.list_item_height())
             .w_full()
-            .items_center()
             .pl_3()
             .pr_1()
-            .gap_1p5()
+            .gap_2()
+            .justify_between()
+            .hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
             .border_1()
             .border_r_2()
             .child(
-                h_flex().flex_1().child(
-                    Label::new(header.title())
-                        .color(Color::Muted)
-                        .size(LabelSize::Small)
-                        .line_height_style(LineHeightStyle::UiLabel)
-                        .single_line(),
-                ),
+                Label::new(header.title())
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
             )
             .child(
-                div()
-                    .flex_none()
-                    .cursor_pointer()
-                    .child(
-                        Checkbox::new(checkbox_id, toggle_state)
-                            .disabled(!has_write_access)
-                            .fill()
-                            .elevation(ElevationIndex::Surface)
-                            .on_click_ext(move |_, _, window, cx| {
-                                if !has_write_access {
-                                    return;
-                                }
-
-                                weak.update(cx, |this, cx| {
-                                    this.toggle_staged_for_entry(
-                                        &GitListEntry::Header(GitHeaderEntry { header: section }),
-                                        window,
-                                        cx,
-                                    );
-                                    cx.stop_propagation();
-                                })
-                                .ok();
-                            }),
-                    )
-                    .when(!show_checkbox_persistently, |this| {
-                        this.visible_on_hover(group_name)
-                    }),
+                Checkbox::new(checkbox_id, toggle_state)
+                    .disabled(!has_write_access)
+                    .fill()
+                    .elevation(ElevationIndex::Surface),
             )
+            .on_click(move |_, window, cx| {
+                if !has_write_access {
+                    return;
+                }
+
+                weak.update(cx, |this, cx| {
+                    this.toggle_staged_for_entry(
+                        &GitListEntry::Header(GitHeaderEntry { header: section }),
+                        window,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                })
+                .ok();
+            })
             .into_any_element()
     }
 
@@ -6123,10 +6150,6 @@ impl RenderOnce for PanelRepoFooter {
             util::truncate_and_trailoff(branch_name.trim_ascii(), branch_display_len)
         };
 
-        let repo_selector_trigger = Button::new("repo-selector", truncated_repo_name)
-            .size(ButtonSize::None)
-            .label_size(LabelSize::Small);
-
         let repo_selector = PopoverMenu::new("repository-switcher")
             .menu({
                 let project = project;
@@ -6136,8 +6159,9 @@ impl RenderOnce for PanelRepoFooter {
                 }
             })
             .trigger_with_tooltip(
-                repo_selector_trigger
-                    .when(single_repo, |this| this.disabled(true).color(Color::Muted))
+                Button::new("repo-selector", truncated_repo_name)
+                    .size(ButtonSize::None)
+                    .label_size(LabelSize::Small)
                     .truncate(true),
                 move |_, cx| {
                     if single_repo {
@@ -6179,7 +6203,7 @@ impl RenderOnce for PanelRepoFooter {
             });
 
         h_flex()
-            .h(px(36.))
+            .h_9()
             .w_full()
             .px_2()
             .justify_between()
@@ -6196,14 +6220,14 @@ impl RenderOnce for PanelRepoFooter {
                             Color::Muted
                         },
                     ))
-                    .child(repo_selector)
-                    .when(show_separator, |this| {
-                        this.child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().colors().icon_muted.opacity(0.5))
-                                .child("/"),
-                        )
+                    .when(!single_repo, |this| {
+                        this.child(repo_selector).when(show_separator, |this| {
+                            this.child(
+                                Label::new("/").size(LabelSize::Small).color(Color::Custom(
+                                    cx.theme().colors().text_muted.opacity(0.4),
+                                )),
+                            )
+                        })
                     })
                     .child(branch_selector),
             )

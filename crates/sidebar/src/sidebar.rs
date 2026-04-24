@@ -381,14 +381,16 @@ fn workspace_menu_worktree_labels(
                 .iter()
                 .find(|snapshot| snapshot.work_directory_abs_path.as_ref() == root_path);
 
-            if let Some(snapshot) = repository_snapshot
-                && snapshot.is_linked_worktree()
-            {
-                let worktree_name = project::linked_worktree_short_name(
-                    snapshot.original_repo_abs_path.as_ref(),
-                    root_path,
-                )
-                .unwrap_or_else(|| folder_name.clone());
+            if let Some(snapshot) = repository_snapshot {
+                let worktree_name = if snapshot.is_linked_worktree() {
+                    project::linked_worktree_short_name(
+                        snapshot.original_repo_abs_path.as_ref(),
+                        root_path,
+                    )
+                    .unwrap_or_else(|| folder_name.clone())
+                } else {
+                    "main".into()
+                };
 
                 if show_folder_name {
                     WorkspaceMenuWorktreeLabel {
@@ -1932,7 +1934,7 @@ impl Sidebar {
                         let menu = if open_workspaces.is_empty() {
                             menu
                         } else {
-                            let mut menu = menu.separator().header("Open Workspaces");
+                            let mut menu = menu.separator().header("Open Worktrees");
 
                             for (
                                 workspace_index,
