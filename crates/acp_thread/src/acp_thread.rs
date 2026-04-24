@@ -2126,8 +2126,6 @@ impl AcpThread {
 
         if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } = curr_status {
             respond_tx.send(outcome).ok();
-        } else if cfg!(debug_assertions) {
-            panic!("tried to authorize an already authorized tool call");
         }
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));

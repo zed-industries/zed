@@ -1,9 +1,10 @@
 use super::tool_permissions::{
-    SensitiveSettingsKind, authorize_symlink_escapes, canonicalize_worktree_roots,
-    collect_symlink_escapes, sensitive_settings_kind,
+    authorize_symlink_escapes, canonicalize_worktree_roots, collect_symlink_escapes,
+    sensitive_settings_kind,
 };
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_paths,
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    authorize_with_sensitive_settings, decide_permission_for_paths,
 };
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
@@ -141,12 +142,13 @@ impl AgentTool for CopyPathTool {
                         vec![input.source_path.clone(), input.destination_path.clone()],
                     );
                     let title = format!("Copy {src} to {dest}");
-                    let title = match sensitive_kind {
-                        Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
-                        Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                        None => title,
-                    };
-                    event_stream.authorize(title, context, cx)
+                    authorize_with_sensitive_settings(
+                        sensitive_kind,
+                        context,
+                        &title,
+                        &event_stream,
+                        cx,
+                    )
                 }))
             } else {
                 None
