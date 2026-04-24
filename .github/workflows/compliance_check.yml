@@ -50,7 +50,7 @@ jobs:
         path: compliance-report-${{ github.ref_name }}.md
         if-no-files-found: error
     - name: send_compliance_slack_notification
-      if: always()
+      if: ${{ always() }}
       run: |
         if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
             STATUS="✅ Scheduled compliance check passed for $COMPLIANCE_TAG"

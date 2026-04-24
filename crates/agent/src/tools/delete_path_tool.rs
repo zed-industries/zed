@@ -1,9 +1,10 @@
 use super::tool_permissions::{
-    SensitiveSettingsKind, authorize_symlink_access, canonicalize_worktree_roots,
-    detect_symlink_escape, sensitive_settings_kind,
+    authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
+    sensitive_settings_kind,
 };
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_path,
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    authorize_with_sensitive_settings, decide_permission_for_path,
 };
 use action_log::ActionLog;
 use agent_client_protocol::schema as acp;
@@ -132,14 +133,13 @@ impl AgentTool for DeletePathTool {
                         let context =
                             crate::ToolPermissionContext::new(Self::NAME, vec![path.clone()]);
                         let title = format!("Delete {}", MarkdownInlineCode(&path));
-                        let title = match settings_kind {
-                            Some(SensitiveSettingsKind::Local) => {
-                                format!("{title} (local settings)")
-                            }
-                            Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                            None => title,
-                        };
-                        event_stream.authorize(title, context, cx)
+                        authorize_with_sensitive_settings(
+                            settings_kind,
+                            context,
+                            &title,
+                            &event_stream,
+                            cx,
+                        )
                     })),
                     ToolPermissionDecision::Deny(_) => None,
                 }

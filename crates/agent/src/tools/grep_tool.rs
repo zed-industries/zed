@@ -189,8 +189,15 @@ impl AgentTool for GrepTool {
                         return Err("Search cancelled by user".to_string());
                     }
                 };
-                let Some(SearchResult::Buffer { buffer, ranges }) = search_result else {
-                    break;
+
+                let (buffer, ranges) = match search_result {
+                    Some(SearchResult::Buffer { buffer, ranges }) => (buffer, ranges),
+                    Some(SearchResult::LimitReached) => {
+                        has_more_matches = true;
+                        break;
+                    }
+                    Some(SearchResult::WaitingForScan | SearchResult::Searching) => continue,
+                    None => break,
                 };
                 if ranges.is_empty() {
                     continue;

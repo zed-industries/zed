@@ -3,8 +3,8 @@ use editor::Editor;
 use extension_host::{ExtensionOperation, ExtensionStore};
 use futures::StreamExt;
 use gpui::{
-    App, Context, CursorStyle, Entity, EventEmitter, InteractiveElement as _, ParentElement as _,
-    Render, SharedString, StatefulInteractiveElement, Styled, Window, actions,
+    App, Context, Entity, EventEmitter, InteractiveElement as _, ParentElement as _, Render,
+    SharedString, Styled, Window, actions,
 };
 use language::{
     BinaryStatus, LanguageRegistry, LanguageServerId, LanguageServerName,
@@ -22,10 +22,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use ui::{
-    ButtonLike, CommonAnimationExt, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip,
-    prelude::*,
-};
+use ui::{CommonAnimationExt, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use util::truncate_and_trailoff;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
@@ -720,43 +717,39 @@ impl Render for ActivityIndicator {
         };
         let activity_indicator = cx.entity().downgrade();
         let truncate_content = content.message.len() > MAX_MESSAGE_LEN;
+
         result.gap_2().child(
             PopoverMenu::new("activity-indicator-popover")
                 .trigger(
-                    ButtonLike::new("activity-indicator-trigger").child(
-                        h_flex()
-                            .id("activity-indicator-status")
-                            .gap_2()
-                            .children(content.icon)
-                            .map(|button| {
-                                if truncate_content {
-                                    button
-                                        .child(
-                                            Label::new(truncate_and_trailoff(
-                                                &content.message,
-                                                MAX_MESSAGE_LEN,
-                                            ))
-                                            .size(LabelSize::Small),
-                                        )
-                                        .tooltip(Tooltip::text(content.message))
-                                } else {
-                                    button
-                                        .child(Label::new(content.message).size(LabelSize::Small))
-                                        .when_some(
-                                            content.tooltip_message,
-                                            |this, tooltip_message| {
-                                                this.tooltip(Tooltip::text(tooltip_message))
-                                            },
-                                        )
-                                }
+                    Button::new("activity-indicator-trigger", {
+                        if truncate_content {
+                            truncate_and_trailoff(&content.message, MAX_MESSAGE_LEN)
+                        } else {
+                            content.message.clone()
+                        }
+                    })
+                    .label_size(LabelSize::Small)
+                    .when(content.icon.is_some(), |this| {
+                        this.start_icon(
+                            Icon::new(IconName::LoadCircle)
+                                .color(Color::Muted)
+                                .size(IconSize::Small),
+                        )
+                    })
+                    .map(|button| {
+                        if truncate_content {
+                            button.tooltip(Tooltip::text(content.message))
+                        } else {
+                            button.when_some(content.tooltip_message, |this, tooltip_message| {
+                                this.tooltip(Tooltip::text(tooltip_message))
                             })
-                            .when_some(content.on_click, |this, handler| {
-                                this.on_click(cx.listener(move |this, _, window, cx| {
-                                    handler(this, window, cx);
-                                }))
-                                .cursor(CursorStyle::PointingHand)
-                            }),
-                    ),
+                        }
+                    })
+                    .when_some(content.on_click, |this, handler| {
+                        this.on_click(cx.listener(move |this, _, window, cx| {
+                            handler(this, window, cx);
+                        }))
+                    }),
                 )
                 .anchor(gpui::Anchor::BottomLeft)
                 .menu(move |window, cx| {

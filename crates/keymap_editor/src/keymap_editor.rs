@@ -3627,7 +3627,7 @@ async fn save_keybinding_update(
     };
 
     let source = settings::KeybindUpdateTarget {
-        context: action_mapping.context.as_ref().map(|a| &***a),
+        context: action_mapping.context.as_deref(),
         keystrokes: &action_mapping.keystrokes,
         action_name: existing.action().name,
         action_arguments: new_args,

@@ -608,51 +608,6 @@ impl InlineAssistant {
         assist_to_focus
     }
 
-    pub fn suggest_assist(
-        &mut self,
-        editor: &Entity<Editor>,
-        mut range: Range<Anchor>,
-        initial_prompt: String,
-        initial_transaction_id: Option<TransactionId>,
-        focus: bool,
-        workspace: Entity<Workspace>,
-        thread_store: Entity<ThreadStore>,
-        prompt_store: Option<Entity<PromptStore>>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> InlineAssistId {
-        let buffer = editor.read(cx).buffer().clone();
-        {
-            let snapshot = buffer.read(cx).read(cx);
-            range.start = range.start.bias_left(&snapshot);
-            range.end = range.end.bias_right(&snapshot);
-        }
-
-        let project = workspace.read(cx).project().downgrade();
-
-        let assist_id = self
-            .batch_assist(
-                editor,
-                workspace.downgrade(),
-                project,
-                thread_store,
-                prompt_store,
-                Some(initial_prompt),
-                window,
-                &[range],
-                None,
-                initial_transaction_id,
-                cx,
-            )
-            .expect("batch_assist returns an id if there's only one range");
-
-        if focus {
-            self.focus_assist(assist_id, window, cx);
-        }
-
-        assist_id
-    }
-
     fn insert_assist_blocks(
         &self,
         editor: &Entity<Editor>,
@@ -1849,12 +1804,12 @@ pub mod evals {
     use eval_utils::{EvalOutput, NoProcessor};
     use fs::FakeFs;
     use futures::channel::mpsc;
+    use futures::stream::StreamExt as _;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use language::Buffer;
     use language_model::{LanguageModelRegistry, SelectedModel};
     use project::Project;
     use prompt_store::PromptBuilder;
-    use smol::stream::StreamExt as _;
     use std::str::FromStr;
     use std::sync::Arc;
     use util::test::marked_text_ranges;
