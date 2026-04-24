@@ -1857,64 +1857,40 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) -> Option<()> {
         let session_id = self.thread.read(cx).session_id().clone();
-        let (returned_session_id, tool_call_id, options) = self
+        let (returned_session_id, tool_call_id, _) = self
             .conversation
             .read(cx)
             .pending_tool_call(&session_id, cx)?;
-        let options = options.clone();
-        self.authorize_with_granularity(
-            returned_session_id,
-            tool_call_id,
-            &options,
-            is_allow,
-            window,
-            cx,
-        )
+        self.authorize_with_granularity(returned_session_id, tool_call_id, is_allow, window, cx)
     }
 
     fn authorize_with_granularity(
         &mut self,
         session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
-        options: &PermissionOptions,
         is_allow: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let choices = match options {
-            PermissionOptions::Dropdown(choices) => choices.as_slice(),
-            PermissionOptions::DropdownWithPatterns { choices, .. } => choices.as_slice(),
-            _ => {
-                let kind = if is_allow {
-                    acp::PermissionOptionKind::AllowOnce
-                } else {
-                    acp::PermissionOptionKind::RejectOnce
-                };
-                return self.authorize_pending_tool_call(kind, window, cx);
-            }
-        };
-
-        let selection = self.permission_selections.get(&tool_call_id);
-
-        // When in per-command pattern mode, use the checked patterns.
-        if let Some(PermissionSelection::SelectedPatterns(checked)) = selection {
-            if let Some(outcome) = options.build_outcome_for_checked_patterns(checked, is_allow) {
-                self.authorize_tool_call(session_id, tool_call_id, outcome, window, cx);
-                return Some(());
-            }
+        let selection = self.permission_selections.get(&tool_call_id).cloned();
+        let result = self.conversation.update(cx, |conversation, cx| {
+            conversation.authorize_with_granularity(
+                session_id,
+                tool_call_id,
+                selection.as_ref(),
+                is_allow,
+                cx,
+            )
+        });
+        if self.should_be_following {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    workspace.follow(CollaboratorId::Agent, window, cx);
+                })
+                .ok();
         }
-
-        // Use the selected granularity choice ("Always for terminal" or "Only this time")
-        let selected_index = selection
-            .and_then(|s| s.choice_index())
-            .unwrap_or_else(|| choices.len().saturating_sub(1));
-
-        let selected_choice = choices.get(selected_index).or(choices.last())?;
-        let outcome = selected_choice.build_outcome(is_allow);
-
-        self.authorize_tool_call(session_id, tool_call_id, outcome, window, cx);
-
-        Some(())
+        cx.notify();
+        result
     }
 
     // edits
@@ -6786,6 +6762,7 @@ impl ThreadView {
                 choices,
                 None,
                 entry_ix,
+                session_id,
                 tool_call_id,
                 focus_handle,
                 cx,
@@ -6799,6 +6776,7 @@ impl ThreadView {
                 choices,
                 Some((patterns, tool_name)),
                 entry_ix,
+                session_id,
                 tool_call_id,
                 focus_handle,
                 cx,
@@ -6812,6 +6790,7 @@ impl ThreadView {
         choices: &[PermissionOptionChoice],
         patterns: Option<(&[PermissionPattern], &str)>,
         entry_ix: usize,
+        session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         focus_handle: &FocusHandle,
         cx: &Context<Self>,
@@ -6885,8 +6864,16 @@ impl ThreadView {
                                 )
                             })
                             .on_click(cx.listener({
+                                let session_id = session_id.clone();
+                                let tool_call_id = tool_call_id.clone();
                                 move |this, _, window, cx| {
-                                    this.authorize_pending_with_granularity(true, window, cx);
+                                    this.authorize_with_granularity(
+                                        session_id.clone(),
+                                        tool_call_id.clone(),
+                                        true,
+                                        window,
+                                        cx,
+                                    );
                                 }
                             })),
                     )
@@ -6910,7 +6897,13 @@ impl ThreadView {
                             })
                             .on_click(cx.listener({
                                 move |this, _, window, cx| {
-                                    this.authorize_pending_with_granularity(false, window, cx);
+                                    this.authorize_with_granularity(
+                                        session_id.clone(),
+                                        tool_call_id.clone(),
+                                        false,
+                                        window,
+                                        cx,
+                                    );
                                 }
                             })),
                     ),

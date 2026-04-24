@@ -1542,7 +1542,7 @@ impl GitGraph {
             return;
         }
 
-        let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
+        let (request_tx, request_rx) = async_channel::unbounded::<Oid>();
 
         repo.update(cx, |repo, cx| {
             repo.search_commits(
@@ -2766,39 +2766,35 @@ impl Render for GitGraph {
                         .flex()
                         .flex_col()
                         .child(render_table_header(
-
                             if !is_file_history {
-
-                            TableRow::from_vec(
-                                vec![
-                                    Label::new("Graph")
-                                        .color(Color::Muted)
-                                        .truncate()
-                                        .into_any_element(),
-                                    Label::new("Description")
-                                        .color(Color::Muted)
-                                        .into_any_element(),
-                                    Label::new("Date").color(Color::Muted).into_any_element(),
-                                    Label::new("Author").color(Color::Muted).into_any_element(),
-                                    Label::new("Commit").color(Color::Muted).into_any_element(),
-                                ],
-                                5,
-                            )
-                                } else {
-                                    TableRow::from_vec(
-                                        vec![
-                                            Label::new("Description")
-                                                .color(Color::Muted)
-                                                .into_any_element(),
-                                            Label::new("Date").color(Color::Muted).into_any_element(),
-                                            Label::new("Author").color(Color::Muted).into_any_element(),
-                                            Label::new("Commit").color(Color::Muted).into_any_element(),
-                                        ],
-                                        4,
-                                    )
-
-                                },
-
+                                TableRow::from_vec(
+                                    vec![
+                                        Label::new("Graph")
+                                            .color(Color::Muted)
+                                            .truncate()
+                                            .into_any_element(),
+                                        Label::new("Description")
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                        Label::new("Date").color(Color::Muted).into_any_element(),
+                                        Label::new("Author").color(Color::Muted).into_any_element(),
+                                        Label::new("Commit").color(Color::Muted).into_any_element(),
+                                    ],
+                                    5,
+                                )
+                            } else {
+                                TableRow::from_vec(
+                                    vec![
+                                        Label::new("Description")
+                                            .color(Color::Muted)
+                                            .into_any_element(),
+                                        Label::new("Date").color(Color::Muted).into_any_element(),
+                                        Label::new("Author").color(Color::Muted).into_any_element(),
+                                        Label::new("Commit").color(Color::Muted).into_any_element(),
+                                    ],
+                                    4,
+                                )
+                            },
                             header_context,
                             Some(header_resize_info),
                             Some(self.column_widths.entity_id()),
@@ -2810,6 +2806,85 @@ impl Render for GitGraph {
                             let hovered_entry_idx = self.hovered_entry_idx;
                             let weak_self = cx.weak_entity();
                             let focus_handle = self.focus_handle.clone();
+
+                            let graph_canvas = div()
+                                .id("graph-canvas")
+                                .size_full()
+                                .overflow_hidden()
+                                .child(
+                                    div()
+                                        .size_full()
+                                        .child(self.render_graph_canvas(window, cx)),
+                                )
+                                .on_scroll_wheel(cx.listener(Self::handle_graph_scroll))
+                                .on_mouse_move(cx.listener(Self::handle_graph_mouse_move))
+                                .on_click(cx.listener(Self::handle_graph_click))
+                                .on_hover(cx.listener(|this, &is_hovered: &bool, _, cx| {
+                                    if !is_hovered && this.hovered_entry_idx.is_some() {
+                                        this.hovered_entry_idx = None;
+                                        cx.notify();
+                                    }
+                                }));
+
+                            let commits_table = Table::new(4)
+                                .interactable(&self.table_interaction_state)
+                                .hide_row_borders()
+                                .hide_row_hover()
+                                .width_config(table_width_config)
+                                .map_row(move |(index, row), window, cx| {
+                                    let is_selected = selected_entry_idx == Some(index);
+                                    let is_hovered = hovered_entry_idx == Some(index);
+                                    let is_focused = focus_handle.is_focused(window);
+                                    let weak = weak_self.clone();
+                                    let weak_for_hover = weak.clone();
+
+                                    let hover_bg = cx.theme().colors().element_hover.opacity(0.6);
+                                    let selected_bg = if is_focused {
+                                        cx.theme().colors().element_selected
+                                    } else {
+                                        cx.theme().colors().element_hover
+                                    };
+
+                                    row.h(row_height)
+                                        .when(is_selected, |row| row.bg(selected_bg))
+                                        .when(is_hovered && !is_selected, |row| row.bg(hover_bg))
+                                        .on_hover(move |&is_hovered, _, cx| {
+                                            weak_for_hover
+                                                .update(cx, |this, cx| {
+                                                    if is_hovered {
+                                                        if this.hovered_entry_idx != Some(index) {
+                                                            this.hovered_entry_idx = Some(index);
+                                                            cx.notify();
+                                                        }
+                                                    } else if this.hovered_entry_idx == Some(index)
+                                                    {
+                                                        this.hovered_entry_idx = None;
+                                                        cx.notify();
+                                                    }
+                                                })
+                                                .ok();
+                                        })
+                                        .on_click(move |event, window, cx| {
+                                            let click_count = event.click_count();
+                                            weak.update(cx, |this, cx| {
+                                                this.select_entry(
+                                                    index,
+                                                    ScrollStrategy::Center,
+                                                    cx,
+                                                );
+                                                if click_count >= 2 {
+                                                    this.open_commit_view(index, window, cx);
+                                                }
+                                            })
+                                            .ok();
+                                        })
+                                        .into_any_element()
+                                })
+                                .uniform_list(
+                                    "git-graph-commits",
+                                    commit_count,
+                                    cx.processor(Self::render_table_rows),
+                                );
 
                             bind_redistributable_columns(
                                 div()
@@ -2827,34 +2902,7 @@ impl Render for GitGraph {
                                                         .h_full()
                                                         .min_w_0()
                                                         .overflow_hidden()
-                                                        .child(
-                                                            div()
-                                                                .id("graph-canvas")
-                                                                .size_full()
-                                                                .overflow_hidden()
-                                                                .child(
-                                                                    div()
-                                                                        .size_full()
-                                                                        .child(self.render_graph_canvas(window, cx)),
-                                                                )
-                                                                .on_scroll_wheel(
-                                                                    cx.listener(Self::handle_graph_scroll),
-                                                                )
-                                                                .on_mouse_move(
-                                                                    cx.listener(Self::handle_graph_mouse_move),
-                                                                )
-                                                                .on_click(cx.listener(Self::handle_graph_click))
-                                                                .on_hover(cx.listener(
-                                                                    |this, &is_hovered: &bool, _, cx| {
-                                                                        if !is_hovered
-                                                                            && this.hovered_entry_idx.is_some()
-                                                                        {
-                                                                            this.hovered_entry_idx = None;
-                                                                            cx.notify();
-                                                                        }
-                                                                    },
-                                                                )),
-                                                        ),
+                                                        .child(graph_canvas),
                                                 )
                                             })
                                             .child(
@@ -2862,87 +2910,7 @@ impl Render for GitGraph {
                                                     .w(DefiniteLength::Fraction(table_fraction))
                                                     .h_full()
                                                     .min_w_0()
-                                                    .child(
-                                                        Table::new(4)
-                                                            .interactable(&self.table_interaction_state)
-                                                            .hide_row_borders()
-                                                            .hide_row_hover()
-                                                            .width_config(table_width_config)
-                                                            .map_row(move |(index, row), window, cx| {
-                                                                let is_selected =
-                                                                    selected_entry_idx == Some(index);
-                                                                let is_hovered =
-                                                                    hovered_entry_idx == Some(index);
-                                                                let is_focused =
-                                                                    focus_handle.is_focused(window);
-                                                                let weak = weak_self.clone();
-                                                                let weak_for_hover = weak.clone();
-
-                                                                let hover_bg = cx
-                                                                    .theme()
-                                                                    .colors()
-                                                                    .element_hover
-                                                                    .opacity(0.6);
-                                                                let selected_bg = if is_focused {
-                                                                    cx.theme().colors().element_selected
-                                                                } else {
-                                                                    cx.theme().colors().element_hover
-                                                                };
-
-                                                                row.h(row_height)
-                                                                    .when(is_selected, |row| row.bg(selected_bg))
-                                                                    .when(
-                                                                        is_hovered && !is_selected,
-                                                                        |row| row.bg(hover_bg),
-                                                                    )
-                                                                    .on_hover(move |&is_hovered, _, cx| {
-                                                                        weak_for_hover
-                                                                            .update(cx, |this, cx| {
-                                                                                if is_hovered {
-                                                                                    if this.hovered_entry_idx
-                                                                                        != Some(index)
-                                                                                    {
-                                                                                        this.hovered_entry_idx =
-                                                                                            Some(index);
-                                                                                        cx.notify();
-                                                                                    }
-                                                                                } else if this
-                                                                                    .hovered_entry_idx
-                                                                                    == Some(index)
-                                                                                {
-                                                                                    this.hovered_entry_idx =
-                                                                                        None;
-                                                                                    cx.notify();
-                                                                                }
-                                                                            })
-                                                                            .ok();
-                                                                    })
-                                                                    .on_click(move |event, window, cx| {
-                                                                        let click_count = event.click_count();
-                                                                        weak.update(cx, |this, cx| {
-                                                                            this.select_entry(
-                                                                                index,
-                                                                                ScrollStrategy::Center,
-                                                                                cx,
-                                                                            );
-                                                                            if click_count >= 2 {
-                                                                                this.open_commit_view(
-                                                                                    index,
-                                                                                    window,
-                                                                                    cx,
-                                                                                );
-                                                                            }
-                                                                        })
-                                                                        .ok();
-                                                                    })
-                                                                    .into_any_element()
-                                                            })
-                                                            .uniform_list(
-                                                                "git-graph-commits",
-                                                                commit_count,
-                                                                cx.processor(Self::render_table_rows),
-                                                            ),
-                                                    ),
+                                                    .child(commits_table),
                                             ),
                                     )
                                     .child(render_redistributable_columns_resize_handles(

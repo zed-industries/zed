@@ -1200,7 +1200,7 @@ impl Fs for RealFs {
         let use_poll = requires_poll_watcher(path);
         let watch_path = effective_watch_path(path);
 
-        let (tx, rx) = smol::channel::unbounded();
+        let (tx, rx) = async_channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
 
         let mode = if use_poll {
@@ -1449,8 +1449,8 @@ struct FakeFsState {
     root: FakeFsEntry,
     next_inode: u64,
     next_mtime: SystemTime,
-    git_event_tx: smol::channel::Sender<PathBuf>,
-    event_txs: Vec<(PathBuf, smol::channel::Sender<Vec<PathEvent>>)>,
+    git_event_tx: async_channel::Sender<PathBuf>,
+    event_txs: Vec<(PathBuf, async_channel::Sender<Vec<PathEvent>>)>,
     events_paused: bool,
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
@@ -1720,7 +1720,7 @@ impl FakeFs {
     const SYSTEMTIME_INTERVAL: Duration = Duration::from_nanos(100);
 
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
-        let (tx, rx) = smol::channel::bounded::<PathBuf>(10);
+        let (tx, rx) = async_channel::bounded::<PathBuf>(10);
 
         let this = Arc::new_cyclic(|this| Self {
             this: this.clone(),
@@ -2714,7 +2714,7 @@ impl FakeFsEntry {
 
 #[cfg(feature = "test-support")]
 struct FakeWatcher {
-    tx: smol::channel::Sender<Vec<PathEvent>>,
+    tx: async_channel::Sender<Vec<PathEvent>>,
     original_path: PathBuf,
     fs_state: Arc<Mutex<FakeFsState>>,
     prefixes: Mutex<Vec<PathBuf>>,
@@ -3183,7 +3183,7 @@ impl Fs for FakeFs {
         Arc<dyn Watcher>,
     ) {
         self.simulate_random_delay().await;
-        let (tx, rx) = smol::channel::unbounded();
+        let (tx, rx) = async_channel::unbounded();
         let path = path.to_path_buf();
         self.state.lock().event_txs.push((path.clone(), tx.clone()));
         let executor = self.executor.clone();

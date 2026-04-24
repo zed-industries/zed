@@ -76,6 +76,7 @@ uuid.workspace = true
 [dev-dependencies]
 agent = { workspace = true, features = ["test-support"] }
 async-trait.workspace = true
+async-channel.workspace = true
 
 buffer_diff.workspace = true
 call = { workspace = true, features = ["test-support"] }

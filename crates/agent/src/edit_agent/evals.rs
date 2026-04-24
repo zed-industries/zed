@@ -1670,7 +1670,7 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
             eprintln!("Attempt #{attempt}: Retry after {retry_after:?} + jitter of {jitter:?}");
             // This code does not use the gpui::executor
             #[allow(clippy::disallowed_methods)]
-            smol::Timer::after(retry_after + jitter).await;
+            async_io::Timer::after(retry_after + jitter).await;
         } else {
             return response;
         }
