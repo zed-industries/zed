@@ -10,7 +10,7 @@ use crate::thread_metadata_store::{
 use crate::{Agent, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
 
 use agent::ThreadStore;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use collections::HashMap;
@@ -31,8 +31,9 @@ use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::{
-    AgentThreadStatus, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tab,
-    ThreadItem, Tooltip, WithScrollbar, prelude::*, utils::platform_title_bar_height,
+    AgentThreadStatus, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, ScrollAxes,
+    Scrollbars, Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
+    utils::platform_title_bar_height,
 };
 use ui_input::ErasedEditor;
 use util::ResultExt;
@@ -320,26 +321,20 @@ impl ThreadsArchiveView {
         let preserve = self.preserve_selection_on_next_update;
         self.preserve_selection_on_next_update = false;
 
-        let saved_scroll = if preserve {
-            Some(self.list_state.logical_scroll_top())
-        } else {
-            None
-        };
+        let saved_scroll = self.list_state.logical_scroll_top();
 
         self.list_state.reset(items.len());
         self.items = items;
 
-        if !preserve {
-            self.hovered_index = None;
-        } else if let Some(ix) = self.hovered_index {
+        if let Some(ix) = self.hovered_index {
             if ix >= self.items.len() || !self.is_selectable_item(ix) {
                 self.hovered_index = None;
             }
         }
 
-        if let Some(scroll_top) = saved_scroll {
-            self.list_state.scroll_to(scroll_top);
+        self.list_state.scroll_to(saved_scroll);
 
+        if preserve {
             if let Some(ix) = self.selection {
                 let next = self.find_next_selectable(ix).or_else(|| {
                     ix.checked_sub(1)
@@ -653,12 +648,15 @@ impl ThreadsArchiveView {
                     .focused(is_focused)
                     .hovered(is_hovered)
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
-                        if *is_hovered {
-                            this.hovered_index = Some(ix);
-                        } else if this.hovered_index == Some(ix) {
-                            this.hovered_index = None;
+                        let previously_hovered = this.hovered_index;
+                        this.hovered_index = if *is_hovered {
+                            Some(ix)
+                        } else {
+                            previously_hovered.filter(|&i| i != ix)
+                        };
+                        if this.hovered_index != previously_hovered {
+                            cx.notify();
                         }
-                        cx.notify();
                     }));
 
                 if is_restoring {
@@ -917,6 +915,7 @@ impl ThreadsArchiveView {
             )
             .child(
                 h_flex()
+                    .gap_1()
                     .child(
                         IconButton::new("thread-import", IconName::Download)
                             .icon_size(IconSize::Small)
@@ -1014,7 +1013,13 @@ impl Render for ThreadsArchiveView {
                     .flex_1()
                     .size_full(),
                 )
-                .vertical_scrollbar_for(&self.list_state, window, cx)
+                .custom_scrollbars(
+                    Scrollbars::new(ScrollAxes::Vertical)
+                        .tracked_scroll_handle(&self.list_state)
+                        .width_sm(),
+                    window,
+                    cx,
+                )
                 .into_any_element()
         };
 
@@ -1082,7 +1087,7 @@ impl ProjectPickerModal {
         let db = WorkspaceDb::global(cx);
         cx.spawn_in(window, async move |this, cx| {
             let workspaces = db
-                .recent_workspaces_on_disk(fs.as_ref())
+                .recent_project_workspaces(fs.as_ref())
                 .await
                 .log_err()
                 .unwrap_or_default();

@@ -1,8 +1,5 @@
 {
   "$schema": "zed://schemas/settings",
-  /// The displayed name of this project. If not set or null, the root directory name
-  /// will be displayed.
-  "project_name": null,
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -342,6 +339,17 @@
     // The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
     "delay": 300,
   },
+  // Whether and how to display code lenses from language servers.
+  //
+  // Possible values:
+  //
+  // 1. Do not display code lenses.
+  //      "code_lens": "off",
+  // 2. Display code lenses from language servers above code elements.
+  //      "code_lens": "on",
+  // 3. Display code lenses in the code action menu.
+  //      "code_lens": "menu",
+  "code_lens": "off",
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`
@@ -967,6 +975,11 @@
     //
     // Default: true
     "diff_stats": true,
+    // Maximum length of the commit message title before a warning is shown.
+    // Set to 0 to disable.
+    //
+    // Default: 72
+    "commit_title_max_length": 72,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
@@ -1363,6 +1376,24 @@
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
+  // How line endings should be handled for new files and during format and save.
+  // This setting can take five values:
+  //
+  // 1. Detect existing line endings and otherwise use the platform default
+  //    (`lf` on Unix, `crlf` on Windows):
+  //    "line_ending": "detect"
+  // 2. Prefer LF (`\n`) for new files and files with no existing line ending:
+  //    "line_ending": "prefer_lf"
+  // 3. Prefer CRLF (`\r\n`) for new files and files with no existing line ending:
+  //    "line_ending": "prefer_crlf"
+  // 4. Enforce LF (`\n`) during format and save:
+  //    "line_ending": "enforce_lf"
+  // 5. Enforce CRLF (`\r\n`) during format and save:
+  //    "line_ending": "enforce_crlf"
+  //
+  // The EditorConfig `end_of_line` property overrides this setting and behaves
+  // like `enforce_lf` or `enforce_crlf`.
+  "line_ending": "detect",
   // Whether or not to perform a buffer format before saving: [on, off]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
@@ -1657,6 +1688,14 @@
       "prompt_format": "infer",
       "max_output_tokens": 64,
     },
+    // Controls whether Zed may collect training data when using Zed's Edit Predictions.
+    // Data is only captured when the project is detected as open source.
+    // Possible values:
+    //   - "default": use the preference previously set via the status-bar toggle,
+    //     or false if no preference has been stored.
+    //   - "yes": allow data collection for files in open-source projects.
+    //   - "no": never allow data collection.
+    "allow_data_collection": "default",
   },
   // Settings specific to journaling
   "journal": {
@@ -1920,6 +1959,8 @@
     "path_hyperlink_timeout_ms": 1,
     // Whether to show a badge on the terminal panel icon with the count of open terminals.
     "show_count_badge": false,
+    // Whether to invoke the OS-specific alert sound when the terminal bell (BEL character) is printed.
+    "bell": "off",
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.
@@ -2482,6 +2523,11 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "nightly": {
     // "theme": "Andromeda"
+    "instrumentation": {
+      "performance_profiler": {
+        "enabled": true,
+      },
+    },
   },
   // Settings overrides to use when using Zed Stable.
   // Mostly useful for developers who are managing multiple instances of Zed.
@@ -2492,6 +2538,11 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
+    "instrumentation": {
+      "performance_profiler": {
+        "enabled": true,
+      },
+    },
   },
   // Settings overrides to use when using Linux.
   "linux": {},
@@ -2611,4 +2662,16 @@
   //
   // Example: {"log": {"client": "warn"}}
   "log": {},
+
+  // Configuration for developer-oriented instrumentation tools that can be
+  // toggled at runtime.
+  "instrumentation": {
+    // Performance profiler, accessed via the `zed: open performance profiler`
+    // action. Collects timing data for foreground and background executor
+    // tasks. Enabling this may lead to increased memory usage, hence it's
+    // disabled by default for regular builds.
+    "performance_profiler": {
+      "enabled": false,
+    },
+  },
 }

@@ -36,7 +36,7 @@ jobs:
     - id: run-compliance-check
       name: release::add_compliance_steps::run_compliance_check
       run: |
-        cargo xtask compliance "$LATEST_TAG" --branch main --report-path "compliance-report-${GITHUB_REF_NAME}.md"
+        cargo xtask compliance version "$LATEST_TAG" --branch main --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}

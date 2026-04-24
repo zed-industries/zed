@@ -46,7 +46,7 @@ impl JsonSchema for SharedString {
 
 impl Default for SharedString {
     fn default() -> Self {
-        Self(ArcCow::Owned(Arc::default()))
+        Self(ArcCow::Borrowed(""))
     }
 }
 

@@ -96,7 +96,7 @@ pub async fn get_recent_projects(
     db: &WorkspaceDb,
 ) -> Vec<RecentProjectEntry> {
     let workspaces = db
-        .recent_workspaces_on_disk(fs.as_ref())
+        .recent_project_workspaces(fs.as_ref())
         .await
         .unwrap_or_default();
 
@@ -610,7 +610,7 @@ impl RecentProjects {
         cx.spawn_in(window, async move |this, cx| {
             let Some(fs) = fs else { return };
             let workspaces = db
-                .recent_workspaces_on_disk(fs.as_ref())
+                .recent_project_workspaces(fs.as_ref())
                 .await
                 .log_err()
                 .unwrap_or_default();
@@ -780,7 +780,7 @@ impl RecentProjects {
                         let paths_to_add = paths.paths().to_vec();
                         picker
                             .delegate
-                            .add_project_to_workspace(paths_to_add, window, cx);
+                            .add_paths_to_project(paths_to_add, window, cx);
                     }
                 }
             }
@@ -1020,8 +1020,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .collect()
             };
 
-            for (index, positions) in matched_folders {
-                entries.push(ProjectPickerEntry::OpenFolder { index, positions });
+            if !matched_folders.is_empty() {
+                entries.push(ProjectPickerEntry::Header("Current Folders".into()));
+                for (index, positions) in matched_folders {
+                    entries.push(ProjectPickerEntry::OpenFolder { index, positions });
+                }
             }
         }
 
@@ -1282,7 +1285,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .child(
                         IconButton::new(("remove-folder", worktree_id.to_usize()), IconName::Close)
                             .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Remove Folder from Workspace"))
+                            .tooltip(Tooltip::text("Remove Folder from Project"))
                             .on_click(cx.listener(move |picker, _, window, cx| {
                                 let Some(workspace) = picker.delegate.workspace.upgrade() else {
                                     return;
@@ -1314,18 +1317,16 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .child(
                             h_flex()
                                 .id("open_folder_item")
-                                .gap_3()
                                 .w_full()
-                                .overflow_hidden()
+                                .gap_2p5()
                                 .when(self.has_any_non_local_projects, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
                                 })
                                 .child(
                                     v_flex()
-                                        .flex_1()
+                                        .min_w_0()
                                         .child(
                                             h_flex()
-                                                .min_w_0()
                                                 .gap_1()
                                                 .child(HighlightedLabel::new(
                                                     name.to_string(),
@@ -1335,8 +1336,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                                     this.child(
                                                         Label::new(branch)
                                                             .color(Color::Muted)
-                                                            .truncate()
-                                                            .flex_1(),
+                                                            .truncate(),
                                                     )
                                                 })
                                                 .when(is_active, |this| {
@@ -1359,7 +1359,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     this.tooltip(move |_, cx| {
                                         if let Some(branch) = tooltip_branch.clone() {
                                             Tooltip::with_meta(
-                                                branch,
+                                                format!("{}/{}", name, branch),
                                                 None,
                                                 tooltip_path.clone(),
                                                 cx,
@@ -1384,6 +1384,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .map(|p| p.compact().to_string_lossy().to_string())
                     .collect();
                 let tooltip_path: SharedString = ordered_paths.join("\n").into();
+                let icon = icon_for_remote_connection(self.project_connection_options.as_ref());
 
                 let mut path_start_offset = 0;
                 let (match_labels, path_highlights): (Vec<_>, Vec<_>) = paths
@@ -1438,7 +1439,10 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .child(
                             h_flex()
                                 .id("open_project_info_container")
-                                .gap_3()
+                                .gap_2p5()
+                                .when(self.has_any_non_local_projects, |this| {
+                                    this.child(Icon::new(icon).color(Color::Muted))
+                                })
                                 .child({
                                     let mut highlighted = highlighted_match;
                                     if !self.render_paths {
@@ -1485,6 +1489,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                     })
                     .unzip();
 
+                let tooltip_title = if paths.len() > 1 {
+                    "Add Folders to this Project"
+                } else {
+                    "Add Folder to this Project"
+                };
+
                 let prefix = match &location {
                     SerializedWorkspaceLocation::Remote(options) => {
                         Some(SharedString::from(options.display_name()))
@@ -1509,9 +1519,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 .icon_size(IconSize::Small)
                                 .tooltip(move |_, cx| {
                                     Tooltip::with_meta(
-                                        "Add Project to this Workspace",
+                                        tooltip_title,
                                         None,
-                                        "As a multi-root folder project",
+                                        "As a multi-root folder",
                                         cx,
                                     )
                                 })
@@ -1520,7 +1530,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     cx.listener(move |picker, _event, window, cx| {
                                         cx.stop_propagation();
                                         window.prevent_default();
-                                        picker.delegate.add_project_to_workspace(
+                                        picker.delegate.add_paths_to_project(
                                             paths_to_add.clone(),
                                             window,
                                             cx,
@@ -1574,7 +1584,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .child(
                             h_flex()
                                 .id("project_info_container")
-                                .gap_3()
+                                .gap_2p5()
                                 .flex_grow()
                                 .when(self.has_any_non_local_projects, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
@@ -1783,7 +1793,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .child(
                     PopoverMenu::new("actions-menu-popover")
                         .with_handle(self.actions_menu_handle.clone())
-                        .anchor(gpui::Corner::BottomRight)
+                        .anchor(gpui::Anchor::BottomRight)
                         .offset(gpui::Point {
                             x: px(0.0),
                             y: px(-2.0),
@@ -1822,7 +1832,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         menu.context(focus_handle)
                                             .when(show_add_to_workspace, |menu| {
                                                 menu.action(
-                                                    "Add to this Workspace",
+                                                    "Add Folder to this Project",
                                                     AddToWorkspace.boxed_clone(),
                                                 )
                                                 .separator()
@@ -1982,7 +1992,7 @@ fn open_local_project(
 }
 
 impl RecentProjectsDelegate {
-    fn add_project_to_workspace(
+    fn add_paths_to_project(
         &mut self,
         paths: Vec<PathBuf>,
         window: &mut Window,
@@ -2039,7 +2049,7 @@ impl RecentProjectsDelegate {
                 db.delete_workspace_by_id(workspace_id).await.log_err();
                 let Some(fs) = fs else { return };
                 let workspaces = db
-                    .recent_workspaces_on_disk(fs.as_ref())
+                    .recent_project_workspaces(fs.as_ref())
                     .await
                     .unwrap_or_default();
                 let workspaces =

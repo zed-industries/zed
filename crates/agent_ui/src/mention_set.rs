@@ -1,7 +1,7 @@
 use crate::diagnostics::{DiagnosticsOptions, codeblock_fence_for_path, collect_diagnostics};
 use acp_thread::{MentionUri, selection_name};
 use agent::{ThreadStore, outline};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
@@ -172,6 +172,10 @@ impl MentionSet {
 
     pub fn mentions(&self) -> HashSet<MentionUri> {
         self.mentions.values().map(|(uri, _)| uri.clone()).collect()
+    }
+
+    pub fn mention_uri_for_crease(&self, crease_id: &CreaseId) -> Option<MentionUri> {
+        self.mentions.get(crease_id).map(|(uri, _)| uri.clone())
     }
 
     pub fn set_mentions(&mut self, mentions: HashMap<CreaseId, (MentionUri, MentionTask)>) {
@@ -839,7 +843,11 @@ fn image_format_from_external_content(format: image::ImageFormat) -> Option<Imag
         image::ImageFormat::Bmp => Some(ImageFormat::Bmp),
         image::ImageFormat::Tiff => Some(ImageFormat::Tiff),
         image::ImageFormat::Ico => Some(ImageFormat::Ico),
-        _ => None,
+        image::ImageFormat::Pnm => Some(ImageFormat::Pnm),
+        _ => {
+            debug_panic!("An unhandled image format: {format:?}");
+            None
+        }
     }
 }
 

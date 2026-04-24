@@ -1,5 +1,5 @@
 use acp_thread::AgentSessionModes;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_servers::AgentServer;
 
 use fs::Fs;
@@ -197,7 +197,7 @@ impl Render for ModeSelector {
                     }
                 }),
             )
-            .anchor(gpui::Corner::BottomRight)
+            .anchor(gpui::Anchor::BottomRight)
             .with_handle(self.menu_handle.clone())
             .offset(gpui::Point {
                 x: px(0.0),

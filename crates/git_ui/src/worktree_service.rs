@@ -787,23 +787,232 @@ async fn open_worktree_workspace(
     window_handle.update(cx, |multi_workspace, window, cx| {
         multi_workspace.activate(new_workspace.clone(), source_for_transfer, window, cx);
 
-        new_workspace.update(cx, |workspace, cx| {
-            workspace.run_create_worktree_tasks(window, cx);
-        });
-    })?;
+        if is_creating_new_worktree {
+            new_workspace.update(cx, |workspace, cx| {
+                workspace.run_create_worktree_tasks(window, cx);
 
-    if is_creating_new_worktree {
-        if let Some(dock_position) = focused_dock {
-            window_handle.update(cx, |_multi_workspace, window, cx| {
-                new_workspace.update(cx, |workspace, cx| {
+                if let Some(dock_position) = focused_dock {
                     let dock = workspace.dock_at_position(dock_position);
                     if let Some(panel) = dock.read(cx).active_panel() {
                         panel.panel_focus_handle(cx).focus(window, cx);
                     }
-                });
-            })?;
+                }
+            });
+        }
+    })?;
+
+    anyhow::Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::Fs;
+    use gpui::{App, Task, TestAppContext};
+    use language::language_settings::AllLanguageSettings;
+    use project::project_settings::ProjectSettings;
+    use project::task_store::{TaskSettingsLocation, TaskStore};
+    use project::{FakeFs, WorktreeSettings};
+    use serde_json::json;
+    use settings::{SettingsLocation, SettingsStore};
+    use std::path::{Path, PathBuf};
+    use std::process::ExitStatus;
+    use std::sync::Mutex;
+    use task::SpawnInTerminal;
+    use theme::LoadThemes;
+    use util::path;
+    use util::rel_path::rel_path;
+    use workspace::{TerminalProvider, WorkspaceSettings};
+
+    struct CountingTerminalProvider {
+        spawned_task_labels: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl TerminalProvider for CountingTerminalProvider {
+        fn spawn(
+            &self,
+            task: SpawnInTerminal,
+            _window: &mut ui::Window,
+            _cx: &mut App,
+        ) -> Task<Option<anyhow::Result<ExitStatus>>> {
+            self.spawned_task_labels
+                .lock()
+                .expect("terminal spawn mutex should not be poisoned")
+                .push(task.label);
+            Task::ready(Some(Ok(ExitStatus::default())))
         }
     }
 
-    anyhow::Ok(())
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(LoadThemes::JustBase, cx);
+            AllLanguageSettings::register(cx);
+            editor::init(cx);
+            ProjectSettings::register(cx);
+            WorktreeSettings::register(cx);
+            WorkspaceSettings::register(cx);
+            TaskStore::init(None);
+        });
+    }
+
+    fn install_counting_provider_and_worktree_hook(
+        workspace: &Entity<Workspace>,
+        spawned_task_labels: &Arc<Mutex<Vec<String>>>,
+        main_project_root: &Path,
+        hook_tasks_json: &str,
+        cx: &mut App,
+    ) {
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_terminal_provider(CountingTerminalProvider {
+                spawned_task_labels: spawned_task_labels.clone(),
+            });
+
+            let project = workspace.project().clone();
+            let Some(worktree) = project.read(cx).worktrees(cx).next() else {
+                return;
+            };
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            let worktree_root = worktree.abs_path().to_path_buf();
+            if worktree_root == main_project_root {
+                return;
+            }
+
+            let Some(task_inventory) = project
+                .read(cx)
+                .task_store()
+                .read(cx)
+                .task_inventory()
+                .cloned()
+            else {
+                return;
+            };
+            task_inventory.update(cx, |inventory, _| {
+                inventory
+                    .update_file_based_tasks(
+                        TaskSettingsLocation::Worktree(SettingsLocation {
+                            worktree_id,
+                            path: rel_path(".zed"),
+                        }),
+                        Some(hook_tasks_json),
+                    )
+                    .expect("should inject create_worktree hook tasks for linked worktree");
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_create_worktree_hook_does_not_run_when_switching_back_to_main_worktree(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let hook_tasks_json = r#"[{"label":"setup worktree","command":"echo","hide":"never","hooks":["create_worktree"]}]"#;
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    ".zed": {
+                        "tasks.json": hook_tasks_json,
+                    },
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let main_project_root = PathBuf::from(path!("/root/project"));
+        let project = Project::test(fs.clone(), [main_project_root.as_path()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let spawned_task_labels = Arc::new(Mutex::new(Vec::new()));
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.retain_active_workspace(cx);
+            let active_workspace = multi_workspace.workspace().clone();
+            install_counting_provider_and_worktree_hook(
+                &active_workspace,
+                &spawned_task_labels,
+                &main_project_root,
+                hook_tasks_json,
+                cx,
+            );
+        });
+
+        let main_workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        main_workspace.update_in(cx, |workspace, window, cx| {
+            handle_create_worktree(
+                workspace,
+                &zed_actions::CreateWorktree {
+                    worktree_name: Some("feature".to_string()),
+                    branch_target: NewWorktreeBranchTarget::CurrentBranch,
+                },
+                window,
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let active_workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.update(|_, cx| {
+            install_counting_provider_and_worktree_hook(
+                &active_workspace,
+                &spawned_task_labels,
+                &main_project_root,
+                hook_tasks_json,
+                cx,
+            );
+        });
+        active_workspace.update_in(cx, |workspace, window, cx| {
+            workspace.run_create_worktree_tasks(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            spawned_task_labels
+                .lock()
+                .expect("terminal spawn mutex should not be poisoned")
+                .as_slice(),
+            ["setup worktree"],
+            "create_worktree hook should run once for the created linked worktree"
+        );
+
+        active_workspace.update_in(cx, |workspace, window, cx| {
+            handle_switch_worktree(
+                workspace,
+                &zed_actions::SwitchWorktree {
+                    path: main_project_root.clone(),
+                    display_name: "project".to_string(),
+                },
+                window,
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            spawned_task_labels
+                .lock()
+                .expect("terminal spawn mutex should not be poisoned")
+                .as_slice(),
+            ["setup worktree"],
+            "switching back to the main worktree should not rerun create_worktree hooks"
+        );
+    }
 }

@@ -288,21 +288,20 @@ impl Render for Onboarding {
                 window.focus_prev(cx);
                 cx.notify();
             }))
+            .vertical_scrollbar_for(&self.scroll_handle, window, cx)
             .child(
                 div()
-                    .max_w(Rems(48.0))
+                    .id("page-content")
                     .size_full()
-                    .mx_auto()
+                    .overflow_y_scroll()
                     .child(
                         v_flex()
-                            .id("page-content")
-                            .m_auto()
-                            .p_12()
-                            .size_full()
-                            .max_w_full()
                             .min_w_0()
+                            .max_w(rems_from_px(780.))
+                            .w_full()
+                            .mx_auto()
+                            .p_12()
                             .gap_6()
-                            .overflow_y_scroll()
                             .child(
                                 h_flex()
                                     .w_full()
@@ -342,10 +341,9 @@ impl Render for Onboarding {
                                     }),
                             )
                             .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
-                            .child(self.render_page(cx))
-                            .track_scroll(&self.scroll_handle),
+                            .child(self.render_page(cx)),
                     )
-                    .vertical_scrollbar_for(&self.scroll_handle, window, cx),
+                    .track_scroll(&self.scroll_handle),
             )
     }
 }

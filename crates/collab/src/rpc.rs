@@ -436,6 +436,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitRemoveRemote>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetWorktrees>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetHeadSha>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetCommitData>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateWorktree>)
             .add_request_handler(disallow_guest_request::<proto::GitRemoveWorktree>)
             .add_request_handler(disallow_guest_request::<proto::GitRenameWorktree>)

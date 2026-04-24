@@ -100,7 +100,7 @@ struct FocusFile(pub u32);
 
 struct SettingField<T: 'static> {
     pick: fn(&SettingsContent) -> Option<&T>,
-    write: fn(&mut SettingsContent, Option<T>),
+    write: fn(&mut SettingsContent, Option<T>, &App),
 
     /// A json-path-like string that gives a unique-ish string that identifies
     /// where in the JSON the setting is defined.
@@ -149,7 +149,7 @@ impl<T: 'static> SettingField<T> {
     fn unimplemented(self) -> SettingField<UnimplementedSettingField> {
         SettingField {
             pick: |_| Some(&UnimplementedSettingField),
-            write: |_, _| unreachable!(),
+            write: |_, _, _| unreachable!(),
             json_path: self.json_path,
         }
     }
@@ -232,8 +232,8 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
                 None,
                 window,
                 cx,
-                move |settings, _| {
-                    (this.write)(settings, value_to_set);
+                move |settings, app| {
+                    (this.write)(settings, value_to_set, app);
                 },
             )
             // todo(settings_ui): Don't log err
@@ -491,6 +491,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ProjectPanelSortOrder>(render_dropdown)
         .add_basic_renderer::<settings::RewrapBehavior>(render_dropdown)
         .add_basic_renderer::<settings::FormatOnSave>(render_dropdown)
+        .add_basic_renderer::<settings::LineEndingSetting>(render_dropdown)
         .add_basic_renderer::<settings::IndentGuideColoring>(render_dropdown)
         .add_basic_renderer::<settings::IndentGuideBackgroundColoring>(render_dropdown)
         .add_basic_renderer::<settings::FileFinderWidthContent>(render_dropdown)
@@ -503,6 +504,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::TerminalBlink>(render_dropdown)
         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
         .add_basic_renderer::<settings::EditPredictionPromptFormat>(render_dropdown)
+        .add_basic_renderer::<settings::EditPredictionDataCollectionChoice>(render_dropdown)
         .add_basic_renderer::<f32>(render_editable_number_field)
         .add_basic_renderer::<u32>(render_editable_number_field)
         .add_basic_renderer::<u64>(render_editable_number_field)
@@ -535,6 +537,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::PaneSplitDirectionHorizontal>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
+        .add_basic_renderer::<settings::CodeLens>(render_dropdown)
         .add_basic_renderer::<settings::DocumentColorsRenderMode>(render_dropdown)
         .add_basic_renderer::<settings::ThemeSelectionDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::ThemeAppearanceMode>(render_dropdown)
@@ -558,6 +561,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DocumentSymbols>(render_dropdown)
         .add_basic_renderer::<settings::AudioInputDeviceName>(render_input_audio_device_dropdown)
         .add_basic_renderer::<settings::AudioOutputDeviceName>(render_output_audio_device_dropdown)
+        .add_basic_renderer::<settings::TerminalBell>(render_dropdown)
         // please semicolon stay on next line
         ;
 }
@@ -2469,7 +2473,7 @@ impl SettingsWindow {
                                     .style(DropdownStyle::Subtle)
                                     .trigger_tooltip(Tooltip::text("View Other Projects"))
                                     .trigger_icon(IconName::ChevronDown)
-                                    .attach(gpui::Corner::BottomLeft)
+                                    .attach(gpui::Anchor::BottomLeft)
                                     .offset(gpui::Point {
                                         x: px(0.0),
                                         y: px(2.0),
@@ -4087,8 +4091,8 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
                     field.json_path,
                     window,
                     cx,
-                    move |settings, _cx| {
-                        (field.write)(settings, new_text.map(Into::into));
+                    move |settings, app| {
+                        (field.write)(settings, new_text.map(Into::into), app);
                     },
                 )
                 .log_err(); // todo(settings_ui) don't log err
@@ -4119,8 +4123,8 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());
 
                 let state = *state == ui::ToggleState::Selected;
-                update_settings_file(file.clone(), field.json_path, window, cx, move |settings, _cx| {
-                    (field.write)(settings, Some(state.into()));
+                update_settings_file(file.clone(), field.json_path, window, cx, move |settings, app| {
+                    (field.write)(settings, Some(state.into()), app);
                 })
                 .log_err(); // todo(settings_ui) don't log err
             }
@@ -4154,8 +4158,8 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
                     field.json_path,
                     window,
                     cx,
-                    move |settings, _cx| {
-                        (field.write)(settings, Some(value));
+                    move |settings, app| {
+                        (field.write)(settings, Some(value), app);
                     },
                 )
                 .log_err(); // todo(settings_ui) don't log err
@@ -4194,8 +4198,8 @@ where
                 field.json_path,
                 window,
                 cx,
-                move |settings, _cx| {
-                    (field.write)(settings, Some(value));
+                move |settings, app| {
+                    (field.write)(settings, Some(value), app);
                 },
             )
             .log_err(); // todo(settings_ui) don't log err
@@ -4249,8 +4253,8 @@ fn render_font_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
-                                (field.write)(settings, Some(font_name.to_string().into()));
+                            move |settings, app| {
+                                (field.write)(settings, Some(font_name.to_string().into()), app);
                             },
                         )
                         .log_err(); // todo(settings_ui) don't log err
@@ -4260,7 +4264,7 @@ fn render_font_picker(
                 )
             }))
         })
-        .anchor(gpui::Corner::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),
@@ -4299,10 +4303,11 @@ fn render_theme_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
+                            move |settings, app| {
                                 (field.write)(
                                     settings,
                                     Some(settings::ThemeName(theme_name.into())),
+                                    app,
                                 );
                             },
                         )
@@ -4313,7 +4318,7 @@ fn render_theme_picker(
                 )
             }))
         })
-        .anchor(gpui::Corner::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),
@@ -4352,10 +4357,11 @@ fn render_icon_theme_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
+                            move |settings, app| {
                                 (field.write)(
                                     settings,
                                     Some(settings::IconThemeName(theme_name.into())),
+                                    app,
                                 );
                             },
                         )
@@ -4366,7 +4372,7 @@ fn render_icon_theme_picker(
                 )
             }))
         })
-        .anchor(gpui::Corner::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),

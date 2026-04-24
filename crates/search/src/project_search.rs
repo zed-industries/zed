@@ -237,6 +237,7 @@ pub struct ProjectSearch {
     search_id: usize,
     no_results: Option<bool>,
     limit_reached: bool,
+    waiting_for_scan: bool,
     search_history_cursor: SearchHistoryCursor,
     search_included_history_cursor: SearchHistoryCursor,
     search_excluded_history_cursor: SearchHistoryCursor,
@@ -299,6 +300,7 @@ impl ProjectSearch {
             search_id: 0,
             no_results: None,
             limit_reached: false,
+            waiting_for_scan: false,
             search_history_cursor: Default::default(),
             search_included_history_cursor: Default::default(),
             search_excluded_history_cursor: Default::default(),
@@ -323,6 +325,7 @@ impl ProjectSearch {
                 search_id: self.search_id,
                 no_results: self.no_results,
                 limit_reached: self.limit_reached,
+                waiting_for_scan: false,
                 search_history_cursor: self.search_history_cursor.clone(),
                 search_included_history_cursor: self.search_included_history_cursor.clone(),
                 search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
@@ -422,15 +425,17 @@ impl ProjectSearch {
                         .update(cx, |excerpts, cx| excerpts.clear(cx));
                     project_search.no_results = Some(true);
                     project_search.limit_reached = false;
+                    project_search.waiting_for_scan = false;
                 })
                 .ok()?;
 
             let mut limit_reached = false;
             while let Some(results) = matches.next().await {
-                let (buffers_with_ranges, has_reached_limit) = cx
+                let (buffers_with_ranges, has_reached_limit, is_waiting_for_scan) = cx
                     .background_executor()
                     .spawn(async move {
                         let mut limit_reached = false;
+                        let mut waiting_for_scan = false;
                         let mut buffers_with_ranges = Vec::with_capacity(results.len());
                         for result in results {
                             match result {
@@ -440,12 +445,23 @@ impl ProjectSearch {
                                 project::search::SearchResult::LimitReached => {
                                     limit_reached = true;
                                 }
+                                project::search::SearchResult::WaitingForScan => {
+                                    waiting_for_scan = true;
+                                }
                             }
                         }
-                        (buffers_with_ranges, limit_reached)
+                        (buffers_with_ranges, limit_reached, waiting_for_scan)
                     })
                     .await;
                 limit_reached |= has_reached_limit;
+                if is_waiting_for_scan {
+                    project_search
+                        .update(cx, |project_search, cx| {
+                            project_search.waiting_for_scan = true;
+                            cx.notify();
+                        })
+                        .ok()?;
+                }
                 let mut new_ranges = project_search
                     .update(cx, |project_search, cx| {
                         project_search.excerpts.update(cx, |excerpts, cx| {
@@ -483,6 +499,7 @@ impl ProjectSearch {
                         project_search.no_results = Some(false);
                     }
                     project_search.limit_reached = limit_reached;
+                    project_search.waiting_for_scan = false;
                     project_search.pending_search.take();
                     cx.notify();
                 })
@@ -516,8 +533,11 @@ impl Render for ProjectSearchView {
             let model = self.entity.read(cx);
             let has_no_results = model.no_results.unwrap_or(false);
             let is_search_underway = model.pending_search.is_some();
+            let is_waiting_for_scan = model.waiting_for_scan;
 
-            let heading_text = if is_search_underway {
+            let heading_text = if is_waiting_for_scan {
+                "Loading project…"
+            } else if is_search_underway {
                 "Searching…"
             } else if has_no_results {
                 "No Results"
@@ -1181,7 +1201,7 @@ impl ProjectSearchView {
             }
 
             let editor = item.act_as::<Editor>(cx)?;
-            let query = editor.query_suggestion(window, cx);
+            let query = editor.query_suggestion(false, window, cx);
             if query.is_empty() { None } else { Some(query) }
         });
 
@@ -5337,6 +5357,83 @@ pub mod tests {
                 "Empty query string should not overwrite the existing query"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_replace_all_with_shared_heading_prefix_does_not_loop(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let search_text = "## この日に作成したノート";
+        let replacement_text = "## この日に関連するノート";
+
+        let file_a_before = format!("{search_text}\n- a\n\n{search_text}\n- b\n");
+        let file_b_before = format!("# Daily\n\n{search_text}\n- c\n");
+        let file_a_after = format!("{replacement_text}\n- a\n\n{replacement_text}\n- b\n");
+        let file_b_after = format!("# Daily\n\n{replacement_text}\n- c\n");
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.md": file_a_before,
+                "b.md": file_b_before,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        perform_search(search_view, search_text, cx);
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                assert_eq!(search_view.entity.read(cx).match_ranges.len(), 3);
+            })
+            .unwrap();
+
+        search_view
+            .update(cx, |search_view, window, cx| {
+                search_view.replacement_editor.update(cx, |editor, cx| {
+                    editor.set_text(replacement_text, window, cx);
+                });
+                search_view.replace_all(&ReplaceAll, window, cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let buffer_a = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("a.md")), cx)
+            })
+            .await
+            .unwrap();
+        let buffer_b = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("b.md")), cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(
+            buffer_a.read_with(cx, |buffer, _| buffer.text()),
+            file_a_after
+        );
+        assert_eq!(
+            buffer_b.read_with(cx, |buffer, _| buffer.text()),
+            file_b_after
+        );
     }
 
     #[gpui::test]

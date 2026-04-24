@@ -372,14 +372,6 @@ impl LanguageModel for OpenRouterLanguageModel {
         self.model.supports_images.unwrap_or(false)
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        count_open_router_tokens(request, self.model.clone(), cx)
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -739,32 +731,6 @@ struct RawToolCall {
     name: String,
     arguments: String,
     thought_signature: Option<String>,
-}
-
-pub fn count_open_router_tokens(
-    request: LanguageModelRequest,
-    _model: open_router::Model,
-    cx: &App,
-) -> BoxFuture<'static, Result<u64>> {
-    cx.background_spawn(async move {
-        let messages = request
-            .messages
-            .into_iter()
-            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                role: match message.role {
-                    Role::User => "user".into(),
-                    Role::Assistant => "assistant".into(),
-                    Role::System => "system".into(),
-                },
-                content: Some(message.string_contents()),
-                name: None,
-                function_call: None,
-            })
-            .collect::<Vec<_>>();
-
-        tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages).map(|tokens| tokens as u64)
-    })
-    .boxed()
 }
 
 struct ConfigurationView {

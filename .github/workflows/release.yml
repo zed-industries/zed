@@ -241,7 +241,7 @@ jobs:
     timeout-minutes: 60
   check_scripts:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -309,7 +309,7 @@ jobs:
     - id: run-compliance-check
       name: release::add_compliance_steps::run_compliance_check
       run: |
-        cargo xtask compliance "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
+        cargo xtask compliance version "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
@@ -678,7 +678,7 @@ jobs:
     - id: run-compliance-check
       name: release::add_compliance_steps::run_compliance_check
       run: |
-        cargo xtask compliance "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
+        cargo xtask compliance version "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}

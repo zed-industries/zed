@@ -52,7 +52,7 @@ pub async fn run_scoring(
     let old_editable_region = if let Some(p) = example.prompt.as_ref() {
         if matches!(
             p.provider,
-            PredictionProvider::Teacher(_) | PredictionProvider::TeacherNonBatching(_)
+            PredictionProvider::Teacher(_, _) | PredictionProvider::TeacherNonBatching(_, _)
         ) {
             Some(
                 TeacherPrompt::extract_editable_region(&p.input)?

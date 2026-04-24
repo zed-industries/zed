@@ -434,7 +434,6 @@ impl Vim {
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
         let prior_selections = self.editor_selections(window, cx);
-        let cursor_word = self.editor_cursor_word(window, cx);
         let vim = cx.entity();
 
         let searched = pane.update(cx, |pane, cx| {
@@ -456,10 +455,7 @@ impl Vim {
                 if !search_bar.show(window, cx) {
                     return None;
                 }
-                let Some(query) = search_bar
-                    .query_suggestion(window, cx)
-                    .or_else(|| cursor_word)
-                else {
+                let Some(query) = search_bar.query_suggestion(true, window, cx) else {
                     drop(search_bar.search("", None, false, window, cx));
                     return None;
                 };

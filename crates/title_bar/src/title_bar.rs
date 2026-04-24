@@ -7,6 +7,7 @@ mod update_version;
 
 use crate::application_menu::{ApplicationMenu, show_menus};
 use crate::plan_chip::PlanChip;
+use arrayvec::ArrayVec;
 use git_ui::worktree_picker::WorktreePicker;
 pub use platform_title_bar::{
     self, DraggedWindowTab, MergeAllWindows, MoveTabToNewWindow, PlatformTitleBar,
@@ -25,15 +26,18 @@ use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, Context, Corner, Element, Entity, Focusable,
+    Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
     pulsating_between,
 };
 use onboarding_banner::OnboardingBanner;
-use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
+use project::{
+    Project, git_store::GitStoreEvent, project_settings::ProjectSettings,
+    trusted_worktrees::TrustedWorktrees,
+};
 use remote::RemoteConnectionOptions;
-use settings::Settings;
+use settings::Settings as _;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -174,10 +178,11 @@ impl Render for TitleBar {
 
         let title_bar_settings = *TitleBarSettings::get_global(cx);
         let button_layout = title_bar_settings.button_layout;
+        let is_git_enabled = ProjectSettings::get_global(cx).git.enabled.status;
 
         let show_menus = show_menus(cx);
 
-        let mut children = Vec::new();
+        let mut children = <ArrayVec<_, 4>>::new();
 
         let mut project_name = None;
         let mut repository = None;
@@ -189,14 +194,20 @@ impl Render for TitleBar {
                 .root_name()
                 .file_name()
                 .map(|name| SharedString::from(name.to_string()));
-            linked_worktree_name = repository.as_ref().and_then(|repo| {
+            if let Some(repo) = &repository {
                 let repo = repo.read(cx);
-                linked_worktree_short_name(
+                linked_worktree_name = linked_worktree_short_name(
                     repo.original_repo_abs_path.as_ref(),
                     repo.work_directory_abs_path.as_ref(),
-                )
-                .filter(|name| Some(name) != project_name.as_ref())
-            });
+                );
+                if let Some(name) = repo
+                    .original_repo_abs_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                {
+                    project_name = Some(SharedString::from(name.to_string()));
+                }
+            }
         }
 
         children.push(
@@ -224,9 +235,9 @@ impl Render for TitleBar {
                                         .child(self.render_project_name(project_name, window, cx))
                                 })
                                 .when_some(
-                                    repository.filter(|_| title_bar_settings.show_branch_name),
+                                    repository.filter(|_| is_git_enabled),
                                     |title_bar, repository| {
-                                        title_bar.children(self.render_project_branch(
+                                        title_bar.children(self.render_worktree_and_branch(
                                             repository,
                                             linked_worktree_name,
                                             cx,
@@ -579,7 +590,7 @@ impl TitleBar {
                         )
                     },
                 )
-                .anchor(gpui::Corner::TopLeft)
+                .anchor(gpui::Anchor::TopLeft)
                 .into_any_element(),
         )
     }
@@ -762,7 +773,7 @@ impl TitleBar {
                     )
                 },
             )
-            .anchor(gpui::Corner::TopLeft)
+            .anchor(gpui::Anchor::TopLeft)
             .into_any_element()
     }
 
@@ -819,10 +830,10 @@ impl TitleBar {
                     )
                 },
             )
-            .anchor(gpui::Corner::TopLeft)
+            .anchor(gpui::Anchor::TopLeft)
     }
 
-    fn render_project_branch(
+    fn render_worktree_and_branch(
         &self,
         repository: Entity<project::git_store::Repository>,
         linked_worktree_name: Option<SharedString>,
@@ -867,7 +878,6 @@ impl TitleBar {
             (branch_name, icon_info, is_detached_head)
         };
 
-        let branch_name = branch_name?;
         let settings = TitleBarSettings::get_global(cx);
         let effective_repository = Some(repository);
 
@@ -925,69 +935,80 @@ impl TitleBar {
                         )
                     },
                 )
-                .anchor(gpui::Corner::TopLeft)
+                .anchor(gpui::Anchor::TopLeft)
         };
 
-        let branch_tooltip_label = branch_name.clone();
-        let (branch_icon, branch_icon_color) = if settings.show_branch_status_icon {
-            icon_info
-        } else {
-            (IconName::GitBranch, Color::Muted)
-        };
-
-        let trigger = if is_detached_head {
-            Button::new("project_branch_trigger", "Create Branch")
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .label_size(LabelSize::Small)
-                .start_icon(
-                    Icon::new(IconName::GitBranchPlus)
-                        .size(IconSize::XSmall)
-                        .color(Color::Muted),
-                )
-        } else {
-            Button::new("project_branch_trigger", branch_name)
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .start_icon(
-                    Icon::new(branch_icon)
-                        .size(IconSize::XSmall)
-                        .color(branch_icon_color),
-                )
-        };
-
-        let git_picker_button = PopoverMenu::new("branch-menu")
-            .menu(move |window, cx| {
-                Some(git_ui::git_picker::popover(
-                    workspace.downgrade(),
-                    effective_repository.clone(),
-                    git_ui::git_picker::GitPickerTab::Branches,
-                    gpui::rems(34.),
-                    window,
-                    cx,
-                ))
-            })
-            .trigger_with_tooltip(trigger, move |_window, cx| {
-                let meta = if is_detached_head {
-                    format!("Detached HEAD: {}", branch_tooltip_label)
+        let branch_picker = branch_name.and_then(|branch_name| {
+            settings.show_branch_name.then(|| {
+                let branch_tooltip_label = branch_name.clone();
+                let (branch_icon, branch_icon_color) = if settings.show_branch_status_icon {
+                    icon_info
                 } else {
-                    format!("Currently Checked Out: {}", branch_tooltip_label)
+                    (IconName::GitBranch, Color::Muted)
                 };
-                Tooltip::with_meta("Branch & Stash", Some(&zed_actions::git::Branch), meta, cx)
+
+                let trigger = if is_detached_head {
+                    Button::new("project_branch_trigger", "Create Branch")
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                        .label_size(LabelSize::Small)
+                        .start_icon(
+                            Icon::new(IconName::GitBranchPlus)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                } else {
+                    Button::new("project_branch_trigger", branch_name)
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                        .label_size(LabelSize::Small)
+                        .color(Color::Muted)
+                        .start_icon(
+                            Icon::new(branch_icon)
+                                .size(IconSize::XSmall)
+                                .color(branch_icon_color),
+                        )
+                };
+
+                PopoverMenu::new("branch-menu")
+                    .menu(move |window, cx| {
+                        Some(git_ui::git_picker::popover(
+                            workspace.downgrade(),
+                            effective_repository.clone(),
+                            git_ui::git_picker::GitPickerTab::Branches,
+                            gpui::rems(34.),
+                            window,
+                            cx,
+                        ))
+                    })
+                    .trigger_with_tooltip(trigger, move |_window, cx| {
+                        let meta = if is_detached_head {
+                            format!("Detached HEAD: {}", branch_tooltip_label)
+                        } else {
+                            format!("Currently Checked Out: {}", branch_tooltip_label)
+                        };
+                        Tooltip::with_meta(
+                            "Branch & Stash",
+                            Some(&zed_actions::git::Branch),
+                            meta,
+                            cx,
+                        )
+                    })
+                    .anchor(gpui::Anchor::TopLeft)
             })
-            .anchor(gpui::Corner::TopLeft);
+        });
 
         Some(
             h_flex()
                 .gap_px()
                 .child(worktree_button)
-                .child(
-                    Label::new("/")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
-                        .alpha(0.25),
-                )
-                .child(git_picker_button)
+                .when_some(branch_picker, |this, branch_picker| {
+                    this.child(
+                        Label::new("/")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .alpha(0.25),
+                    )
+                    .child(branch_picker)
+                })
                 .into_any_element(),
         )
     }
@@ -1297,6 +1318,6 @@ impl TitleBar {
                 })
                 .into()
             })
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
     }
 }

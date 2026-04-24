@@ -203,25 +203,6 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
     }
 }
 
-fn collect_tiktoken_messages(
-    request: LanguageModelRequest,
-) -> Vec<tiktoken_rs::ChatCompletionRequestMessage> {
-    request
-        .messages
-        .into_iter()
-        .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-            role: match message.role {
-                Role::User => "user".into(),
-                Role::Assistant => "assistant".into(),
-                Role::System => "system".into(),
-            },
-            content: Some(message.string_contents()),
-            name: None,
-            function_call: None,
-        })
-        .collect::<Vec<_>>()
-}
-
 pub struct CopilotChatLanguageModel {
     model: CopilotChatModel,
     request_limiter: RateLimiter,
@@ -318,27 +299,6 @@ impl LanguageModel for CopilotChatLanguageModel {
         self.model.max_token_count()
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let model = self.model.clone();
-        cx.background_spawn(async move {
-            let messages = collect_tiktoken_messages(request);
-            // Copilot uses OpenAI tiktoken tokenizer for all it's model irrespective of the underlying provider(vendor).
-            let tokenizer_model = match model.tokenizer() {
-                Some("o200k_base") => "gpt-4o",
-                Some("cl100k_base") => "gpt-4",
-                _ => "gpt-4o",
-            };
-
-            tiktoken_rs::num_tokens_from_messages(tokenizer_model, &messages)
-                .map(|tokens| tokens as u64)
-        })
-        .boxed()
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -405,7 +365,9 @@ impl LanguageModel for CopilotChatLanguageModel {
 
                 if model.supports_adaptive_thinking() {
                     if anthropic_request.thinking.is_some() {
-                        anthropic_request.thinking = Some(anthropic::Thinking::Adaptive);
+                        anthropic_request.thinking = Some(anthropic::Thinking::Adaptive {
+                            display: Some(anthropic::AdaptiveThinkingDisplay::Summarized),
+                        });
                         anthropic_request.output_config =
                             effort.map(|effort| anthropic::OutputConfig {
                                 effort: Some(effort),
