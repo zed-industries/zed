@@ -116,7 +116,12 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
         window: &mut Window,
         cx: &mut Context<Self>,
     );
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String;
+    fn query_suggestion(
+        &mut self,
+        ignore_settings: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String;
     fn activate_match(
         &mut self,
         index: usize,
@@ -221,7 +226,7 @@ pub trait SearchableItemHandle: ItemHandle {
         window: &mut Window,
         cx: &mut App,
     );
-    fn query_suggestion(&self, window: &mut Window, cx: &mut App) -> String;
+    fn query_suggestion(&self, ignore_settings: bool, window: &mut Window, cx: &mut App) -> String;
     fn activate_match(
         &self,
         index: usize,
@@ -335,8 +340,10 @@ impl<T: SearchableItem> SearchableItemHandle for Entity<T> {
             this.update_matches(matches.as_slice(), active_match_index, token, window, cx)
         });
     }
-    fn query_suggestion(&self, window: &mut Window, cx: &mut App) -> String {
-        self.update(cx, |this, cx| this.query_suggestion(window, cx))
+    fn query_suggestion(&self, ignore_settings: bool, window: &mut Window, cx: &mut App) -> String {
+        self.update(cx, |this, cx| {
+            this.query_suggestion(ignore_settings, window, cx)
+        })
     }
     fn activate_match(
         &self,

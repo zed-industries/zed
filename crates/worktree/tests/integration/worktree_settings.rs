@@ -7,7 +7,6 @@ use worktree::*;
 
 fn make_settings_with_read_only(patterns: &[&str]) -> WorktreeSettings {
     WorktreeSettings {
-        project_name: None,
         prevent_sharing_in_public_channels: false,
         file_scan_exclusions: PathMatcher::default(),
         file_scan_inclusions: PathMatcher::default(),

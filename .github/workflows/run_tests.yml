@@ -206,7 +206,7 @@ jobs:
   clippy_linux:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
+    if: needs.orchestrate.outputs.run_tests == 'true'
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       CC: clang
