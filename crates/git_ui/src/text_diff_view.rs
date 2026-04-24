@@ -178,14 +178,9 @@ impl TextDiffView {
                 window,
                 cx,
             );
-            splittable.set_render_diff_hunk_controls(
-                Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                cx,
-            );
-            splittable.rhs_editor().update(cx, |editor, cx| {
+            splittable.disable_diff_hunk_controls(cx);
+            splittable.rhs_editor().update(cx, |editor, _cx| {
                 editor.start_temporary_diff_override();
-                editor.disable_diagnostics(cx);
-                editor.set_expand_all_diff_hunks(cx);
             });
             splittable
         });
