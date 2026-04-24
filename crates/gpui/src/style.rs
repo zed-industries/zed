@@ -698,72 +698,16 @@ impl Style {
 
         if self.is_border_visible() {
             let border_widths = self.border_widths.to_pixels(rem_size);
-            let max_border_width = border_widths.max();
-            let max_corner_radius = corner_radii.max();
-            let zero_size = Size {
-                width: Pixels::ZERO,
-                height: Pixels::ZERO,
-            };
-
-            let mut top_bounds = Bounds::from_corners(
-                bounds.origin,
-                bounds.top_right() + point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
-            );
-            top_bounds.size = top_bounds.size.max(&zero_size);
-            let mut bottom_bounds = Bounds::from_corners(
-                bounds.bottom_left() - point(Pixels::ZERO, max_border_width.max(max_corner_radius)),
-                bounds.bottom_right(),
-            );
-            bottom_bounds.size = bottom_bounds.size.max(&zero_size);
-            let mut left_bounds = Bounds::from_corners(
-                top_bounds.bottom_left(),
-                bottom_bounds.origin + point(max_border_width, Pixels::ZERO),
-            );
-            left_bounds.size = left_bounds.size.max(&zero_size);
-            let mut right_bounds = Bounds::from_corners(
-                top_bounds.bottom_right() - point(max_border_width, Pixels::ZERO),
-                bottom_bounds.top_right(),
-            );
-            right_bounds.size = right_bounds.size.max(&zero_size);
-
             let mut background = self.border_color.unwrap_or_default();
             background.a = 0.;
-            let quad = quad(
+            window.paint_quad(quad(
                 bounds,
                 corner_radii,
                 background,
                 border_widths,
                 self.border_color.unwrap_or_default(),
                 self.border_style,
-            );
-
-            window.with_content_mask(Some(ContentMask { bounds: top_bounds }), |window| {
-                window.paint_quad(quad.clone());
-            });
-            window.with_content_mask(
-                Some(ContentMask {
-                    bounds: right_bounds,
-                }),
-                |window| {
-                    window.paint_quad(quad.clone());
-                },
-            );
-            window.with_content_mask(
-                Some(ContentMask {
-                    bounds: bottom_bounds,
-                }),
-                |window| {
-                    window.paint_quad(quad.clone());
-                },
-            );
-            window.with_content_mask(
-                Some(ContentMask {
-                    bounds: left_bounds,
-                }),
-                |window| {
-                    window.paint_quad(quad);
-                },
-            );
+            ));
         }
 
         #[cfg(debug_assertions)]

@@ -17,7 +17,6 @@ mod persistence;
 pub mod searchable;
 mod security_modal;
 pub mod shared_screen;
-use db::smol::future::yield_now;
 pub use shared_screen::SharedScreen;
 pub mod focus_follows_mouse;
 mod status_bar;
@@ -3389,7 +3388,7 @@ impl Workspace {
                                 .unwrap_or(false);
 
                             if focus_changed {
-                                yield_now().await;
+                                futures_lite::future::yield_now().await;
                             }
                         }
 

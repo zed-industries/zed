@@ -337,7 +337,7 @@ fn main() {
         session_id.clone(),
         KeyValueStore::from_app_db(&app_db),
     ));
-
+    let background_executor = app.background_executor();
     crashes::init(
         InitCrashHandler {
             session_id,
@@ -358,6 +358,7 @@ fn main() {
         |task| {
             app.background_executor().spawn(task).detach();
         },
+        move |duration| background_executor.timer(duration),
     );
 
     let (open_listener, mut open_rx) = OpenListener::new();

@@ -9,6 +9,7 @@ dependencies = [
  "action_log",
  "agent-client-protocol",
  "anyhow",
+ "async-channel 2.5.0",
  "base64 0.22.1",
  "buffer_diff",
  "chrono",
@@ -34,7 +35,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "task",
  "telemetry",
  "terminal",
@@ -52,16 +52,16 @@ name = "acp_tools"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
+ "agent_servers",
+ "agent_ui",
  "collections",
  "gpui",
  "language",
- "log",
  "markdown",
  "project",
  "serde",
  "serde_json",
  "settings",
- "smol",
  "theme_settings",
  "ui",
  "util",
@@ -152,6 +152,8 @@ dependencies = [
  "agent_servers",
  "agent_settings",
  "anyhow",
+ "async-channel 2.5.0",
+ "async-io",
  "chrono",
  "client",
  "clock",
@@ -198,7 +200,6 @@ dependencies = [
  "settings",
  "shell_command_parser",
  "smallvec",
- "smol",
  "sqlez",
  "streaming_diff",
  "strsim",
@@ -276,10 +277,10 @@ name = "agent_servers"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
- "acp_tools",
  "action_log",
  "agent-client-protocol",
  "anyhow",
+ "async-channel 2.5.0",
  "chrono",
  "client",
  "collections",
@@ -303,7 +304,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "task",
  "tempfile",
  "terminal",
@@ -351,6 +351,7 @@ dependencies = [
  "agent_settings",
  "ai_onboarding",
  "anyhow",
+ "async-channel 2.5.0",
  "audio",
  "base64 0.22.1",
  "buffer_diff",
@@ -398,6 +399,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "platform_title_bar",
  "postage",
  "pretty_assertions",
  "project",
@@ -418,7 +420,6 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "smol",
  "streaming_diff",
  "task",
  "telemetry",
@@ -934,7 +935,7 @@ version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8034a681df4aed8b8edbd7fbe472401ecf009251c8b40556b304567052e294c5"
 dependencies = [
- "async-lock 3.4.2",
+ "async-lock",
  "blocking",
  "futures-lite 2.6.1",
 ]
@@ -948,7 +949,7 @@ dependencies = [
  "async-channel 2.5.0",
  "async-executor",
  "async-io",
- "async-lock 3.4.2",
+ "async-lock",
  "blocking",
  "futures-lite 2.6.1",
  "once_cell",
@@ -970,15 +971,6 @@ dependencies = [
  "rustix 1.1.2",
  "slab",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "async-lock"
-version = "2.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "287272293e9d8c41773cec55e365490fe034813a2f172f502d6ddcf75b2f582b"
-dependencies = [
- "event-listener 2.5.3",
 ]
 
 [[package]]
@@ -1020,7 +1012,7 @@ checksum = "fc50921ec0055cdd8a16de48773bfeec5c972598674347252c0399676be7da75"
 dependencies = [
  "async-channel 2.5.0",
  "async-io",
- "async-lock 3.4.2",
+ "async-lock",
  "async-signal",
  "async-task",
  "blocking",
@@ -1048,7 +1040,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43c070bbf59cd3570b6b2dd54cd772527c7c3620fce8be898406dd3ed6adc64c"
 dependencies = [
  "async-io",
- "async-lock 3.4.2",
+ "async-lock",
  "atomic-waker",
  "cfg-if",
  "futures-core",
@@ -1069,7 +1061,7 @@ dependencies = [
  "async-channel 1.9.0",
  "async-global-executor",
  "async-io",
- "async-lock 3.4.2",
+ "async-lock",
  "async-process",
  "crossbeam-utils",
  "futures-channel",
@@ -2961,6 +2953,7 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
  "async-tungstenite",
  "base64 0.22.1",
  "chrono",
@@ -3028,6 +3021,7 @@ name = "cloud_api_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-lock",
  "cloud_api_types",
  "futures 0.3.32",
  "gpui",
@@ -3035,7 +3029,6 @@ dependencies = [
  "http_client",
  "parking_lot",
  "serde_json",
- "smol",
  "thiserror 2.0.17",
  "yawc",
 ]
@@ -3182,6 +3175,7 @@ version = "0.44.0"
 dependencies = [
  "agent",
  "anyhow",
+ "async-channel 2.5.0",
  "async-trait",
  "async-tungstenite",
  "aws-config",
@@ -3559,15 +3553,19 @@ name = "context_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
+ "async-process",
  "async-trait",
  "base64 0.22.1",
  "collections",
  "futures 0.3.32",
+ "futures-lite 1.13.0",
  "gpui",
  "http_client",
  "log",
  "net",
  "parking_lot",
+ "pollster 0.4.0",
  "postage",
  "rand 0.9.3",
  "schemars 1.0.4",
@@ -3576,7 +3574,6 @@ dependencies = [
  "settings",
  "sha2",
  "slotmap",
- "smol",
  "tempfile",
  "tiny_http",
  "url",
@@ -4113,6 +4110,7 @@ dependencies = [
 name = "crashes"
 version = "0.1.0"
 dependencies = [
+ "async-process",
  "cfg-if",
  "crash-handler",
  "futures 0.3.32",
@@ -4124,7 +4122,6 @@ dependencies = [
  "release_channel",
  "serde",
  "serde_json",
- "smol",
  "system_specs",
  "windows 0.61.3",
  "zstd",
@@ -4656,7 +4653,6 @@ dependencies = [
  "log",
  "paths",
  "release_channel",
- "smol",
  "sqlez",
  "sqlez_macros",
  "tempfile",
@@ -5475,6 +5471,7 @@ dependencies = [
  "file_icons",
  "fs",
  "futures 0.3.32",
+ "futures-lite 1.13.0",
  "fuzzy",
  "git",
  "gpui",
@@ -5505,7 +5502,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
- "smol",
  "snippet",
  "sum_tree",
  "task",
@@ -6589,6 +6585,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ashpd",
+ "async-channel 2.5.0",
  "async-tar",
  "async-trait",
  "collections",
@@ -7266,6 +7263,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "askpass",
+ "async-channel 2.5.0",
  "async-trait",
  "collections",
  "derive_more",
@@ -7315,6 +7313,7 @@ name = "git_graph"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
  "collections",
  "db",
  "editor",
@@ -7333,7 +7332,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
- "smol",
  "theme",
  "theme_settings",
  "time",
@@ -7381,6 +7379,7 @@ dependencies = [
  "file_icons",
  "fs",
  "futures 0.3.32",
+ "futures-lite 1.13.0",
  "fuzzy",
  "fuzzy_nucleo",
  "git",
@@ -7409,7 +7408,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
- "smol",
  "strum 0.27.2",
  "task",
  "telemetry",
@@ -7839,10 +7837,9 @@ dependencies = [
 name = "gpui_shared_string"
 version = "0.1.0"
 dependencies = [
- "derive_more",
- "gpui_util",
  "schemars 1.0.4",
  "serde",
+ "smol_str",
 ]
 
 [[package]]
@@ -7969,9 +7966,9 @@ dependencies = [
 
 [[package]]
 name = "grid"
-version = "0.18.0"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12101ecc8225ea6d675bc70263074eab6169079621c2186fe0c66590b2df9681"
+checksum = "f9e2d4c0a8296178d8802098410ca05d86b17a10bb5ab559b3fb404c1f948220"
 
 [[package]]
 name = "group"
@@ -9475,6 +9472,7 @@ dependencies = [
  "encoding_rs",
  "fs",
  "futures 0.3.32",
+ "futures-lite 1.13.0",
  "fuzzy",
  "globset",
  "gpui",
@@ -9497,7 +9495,6 @@ dependencies = [
  "settings",
  "shellexpand",
  "smallvec",
- "smol",
  "streaming-iterator",
  "strsim",
  "sum_tree",
@@ -9595,6 +9592,7 @@ name = "language_model_core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-lock",
  "cloud_llm_client",
  "futures 0.3.32",
  "gpui_shared_string",
@@ -9603,7 +9601,6 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
- "smol",
  "strum 0.27.2",
  "thiserror 2.0.17",
 ]
@@ -9615,6 +9612,7 @@ dependencies = [
  "ai_onboarding",
  "anthropic",
  "anyhow",
+ "async-lock",
  "aws-config",
  "aws-credential-types",
  "aws_http_client",
@@ -9656,7 +9654,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "strum 0.27.2",
  "tokio",
  "ui",
@@ -9683,7 +9680,6 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "smol",
  "thiserror 2.0.17",
 ]
 
@@ -10912,6 +10908,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
+ "futures-lite 1.13.0",
  "gpui",
  "indoc",
  "itertools 0.14.0",
@@ -10924,7 +10921,6 @@ dependencies = [
  "serde",
  "settings",
  "smallvec",
- "smol",
  "sum_tree",
  "text",
  "theme",
@@ -11198,7 +11194,7 @@ dependencies = [
  "channel",
  "client",
  "component",
- "db",
+ "futures-lite 1.13.0",
  "gpui",
  "rpc",
  "sum_tree",
@@ -11792,7 +11788,7 @@ dependencies = [
  "ashpd",
  "async-fs",
  "async-io",
- "async-lock 3.4.2",
+ "async-lock",
  "blocking",
  "cbc",
  "cipher",
@@ -12035,6 +12031,7 @@ name = "outline"
 version = "0.1.0"
 dependencies = [
  "editor",
+ "futures 0.3.32",
  "fuzzy",
  "gpui",
  "indoc",
@@ -12047,7 +12044,6 @@ dependencies = [
  "rope",
  "serde_json",
  "settings",
- "smol",
  "theme",
  "theme_settings",
  "ui",
@@ -12061,10 +12057,12 @@ name = "outline_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel 2.5.0",
  "collections",
  "db",
  "editor",
  "file_icons",
+ "futures 0.3.32",
  "fuzzy",
  "gpui",
  "itertools 0.14.0",
@@ -12080,7 +12078,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
- "smol",
  "theme",
  "theme_settings",
  "ui",
@@ -13440,6 +13437,7 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "askpass",
+ "async-channel 2.5.0",
  "async-trait",
  "base64 0.22.1",
  "buffer_diff",
@@ -14404,7 +14402,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "task",
  "telemetry",
  "ui",
@@ -14606,6 +14603,7 @@ dependencies = [
  "agent",
  "anyhow",
  "askpass",
+ "async-channel 2.5.0",
  "cargo_toml",
  "clap",
  "client",
@@ -15744,6 +15742,7 @@ dependencies = [
  "editor",
  "fs",
  "futures 0.3.32",
+ "futures-lite 1.13.0",
  "gpui",
  "itertools 0.14.0",
  "language",
@@ -15755,7 +15754,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "theme",
  "theme_settings",
  "tracing",
@@ -16304,6 +16302,7 @@ dependencies = [
  "agent_settings",
  "agent_ui",
  "anyhow",
+ "async-channel 2.5.0",
  "chrono",
  "client",
  "clock",
@@ -16333,7 +16332,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
  "telemetry",
  "theme",
  "theme_settings",
@@ -16518,7 +16516,7 @@ dependencies = [
  "async-executor",
  "async-fs",
  "async-io",
- "async-lock 3.4.2",
+ "async-lock",
  "async-net",
  "async-process",
  "blocking",
@@ -16527,9 +16525,13 @@ dependencies = [
 
 [[package]]
 name = "smol_str"
-version = "0.3.5"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f7a918bd2a9951d18ee6e48f076843e8e73a9a5d22cf05bcd4b7a81bdd04e17"
+checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
+dependencies = [
+ "borsh",
+ "serde_core",
+]
 
 [[package]]
 name = "snafu"
@@ -16685,7 +16687,7 @@ dependencies = [
  "libsqlite3-sys",
  "log",
  "parking_lot",
- "smol",
+ "pollster 0.4.0",
  "sqlformat",
  "thread_local",
  "util",
@@ -17616,9 +17618,9 @@ dependencies = [
 
 [[package]]
 name = "taffy"
-version = "0.9.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a13e5d13f79d558b5d353a98072ca8ca0e99da429467804de959aa8c83c9a004"
+checksum = "aea22054047c16c3f34d3ac473a2170be1424b1115b2a3adcf28cfb067c88859"
 dependencies = [
  "arrayvec",
  "grid",
@@ -17769,8 +17771,10 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
+ "async-channel 2.5.0",
  "collections",
  "futures 0.3.32",
+ "futures-lite 1.13.0",
  "gpui",
  "itertools 0.14.0",
  "libc",
@@ -17783,7 +17787,6 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "settings",
- "smol",
  "sysinfo 0.37.2",
  "task",
  "theme",
@@ -18155,6 +18158,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 name = "title_bar"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "arrayvec",
  "auto_update",
@@ -18164,6 +18168,7 @@ dependencies = [
  "client",
  "cloud_api_types",
  "db",
+ "fs",
  "git_ui",
  "gpui",
  "icons",
@@ -21921,6 +21926,7 @@ dependencies = [
  "db",
  "fs",
  "futures 0.3.32",
+ "futures-lite 1.13.0",
  "git",
  "gpui",
  "http_client",
@@ -21963,7 +21969,8 @@ name = "worktree"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-lock 2.8.0",
+ "async-channel 2.5.0",
+ "async-lock",
  "chardetng",
  "clock",
  "collections",
@@ -21986,7 +21993,6 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
- "smol",
  "sum_tree",
  "text",
  "tracing",
@@ -22323,7 +22329,7 @@ dependencies = [
  "async-broadcast",
  "async-executor",
  "async-io",
- "async-lock 3.4.2",
+ "async-lock",
  "async-process",
  "async-recursion",
  "async-task",

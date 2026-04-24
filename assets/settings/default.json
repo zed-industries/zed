@@ -355,6 +355,13 @@
   // 1. Do nothing: `none`
   // 2. Find references for the same symbol: `find_all_references` (default)
   "go_to_definition_fallback": "find_all_references",
+  // How to scroll the target into view when navigating to a definition or reference
+  // (e.g. Go to Definition, Go to Type Definition, Find All References).
+  //
+  // 1. Vertically center the target in the viewport: `center` (default)
+  // 2. Scroll the minimum amount needed to make the target visible: `minimum`
+  // 3. Scroll so the target appears near the top of the viewport: `top`
+  "go_to_definition_scroll_strategy": "center",
   // Which level to use to filter out diagnostics displayed in the editor.
   //
   // Affects the editor rendering only, and does not interrupt
