@@ -6794,6 +6794,7 @@ impl ThreadView {
                 choices,
                 None,
                 entry_ix,
+                session_id,
                 tool_call_id,
                 focus_handle,
                 cx,
