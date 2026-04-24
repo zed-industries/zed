@@ -826,15 +826,16 @@ impl MetalRenderer {
                         viewport_size,
                         command_encoder,
                     ),
-                PrimitiveBatch::PolychromeSprites { texture_id, range } => self
-                    .draw_polychrome_sprites(
-                        texture_id,
-                        &scene.polychrome_sprites[range],
-                        instance_buffer,
-                        &mut instance_offset,
-                        viewport_size,
-                        command_encoder,
-                    ),
+                PrimitiveBatch::PolychromeSprites {
+                    texture_id, range, ..
+                } => self.draw_polychrome_sprites(
+                    texture_id,
+                    &scene.polychrome_sprites[range],
+                    instance_buffer,
+                    &mut instance_offset,
+                    viewport_size,
+                    command_encoder,
+                ),
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
                     &scene.surfaces[range],
                     instance_buffer,
