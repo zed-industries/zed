@@ -2940,6 +2940,7 @@ dependencies = [
  "core-foundation 0.10.0",
  "core-services",
  "dialoguer",
+ "embed-resource",
  "exec",
  "fork",
  "ipc-channel",
