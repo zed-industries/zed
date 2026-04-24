@@ -1094,10 +1094,9 @@ impl Element for TerminalElement {
                     // internal line number (which can be negative in Scrollable mode for
                     // scrollback history).
                     let rows_above_viewport =
-                        f32::from((intersection.top() - bounds.top()).max(px(0.)) / line_height_px)
-                            as usize;
+                        ((intersection.top() - bounds.top()).max(px(0.)) / line_height_px) as usize;
                     let visible_row_count =
-                        f32::from((intersection.size.height / line_height_px).ceil()) as usize + 1;
+                        (intersection.size.height / line_height_px).ceil() as usize + 1;
 
                     TerminalElement::layout_grid(
                         // Group cells by line and filter to only the visible screen rows.
