@@ -3917,7 +3917,37 @@ fn open_user_settings_in_workspace(
     .detach();
 }
 
-fn update_settings_file(
+fn notify_settings_write_error(
+    settings_window: &Entity<SettingsWindow>,
+    message: String,
+    cx: &mut App,
+) {
+    let _ = settings_window.update(cx, |this, cx| {
+        this.settings_write_error = Some(message);
+        cx.notify();
+    });
+}
+
+fn notify_settings_write_error_async(
+    settings_window: &WeakEntity<SettingsWindow>,
+    message: String,
+    cx: &mut AsyncApp,
+) {
+    let _ = settings_window.update(cx, |this: &mut SettingsWindow, cx| {
+        this.settings_write_error = Some(message);
+        cx.notify();
+    });
+}
+
+fn notify_settings_write_error_from_window(window: &mut Window, message: String, cx: &mut App) {
+    if let Some(settings_window) = window.root::<SettingsWindow>().flatten() {
+        notify_settings_write_error(&settings_window, message, cx);
+    } else {
+        log::error!("Failed to update settings: {message}");
+    }
+}
+
+fn update_settings_file_inner(
     file: SettingsUiFile,
     file_name: Option<&'static str>,
     window: &mut Window,
@@ -3940,6 +3970,7 @@ fn update_settings_file(
             let completion = SettingsStore::global(cx)
                 .update_settings_file_with_completion(<dyn fs::Fs>::global(cx), update);
             if let Some(settings_window) = settings_window {
+                let settings_window = settings_window.downgrade();
                 cx.spawn(async move |cx| {
                     let message = match completion.await {
                         Ok(Ok(())) => None,
@@ -3948,10 +3979,7 @@ fn update_settings_file(
                     };
 
                     if let Some(message) = message {
-                        let _ = settings_window.update(cx, |this, cx| {
-                            this.settings_write_error = Some(message);
-                            cx.notify();
-                        });
+                        notify_settings_write_error_async(&settings_window, message, cx);
                     }
                 })
                 .detach();
@@ -3962,6 +3990,18 @@ fn update_settings_file(
     }
 }
 
+pub(crate) fn update_settings_file(
+    file: SettingsUiFile,
+    file_name: Option<&'static str>,
+    window: &mut Window,
+    cx: &mut App,
+    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
+) {
+    if let Err(err) = update_settings_file_inner(file, file_name, window, cx, update) {
+        notify_settings_write_error_from_window(window, format!("{err:#}"), cx);
+    }
+}
+
 pub(crate) fn update_settings_file_or_notify(
     file: SettingsUiFile,
     file_name: Option<&'static str>,
@@ -3969,16 +4009,7 @@ pub(crate) fn update_settings_file_or_notify(
     cx: &mut App,
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) {
-    if let Err(err) = update_settings_file(file, file_name, window, cx, update) {
-        if let Some(settings_window) = window.root::<SettingsWindow>().flatten() {
-            settings_window.update(cx, |this, cx| {
-                this.settings_write_error = Some(format!("{err:#}"));
-                cx.notify();
-            });
-        } else {
-            log::error!("Failed to update settings: {err:#}");
-        }
-    }
+    update_settings_file(file, file_name, window, cx, update);
 }
 
 struct ProjectSettingsUpdateEntry {
@@ -4005,10 +4036,7 @@ impl ProjectSettingsUpdateQueue {
                 let settings_window = entry.settings_window.clone();
                 if let Err(err) = Self::process_entry(entry, &mut cx).await {
                     log::error!("Failed to update project settings: {err:?}");
-                    let _ = settings_window.update(cx, |this: &mut SettingsWindow, cx| {
-                        this.settings_write_error = Some(format!("{err:#}"));
-                        cx.notify();
-                    });
+                    notify_settings_write_error_async(&settings_window, format!("{err:#}"), cx);
                 }
             }
         });
@@ -4194,8 +4222,8 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());
 
                 let state = *state == ui::ToggleState::Selected;
-                update_settings_file_or_notify(file.clone(), field.json_path, window, cx, move |settings, _cx| {
-                    (field.write)(settings, Some(state.into()));
+                update_settings_file_or_notify(file.clone(), field.json_path, window, cx, move |settings, app| {
+                    (field.write)(settings, Some(state.into()), app);
                 });
             }
         })
