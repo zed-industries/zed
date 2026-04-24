@@ -296,7 +296,7 @@ pub struct ThreadView {
     pub expanded_tool_calls: HashSet<acp::ToolCallId>,
     pub expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
-    auto_expanded_thinking_block: Option<(usize, usize)>,
+    pub(crate) auto_expanded_thinking_block: Option<(usize, usize)>,
     pub(crate) user_toggled_thinking_blocks: HashSet<(usize, usize)>,
     pub(crate) search_auto_expanded_tool_calls: HashSet<acp::ToolCallId>,
     pub(crate) search_auto_expanded_thinking_blocks: HashSet<(usize, usize)>,
@@ -340,15 +340,21 @@ pub struct ThreadView {
     /// so that when the match set changes, we can re-anchor to the nearest remaining match.
     pub active_search_position: Option<(usize, usize)>,
     /// Markdown entities that currently hold search highlights, so we can clear
-    /// them when the match set shrinks or the search is dismissed.
-    pub highlighted_markdowns: Vec<Entity<Markdown>>,
+    /// them when the match set shrinks or the search is dismissed. Stored as
+    /// weak handles so that entities dropped from `EntryViewState` aren't
+    /// retained purely for their search-highlight membership.
+    pub highlighted_markdowns: Vec<WeakEntity<Markdown>>,
     /// User-message editors that currently hold search highlights, tracked for
     /// the same reason — user-message rendering goes through a `MessageEditor`
     /// (see `conversation_view/thread_view.rs` user-message arm), not the
     /// markdown entity, so highlights must be applied to the editor directly.
-    pub highlighted_user_message_editors: Vec<Entity<Editor>>,
+    pub highlighted_user_message_editors: Vec<WeakEntity<Editor>>,
     pub search_bar: Option<Entity<search::BufferSearchBar>>,
     pub search_bar_subscription: Option<Subscription>,
+    /// Set when a `deploy_search` has been queued via `window.defer` but not
+    /// yet run. Coalesces duplicate deploys within the same frame so two
+    /// action dispatches don't deploy-then-dismiss the bar.
+    search_deploy_pending: bool,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -582,6 +588,7 @@ impl ThreadView {
             highlighted_user_message_editors: Vec::new(),
             search_bar: None,
             search_bar_subscription: None,
+            search_deploy_pending: false,
         };
 
         this.sync_generating_indicator(cx);
@@ -5507,6 +5514,12 @@ impl ThreadView {
     }
 
     fn toggle_thinking_block_expansion(&mut self, key: (usize, usize), cx: &mut Context<Self>) {
+        // Once the user manually toggles, the block is user-owned; drop the
+        // search tracker so a later `collapse_search_auto_expanded_sections`
+        // doesn't try to roll back the user's explicit choice. Mirrors the
+        // tool-call chevron handler.
+        self.search_auto_expanded_thinking_blocks.remove(&key);
+
         let thinking_display = AgentSettings::get_global(cx).thinking_display;
 
         match thinking_display {
@@ -5573,19 +5586,24 @@ impl ThreadView {
         let thinking_display = AgentSettings::get_global(cx).thinking_display;
         let is_user_toggled = self.user_toggled_thinking_blocks.contains(&key);
         let is_in_expanded_set = self.expanded_thinking_blocks.contains(&key);
+        // Search auto-expansion is an extra "open" force that has to apply in
+        // all display modes, not just Auto/Preview. Without this,
+        // `AlwaysCollapsed` users who navigate via search would see the match
+        // counter advance but no block actually open.
+        let is_search_expanded = self.search_auto_expanded_thinking_blocks.contains(&key);
 
         let (is_open, is_constrained) = match thinking_display {
             ThinkingBlockDisplay::Auto => {
-                let is_open = is_user_toggled || is_in_expanded_set;
+                let is_open = is_user_toggled || is_in_expanded_set || is_search_expanded;
                 (is_open, false)
             }
             ThinkingBlockDisplay::Preview => {
-                let is_open = is_user_toggled || is_in_expanded_set;
-                let is_constrained = is_in_expanded_set && !is_user_toggled;
+                let is_open = is_user_toggled || is_in_expanded_set || is_search_expanded;
+                let is_constrained = (is_in_expanded_set || is_search_expanded) && !is_user_toggled;
                 (is_open, is_constrained)
             }
-            ThinkingBlockDisplay::AlwaysExpanded => (!is_user_toggled, false),
-            ThinkingBlockDisplay::AlwaysCollapsed => (is_user_toggled, false),
+            ThinkingBlockDisplay::AlwaysExpanded => (!is_user_toggled || is_search_expanded, false),
+            ThinkingBlockDisplay::AlwaysCollapsed => (is_user_toggled || is_search_expanded, false),
         };
 
         let should_auto_scroll = self.auto_expanded_thinking_block == Some(key);
@@ -8984,6 +9002,13 @@ impl ThreadView {
     }
 
     fn deploy_search(&mut self, action: &Deploy, window: &mut Window, cx: &mut Context<Self>) {
+        // Guard against two action dispatches in the same frame both landing
+        // here before either deferred closure runs — without this, the first
+        // deploys + toggles (opens) and the second re-toggles (dismisses).
+        if self.search_deploy_pending {
+            return;
+        }
+
         let needs_init = self.search_bar.is_none();
         if needs_init {
             let languages = self
@@ -9002,11 +9027,13 @@ impl ThreadView {
         let Some(bar) = self.search_bar.clone() else {
             return;
         };
+        self.search_deploy_pending = true;
         let this = cx.entity();
         let action = action.clone();
         // `set_active_pane_item` and `toggle` can re-enter this view (via
         // SearchableItem callbacks), so run them outside of the current update.
         window.defer(cx, move |window, cx| {
+            this.update(cx, |this, _| this.search_deploy_pending = false);
             bar.update(cx, |bar, cx| {
                 if needs_init {
                     bar.set_active_pane_item(Some(&this), window, cx);
@@ -9014,6 +9041,21 @@ impl ThreadView {
                 bar.toggle(&action, window, cx);
             });
         });
+    }
+
+    /// Tell the owned `BufferSearchBar` to drop its strong handle back to this
+    /// view, then drop the bar itself. This exists because `BufferSearchBar`
+    /// retains its active SearchableItem (here, `Entity<ThreadView>`) as a
+    /// strong handle, closing a cycle with the `search_bar` field below — if
+    /// nobody explicitly releases one side, neither ever drops. Callers
+    /// (`AgentPanel`, via `ConversationView::release_search_bar_resources`)
+    /// must invoke this before discarding the last external reference to
+    /// this view.
+    pub fn release_search_bar_resources(&mut self, cx: &mut Context<Self>) {
+        if let Some(bar) = self.search_bar.take() {
+            bar.update(cx, |bar, cx| bar.release_active_searchable_item(cx));
+        }
+        self.search_bar_subscription = None;
     }
 }
 

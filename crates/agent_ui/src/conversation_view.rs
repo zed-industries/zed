@@ -1336,6 +1336,20 @@ impl ConversationView {
         }
     }
 
+    /// Release the `BufferSearchBar` / `ThreadView` cycle for every thread this
+    /// view owns so that dropping this `ConversationView` actually frees its
+    /// underlying `ThreadView` entities. See
+    /// `ThreadView::release_search_bar_resources` for the cycle it breaks.
+    pub fn release_search_bar_resources(&mut self, cx: &mut Context<Self>) {
+        if let ServerState::Connected(connected) = &self.server_state {
+            for thread_view in connected.threads.values() {
+                thread_view.update(cx, |thread_view, cx| {
+                    thread_view.release_search_bar_resources(cx);
+                });
+            }
+        }
+    }
+
     pub fn agent_key(&self) -> &Agent {
         &self.connection_key
     }

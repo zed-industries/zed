@@ -1027,7 +1027,10 @@ impl AgentPanel {
             &ThreadMetadataStore::global(cx),
             |this, _store, event, cx| {
                 let ThreadMetadataStoreEvent::ThreadArchived(thread_id) = event;
-                if this.retained_threads.remove(thread_id).is_some() {
+                if let Some(conversation_view) = this.retained_threads.remove(thread_id) {
+                    conversation_view.update(cx, |view, cx| {
+                        view.release_search_bar_resources(cx);
+                    });
                     cx.notify();
                 }
             },
@@ -1999,7 +2002,7 @@ impl AgentPanel {
         self.cleanup_retained_threads(cx);
     }
 
-    fn cleanup_retained_threads(&mut self, cx: &App) {
+    fn cleanup_retained_threads(&mut self, cx: &mut Context<Self>) {
         let mut potential_removals = self
             .retained_threads
             .iter()
@@ -2022,7 +2025,11 @@ impl AgentPanel {
             .take(n)
             .collect::<Vec<_>>();
         for id in to_remove {
-            self.retained_threads.remove(&id);
+            if let Some(conversation_view) = self.retained_threads.remove(&id) {
+                conversation_view.update(cx, |view, cx| {
+                    view.release_search_bar_resources(cx);
+                });
+            }
         }
     }
 

@@ -585,6 +585,13 @@ impl Markdown {
         &self.source
     }
 
+    /// Cheap clone of the source as a `SharedString` — use instead of
+    /// `source().to_string()` when the caller needs an owned value but does
+    /// not need exclusive ownership of the bytes.
+    pub fn source_shared(&self) -> SharedString {
+        self.source.clone()
+    }
+
     pub fn append(&mut self, text: &str, cx: &mut Context<Self>) {
         self.source = SharedString::new(self.source.to_string() + text);
         self.parse(cx);

@@ -8,7 +8,7 @@ use editor::display_map::HighlightKey;
 use editor::{Anchor, Editor, MultiBufferOffset};
 use gpui::{
     App, AppContext, Context, Entity, EntityId, EventEmitter, ListOffset, SharedString, Task,
-    Window, px,
+    WeakEntity, Window, px,
 };
 use markdown::Markdown;
 use project::search::SearchQuery;
@@ -37,10 +37,15 @@ pub enum MatchOrigin {
 /// inside a user-message `Editor`. User messages are rendered through a
 /// `MessageEditor`, not the markdown entity that `UserMessage::content` holds,
 /// so highlights for them must be routed through the editor directly.
+///
+/// Handles are weak so that a match surviving in `search_matches` after the
+/// underlying editor or markdown entity has been dropped (for instance because
+/// `EntryViewState` replaced a message editor) does not extend the entity's
+/// lifetime. Consumers upgrade and skip on failure.
 #[derive(Debug, Clone)]
 pub enum MatchTarget {
-    Markdown(Entity<Markdown>),
-    Editor(Entity<Editor>),
+    Markdown(WeakEntity<Markdown>),
+    Editor(WeakEntity<Editor>),
 }
 
 impl MatchTarget {
@@ -121,12 +126,16 @@ impl SearchableItem for ThreadView {
         self.active_search_match_index = None;
         self.active_search_position = None;
         for markdown in std::mem::take(&mut self.highlighted_markdowns) {
-            markdown.update(cx, |md, cx| md.clear_search_highlights(cx));
+            if let Some(markdown) = markdown.upgrade() {
+                markdown.update(cx, |md, cx| md.clear_search_highlights(cx));
+            }
         }
         for editor in std::mem::take(&mut self.highlighted_user_message_editors) {
-            editor.update(cx, |editor, cx| {
-                editor.clear_background_highlights(HighlightKey::BufferSearchHighlights, cx);
-            });
+            if let Some(editor) = editor.upgrade() {
+                editor.update(cx, |editor, cx| {
+                    editor.clear_background_highlights(HighlightKey::BufferSearchHighlights, cx);
+                });
+            }
         }
         self.collapse_search_auto_expanded_sections(cx);
         if had_matches {
@@ -152,12 +161,16 @@ impl SearchableItem for ThreadView {
             .map(|(target, _, _)| target.entity_id())
             .collect();
         for markdown in std::mem::take(&mut self.highlighted_markdowns) {
-            if !new_ids.contains(&markdown.entity_id()) {
+            if !new_ids.contains(&markdown.entity_id())
+                && let Some(markdown) = markdown.upgrade()
+            {
                 markdown.update(cx, |md, cx| md.clear_search_highlights(cx));
             }
         }
         for editor in std::mem::take(&mut self.highlighted_user_message_editors) {
-            if !new_ids.contains(&editor.entity_id()) {
+            if !new_ids.contains(&editor.entity_id())
+                && let Some(editor) = editor.upgrade()
+            {
                 editor.update(cx, |editor, cx| {
                     editor.clear_background_highlights(HighlightKey::BufferSearchHighlights, cx);
                 });
@@ -168,15 +181,19 @@ impl SearchableItem for ThreadView {
         let mut new_highlighted_editors = Vec::new();
         for (target, ranges, active_local) in per_target {
             match target {
-                MatchTarget::Markdown(markdown) => {
-                    markdown.update(cx, |md, cx| {
-                        md.set_search_highlights(ranges, active_local, cx);
-                    });
-                    new_highlighted_markdowns.push(markdown);
+                MatchTarget::Markdown(weak) => {
+                    if let Some(markdown) = weak.upgrade() {
+                        markdown.update(cx, |md, cx| {
+                            md.set_search_highlights(ranges, active_local, cx);
+                        });
+                        new_highlighted_markdowns.push(weak);
+                    }
                 }
-                MatchTarget::Editor(editor) => {
-                    apply_editor_highlights(&editor, &ranges, active_local, cx);
-                    new_highlighted_editors.push(editor);
+                MatchTarget::Editor(weak) => {
+                    if let Some(editor) = weak.upgrade() {
+                        apply_editor_highlights(&editor, &ranges, active_local, cx);
+                        new_highlighted_editors.push(weak);
+                    }
                 }
             }
         }
@@ -226,8 +243,10 @@ impl SearchableItem for ThreadView {
             .count()
             - 1;
 
-        for other in self.highlighted_markdowns.clone() {
-            if other.entity_id() != target_id {
+        for other in self.highlighted_markdowns.iter() {
+            if other.entity_id() != target_id
+                && let Some(other) = other.upgrade()
+            {
                 other.update(cx, |md, cx| md.set_active_search_highlight(None, cx));
             }
         }
@@ -237,19 +256,25 @@ impl SearchableItem for ThreadView {
         // editor would keep showing the orange "active" color on a stale match.
         let per_target = group_matches_by_target(matches, Some(index));
         for (target, ranges, active_local) in per_target {
-            if let MatchTarget::Editor(editor) = target {
+            if let MatchTarget::Editor(editor) = target
+                && let Some(editor) = editor.upgrade()
+            {
                 apply_editor_highlights(&editor, &ranges, active_local, cx);
             }
         }
         match &m.target {
             MatchTarget::Markdown(markdown) => {
-                markdown.update(cx, |md, cx| {
-                    md.set_active_search_highlight(Some(local_index), cx);
-                    md.request_autoscroll_to_source_index(m.byte_range.start, cx);
-                });
+                if let Some(markdown) = markdown.upgrade() {
+                    markdown.update(cx, |md, cx| {
+                        md.set_active_search_highlight(Some(local_index), cx);
+                        md.request_autoscroll_to_source_index(m.byte_range.start, cx);
+                    });
+                }
             }
             MatchTarget::Editor(active_editor) => {
-                autoscroll_editor_to_range(active_editor, m.byte_range.clone(), cx);
+                if let Some(active_editor) = active_editor.upgrade() {
+                    autoscroll_editor_to_range(&active_editor, m.byte_range.clone(), cx);
+                }
             }
         }
 
@@ -296,7 +321,7 @@ impl SearchableItem for ThreadView {
         let expanded_thinking_blocks = self.expanded_thinking_blocks.clone();
         let entry_view_state = self.entry_view_state.read(cx);
 
-        let mut entries_data: Vec<(usize, Vec<(MatchTarget, String, MatchOrigin)>)> = Vec::new();
+        let mut entries_data: Vec<(usize, Vec<SearchTarget>)> = Vec::new();
         for (entry_index, entry) in self.thread.read(cx).entries().iter().enumerate() {
             let mut targets = Vec::new();
             collect_searchable_targets(
@@ -316,12 +341,19 @@ impl SearchableItem for ThreadView {
         cx.background_spawn(async move {
             let mut matches = Vec::new();
             for (entry_index, targets) in entries_data {
-                for (target, source, origin) in targets {
-                    for byte_range in query.search_str(&source) {
+                for SearchTarget {
+                    target,
+                    text,
+                    origin,
+                    byte_offset,
+                } in targets
+                {
+                    for byte_range in query.search_str(text.as_ref()) {
                         matches.push(ThreadSearchMatch {
                             entry_index,
                             target: target.clone(),
-                            byte_range,
+                            byte_range: (byte_range.start + byte_offset)
+                                ..(byte_range.end + byte_offset),
                             origin: origin.clone(),
                         });
                     }
@@ -396,13 +428,39 @@ impl ThreadView {
             self.expanded_tool_calls.remove(&id);
         }
         for key in std::mem::take(&mut self.search_auto_expanded_thinking_blocks) {
-            if !self.user_toggled_thinking_blocks.contains(&key) {
-                self.expanded_thinking_blocks.remove(&key);
+            // `user_toggled_thinking_blocks` guards explicit user expansion;
+            // `auto_expanded_thinking_block` guards the still-streaming block
+            // that `auto_expand_streaming_thought` opened. Both must survive
+            // search cleanup — otherwise the user could find-and-dismiss a
+            // block that is mid-stream and watch it snap shut.
+            if self.user_toggled_thinking_blocks.contains(&key)
+                || self.auto_expanded_thinking_block == Some(key)
+            {
+                continue;
             }
+            self.expanded_thinking_blocks.remove(&key);
         }
         cx.notify();
     }
 }
+
+struct SearchTarget {
+    target: MatchTarget,
+    /// The text actually handed to `SearchQuery::search_str`. Using
+    /// `SharedString` here lets markdown sources be collected via cheap
+    /// `Arc<str>` clones so foreground work on a keystroke is proportional
+    /// to the entry count, not the total byte size of the thread.
+    text: SharedString,
+    origin: MatchOrigin,
+    /// Added to each byte range produced by `search_str` so matches point back
+    /// into the full markdown/editor source — used by fenced code-block
+    /// sources, where we search only the inner content but highlights are
+    /// applied to the fenced source.
+    byte_offset: usize,
+}
+
+const FENCE_PREFIX: &str = "```\n";
+const FENCE_SUFFIX: &str = "\n```";
 
 fn collect_searchable_targets(
     entry: &AgentThreadEntry,
@@ -412,22 +470,34 @@ fn collect_searchable_targets(
     entry_index: usize,
     expanded_thinking_blocks: &HashSet<(usize, usize)>,
     entry_view_state: &EntryViewState,
-    out: &mut Vec<(MatchTarget, String, MatchOrigin)>,
+    out: &mut Vec<SearchTarget>,
 ) {
     match entry {
-        AgentThreadEntry::UserMessage(_message) => {
+        AgentThreadEntry::UserMessage(message) => {
             // User messages are rendered through a `MessageEditor`, so search
             // the editor's buffer text directly rather than the (unrendered)
             // markdown entity on `UserMessage::content`. The two texts diverge
             // for image chunks — the markdown uses ``Image`` while the editor
             // uses a mention link — so the editor text is the source of truth.
+            //
+            // If the editor hasn't been synced into `EntryViewState` yet (rare,
+            // but possible before a `NewEntry` handler runs) we fall back to
+            // the message's content markdown so the user message still shows
+            // up in the match counter.
             if let Some(editor) = entry_view_state
                 .entry(entry_index)
                 .and_then(|entry| entry.message_editor())
                 .map(|message_editor| message_editor.read(cx).editor().clone())
             {
-                let text = editor.read(cx).text(cx);
-                out.push((MatchTarget::Editor(editor), text, MatchOrigin::UserMessage));
+                let text = SharedString::from(editor.read(cx).text(cx));
+                out.push(SearchTarget {
+                    target: MatchTarget::Editor(editor.downgrade()),
+                    text,
+                    origin: MatchOrigin::UserMessage,
+                    byte_offset: 0,
+                });
+            } else if let Some(markdown) = message.content.markdown() {
+                push_markdown(markdown, cx, MatchOrigin::UserMessage, out);
             }
         }
         AgentThreadEntry::AssistantMessage(message) => {
@@ -455,13 +525,15 @@ fn collect_searchable_targets(
             // but the visible rendering is a code-fenced markdown: once a
             // terminal has been created, `terminal.command()`; otherwise (in
             // the pre-approval "Run Command" preview, or for rejected
-            // commands) `call.command_markdown`. Indexing those fenced
-            // entities — rather than the plain label — means highlights end
-            // up on the markdown the user actually sees.
+            // commands) `call.command_markdown`. We index only the inner
+            // (unfenced) text so a query like a backtick doesn't match the
+            // fence bytes, and offset back into the source when recording
+            // match byte ranges so the markdown renderer highlights the
+            // command itself.
             let mut has_terminal = false;
             for terminal in call.terminals() {
                 has_terminal = true;
-                push_markdown(
+                push_fenced_markdown(
                     terminal.read(cx).command(),
                     cx,
                     MatchOrigin::AlwaysVisible,
@@ -470,7 +542,7 @@ fn collect_searchable_targets(
             }
             if !has_terminal {
                 if let Some(command_markdown) = &call.command_markdown {
-                    push_markdown(command_markdown, cx, MatchOrigin::AlwaysVisible, out);
+                    push_fenced_markdown(command_markdown, cx, MatchOrigin::AlwaysVisible, out);
                 } else {
                     push_markdown(&call.label, cx, MatchOrigin::AlwaysVisible, out);
                 }
@@ -503,7 +575,7 @@ fn push_content_block(
     block: &ContentBlock,
     cx: &App,
     origin: MatchOrigin,
-    out: &mut Vec<(MatchTarget, String, MatchOrigin)>,
+    out: &mut Vec<SearchTarget>,
 ) {
     if let Some(markdown) = block.markdown() {
         push_markdown(markdown, cx, origin, out);
@@ -514,13 +586,40 @@ fn push_markdown(
     markdown: &Entity<Markdown>,
     cx: &App,
     origin: MatchOrigin,
-    out: &mut Vec<(MatchTarget, String, MatchOrigin)>,
+    out: &mut Vec<SearchTarget>,
 ) {
-    out.push((
-        MatchTarget::Markdown(markdown.clone()),
-        markdown.read(cx).source().to_string(),
+    out.push(SearchTarget {
+        target: MatchTarget::Markdown(markdown.downgrade()),
+        text: markdown.read(cx).source_shared(),
         origin,
-    ));
+        byte_offset: 0,
+    });
+}
+
+/// Pushes a markdown entity whose source is wrapped in a ``` `\n` ... `\n``` ```
+/// fence (as produced by `acp_thread::ToolCall::command_markdown` and
+/// `terminal::Terminal::command`). Only the inner text is searched so queries
+/// containing backticks or newlines don't match the fence bytes, and the
+/// resulting byte ranges are offset by the prefix length so highlights land on
+/// the command characters inside the fenced source.
+fn push_fenced_markdown(
+    markdown: &Entity<Markdown>,
+    cx: &App,
+    origin: MatchOrigin,
+    out: &mut Vec<SearchTarget>,
+) {
+    let source = markdown.read(cx).source_shared();
+    let (text, byte_offset) = source
+        .strip_prefix(FENCE_PREFIX)
+        .and_then(|rest| rest.strip_suffix(FENCE_SUFFIX))
+        .map(|inner| (SharedString::from(inner.to_string()), FENCE_PREFIX.len()))
+        .unwrap_or_else(|| (source.clone(), 0));
+    out.push(SearchTarget {
+        target: MatchTarget::Markdown(markdown.downgrade()),
+        text,
+        origin,
+        byte_offset,
+    });
 }
 
 fn group_matches_by_target(

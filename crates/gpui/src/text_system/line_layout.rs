@@ -1085,4 +1085,115 @@ mod tests {
         let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0.5, 0.5]);
     }
+
+    fn wrapped_layout(
+        glyph_count: usize,
+        text_len: usize,
+        wrap_glyph_indices: &[usize],
+    ) -> WrappedLineLayout {
+        let glyphs: Vec<ShapedGlyph> = (0..glyph_count)
+            .map(|i| glyph_at((i * 10) as f32, i))
+            .collect();
+        let mut inner = make_layout(glyphs);
+        inner.len = text_len;
+        inner.width = px((glyph_count * 10) as f32);
+        WrappedLineLayout {
+            unwrapped_layout: Arc::new(inner),
+            wrap_boundaries: wrap_glyph_indices
+                .iter()
+                .map(|&glyph_ix| WrapBoundary {
+                    run_ix: 0,
+                    glyph_ix,
+                })
+                .collect(),
+            wrap_width: None,
+        }
+    }
+
+    #[test]
+    fn test_position_for_index_no_wrap() {
+        let layout = wrapped_layout(5, 5, &[]);
+        let lh = px(20.);
+
+        assert_eq!(
+            layout.position_for_index(0, lh),
+            Some(point(px(0.), px(0.)))
+        );
+        assert_eq!(
+            layout.position_for_index(3, lh),
+            Some(point(px(30.), px(0.)))
+        );
+        assert_eq!(
+            layout.position_for_index(5, lh),
+            Some(point(px(50.), px(0.)))
+        );
+        assert_eq!(layout.position_for_index(6, lh), None);
+    }
+
+    #[test]
+    fn test_position_for_index_at_wrap_boundary() {
+        // Text laid out across two visual lines, wrap at byte 5. The boundary
+        // itself (index 5) belongs to the *next* visual line — that's the
+        // behavior `crates/agent_ui/src/conversation_view/thread_search.rs`
+        // and the markdown highlight autoscroll rely on.
+        let layout = wrapped_layout(10, 10, &[5]);
+        let lh = px(20.);
+
+        assert_eq!(
+            layout.position_for_index(4, lh),
+            Some(point(px(40.), px(0.)))
+        );
+        assert_eq!(
+            layout.position_for_index(5, lh),
+            Some(point(px(0.), px(20.))),
+            "index on the wrap boundary lives on the next visual line",
+        );
+        assert_eq!(
+            layout.position_for_index(6, lh),
+            Some(point(px(10.), px(20.))),
+        );
+    }
+
+    #[test]
+    fn test_position_for_index_multiple_wraps() {
+        let layout = wrapped_layout(9, 9, &[3, 6]);
+        let lh = px(20.);
+
+        assert_eq!(
+            layout.position_for_index(0, lh),
+            Some(point(px(0.), px(0.)))
+        );
+        assert_eq!(
+            layout.position_for_index(3, lh),
+            Some(point(px(0.), px(20.))),
+        );
+        assert_eq!(
+            layout.position_for_index(5, lh),
+            Some(point(px(20.), px(20.))),
+        );
+        assert_eq!(
+            layout.position_for_index(6, lh),
+            Some(point(px(0.), px(40.))),
+        );
+        assert_eq!(
+            layout.position_for_index(9, lh),
+            Some(point(px(30.), px(40.))),
+        );
+        assert_eq!(layout.position_for_index(10, lh), None);
+    }
+
+    #[test]
+    fn test_position_for_index_end_of_last_line() {
+        // On the last (non-wrapping) line, the index equal to `len` is a valid
+        // cursor position — it should land at the end of the last visual line,
+        // not return None.
+        let layout = wrapped_layout(5, 5, &[2]);
+        let lh = px(20.);
+
+        assert_eq!(
+            layout.position_for_index(5, lh),
+            Some(point(px(30.), px(20.))),
+            "index at len on last line should resolve to end of that line",
+        );
+    }
 }

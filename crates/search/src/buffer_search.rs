@@ -997,6 +997,22 @@ impl BufferSearchBar {
         cx.notify();
     }
 
+    /// Drop every strong handle the bar holds to the active searchable item
+    /// and its per-item match state. Call this when a SearchableItem is about
+    /// to be dropped while the bar still holds it through `active_searchable_item`
+    /// — e.g. a ThreadView whose owning container is being released — to break
+    /// the strong-handle cycle introduced by `set_active_pane_item`.
+    pub fn release_active_searchable_item(&mut self, cx: &mut Context<Self>) {
+        self.active_searchable_item_subscriptions.take();
+        self.active_searchable_item.take();
+        self.searchable_items_with_matches.clear();
+        self.pending_search.take();
+        self.active_search.take();
+        self.active_match_index = None;
+        self.dismissed = true;
+        cx.notify();
+    }
+
     pub fn deploy(&mut self, deploy: &Deploy, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let filtered_search_range = if deploy.selection_search_enabled {
             Some(FilteredSearchRange::Default)
@@ -1486,6 +1502,15 @@ impl BufferSearchBar {
             editor::EditorEvent::Focused => self.query_editor_focused = true,
             editor::EditorEvent::Blurred => self.query_editor_focused = false,
             editor::EditorEvent::Edited { .. } => {
+                // When the bar is dismissed, the query editor can still emit
+                // `Edited` events (smartcase updates, external mutations).
+                // Running `clear_matches` + `update_matches` on the active
+                // searchable item in that state causes a spurious re-render
+                // and — for SearchableItems that keep a backpointer to the
+                // bar — pointless work on a hidden UI.
+                if self.dismissed {
+                    return;
+                }
                 self.smartcase(window, cx);
                 self.clear_matches(window, cx);
                 let search = self.update_matches(false, true, window, cx);
