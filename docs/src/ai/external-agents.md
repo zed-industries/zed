@@ -325,7 +325,6 @@ MCP servers configured in Zed's `context_servers` are forwarded to Claude Agent 
 
 - **Local stdio-based MCP servers:** Work reliably
 - **Remote MCP servers with OAuth:** May have issues ([#54410](https://github.com/zed-industries/zed/issues/54410))
-- **Gemini CLI:** Does not yet support MCP servers from Zed
 
 MCP servers from native agent configurations (`~/.claude/`, `~/.codex/config.toml`) are **not used** when running via Zed. If you have MCP servers configured in your standalone Claude Code or Codex installation, you'll need to add them to Zed's `context_servers` settings to use them with external agents.
 
@@ -336,9 +335,8 @@ For more on configuring MCP servers, see [Model Context Protocol](./mcp.md).
 **"I enabled MCP tools in Zed but the agent can't see them"**
 
 1. Verify the MCP server is enabled in `context_servers` settings
-2. Check that the agent supports MCP (Claude Agent and Codex do; Gemini CLI does not)
-3. For remote MCP servers with OAuth, this is a [known issue](https://github.com/zed-industries/zed/issues/54410) — try local stdio-based servers instead
-4. Open `dev: open acp logs` from the Command Palette to debug
+2. For remote MCP servers with OAuth, this is a [known issue](https://github.com/zed-industries/zed/issues/54410) — try local stdio-based servers instead
+3. Open `dev: open acp logs` from the Command Palette to debug
 
 **"My existing Claude Code / Codex setup isn't working in Zed"**
 
