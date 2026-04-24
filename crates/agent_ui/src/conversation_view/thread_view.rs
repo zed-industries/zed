@@ -6807,6 +6807,7 @@ impl ThreadView {
                 choices,
                 Some((patterns, tool_name)),
                 entry_ix,
+                session_id,
                 tool_call_id,
                 focus_handle,
                 cx,
@@ -6820,6 +6821,7 @@ impl ThreadView {
         choices: &[PermissionOptionChoice],
         patterns: Option<(&[PermissionPattern], &str)>,
         entry_ix: usize,
+        session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         focus_handle: &FocusHandle,
         cx: &Context<Self>,
@@ -6892,7 +6894,28 @@ impl ThreadView {
                                     .map(|kb| kb.size(rems_from_px(12.))),
                                 )
                             })
-                            .on_click(cx.listener({ move |_this, _, _window, _cx| {} })),
+                            .on_click(cx.listener({
+                                let session_id = session_id.clone();
+                                let tool_call_id = tool_call_id.clone();
+                                move |this, _, window, cx| {
+                                    if let Some(options) =
+                                        this.conversation.read(cx).permission_options_for_tool_call(
+                                            &session_id,
+                                            tool_call_id.clone(),
+                                            cx,
+                                        )
+                                    {
+                                        this.authorize_with_granularity(
+                                            session_id.clone(),
+                                            tool_call_id.clone(),
+                                            &options.clone(),
+                                            true,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                }
+                            })),
                     )
                     .child(
                         Button::new(("deny-btn", entry_ix), "Deny")
@@ -6913,8 +6936,25 @@ impl ThreadView {
                                 )
                             })
                             .on_click(cx.listener({
+                                let session_id = session_id.clone();
+                                let tool_call_id = tool_call_id.clone();
                                 move |this, _, window, cx| {
-                                    this.authorize_pending_with_granularity(false, window, cx);
+                                    if let Some(options) =
+                                        this.conversation.read(cx).permission_options_for_tool_call(
+                                            &session_id,
+                                            tool_call_id.clone(),
+                                            cx,
+                                        )
+                                    {
+                                        this.authorize_with_granularity(
+                                            session_id.clone(),
+                                            tool_call_id.clone(),
+                                            &options.clone(),
+                                            false,
+                                            window,
+                                            cx,
+                                        );
+                                    }
                                 }
                             })),
                     ),
