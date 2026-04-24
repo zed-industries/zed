@@ -2137,7 +2137,7 @@ impl RecentProjectsDelegate {
                     picker.delegate.snap_selection_to_first_non_header_match = false;
                     picker.update_matches_with_options(
                         picker.query(cx),
-                        ScrollBehavior::Preserve,
+                        ScrollBehavior::PreserveOffset,
                         window,
                         cx,
                     );

@@ -38,7 +38,7 @@ pub enum Direction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScrollBehavior {
     RevealSelected,
-    Preserve,
+    PreserveOffset,
 }
 
 actions!(
@@ -745,7 +745,7 @@ impl<D: PickerDelegate> Picker<D> {
                     let index = self.delegate.selected_index();
                     self.scroll_to_item_index(index);
                 }
-                ScrollBehavior::Preserve => {
+                ScrollBehavior::PreserveOffset => {
                     let offset = state.logical_scroll_top();
                     state.reset(match_count);
                     state.scroll_to(offset);
@@ -756,7 +756,7 @@ impl<D: PickerDelegate> Picker<D> {
                     let index = self.delegate.selected_index();
                     self.scroll_to_item_index(index);
                 }
-                ScrollBehavior::Preserve => {}
+                ScrollBehavior::PreserveOffset => {}
             },
         }
         self.pending_update_matches = None;
