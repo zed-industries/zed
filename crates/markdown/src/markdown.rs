@@ -2131,7 +2131,7 @@ impl Element for MarkdownElement {
                         builder.table.end_row();
                     }
                     MarkdownTagEnd::TableCell => {
-                        builder.replace_pending_checkbox(range);
+                        builder.replace_pending_checkbox(self.on_checkbox_toggle.clone());
                         builder.pop_div();
                         builder.table.end_cell();
                     }
@@ -2689,26 +2689,53 @@ impl MarkdownElementBuilder {
         }
     }
 
-    fn replace_pending_checkbox(&mut self, source_range: &Range<usize>) {
-        let trimmed = self.pending_line.text.trim();
-        if trimmed == "[x]" || trimmed == "[X]" || trimmed == "[ ]" {
-            let checked = trimmed != "[ ]";
-            self.pending_line = PendingLine::default();
-            let checkbox = Checkbox::new(
-                ElementId::Name(
-                    format!("table_checkbox_{}_{}", source_range.start, source_range.end).into(),
-                ),
-                if checked {
-                    ToggleState::Selected
-                } else {
-                    ToggleState::Unselected
-                },
-            )
-            .fill()
-            .visualization_only(true)
-            .into_any_element();
-            self.div_stack.last_mut().unwrap().extend([checkbox]);
+    fn replace_pending_checkbox(&mut self, on_toggle: Option<CheckboxToggleCallback>) {
+        let text = &self.pending_line.text;
+        let trimmed = text.trim();
+        if trimmed != "[x]" && trimmed != "[X]" && trimmed != "[ ]" {
+            return;
         }
+        let checked = trimmed != "[ ]";
+
+        let leading_ws = text.len() - text.trim_start().len();
+        let marker_rendered = leading_ws..leading_ws + trimmed.len();
+        let marker_source = self
+            .source_range_for_rendered(&marker_rendered)
+            .expect("pending checkbox text must have source mappings");
+
+        self.pending_line = PendingLine::default();
+
+        let toggle_state = if checked {
+            ToggleState::Selected
+        } else {
+            ToggleState::Unselected
+        };
+        let checkbox = Checkbox::new(
+            ElementId::Name(
+                format!(
+                    "table_checkbox_{}_{}",
+                    marker_source.start, marker_source.end
+                )
+                .into(),
+            ),
+            toggle_state,
+        )
+        .fill();
+
+        let element = if let Some(on_toggle) = on_toggle {
+            checkbox
+                .on_click(move |_state, window, cx| {
+                    on_toggle(marker_source.clone(), !checked, window, cx);
+                })
+                .into_any_element()
+        } else {
+            checkbox.visualization_only(true).into_any_element()
+        };
+        self.div_stack.last_mut().unwrap().extend([element]);
+    }
+
+    fn source_range_for_rendered(&self, rendered: &Range<usize>) -> Option<Range<usize>> {
+        source_range_for_rendered(&self.pending_line.source_mappings, rendered)
     }
 
     fn render_source_anchor(&mut self, source_range: Range<usize>) -> AnyElement {
@@ -2862,6 +2889,30 @@ impl RenderedLine {
 struct SourceMapping {
     rendered_index: usize,
     source_index: usize,
+}
+
+fn source_range_for_rendered(
+    mappings: &[SourceMapping],
+    rendered: &Range<usize>,
+) -> Option<Range<usize>> {
+    if rendered.start >= rendered.end {
+        return None;
+    }
+    let start = source_index_for_rendered(mappings, rendered.start)?;
+    let end = source_index_for_rendered(mappings, rendered.end - 1)? + 1;
+    Some(start..end)
+}
+
+fn source_index_for_rendered(mappings: &[SourceMapping], rendered_index: usize) -> Option<usize> {
+    let mut last: Option<&SourceMapping> = None;
+    for mapping in mappings {
+        if mapping.rendered_index <= rendered_index {
+            last = Some(mapping);
+        } else {
+            break;
+        }
+    }
+    last.map(|m| m.source_index + (rendered_index - m.rendered_index))
 }
 
 pub struct RenderedMarkdown {
@@ -3369,6 +3420,83 @@ mod tests {
         );
         assert_eq!(checkbox_cells[0].trim(), "[x]");
         assert_eq!(checkbox_cells[1].trim(), "[ ]");
+    }
+
+    #[test]
+    fn test_table_checkbox_marker_source_range() {
+        let md = "| Done |\n|------|\n|  [x]  |\n| [ ] |";
+        let events = crate::parser::parse_markdown_with_options(md, false, false).events;
+
+        let mut in_cell = false;
+        let mut pending_text = String::new();
+        let mut mappings: Vec<SourceMapping> = Vec::new();
+        let mut cell_ranges: Vec<Range<usize>> = Vec::new();
+
+        for (range, event) in &events {
+            match event {
+                MarkdownEvent::Start(MarkdownTag::TableCell) => {
+                    in_cell = true;
+                    pending_text.clear();
+                    mappings.clear();
+                }
+                MarkdownEvent::End(MarkdownTagEnd::TableCell) => {
+                    if in_cell {
+                        let trimmed = pending_text.trim();
+                        if trimmed == "[x]" || trimmed == "[X]" || trimmed == "[ ]" {
+                            let leading = pending_text.len() - pending_text.trim_start().len();
+                            let rendered = leading..leading + trimmed.len();
+                            let marker_source = source_range_for_rendered(&mappings, &rendered)
+                                .expect("marker source range");
+                            cell_ranges.push(marker_source);
+                        }
+                    }
+                    in_cell = false;
+                }
+                MarkdownEvent::Text if in_cell => {
+                    mappings.push(SourceMapping {
+                        rendered_index: pending_text.len(),
+                        source_index: range.start,
+                    });
+                    pending_text.push_str(&md[range.clone()]);
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(cell_ranges.len(), 2);
+        for marker_range in &cell_ranges {
+            let slice = &md[marker_range.clone()];
+            assert!(
+                slice == "[x]" || slice == "[X]" || slice == "[ ]",
+                "expected `[x]`/`[X]`/`[ ]`, got {slice:?} at {marker_range:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_source_range_for_rendered_handles_split_chunks() {
+        let mappings = vec![
+            SourceMapping {
+                rendered_index: 0,
+                source_index: 20,
+            },
+            SourceMapping {
+                rendered_index: 1,
+                source_index: 21,
+            },
+            SourceMapping {
+                rendered_index: 2,
+                source_index: 22,
+            },
+        ];
+
+        let range = source_range_for_rendered(&mappings, &(0..3)).unwrap();
+        assert_eq!(range, 20..23);
+
+        let range = source_range_for_rendered(&mappings, &(1..2)).unwrap();
+        assert_eq!(range, 21..22);
+
+        assert_eq!(source_range_for_rendered(&mappings, &(2..2)), None);
     }
 
     #[gpui::test]
