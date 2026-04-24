@@ -268,42 +268,45 @@ When you start an external agent thread, Zed sends:
 | Environment variables | `agent_servers.<agent>.env` in settings                               |
 | MCP servers           | `context_servers` in settings (see [limitations](#mcp-server-access)) |
 | Working directory     | Automatically set to project root                                     |
-| CLAUDE.md content     | Read from project via Zed's [rules system](./rules.md)                |
 
 **Not forwarded:**
 
 - [Profiles](./agent-panel.md#profiles) — profiles only apply to Zed's first-party agent
 - [Tool permissions](./tool-permissions.md) settings — external agents request permissions at runtime via UI prompts
-- Rules from `.rules` files — Zed injects these into its own prompts only
+- Rules files — Zed's [rules system](./rules.md) only applies to Zed's first-party agent (external agents read their own rules files directly)
 
-### What External Agents Inherit from Native Installations {#native-config}
+### What External Agents Read Directly {#native-config}
 
-External agents run in isolation from their standalone CLI installations. Most native configuration is **not used** when running via Zed.
+External agents run as CLI tools with full filesystem access. They read their own configuration files directly — Zed doesn't forward or block these.
 
 #### Claude Agent
 
-| Native Config                       | Used by Claude Agent in Zed?                                      |
-| ----------------------------------- | ----------------------------------------------------------------- |
-| `~/.claude/` directory              | No — settings, memory, and project preferences are not used       |
-| MCP servers from Claude Code config | No — configure in Zed's `context_servers` instead                 |
-| Hooks                               | No — [not supported](https://code.claude.com/docs/en/hooks-guide) |
-| Authentication                      | No — you must authenticate separately via `/login` in Zed         |
-| Skills                              | Yes — exposed via the Claude Agent SDK                            |
-| CLAUDE.md files                     | Yes — read by Zed's rules system                                  |
+Claude Agent runs Claude Code under the hood, which reads its standard configuration:
 
-> **Why separate authentication?** Zed explicitly isolates Claude Agent authentication to give you control over which account and billing method you use. Even if you're logged into Claude Code CLI, you'll need to authenticate again in Zed.
+| Config                              | Read by Claude Agent?                                             |
+| ----------------------------------- | ----------------------------------------------------------------- |
+| `~/.claude/` directory              | Yes — Claude Code reads its own settings and memory               |
+| CLAUDE.md files                     | Yes — Claude Code reads these directly from the project           |
+| Skills                              | Yes — exposed via the Claude Agent SDK                            |
+| MCP servers from Claude Code config | Yes — but Zed also forwards its own MCP servers via ACP           |
+| Hooks                               | No — [not supported](https://code.claude.com/docs/en/hooks-guide) |
+| Authentication                      | Separate — you must authenticate via `/login` in Zed              |
+
+> **Why separate authentication?** Zed isolates Claude Agent authentication to give you control over which account and billing method you use.
 
 #### Codex
 
-| Native Config                 | Used by Codex in Zed?                                                    |
-| ----------------------------- | ------------------------------------------------------------------------ |
-| `~/.codex/config.toml`        | No — [not respected](https://github.com/zed-industries/zed/issues/40633) |
-| MCP servers from Codex config | No — configure in Zed's `context_servers` instead                        |
-| `CODEX_API_KEY` env var       | Yes — inherited from your shell environment                              |
-| `OPENAI_API_KEY` env var      | Yes — inherited from your shell environment                              |
-| ChatGPT OAuth login           | No — you must re-authenticate in Zed                                     |
+Codex runs the Codex CLI under the hood, which reads its standard configuration:
 
-To use third-party providers with Codex, pass the required environment variables through Zed settings instead of `config.toml`:
+| Config                        | Read by Codex?                                  |
+| ----------------------------- | ----------------------------------------------- |
+| `~/.codex/config.toml`        | Yes — Codex CLI reads its own config            |
+| MCP servers from Codex config | Yes — but Zed also forwards its own MCP servers |
+| `CODEX_API_KEY` env var       | Yes — inherited from your shell environment     |
+| `OPENAI_API_KEY` env var      | Yes — inherited from your shell environment     |
+| ChatGPT OAuth login           | Separate — you must re-authenticate in Zed      |
+
+You can also pass environment variables through Zed settings:
 
 ```json [settings]
 {
@@ -326,7 +329,7 @@ MCP servers configured in Zed's `context_servers` are forwarded to Claude Agent 
 - **Local stdio-based MCP servers:** Work reliably
 - **Remote MCP servers with OAuth:** May have issues ([#54410](https://github.com/zed-industries/zed/issues/54410))
 
-MCP servers from native agent configurations (`~/.claude/`, `~/.codex/config.toml`) are **not used** when running via Zed. If you have MCP servers configured in your standalone Claude Code or Codex installation, you'll need to add them to Zed's `context_servers` settings to use them with external agents.
+External agents can access MCP servers from two sources: Zed's `context_servers` (forwarded via ACP) and their own native configuration files (`~/.claude/`, `~/.codex/config.toml`).
 
 For more on configuring MCP servers, see [Model Context Protocol](./mcp.md).
 
@@ -340,11 +343,11 @@ For more on configuring MCP servers, see [Model Context Protocol](./mcp.md).
 
 **"My existing Claude Code / Codex setup isn't working in Zed"**
 
-External agents in Zed run in isolation. You'll need to:
+External agents read their own config files, but authentication is handled separately:
 
 1. Re-authenticate via `/login` (Claude Agent) or the authentication prompt (Codex)
-2. Re-configure MCP servers in Zed's `context_servers` settings
-3. Re-configure third-party providers via `agent_servers.<agent>.env` settings
+2. Your existing MCP servers and settings from `~/.claude/` or `~/.codex/config.toml` should work
+3. You can also configure additional settings via `agent_servers.<agent>.env` in Zed
 
 **"Profiles don't affect my external agent"**
 
