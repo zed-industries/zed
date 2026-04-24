@@ -102,11 +102,6 @@ pub struct LanguageModelToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub tool_name: Arc<str>,
     pub is_error: bool,
-    /// The tool output formatted for presenting to the model.
-    ///
-    /// Multiple parts allow tools (most notably MCP tools) to return a
-    /// combination of text and non-text content (e.g. images) in a single
-    /// result. Built-in tools still typically produce a single-element `Vec`.
     #[serde(with = "tool_result_content_vec")]
     pub content: Vec<LanguageModelToolResultContent>,
     /// The raw tool output, if available, often for debugging or extra state for replay

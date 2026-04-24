@@ -3420,11 +3420,6 @@ where
 pub struct Erased<T>(T);
 
 pub struct AgentToolOutput {
-    /// Output formatted for presenting to the model.
-    ///
-    /// Typically a single-element `Vec` for built-in tools; the MCP bridge
-    /// is the only site that naturally emits multiple parts (e.g. text plus
-    /// an image) in a single result.
     pub llm_output: Vec<LanguageModelToolResultContent>,
     pub raw_output: serde_json::Value,
 }

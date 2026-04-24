@@ -270,10 +270,6 @@ fn append_message_to_response_items(
             }
             MessageContent::ToolResult(tool_result) => {
                 flush_response_parts(&message.role, index, &mut content_parts, input_items);
-                // Preserve the existing on-wire shape: a single `Text` part
-                // becomes `ResponseFunctionCallOutputContent::Text`; anything
-                // else (multiple parts, or any non-text part) is flattened
-                // into the `List` variant.
                 let output = match tool_result.content.as_slice() {
                     [LanguageModelToolResultContent::Text(text)] => {
                         ResponseFunctionCallOutputContent::Text(text.to_string())

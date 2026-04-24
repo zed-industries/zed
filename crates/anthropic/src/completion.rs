@@ -71,9 +71,6 @@ fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
             cache_control: None,
         }),
         MessageContent::ToolResult(tool_result) => {
-            // Preserve the existing on-wire shape: a single `Text` part becomes
-            // `ToolResultContent::Plain`; anything else (multiple parts, or any
-            // non-text part) becomes `ToolResultContent::Multipart`.
             let content = match tool_result.content.as_slice() {
                 [LanguageModelToolResultContent::Text(text)] => {
                     ToolResultContent::Plain(text.to_string())
