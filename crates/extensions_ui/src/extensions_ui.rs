@@ -16,7 +16,7 @@ use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
     Action, Anchor, App, ClipboardItem, Context, Entity, EventEmitter, Focusable,
     InteractiveElement, KeyContext, ParentElement, Point, Render, Styled, Task, TextStyle,
-    UniformListScrollHandle, WeakEntity, Window, actions, point, uniform_list,
+    ScrollHandle, UniformListScrollHandle, WeakEntity, Window, actions, point, uniform_list,
 };
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
@@ -25,8 +25,9 @@ use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme_settings::ThemeSettings;
 use ui::{
-    Banner, Chip, ContextMenu, Divider, PopoverMenu, ScrollableHandle, Switch, ToggleButtonGroup,
-    ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar,
+    Banner, Chip, ContextMenu, Divider, PopoverMenu, ScrollAxes, ScrollableHandle, Scrollbars,
+    Switch, ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle, ToggleButtonSimple,
+    Tooltip, WithScrollbar,
     prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
@@ -313,6 +314,7 @@ struct ExtensionCardButtons {
 pub struct ExtensionsPage {
     workspace: WeakEntity<Workspace>,
     list: UniformListScrollHandle,
+    category_filter_scroll: ScrollHandle,
     is_fetching_extensions: bool,
     fetch_failed: bool,
     filter: ExtensionFilter,
@@ -376,6 +378,7 @@ impl ExtensionsPage {
             let mut this = Self {
                 workspace: workspace.weak_handle(),
                 list: scroll_handle,
+                category_filter_scroll: ScrollHandle::new(),
                 is_fetching_extensions: false,
                 fetch_failed: false,
                 filter: ExtensionFilter::All,
@@ -1785,52 +1788,69 @@ impl Render for ExtensionsPage {
                     ),
             )
             .child(
-                h_flex()
-                    .id("filter-row")
-                    .gap_2()
-                    .py_2p5()
-                    .px_4()
+                div()
+                    .w_full()
                     .border_b_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .overflow_x_scroll()
                     .child(
-                        Button::new("filter-all-categories", "All")
-                            .when(self.provides_filter.is_none(), |button| {
-                                button.style(ButtonStyle::Filled)
-                            })
-                            .when(self.provides_filter.is_some(), |button| {
-                                button.style(ButtonStyle::Subtle)
-                            })
-                            .toggle_state(self.provides_filter.is_none())
-                            .on_click(cx.listener(|this, _event, _, cx| {
-                                this.change_provides_filter(None, cx);
-                            })),
+                        h_flex()
+                            .id("filter-row")
+                            .w_full()
+                            .gap_2()
+                            .py_2p5()
+                            .px_4()
+                            .overflow_x_scroll()
+                            .track_scroll(&self.category_filter_scroll)
+                            .child(
+                                div().flex_none().child(
+                                    Button::new("filter-all-categories", "All")
+                                        .when(self.provides_filter.is_none(), |button| {
+                                            button.style(ButtonStyle::Filled)
+                                        })
+                                        .when(self.provides_filter.is_some(), |button| {
+                                            button.style(ButtonStyle::Subtle)
+                                        })
+                                        .toggle_state(self.provides_filter.is_none())
+                                        .on_click(cx.listener(|this, _event, _, cx| {
+                                            this.change_provides_filter(None, cx);
+                                        })),
+                                ),
+                            )
+                            .children(ExtensionProvides::iter().filter_map(|provides| {
+                                match provides {
+                                    ExtensionProvides::SlashCommands
+                                    | ExtensionProvides::IndexedDocsProviders => return None,
+                                    _ => {}
+                                }
+
+                                let label = extension_provides_label(provides);
+                                let button_id =
+                                    SharedString::from(format!("filter-category-{}", label));
+
+                                Some(div().flex_none().child(
+                                    Button::new(button_id, label)
+                                        .style(if self.provides_filter == Some(provides) {
+                                            ButtonStyle::Filled
+                                        } else {
+                                            ButtonStyle::Subtle
+                                        })
+                                        .toggle_state(self.provides_filter == Some(provides))
+                                        .on_click({
+                                            cx.listener(move |this, _event, _, cx| {
+                                                this.change_provides_filter(Some(provides), cx);
+                                            })
+                                        }),
+                                ))
+                            }))
+                            .child(div().flex_none().w_8()),
                     )
-                    .children(ExtensionProvides::iter().filter_map(|provides| {
-                        match provides {
-                            ExtensionProvides::SlashCommands
-                            | ExtensionProvides::IndexedDocsProviders => return None,
-                            _ => {}
-                        }
-
-                        let label = extension_provides_label(provides);
-                        let button_id = SharedString::from(format!("filter-category-{}", label));
-
-                        Some(
-                            Button::new(button_id, label)
-                                .style(if self.provides_filter == Some(provides) {
-                                    ButtonStyle::Filled
-                                } else {
-                                    ButtonStyle::Subtle
-                                })
-                                .toggle_state(self.provides_filter == Some(provides))
-                                .on_click({
-                                    cx.listener(move |this, _event, _, cx| {
-                                        this.change_provides_filter(Some(provides), cx);
-                                    })
-                                }),
-                        )
-                    })),
+                    .custom_scrollbars(
+                        Scrollbars::new(ScrollAxes::Horizontal)
+                            .width_xs()
+                            .tracked_scroll_handle(&self.category_filter_scroll),
+                        window,
+                        cx,
+                    ),
             )
             .when(
                 self.provides_filter == Some(ExtensionProvides::AgentServers)
