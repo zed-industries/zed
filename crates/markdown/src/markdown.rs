@@ -2753,38 +2753,74 @@ struct RenderedFootnoteRef {
 impl RenderedText {
     fn bounds_for_source_range(
         &self,
-        bounds: Bounds<Pixels>,
+        _bounds: Bounds<Pixels>,
         range: Range<usize>,
     ) -> Vec<Bounds<Pixels>> {
         let mut all_bounds = Vec::new();
 
-        let start_pos = self.position_for_source_index(range.start);
-        let end_pos = self.position_for_source_index(range.end);
-        if let Some(((start_position, start_line_height), (end_position, end_line_height))) =
-            start_pos.zip(end_pos)
-        {
-            if start_position.y == end_position.y {
-                all_bounds.push(Bounds::from_corners(
-                    start_position,
-                    point(end_position.x, end_position.y + end_line_height),
-                ));
-            } else {
-                all_bounds.push(Bounds::from_corners(
-                    start_position,
-                    point(bounds.right(), start_position.y + start_line_height),
-                ));
+        for line in self.lines.iter() {
+            let line_source_start = line.source_mappings.first().unwrap().source_index;
+            if line_source_start >= range.end {
+                break;
+            }
+            if line.source_end <= range.start {
+                continue;
+            }
 
-                if end_position.y > start_position.y + start_line_height {
-                    all_bounds.push(Bounds::from_corners(
-                        point(bounds.left(), start_position.y + start_line_height),
-                        point(bounds.right(), end_position.y),
-                    ));
+            let layout = &line.layout;
+            let line_bounds = layout.bounds();
+            let line_height = layout.line_height();
+
+            let rendered_start =
+                line.rendered_index_for_source_index(range.start.max(line_source_start));
+            let rendered_end = line.rendered_index_for_source_index(range.end.min(line.source_end));
+
+            let mut wrapped_line_start = 0;
+            let mut row_top = line_bounds.top();
+
+            while wrapped_line_start < rendered_end {
+                let Some(wrapped_line) = layout.line_layout_for_index(wrapped_line_start) else {
+                    break;
+                };
+
+                let unwrapped_layout = &wrapped_line.unwrapped_layout;
+                let wrapped_line_end = wrapped_line_start + wrapped_line.len();
+
+                let row_ends = wrapped_line
+                    .wrap_boundaries()
+                    .iter()
+                    .map(|wrap_boundary| {
+                        let glyph = &unwrapped_layout.runs[wrap_boundary.run_ix].glyphs
+                            [wrap_boundary.glyph_ix];
+                        (wrapped_line_start + glyph.index, glyph.position.x)
+                    })
+                    .chain([(wrapped_line_end, unwrapped_layout.width)]);
+
+                let mut row_start = wrapped_line_start;
+                let mut row_start_x = Pixels::ZERO;
+
+                for (row_end, row_end_x) in row_ends {
+                    let selection_start = rendered_start.max(row_start);
+                    let selection_end = rendered_end.min(row_end);
+
+                    if selection_start < selection_end {
+                        let x_for_index = |index| {
+                            line_bounds.left()
+                                + unwrapped_layout.x_for_index(index - wrapped_line_start)
+                                - row_start_x
+                        };
+                        all_bounds.push(Bounds::from_corners(
+                            point(x_for_index(selection_start), row_top),
+                            point(x_for_index(selection_end), row_top + line_height),
+                        ));
+                    }
+
+                    row_start = row_end;
+                    row_start_x = row_end_x;
+                    row_top += line_height;
                 }
 
-                all_bounds.push(Bounds::from_corners(
-                    point(bounds.left(), end_position.y),
-                    point(end_position.x, end_position.y + end_line_height),
-                ));
+                wrapped_line_start = wrapped_line_end + 1;
             }
         }
 
