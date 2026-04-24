@@ -366,6 +366,21 @@ impl Conversation {
         Some(())
     }
 
+    pub fn authorize_with_granularity(
+        &mut self,
+        session_id: acp::SessionId,
+        tool_call_id: acp::ToolCallId,
+        selection: Option<&thread_view::PermissionSelection>,
+        is_allow: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let options =
+            self.permission_options_for_tool_call(&session_id, tool_call_id.clone(), cx)?;
+        let outcome = resolve_outcome_from_selection(options, selection, is_allow)?;
+        self.authorize_tool_call(session_id, tool_call_id, outcome, cx);
+        Some(())
+    }
+
     pub fn authorize_tool_call(
         &mut self,
         session_id: acp::SessionId,
@@ -404,6 +419,43 @@ impl Conversation {
 pub(crate) struct RootThreadUpdated;
 
 impl EventEmitter<RootThreadUpdated> for ConversationView {}
+
+fn resolve_outcome_from_selection(
+    options: &PermissionOptions,
+    selection: Option<&thread_view::PermissionSelection>,
+    is_allow: bool,
+) -> Option<SelectedPermissionOutcome> {
+    let choices = match options {
+        PermissionOptions::Dropdown(choices) => choices.as_slice(),
+        PermissionOptions::DropdownWithPatterns { choices, .. } => choices.as_slice(),
+        PermissionOptions::Flat(_) => {
+            let kind = if is_allow {
+                acp::PermissionOptionKind::AllowOnce
+            } else {
+                acp::PermissionOptionKind::RejectOnce
+            };
+            let option = options.first_option_of_kind(kind)?;
+            return Some(SelectedPermissionOutcome::new(
+                option.option_id.clone(),
+                option.kind,
+            ));
+        }
+    };
+
+    // When in per-command pattern mode, use the checked patterns.
+    if let Some(thread_view::PermissionSelection::SelectedPatterns(checked)) = selection {
+        if let Some(outcome) = options.build_outcome_for_checked_patterns(checked, is_allow) {
+            return Some(outcome);
+        }
+    }
+
+    // Use the selected granularity choice ("Always for terminal" or "Only this time").
+    let selected_index = selection
+        .and_then(|s| s.choice_index())
+        .unwrap_or_else(|| choices.len().saturating_sub(1));
+    let selected_choice = choices.get(selected_index).or(choices.last())?;
+    Some(selected_choice.build_outcome(is_allow))
+}
 
 fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
     match event {
