@@ -124,14 +124,14 @@ impl AskPassSession {
                         ControlFlow::Continue(Ok(password))
                     } else {
                         if let Some(kill_tx) = kill_tx.lock().await.take() {
-                            kill_tx.send(()).log_err();
+                            kill_tx.send(()).ok();
                         }
                         ControlFlow::Break(())
                     }
                 })
             }
         };
-        let askpass_task = PasswordProxy::new(get_password, executor.clone()).await?;
+        let askpass_task = PasswordProxy::new(Box::new(get_password), executor.clone()).await?;
 
         Ok(Self {
             #[cfg(target_os = "windows")]
@@ -192,10 +192,12 @@ pub struct PasswordProxy {
 
 impl PasswordProxy {
     pub async fn new(
-        mut get_password: impl FnMut(String) -> Task<ControlFlow<(), Result<EncryptedPassword>>>
-        + 'static
-        + Send
-        + Sync,
+        mut get_password: Box<
+            dyn FnMut(String) -> Task<ControlFlow<(), Result<EncryptedPassword>>>
+                + 'static
+                + Send
+                + Sync,
+        >,
         executor: BackgroundExecutor,
     ) -> Result<Self> {
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;

@@ -6,6 +6,7 @@
 //! TODO: Port Python code to generate chronologically-ordered commits
 use crate::FailedHandling;
 use crate::reorder_patch::{Patch, PatchLine, extract_edits, locate_edited_line};
+use crate::word_diff::tokenize;
 
 /// Find the largest valid UTF-8 char boundary at or before `index` in `s`.
 fn floor_char_boundary(s: &str, index: usize) -> usize {
@@ -370,7 +371,7 @@ pub fn generate_evaluation_example_from_ordered_commit(
         reasoning: None,
         uncommitted_diff: String::new(),
         rejected_patch: None,
-        captured_prompt_input: None,
+
         telemetry: None,
         human_feedback: Vec::new(),
         rating: None,
@@ -411,37 +412,6 @@ pub fn split_ordered_commit(commit: &str, split_pos: usize) -> (String, String) 
     }
 
     (source_str, target_str)
-}
-
-/// Tokenize text into words and non-word characters.
-fn tokenize(text: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-
-    for ch in text.chars() {
-        if ch.is_alphanumeric() {
-            current.push(ch);
-        } else if ch == '_' {
-            // Include underscore with the current word, then flush
-            current.push(ch);
-            if !current.is_empty() {
-                tokens.push(std::mem::take(&mut current));
-            }
-        } else {
-            // Punctuation or whitespace - flush current word first
-            if !current.is_empty() {
-                tokens.push(std::mem::take(&mut current));
-            }
-            // Each punctuation/whitespace is its own token
-            tokens.push(ch.to_string());
-        }
-    }
-
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-
-    tokens
 }
 
 /// Calculate the weight for a split position based on the character at that position.
@@ -647,12 +617,8 @@ pub fn imitate_human_edits(
     let src_tokens = tokenize(&src_line);
     let tgt_tokens = tokenize(&tgt_line);
 
-    // Convert to slices for similar
-    let src_refs: Vec<&str> = src_tokens.iter().map(|s| s.as_str()).collect();
-    let tgt_refs: Vec<&str> = tgt_tokens.iter().map(|s| s.as_str()).collect();
-
     // Use similar to get diff operations
-    let diff = TextDiff::from_slices(&src_refs, &tgt_refs);
+    let diff = TextDiff::from_slices(&src_tokens, &tgt_tokens);
 
     // Build weights for each possible split position
     let mut position_weights: Vec<u32> = Vec::new();
@@ -665,12 +631,12 @@ pub fn imitate_human_edits(
             match op.tag() {
                 DiffTag::Equal => {
                     for i in op.old_range() {
-                        current_text.push_str(&src_tokens[i]);
+                        current_text.push_str(src_tokens[i]);
                     }
                 }
                 DiffTag::Replace => {
-                    let ins: String = op.new_range().map(|i| tgt_tokens[i].as_str()).collect();
-                    let del: String = op.old_range().map(|i| src_tokens[i].as_str()).collect();
+                    let ins: String = op.new_range().map(|i| tgt_tokens[i]).collect();
+                    let del: String = op.old_range().map(|i| src_tokens[i]).collect();
 
                     // For insertion part
                     for ch in ins.chars() {
@@ -686,7 +652,7 @@ pub fn imitate_human_edits(
                     }
                 }
                 DiffTag::Insert => {
-                    let ins: String = op.new_range().map(|i| tgt_tokens[i].as_str()).collect();
+                    let ins: String = op.new_range().map(|i| tgt_tokens[i]).collect();
                     for ch in ins.chars() {
                         current_text.push(ch);
                         let weight = position_weight(&current_text, current_text.len());
@@ -694,7 +660,7 @@ pub fn imitate_human_edits(
                     }
                 }
                 DiffTag::Delete => {
-                    let del: String = op.old_range().map(|i| src_tokens[i].as_str()).collect();
+                    let del: String = op.old_range().map(|i| src_tokens[i]).collect();
                     for _ in del.chars() {
                         // Weight deletions lower
                         position_weights.push(2);
@@ -719,14 +685,14 @@ pub fn imitate_human_edits(
         match op.tag() {
             DiffTag::Equal => {
                 for i in op.old_range() {
-                    new_src.push_str(&src_tokens[i]);
+                    new_src.push_str(src_tokens[i]);
                 }
                 last_old_end = op.old_range().end;
             }
             DiffTag::Replace => {
                 // Handle replace as delete + insert
-                let del: String = op.old_range().map(|i| src_tokens[i].as_str()).collect();
-                let ins: String = op.new_range().map(|i| tgt_tokens[i].as_str()).collect();
+                let del: String = op.old_range().map(|i| src_tokens[i]).collect();
+                let ins: String = op.new_range().map(|i| tgt_tokens[i]).collect();
                 let repl_len = del.len() + ins.len();
                 if edit_index + repl_len >= split_index {
                     // Split within this replace operation
@@ -750,7 +716,7 @@ pub fn imitate_human_edits(
                 }
             }
             DiffTag::Insert => {
-                let repl: String = op.new_range().map(|i| tgt_tokens[i].as_str()).collect();
+                let repl: String = op.new_range().map(|i| tgt_tokens[i]).collect();
                 if edit_index + repl.len() >= split_index {
                     let offset = split_index - edit_index;
                     let safe_offset = floor_char_boundary(&repl, offset);
@@ -763,7 +729,7 @@ pub fn imitate_human_edits(
                 }
             }
             DiffTag::Delete => {
-                let repl: String = op.old_range().map(|i| src_tokens[i].as_str()).collect();
+                let repl: String = op.old_range().map(|i| src_tokens[i]).collect();
                 if edit_index + repl.len() >= split_index {
                     let offset = split_index - edit_index;
                     let safe_offset = floor_char_boundary(&repl, offset);
@@ -797,10 +763,10 @@ pub fn imitate_human_edits(
 
     // Add remainder of source if similar enough to target remainder
     let remainder_src: String = (last_old_end..src_tokens.len())
-        .map(|i| src_tokens[i].as_str())
+        .map(|i| src_tokens[i])
         .collect();
     let remainder_tgt: String = (last_old_end..tgt_tokens.len())
-        .filter_map(|i| tgt_tokens.get(i).map(|s| s.as_str()))
+        .filter_map(|i| tgt_tokens.get(i).copied())
         .collect();
 
     let ratio = fuzzy_ratio(&remainder_src, &remainder_tgt);
@@ -1104,13 +1070,13 @@ mod tests {
         assert_eq!(tokens, vec!["hello", " ", "world"]);
 
         let tokens = tokenize("foo_bar123 + baz");
-        assert_eq!(tokens, vec!["foo_", "bar123", " ", "+", " ", "baz"]);
+        assert_eq!(tokens, vec!["foo_bar123", " ", "+", " ", "baz"]);
 
         let tokens = tokenize("print(\"hello\")");
         assert_eq!(tokens, vec!["print", "(", "\"", "hello", "\"", ")"]);
 
         let tokens = tokenize("hello_world");
-        assert_eq!(tokens, vec!["hello_", "world"]);
+        assert_eq!(tokens, vec!["hello_world"]);
 
         let tokens = tokenize("fn();");
         assert_eq!(tokens, vec!["fn", "(", ")", ";"]);
@@ -1404,7 +1370,7 @@ Date: Mon Jan 1 00:00:00 2024
             reasoning: None,
             uncommitted_diff: String::new(),
             rejected_patch: None,
-            captured_prompt_input: None,
+
             telemetry: None,
             human_feedback: Vec::new(),
             rating: None,

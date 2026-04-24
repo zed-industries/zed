@@ -1,6 +1,6 @@
 use collections::BTreeMap;
 use gpui::HighlightStyle;
-use language::Chunk;
+use language::{Chunk, LanguageAwareStyling};
 use multi_buffer::{MultiBufferChunks, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _};
 use std::{
     cmp,
@@ -34,7 +34,7 @@ impl<'a> CustomHighlightsChunks<'a> {
     #[ztracing::instrument(skip_all)]
     pub fn new(
         range: Range<MultiBufferOffset>,
-        language_aware: bool,
+        language_aware: LanguageAwareStyling,
         text_highlights: Option<&'a TextHighlights>,
         semantic_token_highlights: Option<&'a SemanticTokensHighlights>,
         multibuffer_snapshot: &'a MultiBufferSnapshot,
@@ -195,15 +195,18 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
         let mask = 1u128.unbounded_shl(split_idx as u32).wrapping_sub(1);
         let chars = chunk.chars & mask;
         let tabs = chunk.tabs & mask;
+        let newlines = chunk.newlines & mask;
         let mut prefix = Chunk {
             text: prefix,
             chars,
             tabs,
+            newlines,
             ..chunk.clone()
         };
 
         chunk.chars = chunk.chars.unbounded_shr(split_idx as u32);
         chunk.tabs = chunk.tabs.unbounded_shr(split_idx as u32);
+        chunk.newlines = chunk.newlines.unbounded_shr(split_idx as u32);
         chunk.text = suffix;
         if !self.active_highlights.is_empty() {
             prefix.highlight_style = self
@@ -305,7 +308,10 @@ mod tests {
         // Get all chunks and verify their bitmaps
         let chunks = CustomHighlightsChunks::new(
             MultiBufferOffset(0)..buffer_snapshot.len(),
-            false,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
             None,
             None,
             &buffer_snapshot,

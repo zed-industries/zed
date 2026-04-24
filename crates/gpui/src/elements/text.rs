@@ -6,6 +6,7 @@ use crate::{
     WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
+use gpui_util::ResultExt;
 use itertools::Itertools;
 use smallvec::SmallVec;
 use std::{
@@ -16,7 +17,6 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use util::ResultExt;
 
 impl Element for &'static str {
     type RequestLayoutState = TextLayout;
@@ -159,6 +159,7 @@ pub struct StyledText {
     text: SharedString,
     runs: Option<Vec<TextRun>>,
     delayed_highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
+    delayed_font_family_overrides: Option<Vec<(Range<usize>, SharedString)>>,
     layout: TextLayout,
 }
 
@@ -169,6 +170,7 @@ impl StyledText {
             text: text.into(),
             runs: None,
             delayed_highlights: None,
+            delayed_font_family_overrides: None,
             layout: TextLayout::default(),
         }
     }
@@ -242,11 +244,61 @@ impl StyledText {
         runs
     }
 
+    /// Override the font family for specific byte ranges of the text.
+    ///
+    /// This is resolved lazily at layout time, so the overrides are applied
+    /// on top of the inherited text style from the parent element.
+    /// Can be combined with [`with_highlights`](Self::with_highlights).
+    ///
+    /// The overrides must be sorted by range start and non-overlapping.
+    /// Each override range must fall on character boundaries.
+    pub fn with_font_family_overrides(
+        mut self,
+        overrides: impl IntoIterator<Item = (Range<usize>, SharedString)>,
+    ) -> Self {
+        self.delayed_font_family_overrides = Some(
+            overrides
+                .into_iter()
+                .inspect(|(range, _)| {
+                    debug_assert!(self.text.is_char_boundary(range.start));
+                    debug_assert!(self.text.is_char_boundary(range.end));
+                })
+                .collect(),
+        );
+        self
+    }
+
+    fn apply_font_family_overrides(
+        runs: &mut [TextRun],
+        overrides: &[(Range<usize>, SharedString)],
+    ) {
+        let mut byte_offset = 0;
+        let mut override_idx = 0;
+        for run in runs.iter_mut() {
+            let run_end = byte_offset + run.len;
+            while override_idx < overrides.len() && overrides[override_idx].0.end <= byte_offset {
+                override_idx += 1;
+            }
+            if override_idx < overrides.len() {
+                let (ref range, ref family) = overrides[override_idx];
+                if byte_offset >= range.start && run_end <= range.end {
+                    run.font.family = family.clone();
+                }
+            }
+            byte_offset = run_end;
+        }
+    }
+
     /// Set the text runs for this piece of text.
     pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
         let mut text = &**self.text;
         for run in &runs {
-            text = text.get(run.len..).expect("invalid text run");
+            text = text.get(run.len..).unwrap_or_else(|| {
+                #[cfg(debug_assertions)]
+                panic!("invalid text run. Text: '{text}', run: {run:?}");
+                #[cfg(not(debug_assertions))]
+                panic!("invalid text run");
+            });
         }
         assert!(text.is_empty(), "invalid text run");
         self.runs = Some(runs);
@@ -273,11 +325,18 @@ impl Element for StyledText {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let runs = self.runs.take().or_else(|| {
+        let font_family_overrides = self.delayed_font_family_overrides.take();
+        let mut runs = self.runs.take().or_else(|| {
             self.delayed_highlights.take().map(|delayed_highlights| {
                 Self::compute_runs(&self.text, &window.text_style(), delayed_highlights)
             })
         });
+
+        if let Some(ref overrides) = font_family_overrides {
+            let runs =
+                runs.get_or_insert_with(|| vec![window.text_style().to_run(self.text.len())]);
+            Self::apply_font_family_overrides(runs, overrides);
+        }
 
         let layout_id = self.layout.layout(self.text.clone(), runs, window, cx);
         (layout_id, ())

@@ -40,8 +40,12 @@ pub const MIN_VERSION: Version = Version::new(0, 8, 0);
 pub const MAX_VERSION: Version = Version::new(0, 8, 0);
 
 wasmtime::component::bindgen!({
-    async: true,
-    trappable_imports: true,
+    imports: {
+        default: async | trappable,
+    },
+    exports: {
+        default: async,
+    },
     path: "../extension_api/wit/since_v0.8.0",
     with: {
          "worktree": ExtensionWorktree,
@@ -65,7 +69,11 @@ pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBo
 
 pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| super::new_linker(executor, Extension::add_to_linker))
+    LINKER.get_or_init(|| {
+        super::new_linker(executor, |linker| {
+            Extension::add_to_linker::<_, WasmState>(linker, |s| s)
+        })
+    })
 }
 
 impl From<Range> for std::ops::Range<usize> {
@@ -868,7 +876,7 @@ impl process::Host for WasmState {
             self.capability_granter
                 .grant_exec(&command.command, &command.args)?;
 
-            let output = util::command::new_smol_command(command.command.as_str())
+            let output = util::command::new_command(command.command.as_str())
                 .args(&command.args)
                 .envs(command.env)
                 .output()
@@ -941,6 +949,7 @@ impl ExtensionImports for WasmState {
                         );
                         Ok(serde_json::to_string(&settings::LanguageSettings {
                             tab_size: settings.tab_size,
+                            preferred_line_length: settings.preferred_line_length,
                         })?)
                     }
                     "lsp" => {
@@ -1048,7 +1057,8 @@ impl ExtensionImports for WasmState {
 
             let destination_path = self
                 .host
-                .writeable_path_from_extension(&self.manifest.id, &path)?;
+                .writeable_path_from_extension(&self.manifest.id, &path)
+                .await?;
 
             let mut response = self
                 .host
@@ -1105,7 +1115,8 @@ impl ExtensionImports for WasmState {
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
         let path = self
             .host
-            .writeable_path_from_extension(&self.manifest.id, Path::new(&path))?;
+            .writeable_path_from_extension(&self.manifest.id, Path::new(&path))
+            .await?;
 
         make_file_executable(&path)
             .await
