@@ -451,7 +451,30 @@ fn collect_searchable_targets(
             }
         }
         AgentThreadEntry::ToolCall(call) => {
-            push_markdown(&call.label, cx, MatchOrigin::AlwaysVisible, out);
+            // For Execute tool calls, `call.label` carries the full command,
+            // but the visible rendering is a code-fenced markdown: once a
+            // terminal has been created, `terminal.command()`; otherwise (in
+            // the pre-approval "Run Command" preview, or for rejected
+            // commands) `call.command_markdown`. Indexing those fenced
+            // entities — rather than the plain label — means highlights end
+            // up on the markdown the user actually sees.
+            let mut has_terminal = false;
+            for terminal in call.terminals() {
+                has_terminal = true;
+                push_markdown(
+                    terminal.read(cx).command(),
+                    cx,
+                    MatchOrigin::AlwaysVisible,
+                    out,
+                );
+            }
+            if !has_terminal {
+                if let Some(command_markdown) = &call.command_markdown {
+                    push_markdown(command_markdown, cx, MatchOrigin::AlwaysVisible, out);
+                } else {
+                    push_markdown(&call.label, cx, MatchOrigin::AlwaysVisible, out);
+                }
+            }
             let content_visible = include_hidden || expanded_tool_calls.contains(&call.id);
             if content_visible {
                 for content in &call.content {

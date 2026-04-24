@@ -247,6 +247,12 @@ impl AgentThreadEntry {
 pub struct ToolCall {
     pub id: acp::ToolCallId,
     pub label: Entity<Markdown>,
+    /// For `Execute` tool calls, this mirrors `label` but wraps the title in
+    /// a fenced code block. It is used to render the command in a monospace
+    /// block with line breaks preserved, and lets thread search attach
+    /// highlights to the visible command text even before (or when) no
+    /// terminal entity exists for the call.
+    pub command_markdown: Option<Entity<Markdown>>,
     pub kind: acp::ToolKind,
     pub content: Vec<ToolCallContent>,
     pub status: ToolCallStatus,
@@ -299,10 +305,30 @@ impl ToolCall {
 
         let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
 
+        let label = cx.new(|cx| {
+            Markdown::new(
+                title.clone().into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        });
+        let command_markdown = if tool_call.kind == acp::ToolKind::Execute {
+            Some(cx.new(|cx| {
+                Markdown::new(
+                    format!("```\n{}\n```", title).into(),
+                    Some(language_registry.clone()),
+                    None,
+                    cx,
+                )
+            }))
+        } else {
+            None
+        };
         let result = Self {
             id: tool_call.tool_call_id,
-            label: cx
-                .new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx)),
+            label,
+            command_markdown,
             kind: tool_call.kind,
             content,
             locations: tool_call.locations,
@@ -355,6 +381,21 @@ impl ToolCall {
                     terminal.update(cx, |terminal, cx| {
                         terminal.update_command_label(&title, cx);
                     });
+                }
+                let fenced_source = format!("```\n{}\n```", title);
+                if let Some(command_markdown) = &self.command_markdown {
+                    command_markdown.update(cx, |md, cx| {
+                        md.replace(fenced_source, cx);
+                    });
+                } else {
+                    self.command_markdown = Some(cx.new(|cx| {
+                        Markdown::new(
+                            fenced_source.into(),
+                            Some(language_registry.clone()),
+                            None,
+                            cx,
+                        )
+                    }));
                 }
             }
             self.label.update(cx, |label, cx| {
@@ -1821,6 +1862,7 @@ impl AcpThread {
                 let failed_tool_call = ToolCall {
                     id: update.id().clone(),
                     label: cx.new(|cx| Markdown::new("Tool call not found".into(), None, None, cx)),
+                    command_markdown: None,
                     kind: acp::ToolKind::Fetch,
                     content: vec![ToolCallContent::ContentBlock(ContentBlock::new(
                         "Tool call not found".into(),

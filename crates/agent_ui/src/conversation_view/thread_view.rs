@@ -5900,8 +5900,12 @@ impl ThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        // The label's markdown source is a fenced code block (```\n...\n```);
-        // strip the fences so the copy button yields just the command text.
+        // The command's markdown source is a fenced code block (```\n...\n```),
+        // produced by `Terminal::command` (post-execution) and
+        // `ToolCall::command_markdown` (preview/rejected). Strip the fences so
+        // the copy button yields just the command text. Rendering as a code
+        // block (rather than stacked Labels) preserves line breaks and lets
+        // thread search paint highlights on the visible command.
         let command_source = command.read(cx).source();
         let command_text = command_source
             .strip_prefix("```\n")
@@ -5963,6 +5967,7 @@ impl ThreadView {
     ) -> AnyElement {
         let terminal_data = terminal.read(cx);
         let working_dir = terminal_data.working_dir();
+        let command = terminal_data.command();
         let started_at = terminal_data.started_at();
 
         let tool_failed = matches!(
@@ -6016,7 +6021,7 @@ impl ThreadView {
         let command_element = self.render_collapsible_command(
             header_group.clone(),
             false,
-            tool_call.label.clone(),
+            command.clone(),
             window,
             cx,
         );
@@ -6562,11 +6567,13 @@ impl ThreadView {
                 .mr_5()
             })
             .map(|this| {
-                if is_terminal_tool {
+                if is_terminal_tool
+                    && let Some(command_markdown) = tool_call.command_markdown.clone()
+                {
                     this.child(self.render_collapsible_command(
                         card_header_id.clone(),
                         true,
-                        tool_call.label.clone(),
+                        command_markdown,
                         window,
                         cx,
                     ))
