@@ -426,10 +426,6 @@ impl AnyAgentTool for ContextServerTool {
             }
             // `raw_output` is persisted alongside the thread, so avoid embedding
             // raw base64 image bytes here (they're already in `llm_output`).
-            // When the response only contained text parts, preserve the
-            // pre-refactor shape so existing replays keep deserializing the
-            // same way. When there are image parts too, record a small summary
-            // instead of the full content.
             let raw_output = if image_count == 0 {
                 serde_json::Value::String(concatenated_text)
             } else {
