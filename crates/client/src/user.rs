@@ -220,7 +220,7 @@ impl UserStore {
                 let weak = Arc::downgrade(&client);
                 drop(client);
                 while let Some(status) = status.next().await {
-                    // if the client is dropped, the app is shutting down.
+                    // If the client is dropped, the app is shutting down.
                     let Some(client) = weak.upgrade() else {
                         return Ok(());
                     };

@@ -3,7 +3,7 @@ use crate::{
     sidebar_side_context_menu,
 };
 use gpui::{
-    AnyView, App, Context, Corner, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
+    Anchor, AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
     Subscription, WeakEntity, Window,
 };
 use std::any::TypeId;
@@ -92,6 +92,17 @@ impl Render for StatusBar {
                     )
                     // This border is to avoid a transparent gap in the rounded corners
                     .mb(px(-1.))
+                    .mt({
+                        #[cfg(target_os = "linux")]
+                        let needs_gap_fix = {
+                            // Running on Wayland and using some scaling levels other than 100% causes a
+                            // 1px gap above the status bar; adding a margin avoids this.
+                            gpui::guess_compositor() == "Wayland" && window.scale_factor() != 1.0
+                        };
+                        #[cfg(not(target_os = "linux"))]
+                        let needs_gap_fix = false;
+                        if needs_gap_fix { px(-1.) } else { px(0.) }
+                    })
                     .border_b(px(1.0))
                     .border_color(cx.theme().colors().status_bar_background),
             })
@@ -144,14 +155,14 @@ impl StatusBar {
 
         let toggle = sidebar_side_context_menu("sidebar-status-toggle-menu", cx)
             .anchor(if on_right {
-                Corner::BottomRight
+                Anchor::BottomRight
             } else {
-                Corner::BottomLeft
+                Anchor::BottomLeft
             })
             .attach(if on_right {
-                Corner::TopRight
+                Anchor::TopRight
             } else {
-                Corner::TopLeft
+                Anchor::TopLeft
             })
             .trigger(move |_is_active, _window, _cx| {
                 IconButton::new(

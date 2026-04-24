@@ -523,7 +523,7 @@ impl NewProcessModal {
         )
         .style(ui::DropdownStyle::Outlined)
         .tab_index(0)
-        .attach(gpui::Corner::BottomLeft)
+        .attach(gpui::Anchor::BottomLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),

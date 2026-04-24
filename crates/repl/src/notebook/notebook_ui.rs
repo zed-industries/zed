@@ -35,6 +35,7 @@ use crate::kernels::{
     Kernel, KernelSession, KernelSpecification, KernelStatus, LocalKernelSpecification,
     NativeRunningKernel, RemoteRunningKernel, SshRunningKernel, WslRunningKernel,
 };
+use crate::notebook::MovementDirection;
 use crate::repl_store::ReplStore;
 
 use picker::Picker;
@@ -52,6 +53,12 @@ use zed_actions::notebook::{
 pub(crate) enum NotebookMode {
     Command,
     Edit,
+}
+
+#[derive(PartialEq, Eq)]
+enum SelectionMode {
+    SelectOnly,
+    SelectAndMove,
 }
 
 pub(crate) const MAX_TEXT_BLOCK_WIDTH: f32 = 9999.0;
@@ -84,14 +91,11 @@ pub struct NotebookEditor {
     languages: Arc<LanguageRegistry>,
     project: Entity<Project>,
     worktree_id: project::WorktreeId,
-
     focus_handle: FocusHandle,
     notebook_item: Entity<NotebookItem>,
     notebook_language: Shared<Task<Option<Arc<Language>>>>,
-
     remote_id: Option<ViewId>,
     cell_list: ListState,
-
     notebook_mode: NotebookMode,
     selected_cell_index: usize,
     cell_order: Vec<CellId>,
@@ -541,6 +545,12 @@ impl NotebookEditor {
         }
     }
 
+    fn get_selected_cell(&self) -> Option<&Cell> {
+        self.cell_order
+            .get(self.selected_cell_index)
+            .and_then(|cell_id| self.cell_map.get(cell_id))
+    }
+
     fn has_outputs(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         self.cell_map.values().any(|cell| {
             if let Cell::Code(code_cell) = cell {
@@ -865,9 +875,10 @@ impl NotebookEditor {
         }
     }
 
-    pub fn select_next(
+    fn select_next(
         &mut self,
         _: &menu::SelectNext,
+        selection_mode: SelectionMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -880,13 +891,21 @@ impl NotebookEditor {
                 index + 1
             };
             self.set_selected_index(ix, true, window, cx);
+
+            if selection_mode == SelectionMode::SelectAndMove
+                && let Some(cell) = self.get_selected_cell()
+            {
+                cell.move_to(MovementDirection::Start, window, cx);
+            }
+
             cx.notify();
         }
     }
 
-    pub fn select_previous(
+    fn select_previous(
         &mut self,
         _: &menu::SelectPrevious,
+        selection_mode: SelectionMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -895,6 +914,13 @@ impl NotebookEditor {
             let index = self.selected_index();
             let ix = if index == 0 { 0 } else { index - 1 };
             self.set_selected_index(ix, true, window, cx);
+
+            if selection_mode == SelectionMode::SelectAndMove
+                && let Some(cell) = self.get_selected_cell()
+            {
+                cell.move_to(MovementDirection::End, window, cx);
+            }
+
             cx.notify();
         }
     }
@@ -1316,82 +1342,37 @@ impl Render for NotebookEditor {
             .on_action(cx.listener(|this, action, window, cx| {
                 this.handle_enter_command_mode(action, window, cx)
             }))
-            .on_action(cx.listener(|this, action, window, cx| this.select_next(action, window, cx)))
-            .on_action(
-                cx.listener(|this, action, window, cx| this.select_previous(action, window, cx)),
-            )
-            .on_action(
-                cx.listener(|this, action, window, cx| this.select_first(action, window, cx)),
-            )
-            .on_action(cx.listener(|this, action, window, cx| this.select_last(action, window, cx)))
-            .on_action(cx.listener(|this, _: &MoveUp, window, cx| {
-                this.select_previous(&menu::SelectPrevious, window, cx);
-                if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
-                    if let Some(cell) = this.cell_map.get(cell_id) {
-                        match cell {
-                            Cell::Code(cell) => {
-                                let editor = cell.read(cx).editor().clone();
-                                editor.update(cx, |editor, cx| {
-                                    editor.move_to_end(&Default::default(), window, cx);
-                                });
-                                editor.focus_handle(cx).focus(window, cx);
-                            }
-                            Cell::Markdown(cell) => {
-                                cell.update(cx, |cell, cx| {
-                                    cell.set_editing(true);
-                                    cx.notify();
-                                });
-                                let editor = cell.read(cx).editor().clone();
-                                editor.update(cx, |editor, cx| {
-                                    editor.move_to_end(&Default::default(), window, cx);
-                                });
-                                editor.focus_handle(cx).focus(window, cx);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
+            .on_action(cx.listener(|this, action, window, cx| {
+                this.select_next(action, SelectionMode::SelectOnly, window, cx)
             }))
+            .on_action(cx.listener(|this, action, window, cx| {
+                this.select_previous(action, SelectionMode::SelectOnly, window, cx)
+            }))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(|this, _: &MoveDown, window, cx| {
-                this.select_next(&menu::SelectNext, window, cx);
-                if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
-                    if let Some(cell) = this.cell_map.get(cell_id) {
-                        match cell {
-                            Cell::Code(cell) => {
-                                let editor = cell.read(cx).editor().clone();
-                                editor.update(cx, |editor, cx| {
-                                    editor.move_to_beginning(&Default::default(), window, cx);
-                                });
-                                editor.focus_handle(cx).focus(window, cx);
-                            }
-                            Cell::Markdown(cell) => {
-                                cell.update(cx, |cell, cx| {
-                                    cell.set_editing(true);
-                                    cx.notify();
-                                });
-                                let editor = cell.read(cx).editor().clone();
-                                editor.update(cx, |editor, cx| {
-                                    editor.move_to_beginning(&Default::default(), window, cx);
-                                });
-                                editor.focus_handle(cx).focus(window, cx);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
+                this.select_next(
+                    &Default::default(),
+                    SelectionMode::SelectAndMove,
+                    window,
+                    cx,
+                );
+            }))
+            .on_action(cx.listener(|this, _: &MoveUp, window, cx| {
+                this.select_previous(
+                    &Default::default(),
+                    SelectionMode::SelectAndMove,
+                    window,
+                    cx,
+                );
             }))
             .on_action(cx.listener(|this, _: &NotebookMoveDown, window, cx| {
-                let Some(cell_id) = this.cell_order.get(this.selected_cell_index) else {
-                    return;
-                };
-                let Some(cell) = this.cell_map.get(cell_id) else {
+                let Some(cell) = this.get_selected_cell() else {
                     return;
                 };
 
-                let editor = match cell {
-                    Cell::Code(cell) => cell.read(cx).editor().clone(),
-                    Cell::Markdown(cell) => cell.read(cx).editor().clone(),
-                    _ => return,
+                let Some(editor) = cell.editor(cx).cloned() else {
+                    return;
                 };
 
                 let is_at_last_line = editor.update(cx, |editor, cx| {
@@ -1409,32 +1390,12 @@ impl Render for NotebookEditor {
                 });
 
                 if is_at_last_line {
-                    this.select_next(&menu::SelectNext, window, cx);
-                    if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
-                        if let Some(cell) = this.cell_map.get(cell_id) {
-                            match cell {
-                                Cell::Code(cell) => {
-                                    let editor = cell.read(cx).editor().clone();
-                                    editor.update(cx, |editor, cx| {
-                                        editor.move_to_beginning(&Default::default(), window, cx);
-                                    });
-                                    editor.focus_handle(cx).focus(window, cx);
-                                }
-                                Cell::Markdown(cell) => {
-                                    cell.update(cx, |cell, cx| {
-                                        cell.set_editing(true);
-                                        cx.notify();
-                                    });
-                                    let editor = cell.read(cx).editor().clone();
-                                    editor.update(cx, |editor, cx| {
-                                        editor.move_to_beginning(&Default::default(), window, cx);
-                                    });
-                                    editor.focus_handle(cx).focus(window, cx);
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
+                    this.select_next(
+                        &Default::default(),
+                        SelectionMode::SelectAndMove,
+                        window,
+                        cx,
+                    );
                 } else {
                     editor.update(cx, |editor, cx| {
                         editor.move_down(&Default::default(), window, cx);
@@ -1442,17 +1403,12 @@ impl Render for NotebookEditor {
                 }
             }))
             .on_action(cx.listener(|this, _: &NotebookMoveUp, window, cx| {
-                let Some(cell_id) = this.cell_order.get(this.selected_cell_index) else {
-                    return;
-                };
-                let Some(cell) = this.cell_map.get(cell_id) else {
+                let Some(cell) = this.get_selected_cell() else {
                     return;
                 };
 
-                let editor = match cell {
-                    Cell::Code(cell) => cell.read(cx).editor().clone(),
-                    Cell::Markdown(cell) => cell.read(cx).editor().clone(),
-                    _ => return,
+                let Some(editor) = cell.editor(cx).cloned() else {
+                    return;
                 };
 
                 let is_at_first_line = editor.update(cx, |editor, cx| {
@@ -1469,32 +1425,12 @@ impl Render for NotebookEditor {
                 });
 
                 if is_at_first_line {
-                    this.select_previous(&menu::SelectPrevious, window, cx);
-                    if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
-                        if let Some(cell) = this.cell_map.get(cell_id) {
-                            match cell {
-                                Cell::Code(cell) => {
-                                    let editor = cell.read(cx).editor().clone();
-                                    editor.update(cx, |editor, cx| {
-                                        editor.move_to_end(&Default::default(), window, cx);
-                                    });
-                                    editor.focus_handle(cx).focus(window, cx);
-                                }
-                                Cell::Markdown(cell) => {
-                                    cell.update(cx, |cell, cx| {
-                                        cell.set_editing(true);
-                                        cx.notify();
-                                    });
-                                    let editor = cell.read(cx).editor().clone();
-                                    editor.update(cx, |editor, cx| {
-                                        editor.move_to_end(&Default::default(), window, cx);
-                                    });
-                                    editor.focus_handle(cx).focus(window, cx);
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
+                    this.select_previous(
+                        &Default::default(),
+                        SelectionMode::SelectAndMove,
+                        window,
+                        cx,
+                    );
                 } else {
                     editor.update(cx, |editor, cx| {
                         editor.move_up(&Default::default(), window, cx);

@@ -50,7 +50,6 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 project.workspace = true
-release_channel.workspace = true
 remote.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -67,7 +66,6 @@ theme_settings.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
-vim_mode_setting.workspace = true
 zed_actions.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -84,5 +82,7 @@ session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
+proptest.workspace = true
+proptest-derive.workspace = true
 tempfile.workspace = true
 zlog.workspace = true

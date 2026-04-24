@@ -1641,6 +1641,182 @@ async fn test_fold_with_unindented_multiline_block_comment_includes_closing_brac
 }
 
 #[gpui::test]
+async fn test_fold_preserves_top_level_comments_between_python_classes(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_python::LANGUAGE.into()),
+        )
+        .with_queries(LanguageQueries {
+            overrides: Some(Cow::from(indoc! {"
+                (comment) @comment.inclusive
+                (string) @string
+            "})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries"),
+    );
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.set_state(indoc! {"
+        class Foo:
+            def bar(self):
+                pass
+
+
+        # SECTION SEPARATOR
+
+        class Baz:
+            def qux(self):
+                passˇ
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                class Foo:⋯
+
+
+                # SECTION SEPARATOR
+
+                class Baz:
+                    def qux(self):
+                        pass
+            "},
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_preserves_top_level_comments_between_rust_functions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_queries(LanguageQueries {
+            overrides: Some(Cow::from(indoc! {"
+                [
+                  (string_literal)
+                  (raw_string_literal)
+                ] @string
+                [
+                  (line_comment)
+                  (block_comment)
+                ] @comment.inclusive
+            "})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries"),
+    );
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.set_state(indoc! {"
+        fn foo() {
+            bar();
+        }
+
+
+        // SECTION SEPARATOR
+
+
+        fn baz() {
+            qux();ˇ
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                fn foo() {⋯
+                }
+
+
+                // SECTION SEPARATOR
+
+
+                fn baz() {
+                    qux();
+                }
+            "},
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fold_terminates_at_top_level_multiline_string_between_python_classes(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_python::LANGUAGE.into()),
+        )
+        .with_queries(LanguageQueries {
+            overrides: Some(Cow::from(indoc! {"
+                (comment) @comment.inclusive
+                (string) @string
+            "})),
+            ..Default::default()
+        })
+        .expect("Could not parse queries"),
+    );
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.set_state(indoc! {r#"
+        class Foo:
+            def bar(self):
+                pass
+
+
+        """
+        top-level docstring at zero indent
+        """
+
+
+        class Baz:
+            def qux(self):
+                passˇ
+    "#});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {r#"
+                class Foo:⋯
+
+
+                """
+                top-level docstring at zero indent
+                """
+
+
+                class Baz:
+                    def qux(self):
+                        pass
+            "#},
+        );
+    });
+}
+
+#[gpui::test]
 fn test_fold_at_level(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -28496,6 +28672,9 @@ async fn test_tree_sitter_brackets_newline_insertion(cx: &mut TestAppContext) {
 #[gpui::test(iterations = 10)]
 async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.code_lens = Some(settings::CodeLens::Menu);
+    });
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
@@ -28584,15 +28763,6 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
                     command: Some(lsp::Command {
                         title: "Code lens command".to_owned(),
                         command: "_the/command".to_owned(),
-                        arguments: None,
-                    }),
-                    data: None,
-                },
-                lsp::CodeLens {
-                    range: lsp::Range::default(),
-                    command: Some(lsp::Command {
-                        title: "Command not in capabilities".to_owned(),
-                        command: "not in capabilities".to_owned(),
                         arguments: None,
                     }),
                     data: None,
@@ -31607,6 +31777,96 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_click_on_parameter_inlay_hint_places_cursor_correctly(cx: &mut TestAppContext) {
+    use crate::inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels};
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, &|settings: &mut SettingsContent| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        enabled: Some(true),
+                        show_parameter_hints: Some(true),
+                        show_type_hints: Some(true),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        ..Default::default()
+                    })
+            });
+        });
+    });
+
+    cx.set_state("fn foo(value: i32) {} fn main() { foo(ˇ42); }");
+
+    // Buffer: `fn foo(value: i32) {} fn main() { foo(42); }`
+    // The parameter hint "value:" appears before "42"
+    let hint_start_offset = cx.ranges("fn foo(value: i32) {} fn main() { foo(ˇ42); }")[0].start;
+    let hint_position = cx.to_lsp(MultiBufferOffset(hint_start_offset));
+    let hint_label = "value:";
+    let expected_uri = cx.buffer_lsp_url.clone();
+    cx.lsp
+        .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
+            let expected_uri = expected_uri.clone();
+            async move {
+                assert_eq!(params.text_document.uri, expected_uri);
+                Ok(Some(vec![lsp::InlayHint {
+                    position: hint_position,
+                    label: lsp::InlayHintLabel::String(hint_label.to_string()),
+                    kind: Some(lsp::InlayHintKind::PARAMETER),
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: None,
+                    padding_right: Some(true),
+                    data: None,
+                }]))
+            }
+        })
+        .next()
+        .await;
+    cx.background_executor.run_until_parked();
+
+    cx.update_editor(|editor, _window, cx| {
+        let expected_labels = vec!["value: ".to_string()];
+        assert_eq!(expected_labels, cached_hint_labels(editor, cx));
+        assert_eq!(expected_labels, visible_hint_labels(editor, cx));
+    });
+
+    // The cursor is at `4` in `42`. The parameter hint "value: " appears just
+    // before it in display space. We'll click a few characters to the left of
+    // the cursor position to land inside the inlay hint text.
+    let cursor_display_point = cx.update_editor(|editor, _window, cx| {
+        editor
+            .selections
+            .newest_display(&editor.display_snapshot(cx))
+            .head()
+    });
+    let cursor_pixel = cx.pixel_position_for(cursor_display_point);
+    let em_width =
+        cx.update_editor(|editor, _, _| editor.last_position_map.as_ref().unwrap().em_layout_width);
+    // Click 3 characters to the left of the cursor, which lands inside the
+    // "value: " inlay hint text.
+    let click_position = gpui::Point {
+        x: cursor_pixel.x - em_width * 3.0,
+        y: cursor_pixel.y,
+    };
+    cx.simulate_click(click_position, Modifiers::none());
+    cx.background_executor.run_until_parked();
+
+    // The cursor should be placed after the `(`, at the `4` in `42`,
+    // NOT before the `(`.
+    cx.assert_editor_state("fn foo(value: i32) {} fn main() { foo(ˇ42); }");
+}
+
+#[gpui::test]
 async fn test_newline_replacement_in_single_line(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let (editor, cx) = cx.add_window_view(Editor::single_line);
@@ -32701,6 +32961,80 @@ async fn test_no_duplicated_sticky_headers(cx: &mut TestAppContext) {
     assert_eq!(sticky_headers(4.0), vec![(struct_foo, 0.0)]);
     assert_eq!(sticky_headers(4.5), vec![(struct_foo, -0.5)]);
     assert_eq!(sticky_headers(5.0), vec![]);
+}
+
+#[gpui::test]
+async fn test_autoscroll_keeps_cursor_visible_below_sticky_headers(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.vertical_scroll_margin = Some(0.0);
+        settings.scroll_beyond_last_line = Some(ScrollBeyondLastLine::OnePage);
+        settings.sticky_scroll = Some(settings::StickyScrollContent {
+            enabled: Some(true),
+        });
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        impl Foo { fn bar() {
+            let x = 1;
+            fn baz() {
+                let y = 2;
+            }
+        } }
+        ˇ
+    "});
+
+    let mut previous_cursor_row = cx.update_editor(|editor, window, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| buffer.set_language(Some(rust_lang()), cx));
+        let cursor_row = editor
+            .selections
+            .newest_display(&editor.display_snapshot(cx))
+            .head()
+            .row();
+        editor.set_scroll_top_row(cursor_row, window, cx);
+        cursor_row
+    });
+
+    for _ in 0..6 {
+        cx.update_editor(|editor, window, cx| editor.move_up(&MoveUp, window, cx));
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            let scroll_top = snapshot.scroll_position().y;
+            let sticky_header_count = EditorElement::sticky_headers(editor, &snapshot).len();
+            let cursor_row = editor
+                .selections
+                .newest_display(&snapshot.display_snapshot)
+                .head()
+                .row();
+            assert_eq!(
+                cursor_row,
+                previous_cursor_row
+                    .previous_row()
+                    .max(DisplayRow(scroll_top as u32) + DisplayRow(sticky_header_count as u32))
+            );
+            previous_cursor_row = cursor_row;
+        });
+
+        // The `ScrollCursorTop` action shouldn't change the scroll position, as the cursor is
+        // already as high up as the sticky headers allow.
+        let scroll_top_before =
+            cx.update_editor(|editor, window, cx| editor.snapshot(window, cx).scroll_position().y);
+        cx.update_editor(|editor, window, cx| {
+            editor.scroll_cursor_top(&ScrollCursorTop, window, cx)
+        });
+        cx.run_until_parked();
+        let scroll_top_after =
+            cx.update_editor(|editor, window, cx| editor.snapshot(window, cx).scroll_position().y);
+        assert_eq!(scroll_top_before, scroll_top_after);
+    }
 }
 
 #[gpui::test]

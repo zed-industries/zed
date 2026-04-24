@@ -9,6 +9,7 @@ use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
+use project::lsp_store::lsp_ext_command;
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
@@ -608,20 +609,60 @@ impl LspAdapter for RustLspAdapter {
             .lsp
             .get(&SERVER_NAME)
             .is_some_and(|s| s.enable_lsp_tasks);
-        if enable_lsp_tasks {
-            let experimental = json!({
-                "runnables": {
-                    "kinds": [ "cargo", "shell" ],
-                },
-            });
-            if let Some(original_experimental) = &mut original.capabilities.experimental {
-                merge_json_value_into(experimental, original_experimental);
-            } else {
-                original.capabilities.experimental = Some(experimental);
+
+        let mut experimental = json!({
+            "commands": {
+                "commands": [
+                    "rust-analyzer.showReferences",
+                    "rust-analyzer.gotoLocation",
+                    "rust-analyzer.triggerParameterHints",
+                    "rust-analyzer.rename",
+                ]
             }
+        });
+
+        if enable_lsp_tasks {
+            merge_json_value_into(
+                json!({
+                    "runnables": {
+                        "kinds": [ "cargo", "shell" ],
+                    },
+                    "commands": {
+                        "commands": [
+                            "rust-analyzer.runSingle",
+                        ]
+                    }
+                }),
+                &mut experimental,
+            );
+        }
+
+        if let Some(original_experimental) = &mut original.capabilities.experimental {
+            merge_json_value_into(experimental, original_experimental);
+        } else {
+            original.capabilities.experimental = Some(experimental);
         }
 
         Ok(original)
+    }
+
+    fn client_command(
+        &self,
+        command_name: &str,
+        arguments: &[serde_json::Value],
+    ) -> Option<ClientCommand> {
+        match command_name {
+            "rust-analyzer.showReferences" => Some(ClientCommand::ShowLocations),
+            "rust-analyzer.runSingle" => {
+                let first_arg = arguments.first()?;
+                let runnable =
+                    serde_json::from_value::<lsp_ext_command::Runnable>(first_arg.clone()).ok()?;
+                let template =
+                    lsp_ext_command::runnable_to_task_template(runnable.label, runnable.args);
+                Some(ClientCommand::ScheduleTask(template))
+            }
+            _ => None,
+        }
     }
 }
 
