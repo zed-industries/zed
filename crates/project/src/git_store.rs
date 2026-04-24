@@ -310,7 +310,7 @@ pub struct JobInfo {
 
 struct CommitDataHandler {
     _task: Task<()>,
-    commit_data_request: smol::channel::Sender<Oid>,
+    commit_data_request: async_channel::Sender<Oid>,
     completion_senders: HashMap<Oid, oneshot::Sender<Arc<CommitData>>>,
     pending_requests: HashSet<Oid>,
 }
@@ -4812,7 +4812,7 @@ impl Repository {
         &mut self,
         log_source: LogSource,
         search_args: SearchCommitArgs,
-        request_tx: smol::channel::Sender<Oid>,
+        request_tx: async_channel::Sender<Oid>,
         cx: &mut Context<Self>,
     ) {
         let repository_state = self.repository_state.clone();
@@ -4912,7 +4912,7 @@ impl Repository {
         cx: &mut AsyncApp,
     ) -> Result<(), SharedString> {
         let (request_tx, request_rx) =
-            smol::channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
+            async_channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
 
         let task = cx.background_executor().spawn({
             let log_source = log_source.clone();
@@ -5029,8 +5029,8 @@ impl Repository {
 
     fn open_commit_data_handler(&self, cx: &Context<Self>) -> CommitDataHandler {
         let state = self.repository_state.clone();
-        let (result_tx, result_rx) = smol::channel::bounded::<(Oid, CommitData)>(64);
-        let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
+        let (result_tx, result_rx) = async_channel::bounded::<(Oid, CommitData)>(64);
+        let (request_tx, request_rx) = async_channel::unbounded::<Oid>();
 
         let foreground_task = cx.spawn(async move |this, cx| {
             while let Ok((sha, commit_data)) = result_rx.recv().await {

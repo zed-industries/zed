@@ -3,6 +3,7 @@ use acp_thread::{
     AgentSessionListResponse,
 };
 use action_log::ActionLog;
+use async_channel;
 use agent_client_protocol::schema::{self as acp, ErrorCode};
 use agent_client_protocol::{
     Agent, Client, ConnectionTo, JsonRpcResponse, Lines, Responder, SentRequest,
@@ -18,7 +19,6 @@ use project::agent_server_store::{AgentServerCommand, AgentServerStore};
 use project::{AgentId, Project};
 use remote::remote_client::Interactive;
 use serde::Deserialize;
-use smol::channel;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::rc::Rc;
@@ -146,7 +146,7 @@ impl AcpDebugMessage {
 
 fn broadcast_debug_message(
     debug_messages: &Arc<Mutex<VecDeque<AcpDebugMessage>>>,
-    debug_subscribers: &Arc<Mutex<Vec<channel::Sender<AcpDebugMessage>>>>,
+    debug_subscribers: &Arc<Mutex<Vec<async_channel::Sender<AcpDebugMessage>>>>,
     message: AcpDebugMessage,
 ) {
     {
@@ -368,7 +368,7 @@ pub struct AcpConnection {
     child: Option<Child>,
     session_list: Option<Rc<AcpSessionList>>,
     debug_messages: Arc<Mutex<VecDeque<AcpDebugMessage>>>,
-    debug_subscribers: Arc<Mutex<Vec<channel::Sender<AcpDebugMessage>>>>,
+    debug_subscribers: Arc<Mutex<Vec<async_channel::Sender<AcpDebugMessage>>>>,
     _io_task: Task<()>,
     _dispatch_task: Task<()>,
     _wait_task: Task<Result<()>>,
@@ -415,13 +415,13 @@ pub struct AcpSession {
 
 pub struct AcpSessionList {
     connection: ConnectionTo<Agent>,
-    updates_tx: channel::Sender<acp_thread::SessionListUpdate>,
-    updates_rx: channel::Receiver<acp_thread::SessionListUpdate>,
+    updates_tx: async_channel::Sender<acp_thread::SessionListUpdate>,
+    updates_rx: async_channel::Receiver<acp_thread::SessionListUpdate>,
 }
 
 impl AcpSessionList {
     fn new(connection: ConnectionTo<Agent>) -> Self {
-        let (tx, rx) = channel::unbounded();
+        let (tx, rx) = async_channel::unbounded();
         Self {
             connection,
             updates_tx: tx,
@@ -482,7 +482,7 @@ impl AgentSessionList for AcpSessionList {
     fn watch(
         &self,
         _cx: &mut App,
-    ) -> Option<channel::Receiver<acp_thread::SessionListUpdate>> {
+    ) -> Option<async_channel::Receiver<acp_thread::SessionListUpdate>> {
         Some(self.updates_rx.clone())
     }
 
@@ -615,10 +615,7 @@ fn connect_client_future(
 impl AcpConnection {
     pub fn subscribe_debug_messages(
         &self,
-    ) -> (
-        Vec<AcpDebugMessage>,
-        channel::Receiver<AcpDebugMessage>,
-    ) {
+    ) -> (Vec<AcpDebugMessage>, async_channel::Receiver<AcpDebugMessage>) {
         let backlog = self
             .debug_messages
             .lock()
@@ -626,7 +623,7 @@ impl AcpConnection {
             .iter()
             .cloned()
             .collect();
-        let (sender, receiver) = channel::unbounded();
+        let (sender, receiver) = async_channel::unbounded();
         self.debug_subscribers
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1818,7 +1815,7 @@ pub mod test_support {
         close_session_count: Arc<AtomicUsize>,
         fail_next_prompt: Arc<AtomicBool>,
         exit_status_sender:
-            Arc<std::sync::Mutex<Option<smol::channel::Sender<std::process::ExitStatus>>>>,
+            Arc<std::sync::Mutex<Option<async_channel::Sender<std::process::ExitStatus>>>>,
     }
 
     impl FakeAcpAgentServer {
@@ -1879,7 +1876,7 @@ pub mod test_support {
                     cx,
                 )
                 .await?;
-                let (exit_tx, exit_rx) = smol::channel::bounded(1);
+                let (exit_tx, exit_rx) = async_channel::bounded(1);
                 *exit_status_sender
                     .lock()
                     .expect("exit status sender lock should not be poisoned") = Some(exit_tx);
@@ -2388,7 +2385,7 @@ mod tests {
         Arc<AtomicUsize>,
         Arc<AtomicUsize>,
         Arc<std::sync::Mutex<Vec<acp::SessionUpdate>>>,
-        Arc<std::sync::Mutex<Option<smol::channel::Receiver<()>>>>,
+        Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>>,
         Task<anyhow::Result<()>>,
     ) {
         cx.update(|cx| {
@@ -2404,7 +2401,7 @@ mod tests {
         let close_count = Arc::new(AtomicUsize::new(0));
         let load_session_updates: Arc<std::sync::Mutex<Vec<acp::SessionUpdate>>> =
             Arc::new(std::sync::Mutex::new(Vec::new()));
-        let load_session_gate: Arc<std::sync::Mutex<Option<smol::channel::Receiver<()>>>> =
+        let load_session_gate: Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>> =
             Arc::new(std::sync::Mutex::new(None));
 
         let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
@@ -2759,7 +2756,7 @@ mod tests {
         // Install a gate so the fake agent's `load_session` handler parks
         // before sending its response. We'll close the session while the
         // load is parked.
-        let (gate_tx, gate_rx) = smol::channel::bounded::<()>(1);
+        let (gate_tx, gate_rx) = async_channel::bounded::<()>(1);
         *load_session_gate
             .lock()
             .expect("load_session_gate mutex poisoned") = Some(gate_rx);
@@ -2854,7 +2851,7 @@ mod tests {
             _keep_agent_alive,
         ) = connect_fake_agent(cx).await;
 
-        let (gate_tx, gate_rx) = smol::channel::bounded::<()>(1);
+        let (gate_tx, gate_rx) = async_channel::bounded::<()>(1);
         *load_session_gate
             .lock()
             .expect("load_session_gate mutex poisoned") = Some(gate_rx);

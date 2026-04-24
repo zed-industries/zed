@@ -257,12 +257,15 @@ pub struct OpenAiCompatibleSettingsContent {
 pub struct OpenAiModelCapabilities {
     #[serde(default = "default_true")]
     pub chat_completions: bool,
+    #[serde(default = "default_true")]
+    pub images: bool,
 }
 
 impl Default for OpenAiModelCapabilities {
     fn default() -> Self {
         Self {
             chat_completions: default_true(),
+            images: default_true(),
         }
     }
 }
