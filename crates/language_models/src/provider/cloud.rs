@@ -1,6 +1,5 @@
 use ai_onboarding::YoungAccountBanner;
 use anyhow::Result;
-use client::Status;
 use client::{Client, RefreshLlmTokenListener, UserStore, global_llm_token, zed_urls};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::OrganizationId;
