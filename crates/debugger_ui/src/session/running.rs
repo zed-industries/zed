@@ -1145,6 +1145,9 @@ impl RunningState {
                     args,
                     ..task.resolved.clone()
                 };
+
+                Workspace::save_for_task(&weak_workspace, task_with_shell.save, cx).await;
+
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(

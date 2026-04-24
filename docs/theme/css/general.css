@@ -70,8 +70,19 @@ h5,
 h6 {
   position: relative;
   font-family: var(--title-font);
-  font-weight: 480;
+  font-weight: 400;
+}
+
+h1 {
   color: var(--title-color);
+}
+
+h2,
+h3,
+h4,
+h5,
+h6 {
+  color: var(--full-contrast);
 }
 
 /* Don't change font size in headers. */
@@ -213,7 +224,7 @@ hr {
 }
 
 .content {
-  padding: 48px 32px 0 32px;
+  padding: 32px 32px 0 32px;
   display: flex;
   justify-content: space-between;
   gap: 36px;
@@ -272,9 +283,13 @@ hr {
   border-radius: 8px;
   overflow: clip;
 }
-.content .header:link,
-.content .header:visited {
+.content h1 .header:link,
+.content h1 .header:visited {
   color: var(--title-color);
+}
+.content :is(h2, h3, h4, h5, h6) .header:link,
+.content :is(h2, h3, h4, h5, h6) .header:visited {
+  color: var(--full-contrast);
 }
 .content .header:link,
 .content .header:visited:hover {
@@ -383,15 +398,17 @@ blockquote .warning:before {
 }
 
 kbd {
-  background-color: rgba(8, 76, 207, 0.1);
+  background-color: var(--keybinding-bg);
+  padding: 4px 4px 6px 4px;
   border-radius: 4px;
+  font-family: var(--mono-font);
+  display: inline-block;
+  margin: 0 2px;
   border: solid 1px var(--popover-border);
   box-shadow: inset 0 -1px 0 var(--theme-hover);
-  display: inline-block;
   font-size: var(--code-font-size);
-  font-family: var(--mono-font);
+  color: var(--full-contrast);
   line-height: 10px;
-  padding: 4px 5px;
   vertical-align: middle;
 }
 

@@ -12,7 +12,7 @@ use gpui::{
     StyleRefinement, Task, TextStyleRefinement, Window, list, prelude::*,
 };
 use language::LanguageRegistry;
-use markdown::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownStyle};
+use markdown::{CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use project::Project;
 use settings::Settings;
 use telemetry_events::{Event, EventWrapper};
@@ -424,8 +424,11 @@ impl TelemetryLogView {
                             },
                         )
                         .code_block_renderer(CodeBlockRenderer::Default {
-                            copy_button: false,
-                            copy_button_on_hover: expanded,
+                            copy_button_visibility: if expanded {
+                                CopyButtonVisibility::VisibleOnHover
+                            } else {
+                                CopyButtonVisibility::Hidden
+                            },
                             border: false,
                         }),
                     ),

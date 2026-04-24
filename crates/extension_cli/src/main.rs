@@ -165,6 +165,7 @@ async fn copy_extension_resources(
         let output_themes_dir = output_dir.join("themes");
         fs::create_dir_all(&output_themes_dir)?;
         for theme_path in &manifest.themes {
+            let theme_path = theme_path.as_std_path();
             fs::copy(
                 extension_path.join(theme_path),
                 output_themes_dir.join(theme_path.file_name().context("invalid theme path")?),
@@ -177,6 +178,7 @@ async fn copy_extension_resources(
         let output_icon_themes_dir = output_dir.join("icon_themes");
         fs::create_dir_all(&output_icon_themes_dir)?;
         for icon_theme_path in &manifest.icon_themes {
+            let icon_theme_path = icon_theme_path.as_std_path();
             fs::copy(
                 extension_path.join(icon_theme_path),
                 output_icon_themes_dir.join(
@@ -224,6 +226,7 @@ async fn copy_extension_resources(
         let output_languages_dir = output_dir.join("languages");
         fs::create_dir_all(&output_languages_dir)?;
         for language_path in &manifest.languages {
+            let language_path = language_path.as_std_path();
             copy_recursive(
                 fs.as_ref(),
                 &extension_path.join(language_path),
@@ -243,14 +246,11 @@ async fn copy_extension_resources(
 
     if !manifest.debug_adapters.is_empty() {
         for (debug_adapter, entry) in &manifest.debug_adapters {
-            let schema_path = entry.schema_path.clone().unwrap_or_else(|| {
-                PathBuf::from("debug_adapter_schemas".to_owned())
-                    .join(debug_adapter.as_ref())
-                    .with_extension("json")
-            });
+            let schema_path = extension::build_debug_adapter_schema_path(debug_adapter, entry)?;
             let parent = schema_path
                 .parent()
                 .with_context(|| format!("invalid empty schema path for {debug_adapter}"))?;
+            let schema_path = schema_path.as_std_path();
             fs::create_dir_all(output_dir.join(parent))?;
             copy_recursive(
                 fs.as_ref(),
@@ -265,7 +265,7 @@ async fn copy_extension_resources(
             .with_context(|| {
                 format!(
                     "failed to copy debug adapter schema '{}'",
-                    schema_path.display()
+                    schema_path.display(),
                 )
             })?;
         }

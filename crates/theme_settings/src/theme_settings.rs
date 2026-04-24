@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use ::settings::{IntoGpui, Settings, SettingsStore};
 use anyhow::{Context as _, Result};
-use gpui::{App, Font, HighlightStyle, Pixels, Refineable};
+use gpui::{App, Font, HighlightStyle, Pixels, Refineable, px};
 use gpui_util::ResultExt;
 use theme::{
     AccentColors, Appearance, AppearanceContent, DEFAULT_DARK_THEME, DEFAULT_ICON_THEME_NAME,
@@ -26,13 +26,14 @@ pub use crate::schema::{
     ThemeColorsContent, ThemeContent, ThemeFamilyContent, ThemeStyleContent,
     WindowBackgroundContent, status_colors_refinement, syntax_overrides, theme_colors_refinement,
 };
+use crate::settings::adjust_buffer_font_size;
 pub use crate::settings::{
-    AgentFontSize, BufferLineHeight, FontFamilyName, IconThemeName, IconThemeSelection,
-    ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings, adjust_agent_buffer_font_size,
-    adjust_agent_ui_font_size, adjust_buffer_font_size, adjust_ui_font_size, adjusted_font_size,
-    appearance_to_mode, clamp_font_size, default_theme, observe_buffer_font_size_adjustment,
-    reset_agent_buffer_font_size, reset_agent_ui_font_size, reset_buffer_font_size,
-    reset_ui_font_size, set_icon_theme, set_mode, set_theme, setup_ui_font,
+    AgentBufferFontSize, AgentUiFontSize, BufferLineHeight, FontFamilyName, IconThemeName,
+    IconThemeSelection, ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings,
+    adjust_agent_buffer_font_size, adjust_agent_ui_font_size, adjust_ui_font_size,
+    adjusted_font_size, appearance_to_mode, clamp_font_size, default_theme,
+    observe_buffer_font_size_adjustment, reset_agent_buffer_font_size, reset_agent_ui_font_size,
+    reset_buffer_font_size, reset_ui_font_size, set_icon_theme, set_mode, set_theme, setup_ui_font,
 };
 pub use theme::UiDensity;
 
@@ -409,4 +410,16 @@ pub fn merge_accent_colors(
     if !colors.is_empty() {
         accent_colors.0 = Arc::from(colors);
     }
+}
+
+/// Increases the buffer font size by 1 pixel, without persisting the result in the settings.
+/// This will be effective until the app is restarted.
+pub fn increase_buffer_font_size(cx: &mut App) {
+    adjust_buffer_font_size(cx, |size| size + px(1.0));
+}
+
+/// Decreases the buffer font size by 1 pixel, without persisting the result in the settings.
+/// This will be effective until the app is restarted.
+pub fn decrease_buffer_font_size(cx: &mut App) {
+    adjust_buffer_font_size(cx, |size| size - px(1.0));
 }

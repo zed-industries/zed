@@ -629,6 +629,7 @@ impl Database {
                 settings_files: Default::default(),
                 scan_id: db_worktree.scan_id as u64,
                 completed_scan_id: db_worktree.completed_scan_id as u64,
+                root_repo_common_dir: db_worktree.root_repo_common_dir,
             };
 
             let rejoined_worktree = rejoined_project
@@ -789,6 +790,7 @@ impl Database {
                             current_merge_conflicts,
                             branch_summary,
                             head_commit_details,
+                            branch_list: Vec::new(),
                             project_id: project_id.to_proto(),
                             id: db_repository.id as u64,
                             abs_path: db_repository.abs_path.clone(),

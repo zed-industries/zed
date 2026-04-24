@@ -1,5 +1,6 @@
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{GitPanel, commit_message_editor, panel_editor_style};
+use crate::git_panel_settings::GitPanelSettings;
 use git::repository::CommitOptions;
 use git::{Amend, Commit, GenerateCommitMessage, Signoff};
 use panel::panel_button;
@@ -324,7 +325,7 @@ impl CommitModal {
                 }
             })
             .with_handle(self.commit_menu_handle.clone())
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
     }
 
     pub fn render_footer(&self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -392,7 +393,7 @@ impl CommitModal {
                 branch_picker_button,
                 Tooltip::for_action_title("Switch Branch", &zed_actions::git::Branch),
             )
-            .anchor(Corner::BottomLeft)
+            .anchor(Anchor::BottomLeft)
             .offset(gpui::Point {
                 x: px(0.0),
                 y: px(-2.0),
@@ -453,6 +454,7 @@ impl CommitModal {
                                     CommitOptions {
                                         amend: is_amend_pending,
                                         signoff: is_signoff_enabled,
+                                        allow_empty: false,
                                     },
                                     window,
                                     cx,
@@ -538,6 +540,18 @@ impl Render for CommitModal {
         let border_radius = properties.modal_border_radius;
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
 
+        let max_title_length = GitPanelSettings::get_global(cx).commit_title_max_length;
+        let title_exceeds_limit = if max_title_length > 0 {
+            self.commit_editor
+                .read(cx)
+                .text(cx)
+                .lines()
+                .next()
+                .is_some_and(|title| title.len() > max_title_length)
+        } else {
+            false
+        };
+
         v_flex()
             .id("commit-modal")
             .key_context("GitCommit")
@@ -566,6 +580,9 @@ impl Render for CommitModal {
                     this.toggle_branch_selector(window, cx);
                 }),
             )
+            .w(width)
+            .h_112()
+            .p(container_padding)
             .elevation_3(cx)
             .overflow_hidden()
             .flex_none()
@@ -574,30 +591,50 @@ impl Render for CommitModal {
             .rounded(px(border_radius))
             .border_1()
             .border_color(cx.theme().colors().border)
-            .w(width)
-            .p(container_padding)
             .child(
                 v_flex()
                     .id("editor-container")
-                    .justify_between()
+                    .cursor_text()
                     .p_2()
                     .size_full()
                     .gap_2()
+                    .justify_between()
                     .rounded(properties.editor_border_radius())
                     .overflow_hidden()
-                    .cursor_text()
                     .bg(cx.theme().colors().editor_background)
                     .border_1()
-                    .border_color(cx.theme().colors().border_variant)
+                    .border_color(if title_exceeds_limit {
+                        cx.theme().status().warning_border
+                    } else {
+                        cx.theme().colors().border_variant
+                    })
                     .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
                         window.focus(&editor_focus_handle, cx);
                     }))
-                    .child(
-                        div()
-                            .flex_1()
-                            .size_full()
-                            .child(self.render_commit_editor(window, cx)),
-                    )
+                    .child(self.render_commit_editor(window, cx))
+                    .when(title_exceeds_limit, |this| {
+                        this.child(
+                            h_flex()
+                                .absolute()
+                                .bottom_12()
+                                .w_full()
+                                .py_1()
+                                .px_2()
+                                .gap_1()
+                                .justify_center()
+                                .child(
+                                    Icon::new(IconName::Warning)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Warning),
+                                )
+                                .child(
+                                    Label::new(format!(
+                                        "Commit message title exceeds {max_title_length}-character limit."
+                                    ))
+                                    .size(LabelSize::Small),
+                                ),
+                        )
+                    })
                     .child(self.render_footer(window, cx)),
             )
     }

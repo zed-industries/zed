@@ -185,15 +185,14 @@ impl LayoutRect {
         let position = {
             let alac_point = self.point;
             point(
-                (origin.x + alac_point.column as f32 * dimensions.cell_width).floor(),
+                origin.x + alac_point.column as f32 * dimensions.cell_width,
                 origin.y + alac_point.line as f32 * dimensions.line_height,
             )
         };
-        let size = point(
-            (dimensions.cell_width * self.num_of_cells as f32).ceil(),
+        let size = size(
+            dimensions.cell_width * self.num_of_cells as f32,
             dimensions.line_height,
-        )
-        .into();
+        );
 
         window.paint_quad(fill(Bounds::new(position, size), self.color));
     }
@@ -550,11 +549,13 @@ impl TerminalElement {
         minimum_contrast: f32,
     ) -> TextRun {
         let flags = indexed.cell.flags;
+        let is_true_color = matches!(fg, terminal::alacritty_terminal::vte::ansi::Color::Spec(_));
         let mut fg = convert_color(&fg, colors);
         let bg = convert_color(&bg, colors);
 
-        // Only apply contrast adjustment to non-decorative characters
-        if !Self::is_decorative_character(indexed.c) {
+        // Skip contrast adjustment for true-color (24-bit RGB) foregrounds — the
+        // application chose that exact color. Also skip for decorative characters.
+        if !is_true_color && !Self::is_decorative_character(indexed.c) {
             fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
         }
 
@@ -957,13 +958,15 @@ impl Element for TerminalElement {
                 let (dimensions, line_height_px) = {
                     let rem_size = window.rem_size();
                     let font_pixels = text_style.font_size.to_pixels(rem_size);
-                    let line_height = f32::from(font_pixels) * line_height;
+                    let line_height = window.pixel_snap(px(f32::from(font_pixels) * line_height));
                     let font_id = cx.text_system().resolve_font(&text_style.font());
 
-                    let cell_width = text_system
-                        .advance(font_id, font_pixels, 'm')
-                        .unwrap()
-                        .width;
+                    let cell_width = window.pixel_snap(
+                        text_system
+                            .advance(font_id, font_pixels, 'm')
+                            .unwrap()
+                            .width,
+                    );
                     gutter = cell_width;
 
                     let mut size = bounds.size;
@@ -980,7 +983,7 @@ impl Element for TerminalElement {
                     origin.x += gutter;
 
                     (
-                        TerminalBounds::new(px(line_height), cell_width, Bounds { origin, size }),
+                        TerminalBounds::new(line_height, cell_width, Bounds { origin, size }),
                         line_height,
                     )
                 };
@@ -1091,10 +1094,9 @@ impl Element for TerminalElement {
                     // internal line number (which can be negative in Scrollable mode for
                     // scrollback history).
                     let rows_above_viewport =
-                        f32::from((intersection.top() - bounds.top()).max(px(0.)) / line_height_px)
-                            as usize;
+                        ((intersection.top() - bounds.top()).max(px(0.)) / line_height_px) as usize;
                     let visible_row_count =
-                        f32::from((intersection.size.height / line_height_px).ceil()) as usize + 1;
+                        (intersection.size.height / line_height_px).ceil() as usize + 1;
 
                     TerminalElement::layout_grid(
                         // Group cells by line and filter to only the visible screen rows.
@@ -1160,7 +1162,9 @@ impl Element for TerminalElement {
                         let (shape, text) = match cursor.shape {
                             AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
                             AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
+                            AlacCursorShape::Underline if !focused => (CursorShape::Hollow, None),
                             AlacCursorShape::Underline => (CursorShape::Underline, None),
+                            AlacCursorShape::Beam if !focused => (CursorShape::Hollow, None),
                             AlacCursorShape::Beam => (CursorShape::Bar, None),
                             AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
                             AlacCursorShape::Hidden => unreachable!(),
@@ -1846,6 +1850,42 @@ mod tests {
             good_contrast, black_fg,
             "Good contrast should not be adjusted"
         );
+    }
+
+    #[test]
+    fn test_true_color_red_blue_not_washed_out_on_dark_bg() {
+        // Red and blue have inherently low perceptual luminance in APCA.
+        // Pure #ff0000 only achieves Lc ~35 against #1e1e1e — below the
+        // default Lc 45 threshold. ensure_minimum_contrast would lighten
+        // them, washing out the color. This is why cell_style skips the
+        // adjustment for Color::Spec (24-bit true color).
+        let dark_bg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.05,
+            a: 1.0,
+        };
+
+        for (name, r, g, b) in [
+            ("red", 225, 80, 80),
+            ("blue", 80, 80, 225),
+            ("pure red", 255, 0, 0),
+        ] {
+            let color = terminal::rgba_color(r, g, b);
+            let contrast = apca_contrast(color, dark_bg).abs();
+            assert!(
+                contrast < 45.0,
+                "{name} should have APCA < 45 on dark bg, got {contrast}",
+            );
+
+            let adjusted = ensure_minimum_contrast(color, dark_bg, 45.0);
+            assert!(
+                adjusted.l > color.l,
+                "{name} would be lightened by contrast adjustment (l: {} -> {})",
+                color.l,
+                adjusted.l,
+            );
+        }
     }
 
     #[test]
