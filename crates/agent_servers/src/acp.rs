@@ -3,12 +3,12 @@ use acp_thread::{
     AgentSessionListResponse,
 };
 use action_log::ActionLog;
-use async_channel;
 use agent_client_protocol::schema::{self as acp, ErrorCode};
 use agent_client_protocol::{
     Agent, Client, ConnectionTo, JsonRpcResponse, Lines, Responder, SentRequest,
 };
 use anyhow::anyhow;
+use async_channel;
 use collections::HashMap;
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::channel::mpsc;
@@ -615,7 +615,10 @@ fn connect_client_future(
 impl AcpConnection {
     pub fn subscribe_debug_messages(
         &self,
-    ) -> (Vec<AcpDebugMessage>, async_channel::Receiver<AcpDebugMessage>) {
+    ) -> (
+        Vec<AcpDebugMessage>,
+        async_channel::Receiver<AcpDebugMessage>,
+    ) {
         let backlog = self
             .debug_messages
             .lock()
