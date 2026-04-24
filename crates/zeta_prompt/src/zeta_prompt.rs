@@ -95,6 +95,8 @@ pub enum ZetaFormat {
     V0318SeedMultiRegions,
     /// V0318-style markers over the full available current file excerpt with no related files.
     V0327SingleFile,
+    /// V0318-style prompt with buffer diagnostics
+    V0420Diagnostics,
 }
 
 impl std::fmt::Display for ZetaFormat {
@@ -278,7 +280,7 @@ pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] 
             ];
             TOKENS
         }
-        ZetaFormat::V0318SeedMultiRegions => {
+        ZetaFormat::V0318SeedMultiRegions | ZetaFormat::V0420Diagnostics => {
             static TOKENS: &[&str] = &[
                 seed_coder::FIM_SUFFIX,
                 seed_coder::FIM_PREFIX,
@@ -345,6 +347,7 @@ pub fn token_limits_for_format(format: ZetaFormat) -> (usize, usize) {
         | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0316SeedMultiRegions
         | ZetaFormat::V0318SeedMultiRegions
+        | ZetaFormat::V0420Diagnostics
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0327SingleFile
         | ZetaFormat::V0304SeedNoEdits => (350, 150),
@@ -368,7 +371,9 @@ pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
         | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0304SeedNoEdits => &[],
         ZetaFormat::V0316SeedMultiRegions => &[multi_region::V0316_END_MARKER],
-        ZetaFormat::V0318SeedMultiRegions => &[multi_region::V0318_END_MARKER],
+        ZetaFormat::V0318SeedMultiRegions | ZetaFormat::V0420Diagnostics => {
+            &[multi_region::V0318_END_MARKER]
+        }
         ZetaFormat::V0317SeedMultiRegions => &[multi_region::V0317_END_MARKER],
         ZetaFormat::V0327SingleFile => &[multi_region::V0327_END_MARKER],
     }
@@ -398,7 +403,8 @@ pub fn excerpt_ranges_for_format(
         | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0316SeedMultiRegions
         | ZetaFormat::V0318SeedMultiRegions
-        | ZetaFormat::V0317SeedMultiRegions => (
+        | ZetaFormat::V0317SeedMultiRegions
+        | ZetaFormat::V0420Diagnostics => (
             ranges.editable_350.clone(),
             ranges.editable_350_context_150.clone(),
         ),
@@ -497,7 +503,7 @@ pub fn write_cursor_excerpt_section_for_format(
                 cursor_offset,
             ));
         }
-        ZetaFormat::V0318SeedMultiRegions => {
+        ZetaFormat::V0318SeedMultiRegions | ZetaFormat::V0420Diagnostics => {
             prompt.push_str(&build_v0318_cursor_prefix(
                 path,
                 context,
@@ -829,6 +835,7 @@ pub fn max_edit_event_count_for_format(format: &ZetaFormat) -> usize {
         | ZetaFormat::V0316SeedMultiRegions
         | ZetaFormat::V0318SeedMultiRegions
         | ZetaFormat::V0317SeedMultiRegions
+        | ZetaFormat::V0420Diagnostics
         | ZetaFormat::V0327SingleFile => 6,
     }
 }
@@ -854,6 +861,7 @@ pub fn get_prefill_for_format(
         | ZetaFormat::V0316SeedMultiRegions
         | ZetaFormat::V0318SeedMultiRegions
         | ZetaFormat::V0317SeedMultiRegions
+        | ZetaFormat::V0420Diagnostics
         | ZetaFormat::V0327SingleFile => String::new(),
     }
 }
@@ -869,6 +877,7 @@ pub fn output_end_marker_for_format(format: ZetaFormat) -> Option<&'static str> 
         | ZetaFormat::V0306SeedMultiRegions => Some(seed_coder::END_MARKER),
         ZetaFormat::V0316SeedMultiRegions => Some(multi_region::V0316_END_MARKER),
         ZetaFormat::V0318SeedMultiRegions => Some(multi_region::V0318_END_MARKER),
+        ZetaFormat::V0420Diagnostics => Some(multi_region::V0318_END_MARKER),
         ZetaFormat::V0317SeedMultiRegions => Some(multi_region::V0317_END_MARKER),
         ZetaFormat::V0327SingleFile => Some(multi_region::V0327_END_MARKER),
 
