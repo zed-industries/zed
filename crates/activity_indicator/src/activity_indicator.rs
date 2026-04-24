@@ -723,7 +723,7 @@ impl Render for ActivityIndicator {
                 .trigger(
                     Button::new("activity-indicator-trigger", {
                         if truncate_content {
-                            truncate_and_trailoff(&content.message, MAX_MESSAGE_LEN).to_string()
+                            truncate_and_trailoff(&content.message, MAX_MESSAGE_LEN)
                         } else {
                             content.message.clone()
                         }
