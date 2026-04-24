@@ -398,6 +398,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "platform_title_bar",
  "postage",
  "pretty_assertions",
  "project",

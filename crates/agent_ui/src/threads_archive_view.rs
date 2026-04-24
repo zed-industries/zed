@@ -39,8 +39,8 @@ use ui_input::ErasedEditor;
 use util::ResultExt;
 use util::paths::PathExt;
 use workspace::{
-    ModalView, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
-    resolve_worktree_workspaces,
+    CloseWindow, ModalView, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb,
+    WorkspaceId, resolve_worktree_workspaces,
 };
 
 use zed_actions::agents_sidebar::FocusSidebarFilter;
@@ -828,8 +828,12 @@ impl ThreadsArchiveView {
             AgentSettings::get_global(cx).sidebar_side(),
             settings::SidebarSide::Left
         );
-        let traffic_lights =
-            cfg!(target_os = "macos") && !window.is_fullscreen() && sidebar_on_left;
+        let sidebar_on_right = !sidebar_on_left;
+        let not_fullscreen = !window.is_fullscreen();
+        let traffic_lights = cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
+        let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
+        let right_window_controls =
+            !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_right;
         let header_height = platform_title_bar_height(window);
         let show_focus_keybinding =
             self.selection.is_some() && !self.filter_editor.focus_handle(cx).is_focused(window);
@@ -838,14 +842,19 @@ impl ThreadsArchiveView {
             .h(header_height)
             .mt_px()
             .pb_px()
+            .when(left_window_controls, |this| {
+                this.children(Self::render_left_window_controls(window, cx))
+            })
             .map(|this| {
                 if traffic_lights {
                     this.pl(px(ui::utils::TRAFFIC_LIGHT_PADDING))
-                } else {
+                } else if !left_window_controls {
                     this.pl_1p5()
+                } else {
+                    this
                 }
             })
-            .pr_1p5()
+            .when(!right_window_controls, |this| this.pr_1p5())
             .gap_1()
             .justify_between()
             .border_b_1()
@@ -880,6 +889,25 @@ impl ThreadsArchiveView {
                         })),
                 )
             })
+            .when(right_window_controls, |this| {
+                this.children(Self::render_right_window_controls(window, cx))
+            })
+    }
+
+    fn render_left_window_controls(window: &Window, cx: &mut App) -> Option<AnyElement> {
+        platform_title_bar::render_left_window_controls(
+            cx.button_layout(),
+            Box::new(CloseWindow),
+            window,
+        )
+    }
+
+    fn render_right_window_controls(window: &Window, cx: &mut App) -> Option<AnyElement> {
+        platform_title_bar::render_right_window_controls(
+            cx.button_layout(),
+            Box::new(CloseWindow),
+            window,
+        )
     }
 
     fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
