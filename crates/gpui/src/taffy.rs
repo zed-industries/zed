@@ -1,6 +1,10 @@
 use crate::{
     AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
-    Style, Window, point, size, util::round_half_toward_zero,
+    Style, Window, size,
+    util::{
+        ceil_to_device_pixel, round_half_toward_zero, round_stroke_to_device_pixel,
+        round_to_device_pixel,
+    },
 };
 use collections::{FxHashMap, FxHashSet};
 use stacksafe::{StackSafe, stacksafe};
@@ -319,7 +323,11 @@ impl TaffyLayoutEngine {
         }
 
         let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
-        let absolute_outer_origin = match self.taffy.parent(id.0) {
+        let layout_location = layout.location;
+        let layout_size = layout.size;
+        let parent = self.taffy.parent(id.0);
+
+        let absolute_outer_origin = match parent {
             Some(parent_id) => {
                 let parent_id = LayoutId::from(parent_id);
                 self.layout_bounds(parent_id, scale_factor);
@@ -327,13 +335,14 @@ impl TaffyLayoutEngine {
                     .absolute_outer_origins
                     .get(&parent_id)
                     .expect("parent absolute outer origin should be cached");
-                parent_origin + Point::from(layout.location)
+                parent_origin + Point::from(layout_location)
             }
-            None => Point::from(layout.location),
+            None => Point::from(layout_location),
         };
-        self.absolute_outer_origins.insert(id, absolute_outer_origin);
+        self.absolute_outer_origins
+            .insert(id, absolute_outer_origin);
 
-        let absolute_far = absolute_outer_origin + Point::from(Size::from(layout.size));
+        let absolute_far = absolute_outer_origin + Point::from(Size::from(layout_size));
         let snapped_bounds = Bounds::from_corners(
             absolute_outer_origin.map(round_half_toward_zero),
             absolute_far.map(round_half_toward_zero),
@@ -343,6 +352,7 @@ impl TaffyLayoutEngine {
         self.absolute_layout_bounds.insert(id, bounds);
         bounds
     }
+}
 
 /// A unique identifier for a layout node, generated when requesting a layout from Taffy
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -375,7 +385,31 @@ impl From<LayoutId> for NodeId {
 }
 
 fn snap_measured_size_to_device_pixels(size: Size<Pixels>, scale_factor: f32) -> Size<f32> {
-    size.map(|d| (d.0 * scale_factor).max(0.0).ceil())
+    size.map(|d| ceil_to_device_pixel(d.0.max(0.0), scale_factor))
+}
+
+fn border_width_to_taffy(
+    width: AbsoluteLength,
+    rem_size: Pixels,
+    scale_factor: f32,
+) -> taffy::style::LengthPercentage {
+    taffy::style::LengthPercentage::length(round_stroke_to_device_pixel(
+        width.to_pixels(rem_size).0,
+        scale_factor,
+    ))
+}
+
+fn border_widths_to_taffy(
+    widths: &Edges<AbsoluteLength>,
+    rem_size: Pixels,
+    scale_factor: f32,
+) -> TaffyRect<taffy::style::LengthPercentage> {
+    TaffyRect {
+        top: border_width_to_taffy(widths.top, rem_size, scale_factor),
+        right: border_width_to_taffy(widths.right, rem_size, scale_factor),
+        bottom: border_width_to_taffy(widths.bottom, rem_size, scale_factor),
+        left: border_width_to_taffy(widths.left, rem_size, scale_factor),
+    }
 }
 
 trait ToTaffy<Output> {
@@ -438,7 +472,7 @@ impl ToTaffy<taffy::style::Style> for Style {
             aspect_ratio: self.aspect_ratio,
             margin: self.margin.to_taffy(rem_size, scale_factor),
             padding: self.padding.to_taffy(rem_size, scale_factor),
-            border: self.border_widths.to_taffy(rem_size, scale_factor),
+            border: border_widths_to_taffy(&self.border_widths, rem_size, scale_factor),
             align_items: self.align_items.map(|x| x.into()),
             align_self: self.align_self.map(|x| x.into()),
             align_content: self.align_content.map(|x| x.into()),
@@ -468,11 +502,7 @@ impl ToTaffy<taffy::style::Style> for Style {
 
 impl ToTaffy<f32> for AbsoluteLength {
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> f32 {
-        // Pre-round to integer device pixels so that Taffy's layout algorithms
-        // work with snapped values. GPUI's post-layout edge pass then decides
-        // final edge placement.
-        // NOTE: no `.max(0.0)` here — negative values are valid (e.g. margins).
-        round_half_toward_zero(self.to_pixels(rem_size).0 * scale_factor)
+        round_to_device_pixel(self.to_pixels(rem_size).0, scale_factor)
     }
 }
 
@@ -623,36 +653,6 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn measured_sizes_are_snapped_to_integer_device_pixels() {
-        assert_eq!(
-            snap_measured_size_to_device_pixels(size(Pixels(7.), Pixels(13.25)), 1.5),
-            size(11., 20.)
-        );
-    }
-
-    #[test]
-    fn integer_device_pixel_lengths_are_translation_stable() {
-        let snapped = snap_measured_size_to_device_pixels(size(Pixels(7.), Pixels(13.25)), 1.5);
-        let fractional_origins = [0.1, 0.49, 0.5, 0.51, 0.9];
-
-        for origin in fractional_origins {
-            assert_eq!(
-                round_half_toward_zero(origin + snapped.width) - round_half_toward_zero(origin),
-                snapped.width
-            );
-            assert_eq!(
-                round_half_toward_zero(origin + snapped.height) - round_half_toward_zero(origin),
-                snapped.height
-            );
-        }
-    }
-}
-
 /// The space available for an element to be laid out in
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq)]
 pub enum AvailableSpace {
@@ -719,5 +719,38 @@ impl From<Size<Pixels>> for Size<AvailableSpace> {
             width: AvailableSpace::Definite(size.width),
             height: AvailableSpace::Definite(size.height),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn border_widths_to_taffy_use_stroke_snapping() {
+        let border_widths = Edges {
+            top: Pixels(0.0).into(),
+            right: Pixels(0.4).into(),
+            bottom: Pixels(0.5).into(),
+            left: Pixels(1.6).into(),
+        };
+        let taffy_border = border_widths_to_taffy(&border_widths, Pixels(16.0), 1.0);
+
+        assert_eq!(
+            taffy_border.top,
+            taffy::style::LengthPercentage::length(0.0)
+        );
+        assert_eq!(
+            taffy_border.right,
+            taffy::style::LengthPercentage::length(1.0)
+        );
+        assert_eq!(
+            taffy_border.bottom,
+            taffy::style::LengthPercentage::length(1.0)
+        );
+        assert_eq!(
+            taffy_border.left,
+            taffy::style::LengthPercentage::length(2.0)
+        );
     }
 }

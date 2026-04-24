@@ -976,13 +976,6 @@ impl<T> Bounds<T>
 where
     T: Add<T, Output = T> + Sub<Output = T> + Clone + Debug + Default + PartialEq,
 {
-    /// Applies a function to both corner points (origin and bottom-right),
-    /// returning new bounds constructed from the mapped corners.
-    #[must_use]
-    pub fn map_corners(self, f: impl Fn(Point<T>) -> Point<T>) -> Self {
-        Self::from_corners(f(self.origin.clone()), f(self.bottom_right()))
-    }
-
     /// Dilates the bounds by a specified amount in all directions.
     ///
     /// This method expands the bounds by the given `amount`, increasing the size
