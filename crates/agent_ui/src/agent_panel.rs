@@ -74,8 +74,8 @@ use terminal::terminal_settings::TerminalSettings;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
-    Button, Callout, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle,
-    Tab, Tooltip, prelude::*, utils::WithRemSize,
+    Button, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle, Tab,
+    Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -705,7 +705,6 @@ pub struct AgentPanel {
     selected_agent: Agent,
     _thread_view_subscription: Option<Subscription>,
     _active_thread_focus_subscription: Option<Subscription>,
-    show_trust_workspace_message: bool,
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
 }
@@ -1051,7 +1050,6 @@ impl AgentPanel {
             selected_agent: Agent::default(),
             _thread_view_subscription: None,
             _active_thread_focus_subscription: None,
-            show_trust_workspace_message: false,
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
             _base_view_observation: None,
             _draft_editor_observation: None,
@@ -3498,38 +3496,6 @@ impl AgentPanel {
         }
     }
 
-    fn render_workspace_trust_message(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
-        if !self.show_trust_workspace_message {
-            return None;
-        }
-
-        let description = "To protect your system, third-party code—like MCP servers—won't run until you mark this workspace as safe.";
-
-        Some(
-            Callout::new()
-                .icon(IconName::Warning)
-                .severity(Severity::Warning)
-                .border_position(ui::BorderPosition::Bottom)
-                .title("You're in Restricted Mode")
-                .description(description)
-                .actions_slot(
-                    Button::new("open-trust-modal", "Configure Project Trust")
-                        .label_size(LabelSize::Small)
-                        .style(ButtonStyle::Outlined)
-                        .on_click({
-                            cx.listener(move |this, _, window, cx| {
-                                this.workspace
-                                    .update(cx, |workspace, cx| {
-                                        workspace
-                                            .show_worktree_trust_security_modal(true, window, cx)
-                                    })
-                                    .log_err();
-                            })
-                        }),
-                ),
-        )
-    }
-
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
@@ -3579,7 +3545,6 @@ impl Render for AgentPanel {
                 }
             }))
             .child(self.render_toolbar(window, cx))
-            .children(self.render_workspace_trust_message(cx))
             .children(self.render_new_user_onboarding(window, cx))
             .map(|parent| match self.visible_surface() {
                 VisibleSurface::Uninitialized => parent,
