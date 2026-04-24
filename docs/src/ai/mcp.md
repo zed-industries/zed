@@ -157,7 +157,7 @@ Learn more about [how tool permissions work](./tool-permissions.md), how to furt
 
 ### External Agents
 
-MCP servers configured in Zed are forwarded to [external agents](./external-agents.md) via the [Agent Client Protocol](https://agentclientprotocol.com/). Claude Agent and Codex both support this; Gemini CLI does not yet (see [their documentation](https://github.com/google-gemini/gemini-cli?tab=readme-ov-file#using-mcp-servers) for adding MCP support directly).
+MCP servers configured in Zed are forwarded to [external agents](./external-agents.md) via the [Agent Client Protocol](https://agentclientprotocol.com/).
 
 **Important:** MCP servers from native agent installations (`~/.claude/`, `~/.codex/config.toml`) are not used when running via Zed. You'll need to configure them in Zed's `context_servers` settings.
 
