@@ -1174,14 +1174,13 @@ impl MarkdownElement {
     }
 
     fn paint_highlight_range(
-        bounds: Bounds<Pixels>,
         start: usize,
         end: usize,
         color: Hsla,
         rendered_text: &RenderedText,
         window: &mut Window,
     ) {
-        for bounds in rendered_text.bounds_for_source_range(bounds, start..end) {
+        for bounds in rendered_text.bounds_for_source_range(start..end) {
             window.paint_quad(quad(
                 bounds,
                 Pixels::ZERO,
@@ -1193,16 +1192,9 @@ impl MarkdownElement {
         }
     }
 
-    fn paint_selection(
-        &self,
-        bounds: Bounds<Pixels>,
-        rendered_text: &RenderedText,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
+    fn paint_selection(&self, rendered_text: &RenderedText, window: &mut Window, cx: &mut App) {
         let selection = self.markdown.read(cx).selection.clone();
         Self::paint_highlight_range(
-            bounds,
             selection.start,
             selection.end,
             self.style.selection_background_color,
@@ -1213,7 +1205,6 @@ impl MarkdownElement {
 
     fn paint_search_highlights(
         &self,
-        bounds: Bounds<Pixels>,
         rendered_text: &RenderedText,
         window: &mut Window,
         cx: &mut App,
@@ -1229,7 +1220,6 @@ impl MarkdownElement {
                 colors.search_match_background
             };
             Self::paint_highlight_range(
-                bounds,
                 highlight_range.start,
                 highlight_range.end,
                 color,
@@ -2102,7 +2092,7 @@ impl Element for MarkdownElement {
         &mut self,
         _id: Option<&GlobalElementId>,
         _inspector_id: Option<&gpui::InspectorElementId>,
-        bounds: Bounds<Pixels>,
+        _bounds: Bounds<Pixels>,
         rendered_markdown: &mut Self::RequestLayoutState,
         hitbox: &mut Self::PrepaintState,
         window: &mut Window,
@@ -2132,8 +2122,8 @@ impl Element for MarkdownElement {
 
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
         rendered_markdown.element.paint(window, cx);
-        self.paint_search_highlights(bounds, &rendered_markdown.text, window, cx);
-        self.paint_selection(bounds, &rendered_markdown.text, window, cx);
+        self.paint_search_highlights(&rendered_markdown.text, window, cx);
+        self.paint_selection(&rendered_markdown.text, window, cx);
     }
 }
 
@@ -2751,11 +2741,7 @@ struct RenderedFootnoteRef {
 }
 
 impl RenderedText {
-    fn bounds_for_source_range(
-        &self,
-        _bounds: Bounds<Pixels>,
-        range: Range<usize>,
-    ) -> Vec<Bounds<Pixels>> {
+    fn bounds_for_source_range(&self, range: Range<usize>) -> Vec<Bounds<Pixels>> {
         let mut all_bounds = Vec::new();
 
         for line in self.lines.iter() {
@@ -3058,13 +3044,6 @@ mod tests {
         render_markdown_with_language_registry(markdown, None, cx)
     }
 
-    fn render_markdown_with_bounds(
-        markdown: &str,
-        cx: &mut TestAppContext,
-    ) -> (RenderedText, Bounds<Pixels>) {
-        render_markdown_with_options_and_bounds(markdown, None, MarkdownOptions::default(), cx)
-    }
-
     fn render_markdown_with_language_registry(
         markdown: &str,
         language_registry: Option<Arc<LanguageRegistry>>,
@@ -3079,15 +3058,6 @@ mod tests {
         options: MarkdownOptions,
         cx: &mut TestAppContext,
     ) -> RenderedText {
-        render_markdown_with_options_and_bounds(markdown, language_registry, options, cx).0
-    }
-
-    fn render_markdown_with_options_and_bounds(
-        markdown: &str,
-        language_registry: Option<Arc<LanguageRegistry>>,
-        options: MarkdownOptions,
-        cx: &mut TestAppContext,
-    ) -> (RenderedText, Bounds<Pixels>) {
         struct TestWindow;
 
         impl Render for TestWindow {
@@ -3109,7 +3079,7 @@ mod tests {
             )
         });
         cx.run_until_parked();
-        let (rendered, hitbox) = cx.draw(
+        let (rendered, _) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
             |_window, _cx| {
@@ -3121,7 +3091,7 @@ mod tests {
                 )
             },
         );
-        (rendered.text, *hitbox)
+        rendered.text
     }
 
     #[gpui::test]
@@ -3673,8 +3643,8 @@ mod tests {
     #[gpui::test]
     fn test_bounds_for_source_range_skips_gaps_between_rendered_lines(cx: &mut TestAppContext) {
         let source = "First\n\nSecond";
-        let (rendered, draw_bounds) = render_markdown_with_bounds(source, cx);
-        let highlight_bounds = rendered.bounds_for_source_range(draw_bounds, 0..source.len());
+        let rendered = render_markdown(source, cx);
+        let highlight_bounds = rendered.bounds_for_source_range(0..source.len());
         assert_eq!(highlight_bounds.len(), rendered.lines.len());
 
         for (line, highlight_bounds) in rendered.lines.iter().zip(highlight_bounds.iter()) {
@@ -3692,14 +3662,14 @@ mod tests {
         let sentence = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, \
             sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.";
         let source = [sentence, sentence, sentence, sentence].join(" ");
-        let (rendered, draw_bounds) = render_markdown_with_bounds(&source, cx);
+        let rendered = render_markdown(&source, cx);
         let line = &rendered.lines[0];
         let line_bounds = line.layout.bounds();
         let line_height = line.layout.line_height();
         let wrapped_line = line.layout.line_layout_for_index(0).unwrap();
         let visual_row_count = wrapped_line.wrap_boundaries().len() + 1;
 
-        let highlight_bounds = rendered.bounds_for_source_range(draw_bounds, 0..source.len());
+        let highlight_bounds = rendered.bounds_for_source_range(0..source.len());
         assert_eq!(highlight_bounds.len(), visual_row_count);
 
         let mut row_top = line_bounds.top();
