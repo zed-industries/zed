@@ -221,6 +221,7 @@ impl Search {
                                 query.clone(),
                                 input_paths_tx,
                                 sorted_search_results_tx,
+                                tx.clone(),
                             ))
                             .boxed_local(),
                             Self::open_buffers(
@@ -412,12 +413,21 @@ impl Search {
         query: Arc<SearchQuery>,
         tx: Sender<InputPath>,
         results: Sender<oneshot::Receiver<ProjectPath>>,
+        results_tx: Sender<SearchResult>,
     ) -> impl AsyncFnOnce(&mut AsyncApp) {
         async move |cx| {
             _ = maybe!(async move {
                 let gitignored_tracker = PathInclusionMatcher::new(query.clone());
                 let include_ignored = query.include_ignored();
                 for worktree in worktrees {
+                    let scan_complete = worktree.read_with(cx, |worktree, _| {
+                        worktree.as_local().map(|local| local.scan_complete())
+                    });
+                    if let Some(scan_complete) = scan_complete {
+                        _ = results_tx.send(SearchResult::WaitingForScan).await;
+                        scan_complete.await;
+                    }
+
                     let (mut snapshot, worktree_settings) = worktree
                         .read_with(cx, |this, _| {
                             Some((this.snapshot(), this.as_local()?.settings()))

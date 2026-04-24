@@ -138,6 +138,10 @@ pub(super) fn find_from_grid_point<T: EventListener>(
                 if let Ok(url) = Url::parse(&maybe_url_or_path) {
                     if let Ok(path) = url.to_file_path_ext(path_style) {
                         return (path.to_string_lossy().into_owned(), false, word_match);
+                    } else if let Some(path) = try_osc8_url_to_path(url)
+                        && path_style.is_posix()
+                    {
+                        return (path, false, word_match);
                     }
                 }
                 // Fallback: strip file:// prefix if URL parsing fails
@@ -152,6 +156,22 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             (maybe_url_or_path, false, word_match)
         }
     })
+}
+
+// OSC 8 mandates that file:// URIs must be encoded as file://{host}{path}
+// We need to skip the {host} part if it's set
+fn try_osc8_url_to_path(url: url::Url) -> Option<String> {
+    use percent_encoding::percent_decode;
+    if url.scheme() != "file" {
+        return None;
+    }
+
+    let bytes = url
+        .path_segments()?
+        .skip(1)
+        .flat_map(|segment| percent_decode(segment.as_bytes()))
+        .collect::<Vec<u8>>();
+    bytes.try_into().ok()
 }
 
 fn sanitize_url_punctuation<T: EventListener>(

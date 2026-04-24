@@ -174,6 +174,10 @@ impl MentionSet {
         self.mentions.values().map(|(uri, _)| uri.clone()).collect()
     }
 
+    pub fn mention_uri_for_crease(&self, crease_id: &CreaseId) -> Option<MentionUri> {
+        self.mentions.get(crease_id).map(|(uri, _)| uri.clone())
+    }
+
     pub fn set_mentions(&mut self, mentions: HashMap<CreaseId, (MentionUri, MentionTask)>) {
         self.mentions = mentions;
     }
