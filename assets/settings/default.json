@@ -1008,6 +1008,8 @@
     "flexible": true,
     // Where to position the threads sidebar. Can be 'left' or 'right'.
     "sidebar_side": "left",
+    // Whether to open the threads sidebar when the agent panel enters full screen.
+    "open_threads_sidebar_on_agent_panel_fullscreen": false,
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.

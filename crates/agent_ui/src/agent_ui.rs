@@ -692,6 +692,7 @@ mod tests {
             default_width: px(300.),
             default_height: px(600.),
             max_content_width: Some(px(850.)),
+            open_threads_sidebar_on_agent_panel_fullscreen: false,
             default_model: None,
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,

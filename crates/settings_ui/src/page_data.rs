@@ -5807,7 +5807,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_panel_section() -> [SettingsPageItem; 7] {
+    fn agent_panel_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Agent Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5877,6 +5877,28 @@ fn panels_page() -> SettingsPage {
                             .agent
                             .get_or_insert_default()
                             .default_height = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Open Threads Sidebar On Full Screen",
+                description: "Whether to open the threads sidebar when the agent panel enters full screen.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.open_threads_sidebar_on_agent_panel_fullscreen"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .open_threads_sidebar_on_agent_panel_fullscreen
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .open_threads_sidebar_on_agent_panel_fullscreen = value;
                     },
                 }),
                 metadata: None,

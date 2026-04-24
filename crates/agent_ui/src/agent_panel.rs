@@ -699,6 +699,7 @@ pub struct AgentPanel {
     _extension_subscription: Option<Subscription>,
     _project_subscription: Subscription,
     zoomed: bool,
+    opened_threads_sidebar_for_zoom: bool,
     pending_serialization: Option<Task<Result<()>>>,
     new_user_onboarding: Entity<AgentPanelOnboarding>,
     new_user_onboarding_upsell_dismissed: AtomicBool,
@@ -1056,6 +1057,7 @@ impl AgentPanel {
             _extension_subscription: extension_subscription,
             _project_subscription,
             zoomed: false,
+            opened_threads_sidebar_for_zoom: false,
             pending_serialization: None,
             new_user_onboarding: onboarding,
             thread_store,
@@ -1532,10 +1534,57 @@ impl AgentPanel {
         theme_settings::reset_agent_buffer_font_size(cx);
     }
 
+    fn close_threads_sidebar_opened_for_zoom(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.opened_threads_sidebar_for_zoom {
+            return;
+        }
+
+        self.opened_threads_sidebar_for_zoom = false;
+        let multi_workspace = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).multi_workspace().cloned());
+        if let Some(multi_workspace) = multi_workspace {
+            multi_workspace
+                .update(cx, |multi_workspace, cx| {
+                    if multi_workspace.sidebar_open() {
+                        multi_workspace.close_sidebar(window, cx);
+                    }
+                })
+                .log_err();
+        }
+    }
+
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, window: &mut Window, cx: &mut Context<Self>) {
         if self.zoomed {
+            self.close_threads_sidebar_opened_for_zoom(window, cx);
             cx.emit(PanelEvent::ZoomOut);
         } else {
+            if AgentSettings::get_global(cx).open_threads_sidebar_on_agent_panel_fullscreen {
+                let multi_workspace = self
+                    .workspace
+                    .upgrade()
+                    .and_then(|workspace| workspace.read(cx).multi_workspace().cloned());
+                if let Some(multi_workspace) = multi_workspace {
+                    multi_workspace
+                        .update(cx, |multi_workspace, cx| {
+                            if !multi_workspace.sidebar_open() {
+                                multi_workspace.open_sidebar(cx);
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                        .map(|opened_sidebar| {
+                            self.opened_threads_sidebar_for_zoom = opened_sidebar;
+                        })
+                        .log_err();
+                }
+            }
             if !self.focus_handle(cx).contains_focused(window, cx) {
                 cx.focus_self(window);
             }
@@ -2547,8 +2596,11 @@ impl Panel for AgentPanel {
         self.zoomed
     }
 
-    fn set_zoomed(&mut self, zoomed: bool, _window: &mut Window, cx: &mut Context<Self>) {
+    fn set_zoomed(&mut self, zoomed: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.zoomed = zoomed;
+        if !zoomed {
+            self.close_threads_sidebar_opened_for_zoom(window, cx);
+        }
         cx.notify();
     }
 }
@@ -3917,6 +3969,94 @@ mod tests {
         fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
             self
         }
+    }
+
+    #[gpui::test]
+    async fn test_agent_panel_full_screen_can_open_threads_sidebar(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(multi_workspace.clone().into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_zoom(&ToggleZoom, window, cx);
+        });
+        assert!(
+            !multi_workspace
+                .read_with(cx, |multi_workspace, _cx| multi_workspace.sidebar_open())
+                .unwrap(),
+            "the threads sidebar should stay closed by default"
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_zoom(&ToggleZoom, window, cx);
+        });
+
+        cx.update(|_, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    open_threads_sidebar_on_agent_panel_fullscreen: true,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_zoom(&ToggleZoom, window, cx);
+        });
+        assert!(
+            multi_workspace
+                .read_with(cx, |multi_workspace, _cx| multi_workspace.sidebar_open())
+                .unwrap(),
+            "the threads sidebar should open when configured"
+        );
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_zoom(&ToggleZoom, window, cx);
+        });
+        assert!(
+            !multi_workspace
+                .read_with(cx, |multi_workspace, _cx| multi_workspace.sidebar_open())
+                .unwrap(),
+            "the threads sidebar should close after leaving full screen if full screen opened it"
+        );
+
+        multi_workspace
+            .update(cx, |multi_workspace, _window, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_zoom(&ToggleZoom, window, cx);
+        });
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_zoom(&ToggleZoom, window, cx);
+        });
+        assert!(
+            multi_workspace
+                .read_with(cx, |multi_workspace, _cx| multi_workspace.sidebar_open())
+                .unwrap(),
+            "the threads sidebar should stay open after leaving full screen if it was already open"
+        );
     }
 
     #[gpui::test]

@@ -118,6 +118,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
+    /// Whether to open the threads sidebar when the agent panel enters full screen.
+    ///
+    /// Default: false
+    pub open_threads_sidebar_on_agent_panel_fullscreen: Option<bool>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
