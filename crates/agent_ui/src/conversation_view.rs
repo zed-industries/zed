@@ -1,9 +1,8 @@
 use acp_thread::{
-    AcpThread, AcpThreadEvent, AgentSessionInfo, AgentThreadEntry, AssistantMessage,
-    AssistantMessageChunk, AuthRequired, LoadError, MaxOutputTokensError, MentionUri,
-    PermissionOptionChoice, PermissionOptions, PermissionPattern, RetryStatus,
-    SelectedPermissionOutcome, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
-    UserMessageId,
+    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
+    AuthRequired, LoadError, MaxOutputTokensError, MentionUri, PermissionOptionChoice,
+    PermissionOptions, PermissionPattern, RetryStatus, SelectedPermissionOutcome, ThreadStatus,
+    ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
@@ -1264,10 +1263,6 @@ impl ConversationView {
             }
             self.reset(window, cx);
         }
-    }
-
-    pub fn workspace(&self) -> &WeakEntity<Workspace> {
-        &self.workspace
     }
 
     pub fn agent_key(&self) -> &Agent {

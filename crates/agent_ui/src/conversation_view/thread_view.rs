@@ -312,7 +312,6 @@ pub struct ThreadView {
     pub resumed_without_history: bool,
     pub(crate) permission_selections:
         HashMap<agent_client_protocol::ToolCallId, PermissionSelection>,
-    pub resume_thread_metadata: Option<AgentSessionInfo>,
     pub _cancel_task: Option<Task<()>>,
     _save_task: Option<Task<()>>,
     _draft_resolve_task: Option<Task<()>>,
@@ -538,7 +537,6 @@ impl ThreadView {
             is_loading_contents: false,
             new_server_version_available: None,
             permission_selections: HashMap::default(),
-            resume_thread_metadata: None,
             _cancel_task: None,
             _save_task: None,
             _draft_resolve_task: None,
@@ -621,10 +619,6 @@ impl ThreadView {
             MessageEditorEvent::LostFocus => {}
             MessageEditorEvent::InputAttempted { .. } => {}
         }
-    }
-
-    pub fn is_draft(&self, cx: &App) -> bool {
-        self.thread.read(cx).entries().is_empty()
     }
 
     pub(crate) fn as_native_connection(
@@ -2186,43 +2180,6 @@ impl ThreadView {
                 .title(state.last_error.clone())
                 .description(retry_message),
         )
-    }
-
-    pub fn handle_open_rules(
-        &mut self,
-        _: &ClickEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(thread) = self.as_native_thread(cx) else {
-            return;
-        };
-        let project_context = thread.read(cx).project_context().read(cx);
-
-        let project_entry_ids = project_context
-            .worktrees
-            .iter()
-            .flat_map(|worktree| worktree.rules_file.as_ref())
-            .map(|rules_file| ProjectEntryId::from_usize(rules_file.project_entry_id))
-            .collect::<Vec<_>>();
-
-        self.workspace
-            .update(cx, move |workspace, cx| {
-                // TODO: Open a multibuffer instead? In some cases this doesn't make the set of rules
-                // files clear. For example, if rules file 1 is already open but rules file 2 is not,
-                // this would open and focus rules file 2 in a tab that is not next to rules file 1.
-                let project = workspace.project().read(cx);
-                let project_paths = project_entry_ids
-                    .into_iter()
-                    .flat_map(|entry_id| project.path_for_entry(entry_id, cx))
-                    .collect::<Vec<_>>();
-                for project_path in project_paths {
-                    workspace
-                        .open_path(project_path, None, true, window, cx)
-                        .detach_and_log_err(cx);
-                }
-            })
-            .ok();
     }
 
     fn activity_bar_bg(&self, cx: &Context<Self>) -> Hsla {
