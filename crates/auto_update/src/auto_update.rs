@@ -172,6 +172,35 @@ pub struct ReleaseAsset {
     pub url: String,
 }
 
+fn github_remote_server_release_asset(
+    release_channel: ReleaseChannel,
+    version: Option<&Version>,
+    asset: &str,
+    os: &str,
+    arch: &str,
+) -> Option<ReleaseAsset> {
+    if asset != "zed-remote-server" {
+        return None;
+    }
+
+    let mut version = version?.clone();
+    version.pre = semver::Prerelease::EMPTY;
+    version.build = semver::BuildMetadata::EMPTY;
+
+    let tag = match release_channel {
+        ReleaseChannel::Stable => format!("v{version}"),
+        ReleaseChannel::Preview => format!("v{version}-pre"),
+        ReleaseChannel::Dev | ReleaseChannel::Nightly => return None,
+    };
+    let extension = if os == "windows" { "zip" } else { "gz" };
+    let asset_name = format!("{asset}-{os}-{arch}.{extension}");
+
+    Some(ReleaseAsset {
+        version: version.to_string(),
+        url: format!("https://github.com/zed-industries/zed/releases/download/{tag}/{asset_name}"),
+    })
+}
+
 struct MacOsUnmounter<'a> {
     mount_path: PathBuf,
     background_executor: &'a BackgroundExecutor,
@@ -589,6 +618,7 @@ impl AutoUpdater {
         cx: &mut AsyncApp,
     ) -> Result<ReleaseAsset> {
         let client = this.read_with(cx, |this, _| this.client.clone());
+        let requested_version = version.clone();
 
         let (system_id, metrics_id, is_staff) = if client.telemetry().metrics_enabled() {
             (
@@ -608,6 +638,10 @@ impl AutoUpdater {
             "latest".to_string()
         };
         let http_client = client.http_client();
+        let allow_github_fallback = matches!(
+            http_client.base_url().as_str(),
+            "https://zed.dev" | "https://staging.zed.dev"
+        );
 
         let path = format!("/releases/{}/{}/asset", release_channel.dev_name(), version,);
         let url = http_client.build_zed_cloud_url_with_query(
@@ -622,17 +656,56 @@ impl AutoUpdater {
             },
         )?;
 
-        let mut response = http_client
+        let mut response = match http_client
             .get(url.as_str(), Default::default(), true)
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                if allow_github_fallback
+                    && let Some(fallback) = github_remote_server_release_asset(
+                        release_channel,
+                        requested_version.as_ref(),
+                        asset,
+                        os,
+                        arch,
+                    )
+                {
+                    log::warn!(
+                        "failed to fetch remote release metadata from {url}, falling back to GitHub asset URL: {error:#}"
+                    );
+                    return Ok(fallback);
+                }
+
+                return Err(error);
+            }
+        };
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
 
-        anyhow::ensure!(
-            response.status().is_success(),
-            "failed to fetch release: {:?}",
-            String::from_utf8_lossy(&body),
-        );
+        if !response.status().is_success() {
+            if allow_github_fallback
+                && let Some(fallback) = github_remote_server_release_asset(
+                    release_channel,
+                    requested_version.as_ref(),
+                    asset,
+                    os,
+                    arch,
+                )
+            {
+                log::warn!(
+                    "failed to fetch remote release metadata from {url}: status {} body {:?}; falling back to GitHub asset URL",
+                    response.status(),
+                    String::from_utf8_lossy(&body),
+                );
+                return Ok(fallback);
+            }
+
+            anyhow::bail!(
+                "failed to fetch release: {:?}",
+                String::from_utf8_lossy(&body)
+            );
+        }
 
         serde_json::from_slice(body.as_slice()).with_context(|| {
             format!(
@@ -1539,6 +1612,82 @@ mod tests {
         assert_eq!(
             newer_version.unwrap(),
             Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
+        );
+    }
+
+    #[test]
+    fn test_github_remote_server_release_asset_for_stable() {
+        let version = Version::parse("0.228.0+stable.1.abc123").unwrap();
+
+        let release = github_remote_server_release_asset(
+            ReleaseChannel::Stable,
+            Some(&version),
+            "zed-remote-server",
+            "linux",
+            "x86_64",
+        )
+        .unwrap();
+
+        assert_eq!(release.version, "0.228.0");
+        assert_eq!(
+            release.url,
+            "https://github.com/zed-industries/zed/releases/download/v0.228.0/zed-remote-server-linux-x86_64.gz"
+        );
+    }
+
+    #[test]
+    fn test_github_remote_server_release_asset_for_preview() {
+        let version = Version::parse("0.234.6+preview.1.abc123").unwrap();
+
+        let release = github_remote_server_release_asset(
+            ReleaseChannel::Preview,
+            Some(&version),
+            "zed-remote-server",
+            "windows",
+            "aarch64",
+        )
+        .unwrap();
+
+        assert_eq!(release.version, "0.234.6");
+        assert_eq!(
+            release.url,
+            "https://github.com/zed-industries/zed/releases/download/v0.234.6-pre/zed-remote-server-windows-aarch64.zip"
+        );
+    }
+
+    #[test]
+    fn test_github_remote_server_release_asset_skips_unsupported_cases() {
+        let version = Version::parse("0.228.0").unwrap();
+
+        assert!(
+            github_remote_server_release_asset(
+                ReleaseChannel::Nightly,
+                Some(&version),
+                "zed-remote-server",
+                "linux",
+                "x86_64",
+            )
+            .is_none()
+        );
+        assert!(
+            github_remote_server_release_asset(
+                ReleaseChannel::Stable,
+                Some(&version),
+                "zed",
+                "linux",
+                "x86_64",
+            )
+            .is_none()
+        );
+        assert!(
+            github_remote_server_release_asset(
+                ReleaseChannel::Stable,
+                None,
+                "zed-remote-server",
+                "linux",
+                "x86_64",
+            )
+            .is_none()
         );
     }
 }
