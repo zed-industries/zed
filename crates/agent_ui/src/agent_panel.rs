@@ -74,8 +74,8 @@ use terminal::terminal_settings::TerminalSettings;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
-    Button, Callout, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle,
-    Tab, Tooltip, prelude::*, utils::WithRemSize,
+    Button, ContextMenu, ContextMenuEntry, IconButton, PopoverMenu, PopoverMenuHandle, Tab,
+    Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -705,7 +705,6 @@ pub struct AgentPanel {
     selected_agent: Agent,
     _thread_view_subscription: Option<Subscription>,
     _active_thread_focus_subscription: Option<Subscription>,
-    show_trust_workspace_message: bool,
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
     _thread_metadata_store_subscription: Subscription,
@@ -1063,7 +1062,6 @@ impl AgentPanel {
             selected_agent: Agent::default(),
             _thread_view_subscription: None,
             _active_thread_focus_subscription: None,
-            show_trust_workspace_message: false,
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
             _base_view_observation: None,
             _draft_editor_observation: None,
@@ -1288,20 +1286,6 @@ impl AgentPanel {
         }
     }
 
-    pub fn create_thread(
-        &mut self,
-        source: &'static str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> ThreadId {
-        let agent = self.selected_agent(cx);
-        let thread = self.create_agent_thread(agent, None, None, None, None, source, window, cx);
-        let thread_id = thread.conversation_view.read(cx).thread_id;
-        self.retained_threads
-            .insert(thread_id, thread.conversation_view);
-        thread_id
-    }
-
     pub fn activate_retained_thread(
         &mut self,
         id: ThreadId,
@@ -1318,30 +1302,6 @@ impl AgentPanel {
             window,
             cx,
         );
-    }
-
-    pub fn remove_thread(&mut self, id: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
-        self.retained_threads.remove(&id);
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.delete(id, cx);
-        });
-
-        if self
-            .draft_thread
-            .as_ref()
-            .is_some_and(|d| d.read(cx).thread_id == id)
-        {
-            self.draft_thread = None;
-            self._draft_editor_observation = None;
-        }
-
-        if self.active_thread_id(cx) == Some(id) {
-            self.clear_overlay_state();
-            self.activate_draft(false, "agent_panel", window, cx);
-            self.serialize(cx);
-            cx.emit(AgentPanelEvent::ActiveViewChanged);
-            cx.notify();
-        }
     }
 
     pub fn active_thread_id(&self, cx: &App) -> Option<ThreadId> {
@@ -1372,28 +1332,6 @@ impl AgentPanel {
         } else {
             Some(text)
         }
-    }
-
-    pub fn clear_editor(&self, id: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
-        let cv = self
-            .retained_threads
-            .get(&id)
-            .or_else(|| match &self.base_view {
-                BaseView::AgentThread { conversation_view }
-                    if conversation_view.read(cx).thread_id == id =>
-                {
-                    Some(conversation_view)
-                }
-                _ => None,
-            });
-        let Some(cv) = cv else { return };
-        let Some(tv) = cv.read(cx).root_thread_view() else {
-            return;
-        };
-        let editor = tv.read(cx).message_editor.clone();
-        editor.update(cx, |editor, cx| {
-            editor.clear(window, cx);
-        });
     }
 
     fn new_native_agent_thread_from_summary(
@@ -2001,26 +1939,6 @@ impl AgentPanel {
             }
         }
         false
-    }
-
-    /// active thread plus any background threads that are still running or
-    /// completed but unseen.
-    pub fn parent_threads(&self, cx: &App) -> Vec<Entity<ThreadView>> {
-        let mut views = Vec::new();
-
-        if let Some(server_view) = self.active_conversation_view() {
-            if let Some(thread_view) = server_view.read(cx).root_thread_view() {
-                views.push(thread_view);
-            }
-        }
-
-        for server_view in self.retained_threads.values() {
-            if let Some(thread_view) = server_view.read(cx).root_thread_view() {
-                views.push(thread_view);
-            }
-        }
-
-        views
     }
 
     fn update_thread_work_dirs(&self, cx: &mut Context<Self>) {
@@ -3594,38 +3512,6 @@ impl AgentPanel {
         }
     }
 
-    fn render_workspace_trust_message(&self, cx: &Context<Self>) -> Option<impl IntoElement> {
-        if !self.show_trust_workspace_message {
-            return None;
-        }
-
-        let description = "To protect your system, third-party code—like MCP servers—won't run until you mark this workspace as safe.";
-
-        Some(
-            Callout::new()
-                .icon(IconName::Warning)
-                .severity(Severity::Warning)
-                .border_position(ui::BorderPosition::Bottom)
-                .title("You're in Restricted Mode")
-                .description(description)
-                .actions_slot(
-                    Button::new("open-trust-modal", "Configure Project Trust")
-                        .label_size(LabelSize::Small)
-                        .style(ButtonStyle::Outlined)
-                        .on_click({
-                            cx.listener(move |this, _, window, cx| {
-                                this.workspace
-                                    .update(cx, |workspace, cx| {
-                                        workspace
-                                            .show_worktree_trust_security_modal(true, window, cx)
-                                    })
-                                    .log_err();
-                            })
-                        }),
-                ),
-        )
-    }
-
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
@@ -3675,7 +3561,6 @@ impl Render for AgentPanel {
                 }
             }))
             .child(self.render_toolbar(window, cx))
-            .children(self.render_workspace_trust_message(cx))
             .children(self.render_new_user_onboarding(window, cx))
             .map(|parent| match self.visible_surface() {
                 VisibleSurface::Uninitialized => parent,

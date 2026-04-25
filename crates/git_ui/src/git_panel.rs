@@ -22,6 +22,7 @@ use editor::{
 use editor::{EditorStyle, RewrapOptions};
 use file_icons::FileIcons;
 use futures::StreamExt as _;
+use futures::channel::oneshot::Canceled;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, GitCommitTemplate,
@@ -51,6 +52,7 @@ use menu;
 use multi_buffer::ExcerptBoundaryInfo;
 use notifications::status_toast::StatusToast;
 use panel::{PanelHeader, panel_button, panel_filled_button, panel_icon_button};
+use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
@@ -656,6 +658,7 @@ pub struct GitPanel {
     stash_entries: GitStash,
 
     _settings_subscription: Subscription,
+    git_access: GitAccess,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -786,6 +789,7 @@ impl GitPanel {
                     )
                     | GitStoreEvent::RepositoryAdded
                     | GitStoreEvent::RepositoryRemoved(_)
+                    | GitStoreEvent::GlobalConfigurationUpdated
                     | GitStoreEvent::ActiveRepositoryChanged(_) => {
                         this.schedule_update(window, cx);
                     }
@@ -843,6 +847,7 @@ impl GitPanel {
                 bulk_staging: None,
                 stash_entries: Default::default(),
                 _settings_subscription,
+                git_access: GitAccess::Yes,
             };
 
             this.schedule_update(window, cx);
@@ -1744,11 +1749,18 @@ impl GitPanel {
         // 3. finally, if there is no info about this `entry` in the repo, we fall back to whatever status is encoded
         //    in `entry` arg.
         repo.pending_ops_for_path(&entry.repo_path)
-            .map(|ops| {
+            .and_then(|ops| {
+                // In case the last operation in the list of pending operations
+                // failed, we can't assume the stage status for this entry and
+                // need to fallback to the actual state in the repo.
+                if ops.last_op_errored() {
+                    return None;
+                }
+
                 if ops.staging() || ops.staged() {
-                    StageStatus::Staged
+                    Some(StageStatus::Staged)
                 } else {
-                    StageStatus::Unstaged
+                    Some(StageStatus::Unstaged)
                 }
             })
             .or_else(|| {
@@ -1950,6 +1962,7 @@ impl GitPanel {
                 this.update(cx, |this, cx| {
                     if let Err(err) = result {
                         this.show_error_toast(if stage { "add" } else { "reset" }, err, cx);
+                        this.update_counts(active_repository.read(cx));
                     }
                     cx.notify();
                 })
@@ -3110,6 +3123,37 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
+    /// Updates git's configuration, adding the directory of the current
+    /// worktree to the `safe.directory` config, ensuring that, even if the user
+    /// that's running the application is not the owner of `.git/`, it can still
+    /// read the repository's contents.
+    fn add_safe_directory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repository) = &self.active_repository else {
+            return;
+        };
+
+        let path = active_repository.update(cx, |repository, _cx| {
+            repository.snapshot().work_directory_abs_path
+        });
+
+        if let Some(path_str) = path.to_str() {
+            let path_arg = String::from(path_str);
+            let args = vec![
+                String::from("--global"),
+                String::from("--add"),
+                String::from("safe.directory"),
+                path_arg,
+            ];
+
+            cx.spawn_in(window, async move |git_panel, cx| {
+                git_panel.update(cx, |git_panel, cx| {
+                    git_panel.project.read(cx).git_config(path, args, cx)
+                })
+            })
+            .detach();
+        }
+    }
+
     pub fn create_pull_request(&self, window: &mut Window, cx: &mut Context<Self>) {
         let result = (|| -> anyhow::Result<()> {
             let repo = self
@@ -3507,10 +3551,36 @@ impl GitPanel {
         self.tracked_staged_count = 0;
         self.entry_count = 0;
         self.max_width_item_index = None;
+        self.git_access = GitAccess::Yes;
 
         let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
         let is_tree_view = matches!(self.view_mode, GitPanelViewMode::Tree(_));
         let group_by_status = is_tree_view || !sort_by_path;
+
+        if let Some(active_repo) = self.active_repository.as_ref() {
+            let access = active_repo.update(cx, |active_repo, cx| active_repo.access(cx));
+
+            cx.spawn_in(window, async move |git_panel, cx| {
+                // When the user does not own the `.git` folder, the
+                // `GitStore.spawn_local_git_worker` will fail to create the
+                // receiver for Git jobs, so this access check will be
+                // cancelled.
+                //
+                // We assume `GitAccess::No` on cancellation. I believe this is
+                // imprecise, other failures could also cause cancellation, but
+                // the consequence is just showing the "unsafe repo" UI, which
+                // seems acceptable for this edge case.
+                let access = match access.await {
+                    Ok(access) => access,
+                    Err(Canceled) => GitAccess::No,
+                };
+
+                git_panel.update(cx, |this, _cx| {
+                    this.git_access = access;
+                })
+            })
+            .detach_and_log_err(cx);
+        }
 
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
@@ -4205,6 +4275,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
+        if matches!(self.git_access, GitAccess::No) {
+            return None;
+        }
+
         self.active_repository.as_ref()?;
 
         let (text, action, stage, tooltip) =
@@ -4659,17 +4733,10 @@ impl GitPanel {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_repo = self.active_repository.is_some();
-        let has_no_repo = self.active_repository.is_none();
-        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
-
-        let should_show_branch_diff =
-            has_repo && self.changes_count == 0 && !self.is_on_main_branch(cx);
-
-        let label = if has_repo {
-            "No changes to commit"
-        } else {
-            "No Git repositories"
+        let children = match (self.git_access, &self.active_repository) {
+            (GitAccess::No, Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
+            (_, None) => self.render_uninitialized_ui(cx),
+            (_, Some(_)) => self.render_no_changes_ui(cx),
         };
 
         v_flex()
@@ -4677,40 +4744,110 @@ impl GitPanel {
             .flex_1()
             .items_center()
             .justify_center()
-            .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
-            .when(has_no_repo && worktree_count > 0, |this| {
-                this.child(
-                    panel_filled_button("Initialize Repository")
-                        .tooltip(Tooltip::for_action_title_in(
-                            "git init",
-                            &git::Init,
-                            &self.focus_handle,
-                        ))
-                        .on_click(move |_, _, cx| {
-                            cx.defer(move |cx| {
-                                cx.dispatch_action(&git::Init);
-                            })
-                        }),
-                )
-            })
-            .when(should_show_branch_diff, |this| {
-                this.child(
-                    panel_filled_button("View Branch Diff")
-                        .tooltip(move |_, cx| {
-                            Tooltip::with_meta(
-                                "Branch Diff",
-                                Some(&BranchDiff),
-                                "Show diff between working directory and default branch",
-                                cx,
-                            )
+            .text_color(Color::Placeholder.color(cx))
+            .children(children)
+    }
+
+    fn render_no_changes_ui(&self, cx: &Context<Self>) -> Vec<AnyElement> {
+        let mut elements: Vec<AnyElement> = vec!["No changes to commit".into_any_element()];
+
+        if self.changes_count == 0 && !self.is_on_main_branch(cx) {
+            elements.push(
+                panel_filled_button("View Branch Diff")
+                    .tooltip(move |_, cx| {
+                        Tooltip::with_meta(
+                            "Branch Diff",
+                            Some(&BranchDiff),
+                            "Show diff between working directory and default branch",
+                            cx,
+                        )
+                    })
+                    .on_click(move |_, _, cx| {
+                        cx.defer(move |cx| {
+                            cx.dispatch_action(&BranchDiff);
                         })
-                        .on_click(move |_, _, cx| {
-                            cx.defer(move |cx| {
-                                cx.dispatch_action(&BranchDiff);
-                            })
-                        }),
+                    })
+                    .into_any_element(),
+            );
+        }
+
+        elements
+    }
+
+    fn render_unsafe_repo_ui(
+        &self,
+        active_repository: &Entity<Repository>,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let directory = active_repository.update(cx, |repository, _cx| {
+            repository.snapshot().work_directory_abs_path
+        });
+
+        let message = format!(
+            "Detected dubious ownership in repository at {}. \
+            This happens when the .git/ directory is not owned by the current user. \
+            If you want to learn more about safe directories, visit git's documentation.",
+            directory.display()
+        );
+
+        vec![
+            div()
+                .self_stretch()
+                .px_4()
+                .text_center()
+                .child(Label::new(message).color(Color::Muted))
+                .into_any_element(),
+            self.render_unsafe_repo_buttons(directory, cx)
+                .into_any_element(),
+        ]
+    }
+
+    fn render_unsafe_repo_buttons(&self, directory: Arc<Path>, cx: &mut Context<Self>) -> Div {
+        h_flex()
+            .max_w_full()
+            .gap_2()
+            .justify_center()
+            .child(
+                panel_filled_button("Trust Directory")
+                .end_icon(Icon::new(IconName::Check).size(IconSize::Small))
+                .tooltip(Tooltip::text(
+                    format!("git config --global --add safe.directory {}", directory.display())
+                ))
+                .on_click(
+                    cx.listener(|this, _, window, cx| {
+                        this.add_safe_directory(window, cx);
+                    })
                 )
-            })
+        )
+        .child(
+            panel_filled_button("Learn More")
+                .end_icon(Icon::new(IconName::Link).size(IconSize::Small))
+                .tooltip(Tooltip::text("Open https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory in your default browser"))
+                .on_click(move |_, _, cx| cx.open_url("https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory"))
+        )
+    }
+
+    fn render_uninitialized_ui(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
+        if worktree_count > 0 && self.active_repository.is_none() {
+            vec![
+                "No Git Repositories".into_any_element(),
+                panel_filled_button("Initialize Repository")
+                    .tooltip(Tooltip::for_action_title_in(
+                        "git init",
+                        &git::Init,
+                        &self.focus_handle,
+                    ))
+                    .on_click(move |_, _, cx| {
+                        cx.defer(move |cx| {
+                            cx.dispatch_action(&git::Init);
+                        })
+                    })
+                    .into_any_element(),
+            ]
+        } else {
+            vec![]
+        }
     }
 
     fn is_on_main_branch(&self, cx: &Context<Self>) -> bool {
@@ -4741,7 +4878,7 @@ impl GitPanel {
 
         let is_staging_or_staged = repo
             .pending_ops_for_path(&repo_path)
-            .map(|ops| ops.staging() || ops.staged())
+            .map(|ops| !ops.last_op_errored() && (ops.staging() || ops.staged()))
             .or_else(|| {
                 repo.status_for_path(&repo_path)
                     .and_then(|status| status.status.staging().as_bool())

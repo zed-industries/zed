@@ -1469,6 +1469,31 @@ pub(crate) async fn restore_or_create_workspace(
                 .await?;
             }
         }
+
+        // If the user cancelled a failed remote connection at startup,
+        // open_remote_project returns Ok but removes the window, so error_count
+        // stays 0 and the toast fallback above does not trigger. Without this
+        // check, Zed would exit silently.
+        if cx.update(|cx| cx.windows().is_empty()) {
+            cx.update(|cx| {
+                workspace::open_new(
+                    Default::default(),
+                    app_state.clone(),
+                    cx,
+                    |workspace, window, cx| {
+                        let restore_on_startup =
+                            WorkspaceSettings::get_global(cx).restore_on_startup;
+                        match restore_on_startup {
+                            workspace::RestoreOnStartupBehavior::Launchpad => {}
+                            _ => {
+                                Editor::new_file(workspace, &Default::default(), window, cx);
+                            }
+                        }
+                    },
+                )
+            })
+            .await?;
+        }
     } else if matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_onboarding_view(app_state, cx)).await?;
     } else {

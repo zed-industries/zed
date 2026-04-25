@@ -52,16 +52,16 @@ name = "acp_tools"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
+ "agent_servers",
+ "agent_ui",
  "collections",
  "gpui",
  "language",
- "log",
  "markdown",
  "project",
  "serde",
  "serde_json",
  "settings",
- "smol",
  "theme_settings",
  "ui",
  "util",
@@ -277,7 +277,6 @@ name = "agent_servers"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
- "acp_tools",
  "action_log",
  "agent-client-protocol",
  "anyhow",
