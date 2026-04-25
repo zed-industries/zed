@@ -418,6 +418,29 @@ impl WebWindowInner {
         Some(result)
     }
 
+    /// Read the currently selected text via the platform input handler.
+    /// Returns `None` if no input is focused or nothing is selected.
+    pub(crate) fn read_selected_text(&self) -> Option<String> {
+        self.read_selected_range_and_text().map(|(_, text)| text)
+    }
+
+    /// As `read_selected_text`, but also returns the UTF-16 range — used
+    /// by cut, where we need to delete after copying.
+    pub(crate) fn read_selected_range_and_text(
+        &self,
+    ) -> Option<(std::ops::Range<usize>, String)> {
+        self.with_input_handler(|handler| {
+            let selection = handler.selected_text_range(true)?;
+            if selection.range.is_empty() {
+                return None;
+            }
+            let mut adjusted = None;
+            let text = handler.text_for_range(selection.range.clone(), &mut adjusted)?;
+            Some((selection.range, text))
+        })
+        .flatten()
+    }
+
     pub(crate) fn register_appearance_change(
         self: &Rc<Self>,
     ) -> Option<Closure<dyn FnMut(JsValue)>> {
