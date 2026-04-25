@@ -16,8 +16,8 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, HighlightKey, RowHighlightOptions, SelectionEffects};
 use gpui::{
     Action, App, AsyncApp, Context, DismissEvent, DragMoveEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Global, HighlightStyle, KeyContext, MouseButton, ParentElement, Render, Styled,
-    StyledText, Subscription, Task, WeakEntity, Window, actions, px, relative,
+    Focusable, Global, HighlightStyle, KeyContext, MouseButton, MouseDownEvent, ParentElement,
+    Render, Styled, StyledText, Subscription, Task, WeakEntity, Window, actions, px, relative,
 };
 use language::{Buffer, LanguageAwareStyling};
 use menu;
@@ -60,6 +60,9 @@ const SEARCH_DEBOUNCE_MS: u64 = 100;
 const AUTOSAVE_DELAY_MS: u64 = 500;
 const RESIZE_HANDLE_HEIGHT: f32 = 6.0;
 const RESIZE_HANDLE_WIDTH: f32 = 6.0;
+const RESIZE_DIVIDER_SIZE: f32 = 1.0;
+const RESIZE_CORNER_HANDLE_SIZE: f32 = 24.0;
+const RESIZE_CORNER_CLEARANCE: f32 = 18.0;
 const CLICK_THRESHOLD_MS: u128 = 50;
 const DOUBLE_CLICK_THRESHOLD_MS: u128 = 300;
 const SEARCH_RESULTS_BATCH_SIZE: usize = 256;
@@ -184,6 +187,28 @@ enum ResizeSide {
     End,
 }
 
+fn handle_resize_mouse_down(_: &MouseDownEvent, window: &mut Window, cx: &mut App) {
+    window.prevent_default();
+    cx.stop_propagation();
+}
+
+fn resize_hover_handler(is_highlighted: Entity<bool>) -> impl Fn(&bool, &mut Window, &mut App) {
+    move |&hovered, _window, cx| is_highlighted.write(cx, hovered)
+}
+
+fn clear_resize_highlight<T>(is_highlighted: Entity<bool>) -> impl Fn(&T, &mut Window, &mut App) {
+    move |_, _, cx| is_highlighted.write(cx, false)
+}
+
+fn highlighted_drag_preview<T>(
+    is_highlighted: Entity<bool>,
+) -> impl Fn(&T, gpui::Point<Pixels>, &mut Window, &mut App) -> Entity<DragPreview> {
+    move |_, _, _, cx| {
+        is_highlighted.write(cx, true);
+        cx.new(|_| DragPreview)
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ResizeDrag {
     mouse_start_y: Pixels,
@@ -207,6 +232,19 @@ struct VerticalResizeDrag {
     results_height_start: Pixels,
     preview_height_start: Pixels,
     offset_start: Pixels,
+}
+
+#[derive(Clone, Copy)]
+struct CornerResizeDrag {
+    horizontal_side: ResizeSide,
+    vertical_side: ResizeSide,
+    mouse_start: gpui::Point<Pixels>,
+    width_start: Pixels,
+    preview_width_start: Pixels,
+    results_height_start: Pixels,
+    preview_height_start: Pixels,
+    content_height_start: Pixels,
+    offset_start: gpui::Point<Pixels>,
 }
 
 #[derive(Clone, Copy)]
@@ -686,6 +724,8 @@ impl QuickSearch {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let handle_width = px(RESIZE_HANDLE_WIDTH);
+        let handle_offset = handle_width / 2.0;
+        let corner_clearance = px(RESIZE_CORNER_CLEARANCE);
         let (min_width_rems, max_width_rems) = match self.layout_mode {
             LayoutMode::Stacked => (
                 StackedLayoutState::MIN_MODAL_WIDTH_REMS,
@@ -705,14 +745,16 @@ impl QuickSearch {
                 ResizeSide::End => "right-resize-handle",
             })
             .absolute()
-            .top_0()
-            .bottom_0()
+            .top(corner_clearance)
+            .bottom(corner_clearance)
             .w(handle_width)
             .cursor_col_resize()
             .map(|this| match side {
-                ResizeSide::Start => this.left(-handle_width),
-                ResizeSide::End => this.right(-handle_width),
+                ResizeSide::Start => this.left(-handle_offset),
+                ResizeSide::End => this.right(-handle_offset),
             })
+            .block_mouse_except_scroll()
+            .on_mouse_down(MouseButton::Left, handle_resize_mouse_down)
             .on_drag(
                 HorizontalResizeDrag {
                     side,
@@ -731,7 +773,6 @@ impl QuickSearch {
                         ResizeSide::Start => -delta,
                         ResizeSide::End => delta,
                     };
-
                     let new_width = (drag.width_start + width_delta)
                         .max(min_width)
                         .min(max_width);
@@ -764,27 +805,28 @@ impl QuickSearch {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let handle_height = px(RESIZE_HANDLE_HEIGHT);
+        let handle_offset = handle_height / 2.0;
+        let corner_clearance = px(RESIZE_CORNER_CLEARANCE);
+
         div()
             .id(match side {
                 ResizeSide::Start => "top-resize-handle",
                 ResizeSide::End => "bottom-resize-handle",
             })
-            .h(px(RESIZE_HANDLE_HEIGHT))
+            .h(handle_height)
             .w_full()
             .cursor_row_resize()
             .map(|this| match side {
                 ResizeSide::Start => this
                     .absolute()
-                    .top(-px(RESIZE_HANDLE_HEIGHT))
-                    .left_0()
-                    .right_0(),
-                ResizeSide::End => this
-                    .bg(cx.theme().colors().border)
-                    .hover(|style| style.bg(cx.theme().colors().border_focused)),
+                    .top(-handle_offset)
+                    .left(corner_clearance)
+                    .right(corner_clearance),
+                ResizeSide::End => this.ml(corner_clearance).mr(corner_clearance),
             })
-            .on_mouse_down(MouseButton::Left, |_, window, _cx| {
-                window.prevent_default();
-            })
+            .block_mouse_except_scroll()
+            .on_mouse_down(MouseButton::Left, handle_resize_mouse_down)
             .on_drag(
                 VerticalResizeDrag {
                     side,
@@ -799,12 +841,10 @@ impl QuickSearch {
                 move |this, event: &DragMoveEvent<VerticalResizeDrag>, _window, cx| {
                     let drag = event.drag(cx);
                     let delta = event.event.position.y - drag.mouse_start;
-
                     let total_growth = match drag.side {
                         ResizeSide::Start => -delta,
                         ResizeSide::End => delta,
                     };
-
                     let total_start = drag.results_height_start + drag.preview_height_start;
                     let min_total = px(StackedLayoutState::MIN_PANEL_HEIGHT * 2.0);
 
@@ -818,6 +858,140 @@ impl QuickSearch {
                         let actual_growth = new_total - total_start;
                         this.offset.y = drag.offset_start - actual_growth;
                     }
+                    cx.notify();
+                },
+            ))
+    }
+
+    fn render_corner_resize(
+        &self,
+        horizontal_side: ResizeSide,
+        vertical_side: ResizeSide,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let handle_size = px(RESIZE_CORNER_HANDLE_SIZE);
+        let handle_offset = handle_size / 2.0;
+        let corner_id: u32 = match (horizontal_side, vertical_side) {
+            (ResizeSide::Start, ResizeSide::Start) => 0,
+            (ResizeSide::End, ResizeSide::Start) => 1,
+            (ResizeSide::Start, ResizeSide::End) => 2,
+            (ResizeSide::End, ResizeSide::End) => 3,
+        };
+        let (min_width_rems, max_width_rems) = match self.layout_mode {
+            LayoutMode::Stacked => (
+                StackedLayoutState::MIN_MODAL_WIDTH_REMS,
+                StackedLayoutState::MAX_MODAL_WIDTH_REMS,
+            ),
+            LayoutMode::Telescope => (
+                TelescopeLayoutState::MIN_MODAL_WIDTH_REMS,
+                TelescopeLayoutState::MAX_MODAL_WIDTH_REMS,
+            ),
+        };
+        let min_width = rems(min_width_rems).to_pixels(window.rem_size());
+        let max_width = rems(max_width_rems).to_pixels(window.rem_size());
+
+        div()
+            .id(("corner-resize-handle", corner_id))
+            .absolute()
+            .w(handle_size)
+            .h(handle_size)
+            .map(|this| match horizontal_side {
+                ResizeSide::Start => this.left(-handle_offset),
+                ResizeSide::End => this.right(-handle_offset),
+            })
+            .map(|this| match vertical_side {
+                ResizeSide::Start => this.top(-handle_offset),
+                ResizeSide::End => this.bottom(-handle_offset),
+            })
+            .map(|this| match (horizontal_side, vertical_side) {
+                (ResizeSide::Start, ResizeSide::Start)
+                | (ResizeSide::End, ResizeSide::End) => this.cursor_nwse_resize(),
+                (ResizeSide::Start, ResizeSide::End)
+                | (ResizeSide::End, ResizeSide::Start) => this.cursor_nesw_resize(),
+            })
+            .block_mouse_except_scroll()
+            .on_mouse_down(MouseButton::Left, handle_resize_mouse_down)
+            .on_drag(
+                CornerResizeDrag {
+                    horizontal_side,
+                    vertical_side,
+                    mouse_start: window.mouse_position(),
+                    width_start: self.modal_width,
+                    preview_width_start: self.telescope.preview_width,
+                    results_height_start: self.stacked.results_height,
+                    preview_height_start: self.stacked.preview_height,
+                    content_height_start: self.telescope.content_height,
+                    offset_start: self.offset,
+                },
+                |_, _, _, cx| cx.new(|_| DragPreview),
+            )
+            .on_drag_move::<CornerResizeDrag>(cx.listener(
+                move |this, event: &DragMoveEvent<CornerResizeDrag>, _window, cx| {
+                    let drag = event.drag(cx);
+                    let delta = event.event.position - drag.mouse_start;
+
+                    let width_delta = match drag.horizontal_side {
+                        ResizeSide::Start => -delta.x,
+                        ResizeSide::End => delta.x,
+                    };
+                    let new_width = (drag.width_start + width_delta)
+                        .max(min_width)
+                        .min(max_width);
+                    let width_change = new_width - drag.width_start;
+                    this.modal_width = new_width;
+
+                    if this.layout_mode == LayoutMode::Telescope && drag.width_start > px(0.0) {
+                        let ratio = drag.preview_width_start / drag.width_start;
+                        this.telescope.preview_width = (new_width * ratio)
+                            .max(px(TelescopeLayoutState::MIN_PREVIEW_WIDTH))
+                            .min(px(TelescopeLayoutState::MAX_PREVIEW_WIDTH));
+                    }
+
+                    this.offset.x = drag.offset_start.x
+                        + match drag.horizontal_side {
+                            ResizeSide::Start => -(width_change / 2.0),
+                            ResizeSide::End => width_change / 2.0,
+                        };
+
+                    match this.layout_mode {
+                        LayoutMode::Stacked => {
+                            let height_delta = match drag.vertical_side {
+                                ResizeSide::Start => -delta.y,
+                                ResizeSide::End => delta.y,
+                            };
+                            let total_start =
+                                drag.results_height_start + drag.preview_height_start;
+                            let min_total = px(StackedLayoutState::MIN_PANEL_HEIGHT * 2.0);
+                            let new_total = (total_start + height_delta).max(min_total);
+                            let scale = new_total / total_start;
+
+                            this.stacked.results_height = drag.results_height_start * scale;
+                            this.stacked.preview_height = drag.preview_height_start * scale;
+
+                            if drag.vertical_side == ResizeSide::Start {
+                                let actual_growth = new_total - total_start;
+                                this.offset.y = drag.offset_start.y - actual_growth;
+                            }
+                        }
+                        LayoutMode::Telescope => {
+                            let height_delta = match drag.vertical_side {
+                                ResizeSide::Start => -delta.y,
+                                ResizeSide::End => delta.y,
+                            };
+                            let new_height = (drag.content_height_start + height_delta)
+                                .max(px(TelescopeLayoutState::MIN_CONTENT_HEIGHT))
+                                .min(px(TelescopeLayoutState::MAX_CONTENT_HEIGHT));
+
+                            this.telescope.content_height = new_height;
+
+                            if drag.vertical_side == ResizeSide::Start {
+                                let actual_growth = new_height - drag.content_height_start;
+                                this.offset.y = drag.offset_start.y - actual_growth;
+                            }
+                        }
+                    }
+
                     cx.notify();
                 },
             ))
@@ -1069,23 +1243,41 @@ impl QuickSearch {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let is_highlighted = window.use_state(cx, |_window, _cx| false);
+        let divider_size = px(RESIZE_DIVIDER_SIZE);
+        let handle_height = px(RESIZE_HANDLE_HEIGHT);
+        let handle_offset = (handle_height - divider_size) / 2.0;
+
         div()
-            .id("resize-handle")
-            .h(px(RESIZE_HANDLE_HEIGHT))
+            .id("resize-divider")
+            .relative()
+            .h(divider_size)
             .w_full()
-            .cursor_row_resize()
             .bg(cx.theme().colors().border)
-            .hover(|style| style.bg(cx.theme().colors().border_focused))
-            .on_mouse_down(MouseButton::Left, |_, window, _cx| {
-                window.prevent_default();
+            .when(*is_highlighted.read(cx), |this| {
+                this.bg(cx.theme().colors().border_focused)
             })
-            .on_drag(
-                ResizeDrag {
-                    mouse_start_y: window.mouse_position().y,
-                    results_height_start: self.stacked.results_height,
-                    preview_height_start: self.stacked.preview_height,
-                },
-                |_, _, _, cx| cx.new(|_| DragPreview),
+            .child(
+                div()
+                    .id("resize-handle")
+                    .absolute()
+                    .top(-handle_offset)
+                    .left_0()
+                    .right_0()
+                    .h(handle_height)
+                    .cursor_row_resize()
+                    .block_mouse_except_scroll()
+                    .on_hover(resize_hover_handler(is_highlighted.clone()))
+                    .on_mouse_down(MouseButton::Left, handle_resize_mouse_down)
+                    .on_drag(
+                        ResizeDrag {
+                            mouse_start_y: window.mouse_position().y,
+                            results_height_start: self.stacked.results_height,
+                            preview_height_start: self.stacked.preview_height,
+                        },
+                        highlighted_drag_preview(is_highlighted.clone()),
+                    )
+                    .on_drop::<ResizeDrag>(clear_resize_highlight(is_highlighted.clone())),
             )
             .on_drag_move::<ResizeDrag>(cx.listener(
                 |this, event: &DragMoveEvent<ResizeDrag>, _window, cx| {
@@ -1182,22 +1374,42 @@ impl QuickSearch {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let is_highlighted = window.use_state(cx, |_window, _cx| false);
+        let divider_size = px(RESIZE_DIVIDER_SIZE);
+        let handle_width = px(RESIZE_HANDLE_WIDTH);
+        let handle_offset = (handle_width - divider_size) / 2.0;
+
         div()
-            .id("telescope-preview-resize-handle")
-            .w(px(RESIZE_HANDLE_WIDTH))
+            .id("telescope-preview-resize-divider")
+            .relative()
+            .w(divider_size)
             .h_full()
-            .cursor_col_resize()
             .bg(cx.theme().colors().border)
-            .hover(|style| style.bg(cx.theme().colors().border_focused))
-            .on_mouse_down(MouseButton::Left, |_, window, _cx| {
-                window.prevent_default();
+            .when(*is_highlighted.read(cx), |this| {
+                this.bg(cx.theme().colors().border_focused)
             })
-            .on_drag(
-                TelescopePreviewResizeDrag {
-                    mouse_start_x: window.mouse_position().x,
-                    preview_width_start: self.telescope.preview_width,
-                },
-                |_, _, _, cx| cx.new(|_| DragPreview),
+            .child(
+                div()
+                    .id("telescope-preview-resize-handle")
+                    .absolute()
+                    .left(-handle_offset)
+                    .top_0()
+                    .bottom_0()
+                    .w(handle_width)
+                    .cursor_col_resize()
+                    .block_mouse_except_scroll()
+                    .on_hover(resize_hover_handler(is_highlighted.clone()))
+                    .on_mouse_down(MouseButton::Left, handle_resize_mouse_down)
+                    .on_drag(
+                        TelescopePreviewResizeDrag {
+                            mouse_start_x: window.mouse_position().x,
+                            preview_width_start: self.telescope.preview_width,
+                        },
+                        highlighted_drag_preview(is_highlighted.clone()),
+                    )
+                    .on_drop::<TelescopePreviewResizeDrag>(clear_resize_highlight(
+                        is_highlighted.clone(),
+                    )),
             )
             .on_drag_move::<TelescopePreviewResizeDrag>(cx.listener(
                 |this, event: &DragMoveEvent<TelescopePreviewResizeDrag>, _window, cx| {
@@ -1218,49 +1430,70 @@ impl QuickSearch {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let is_highlighted = window.use_state(cx, |_window, _cx| false);
+        let divider_size = px(RESIZE_DIVIDER_SIZE);
+        let handle_height = px(RESIZE_HANDLE_HEIGHT);
+        let handle_offset = (handle_height - divider_size) / 2.0;
+        let corner_clearance = px(RESIZE_CORNER_CLEARANCE);
+
         div()
             .id(match side {
-                ResizeSide::Start => "telescope-top-resize-handle",
-                ResizeSide::End => "telescope-bottom-resize-handle",
+                ResizeSide::Start => "telescope-top-resize-divider",
+                ResizeSide::End => "telescope-bottom-resize-divider",
             })
-            .h(px(RESIZE_HANDLE_HEIGHT))
+            .relative()
+            .h(divider_size)
             .w_full()
-            .cursor_row_resize()
-            .map(|this| {
-                let this = this
-                    .bg(cx.theme().colors().border)
-                    .hover(|style| style.bg(cx.theme().colors().border_focused));
-                match side {
-                    ResizeSide::Start => this
-                        .absolute()
-                        .top(-px(RESIZE_HANDLE_HEIGHT))
-                        .left_0()
-                        .right_0(),
-                    ResizeSide::End => this,
-                }
+            .when(side == ResizeSide::End, |this| {
+                this.bg(cx.theme().colors().border)
             })
-            .on_mouse_down(MouseButton::Left, |_, window, _cx| {
-                window.prevent_default();
+            .when(side == ResizeSide::End && *is_highlighted.read(cx), |this| {
+                this.bg(cx.theme().colors().border_focused)
             })
-            .on_drag(
-                TelescopeHeightResizeDrag {
-                    side,
-                    mouse_start_y: window.mouse_position().y,
-                    content_height_start: self.telescope.content_height,
-                    offset_start: self.offset.y,
-                },
-                |_, _, _, cx| cx.new(|_| DragPreview),
+            .map(|this| match side {
+                ResizeSide::Start => this
+                    .absolute()
+                    .top(-(divider_size / 2.0))
+                    .left(corner_clearance)
+                    .right(corner_clearance),
+                ResizeSide::End => this.ml(corner_clearance).mr(corner_clearance),
+            })
+            .child(
+                div()
+                    .id(match side {
+                        ResizeSide::Start => "telescope-top-resize-handle",
+                        ResizeSide::End => "telescope-bottom-resize-handle",
+                    })
+                    .absolute()
+                    .top(-handle_offset)
+                    .left_0()
+                    .right_0()
+                    .h(handle_height)
+                    .cursor_row_resize()
+                    .block_mouse_except_scroll()
+                    .on_hover(resize_hover_handler(is_highlighted.clone()))
+                    .on_mouse_down(MouseButton::Left, handle_resize_mouse_down)
+                    .on_drag(
+                        TelescopeHeightResizeDrag {
+                            side,
+                            mouse_start_y: window.mouse_position().y,
+                            content_height_start: self.telescope.content_height,
+                            offset_start: self.offset.y,
+                        },
+                        highlighted_drag_preview(is_highlighted.clone()),
+                    )
+                    .on_drop::<TelescopeHeightResizeDrag>(clear_resize_highlight(
+                        is_highlighted.clone(),
+                    )),
             )
             .on_drag_move::<TelescopeHeightResizeDrag>(cx.listener(
                 move |this, event: &DragMoveEvent<TelescopeHeightResizeDrag>, _window, cx| {
                     let drag = event.drag(cx);
                     let delta = event.event.position.y - drag.mouse_start_y;
-
                     let height_delta = match drag.side {
                         ResizeSide::Start => -delta,
                         ResizeSide::End => delta,
                     };
-
                     let new_height = (drag.content_height_start + height_delta)
                         .max(px(TelescopeLayoutState::MIN_CONTENT_HEIGHT))
                         .min(px(TelescopeLayoutState::MAX_CONTENT_HEIGHT));
@@ -1486,7 +1719,13 @@ impl Render for QuickSearch {
                             .shadow_lg()
                             .child(self.render_header(window, cx))
                             .child(self.render_content(window, cx)),
-                    ),
+                    )
+                    .children([
+                        self.render_corner_resize(ResizeSide::Start, ResizeSide::Start, window, cx),
+                        self.render_corner_resize(ResizeSide::End, ResizeSide::Start, window, cx),
+                        self.render_corner_resize(ResizeSide::Start, ResizeSide::End, window, cx),
+                        self.render_corner_resize(ResizeSide::End, ResizeSide::End, window, cx),
+                    ]),
             )
     }
 }
