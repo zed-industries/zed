@@ -66,7 +66,7 @@ pub use edit_prediction_types::Direction;
 pub use editor_settings::{
     CompletionDetailAlignment, CurrentLineHighlight, DiffViewStyle, DocumentColorsRenderMode,
     EditorSettings, EditorSettingsScrollbarProxy, HideMouseMode, ScrollBeyondLastLine,
-    ScrollbarAxes, SearchSettings, ShowMinimap, ui_scrollbar_settings_from_raw,
+    ScrollbarAxes, SearchSettings, ShowMinimap, SmoothCursorStyle, ui_scrollbar_settings_from_raw,
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -1139,6 +1139,41 @@ struct ActionFetchReady {
     actions: Rc<[AvailableCodeAction]>,
 }
 
+/// Tracks a smooth cursor glide from one pixel position to another.
+/// Stored on [`Editor`] and consumed by [`EditorElement`] during layout and paint.
+#[derive(Clone)]
+pub(crate) struct CursorAnimationState {
+    /// Visual origin at animation start (relative to editor content_origin).
+    pub from: gpui::Point<Pixels>,
+    /// True cursor target position (relative to editor content_origin).
+    pub to: gpui::Point<Pixels>,
+    /// Logical cursor position when `to` was last set.
+    /// Used to distinguish real cursor moves from scroll-only viewport shifts.
+    pub cursor_position: DisplayPoint,
+    /// Wall-clock time when this animation began.
+    pub started_at: Instant,
+    /// Total animation duration, proportional to travel distance.
+    pub duration: Duration,
+}
+
+impl CursorAnimationState {
+    /// Interpolated visual position at `now`, using ease-out-cubic easing.
+    pub fn visual_origin(&self, now: Instant) -> gpui::Point<Pixels> {
+        let elapsed = now.saturating_duration_since(self.started_at).as_secs_f32();
+        let t = (elapsed / self.duration.as_secs_f32().max(f32::EPSILON)).min(1.0);
+        // ease_out_cubic: 1 - (1 - t)^3 — snappier arrive than quint
+        let t_eased = 1.0 - (1.0 - t).powi(3);
+        gpui::point(
+            self.from.x + (self.to.x - self.from.x) * t_eased,
+            self.from.y + (self.to.y - self.from.y) * t_eased,
+        )
+    }
+
+    pub fn is_settled(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.started_at) >= self.duration
+    }
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -1277,6 +1312,9 @@ pub struct Editor {
     next_color_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
+    /// Active smooth cursor animation, set by [`EditorElement`] during layout
+    /// when `smooth_cursor` is enabled and the local bar cursor moves.
+    pub(crate) cursor_animation: Option<CursorAnimationState>,
     gutter_dimensions: GutterDimensions,
     style: Option<EditorStyle>,
     text_style_refinement: Option<TextStyleRefinement>,
@@ -2553,6 +2591,7 @@ impl Editor {
             inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
+            cursor_animation: None,
             last_bounds: None,
             last_position_map: None,
             expect_bounds_change: None,

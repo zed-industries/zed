@@ -1,6 +1,17 @@
 use std::fmt::Display;
 use std::num;
 
+/// Visual style of the smooth cursor when `smooth_cursor` is enabled.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum SmoothCursorStyle {
+    /// Rounded semicircle top, flat bottom (default).
+    #[default]
+    Shaped,
+    /// Gradient fade-in from transparent at the top, solid below.
+    Classic,
+}
+
 use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -17,6 +28,18 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub cursor_blink: Option<bool>,
+    /// Whether to animate cursor movement with a smooth glide instead of teleporting.
+    /// Only animates the local bar cursor. Has no effect on block or underline cursors in v1.
+    ///
+    /// Default: false
+    pub smooth_cursor: Option<bool>,
+    /// Visual style for the smooth cursor. Only has effect when `smooth_cursor` is true.
+    ///
+    /// - "shaped": rounded semicircle top, flat bottom (default)
+    /// - "classic": gradient fade-in from transparent at top, solid below
+    ///
+    /// Default: "shaped"
+    pub smooth_cursor_style: Option<SmoothCursorStyle>,
     /// Cursor shape for the default editor.
     /// Can be "bar", "block", "underline", or "hollow".
     ///

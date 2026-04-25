@@ -1,5 +1,6 @@
 use crate::{
     ActiveDiagnostic, BUFFER_HEADER_PADDING, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext,
+    CursorAnimationState, SmoothCursorStyle,
     ChunkReplacement, CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker,
     ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape,
     CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction,
@@ -1894,6 +1895,86 @@ impl EditorElement {
                     let y = ((cursor_position.row().as_f64() - scroll_position.y)
                         * ScrollPixelOffset::from(line_height))
                     .into();
+
+                    // `smooth_now` is Some only for the local bar cursor with smooth_cursor enabled.
+                    // Using Option<Instant> avoids calling Instant::now() for other cursors and
+                    // gives a single timestamp shared by both the state-update and origin-read.
+                    let smooth_now = (selection.is_local
+                        && selection.cursor_shape == CursorShape::Bar
+                        && EditorSettings::get_global(cx).smooth_cursor)
+                        .then(Instant::now);
+
+                    // Update smooth cursor animation for the local bar cursor.
+                    // Non-local (collab) cursors and non-bar shapes are not animated in v1.
+                    if let Some(now) = smooth_now {
+                        let target = gpui::point(x, y);
+                        // Only animate when the logical cursor position (row/col) changed.
+                        // Pure scroll events shift viewport-relative pixels without moving the
+                        // cursor in the document — animating those causes the cursor to drift
+                        // upward while scrolling (the Ctrl+Down bug).
+                        let cursor_moved = editor
+                            .cursor_animation
+                            .as_ref()
+                            .map(|anim| anim.cursor_position != cursor_position)
+                            .unwrap_or(false);
+                        let needs_new_animation = cursor_moved && {
+                            let dx = editor
+                                .cursor_animation
+                                .as_ref()
+                                .map(|anim| (anim.to.x - target.x).as_f32())
+                                .unwrap_or(0.0);
+                            let dy = editor
+                                .cursor_animation
+                                .as_ref()
+                                .map(|anim| (anim.to.y - target.y).as_f32())
+                                .unwrap_or(0.0);
+                            dx * dx + dy * dy > 0.25 // target moved by > 0.5px
+                        };
+                        if needs_new_animation {
+                            let from = editor
+                                .cursor_animation
+                                .as_ref()
+                                .map(|anim| anim.visual_origin(now))
+                                .unwrap_or(target);
+                            let dx = (target.x - from.x).as_f32();
+                            let dy = (target.y - from.y).as_f32();
+                            let distance = (dx * dx + dy * dy).sqrt();
+                            let duration_ms = (distance * 3.5).clamp(25.0, 70.0) as u64;
+                            editor.cursor_animation = Some(CursorAnimationState {
+                                from,
+                                to: target,
+                                cursor_position,
+                                started_at: now,
+                                duration: Duration::from_millis(duration_ms),
+                            });
+                            // Cursor moved: show solid cursor during animation, then blink
+                            // only after 500ms of idle. Uses the existing pause_blinking
+                            // mechanism so no new timers or state are needed.
+                            editor.blink_manager.update(cx, |blink, cx| {
+                                blink.pause_blinking(cx);
+                            });
+                        } else if editor.cursor_animation.is_none() {
+                            // First render: seed the state so future moves have a valid `from`.
+                            editor.cursor_animation = Some(CursorAnimationState {
+                                from: target,
+                                to: target,
+                                cursor_position,
+                                started_at: now,
+                                duration: Duration::ZERO,
+                            });
+                        } else {
+                            // Scroll-only frame: update pixel positions silently so the stored
+                            // coords stay in sync with the current viewport, but don't animate.
+                            if let Some(anim) = editor.cursor_animation.as_mut() {
+                                anim.to = target;
+                                anim.cursor_position = cursor_position;
+                                if anim.is_settled(now) {
+                                    anim.from = target;
+                                }
+                            }
+                        }
+                    }
+
                     if selection.is_newest {
                         editor.pixel_position_of_newest_cursor = Some(point(
                             text_hitbox.origin.x + x + block_width / 2.,
@@ -1929,10 +2010,22 @@ impl EditorElement {
                         }
                     }
 
+                    // Use the animated visual position for local bar cursors when animating;
+                    // all other cursors (collab, block, underline) use the true position.
+                    let origin = if let Some(now) = smooth_now {
+                        editor
+                            .cursor_animation
+                            .as_ref()
+                            .map(|anim| anim.visual_origin(now))
+                            .unwrap_or_else(|| gpui::point(x, y))
+                    } else {
+                        gpui::point(x, y)
+                    };
+
                     let mut cursor = CursorLayout {
                         color: player_color.cursor,
                         block_width,
-                        origin: point(x, y),
+                        origin,
                         line_height,
                         shape: selection.cursor_shape,
                         block_text,
@@ -6673,7 +6766,13 @@ impl EditorElement {
                 );
             }
 
-            let corner_radius = if EditorSettings::get_global(cx).rounded_selection {
+            let smooth = EditorSettings::get_global(cx).smooth_cursor;
+            // smooth_cursor uses a larger radius to distinguish Zed's selection from
+            // JetBrains-style subtle rounding. Falls back to the standard rounded_selection
+            // value, or zero if that setting is also off.
+            let corner_radius = if smooth {
+                0.30 * layout.position_map.line_height
+            } else if EditorSettings::get_global(cx).rounded_selection {
                 0.15 * layout.position_map.line_height
             } else {
                 Pixels::ZERO
@@ -6929,6 +7028,20 @@ impl EditorElement {
     fn paint_cursors(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         for cursor in &mut layout.visible_cursors {
             cursor.paint(layout.content_origin, window, cx);
+        }
+
+        // Drive the smooth cursor animation by scheduling another render frame
+        // until the animation settles. Only the local bar cursor is animated.
+        let animation_active = self
+            .editor
+            .read(cx)
+            .cursor_animation
+            .as_ref()
+            .map(|anim| !anim.is_settled(Instant::now()))
+            .unwrap_or(false);
+
+        if animation_active {
+            window.request_animation_frame();
         }
     }
 
@@ -12401,17 +12514,77 @@ impl CursorLayout {
         let bounds = self.bounds(origin);
 
         //Draw background or border quad
-        let cursor = if matches!(self.shape, CursorShape::Hollow) {
-            outline(bounds, self.color, BorderStyle::Solid)
-        } else {
-            fill(bounds, self.color)
-        };
-
+        let smooth = EditorSettings::get_global(cx).smooth_cursor;
         if let Some(name) = &mut self.cursor_name {
             name.paint(window, cx);
         }
-
-        window.paint_quad(cursor);
+        if matches!(self.shape, CursorShape::Bar) && smooth {
+            match EditorSettings::get_global(cx).smooth_cursor_style {
+                SmoothCursorStyle::Shaped => {
+                    // Shaped: semicircle top, flat bottom. 2.5px so the dome reads
+                    // clearly without the cursor feeling heavier than the text.
+                    window.paint_quad(PaintQuad {
+                        bounds: Bounds {
+                            origin: bounds.origin,
+                            size: gpui::size(px(2.5), bounds.size.height),
+                        },
+                        corner_radii: Corners {
+                            top_left: px(1.25),
+                            top_right: px(1.25),
+                            bottom_left: px(0.0),
+                            bottom_right: px(0.0),
+                        },
+                        background: solid_background(self.color),
+                        border_widths: Default::default(),
+                        border_color: Default::default(),
+                        border_style: BorderStyle::Solid,
+                    });
+                }
+                SmoothCursorStyle::Classic => {
+                    // Classic: fades in from transparent at top, solid below.
+                    let w = bounds.size.width;
+                    let h = bounds.size.height;
+                    let o = bounds.origin;
+                    let fade_h = h * 0.30_f32;
+                    window.paint_quad(PaintQuad {
+                        bounds: Bounds { origin: o, size: gpui::size(w, fade_h) },
+                        corner_radii: Corners {
+                            top_left: px(1.0), top_right: px(1.0),
+                            bottom_left: px(0.0), bottom_right: px(0.0),
+                        },
+                        background: linear_gradient(
+                            180.0,
+                            linear_color_stop(self.color.opacity(0.0), 0.0),
+                            linear_color_stop(self.color, 1.0),
+                        ),
+                        border_widths: Default::default(),
+                        border_color: Default::default(),
+                        border_style: BorderStyle::Solid,
+                    });
+                    window.paint_quad(PaintQuad {
+                        bounds: Bounds {
+                            origin: gpui::point(o.x, o.y + fade_h),
+                            size: gpui::size(w, h - fade_h),
+                        },
+                        corner_radii: Corners {
+                            top_left: px(0.0), top_right: px(0.0),
+                            bottom_left: px(1.0), bottom_right: px(1.0),
+                        },
+                        background: solid_background(self.color),
+                        border_widths: Default::default(),
+                        border_color: Default::default(),
+                        border_style: BorderStyle::Solid,
+                    });
+                }
+            }
+        } else {
+            let cursor = if matches!(self.shape, CursorShape::Hollow) {
+                outline(bounds, self.color, BorderStyle::Solid)
+            } else {
+                fill(bounds, self.color)
+            };
+            window.paint_quad(cursor);
+        }
 
         if let Some(block_text) = &self.block_text {
             block_text
