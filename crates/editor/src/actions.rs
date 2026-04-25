@@ -907,6 +907,8 @@ actions!(
         WrapSelectionsInTag,
         /// Aligns selections from different rows into the same column
         AlignSelections,
+        /// Saves the current location to navigation history.
+        SaveLocation,
     ]
 );
 

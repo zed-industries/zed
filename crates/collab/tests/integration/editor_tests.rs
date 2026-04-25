@@ -2739,9 +2739,9 @@ async fn test_lsp_pull_diagnostics(
     let closure_workspace_diagnostics_pulls_result_ids =
         workspace_diagnostics_pulls_result_ids.clone();
     let (workspace_diagnostic_cancel_tx, closure_workspace_diagnostic_cancel_rx) =
-        smol::channel::bounded::<()>(1);
+        async_channel::bounded::<()>(1);
     let (closure_workspace_diagnostic_received_tx, workspace_diagnostic_received_rx) =
-        smol::channel::bounded::<()>(1);
+        async_channel::bounded::<()>(1);
 
     let capabilities = lsp::ServerCapabilities {
         diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
