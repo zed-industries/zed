@@ -462,12 +462,16 @@ impl OpenAiEventMapper {
                     let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
 
                     if let Some(tool_id) = tool_call.id.clone() {
-                        entry.id = tool_id;
+                        if !tool_id.is_empty() {
+                            entry.id = tool_id;
+                        }
                     }
 
                     if let Some(function) = tool_call.function.as_ref() {
                         if let Some(name) = function.name.clone() {
-                            entry.name = name;
+                            if !name.is_empty() {
+                                entry.name = name;
+                            }
                         }
 
                         if let Some(arguments) = function.arguments.clone() {
@@ -848,6 +852,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::{
+        ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamEvent, ToolCallChunk,
+    };
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
         block_on(async {
@@ -859,6 +866,17 @@ mod tests {
                 .map(Result::unwrap)
                 .collect()
         })
+    }
+
+    fn map_completion_events(
+        events: Vec<ResponseStreamEvent>,
+    ) -> Vec<LanguageModelCompletionEvent> {
+        let mut mapper = OpenAiEventMapper::new();
+        let mut all_events = Vec::new();
+        for event in events {
+            all_events.extend(mapper.map_event(event));
+        }
+        all_events.into_iter().filter_map(|e| e.ok()).collect()
     }
 
     fn response_item_message(id: &str) -> ResponseOutputItem {
@@ -1721,5 +1739,133 @@ mod tests {
                 {"role": "tool", "content": "result", "tool_call_id": "call-1"}
             ])
         );
+    }
+
+    #[test]
+    fn stream_maps_preserves_tool_id_and_name_across_empty_deltas() {
+        // DashScope sends id="" and name="" in subsequent tool_calls delta
+        // chunks after the first chunk. OpenAiEventMapper must not overwrite
+        // the accumulated id and name with these empty strings.
+
+        let events = vec![
+            // First chunk: id and name are present
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: Some("call_dashscope_test".into()),
+                            function: Some(FunctionChunk {
+                                name: Some("list_directory".into()),
+                                arguments: Some("".into()),
+                            }),
+                        }]),
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Subsequent chunks: DashScope sends id="" and name=""
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: Some("".into()),
+                            function: Some(FunctionChunk {
+                                name: Some("".into()),
+                                arguments: Some("{\"path\": \"".into()),
+                            }),
+                        }]),
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: Some(ResponseMessageDelta {
+                        role: None,
+                        content: None,
+                        tool_calls: Some(vec![ToolCallChunk {
+                            index: 0,
+                            id: Some("".into()),
+                            function: Some(FunctionChunk {
+                                name: Some("".into()),
+                                arguments: Some("blog-scraper\"}".into()),
+                            }),
+                        }]),
+                        reasoning_content: None,
+                    }),
+                    finish_reason: None,
+                }],
+                usage: None,
+            },
+            // Final chunk: finish_reason = "tool_calls"
+            ResponseStreamEvent {
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: None,
+                    finish_reason: Some("tool_calls".into()),
+                }],
+                usage: None,
+            },
+        ];
+
+        let mapped = map_completion_events(events);
+
+        // Events emitted:
+        //   1. Partial ToolUse from chunk 1 (fix_json("") → "{}", parseable)
+        //   2. Partial ToolUse from chunk 3 (arguments fully assembled)
+        //   3. Complete ToolUse from finish_reason="tool_calls" drain
+        //   4. Stop(ToolUse)
+        assert_eq!(mapped.len(), 4);
+
+        // Verify the complete ToolUse event (from finish_reason drain)
+        // has the correct id, name, and accumulated arguments.
+        let complete_tool_use = mapped.iter().find_map(|event| {
+            if let LanguageModelCompletionEvent::ToolUse(tool_use) = event {
+                if tool_use.is_input_complete {
+                    return Some(tool_use);
+                }
+            }
+            None
+        });
+        assert!(
+            complete_tool_use.is_some(),
+            "expected a completed ToolUse event"
+        );
+        let tool_use = complete_tool_use.unwrap();
+        assert_eq!(
+            tool_use.id.to_string(),
+            "call_dashscope_test",
+            "id must survive empty-string overwrites"
+        );
+        assert_eq!(
+            tool_use.name.as_ref(),
+            "list_directory",
+            "name must survive empty-string overwrites"
+        );
+        assert_eq!(
+            tool_use.raw_input, "{\"path\": \"blog-scraper\"}",
+            "arguments should accumulate across chunks"
+        );
+
+        // Verify the Stop event
+        assert!(mapped.iter().any(|event| {
+            matches!(
+                event,
+                LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
+            )
+        }));
     }
 }
