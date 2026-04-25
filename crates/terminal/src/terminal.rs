@@ -797,7 +797,10 @@ impl Deref for IndexedCell {
 pub struct TerminalContent {
     pub cells: Vec<IndexedCell>,
     pub mode: TermMode,
+    pub total_lines: usize,
     pub display_offset: usize,
+    pub columns: usize,
+    pub screen_lines: usize,
     pub selection_text: Option<String>,
     pub selection: Option<SelectionRange>,
     pub cursor: RenderableCursor,
@@ -820,7 +823,10 @@ impl Default for TerminalContent {
         TerminalContent {
             cells: Default::default(),
             mode: Default::default(),
+            total_lines: Default::default(),
             display_offset: Default::default(),
+            columns: Default::default(),
+            screen_lines: Default::default(),
             selection_text: Default::default(),
             selection: Default::default(),
             cursor: RenderableCursor {
@@ -932,6 +938,7 @@ impl TaskStatus {
 }
 
 const FIND_HYPERLINK_THROTTLE_PX: Pixels = px(5.0);
+const FIND_HYPERLINK_THROTTLE_MS: Duration = Duration::from_millis(100);
 
 impl Terminal {
     fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
@@ -1081,7 +1088,7 @@ impl Terminal {
             InternalEvent::Scroll(scroll) => {
                 trace!("Scrolling: scroll={scroll:?}");
                 term.scroll_display(*scroll);
-                self.refresh_hovered_word(window);
+                self.refresh_hovered_word(window, cx);
 
                 if self.vi_mode_enabled {
                     match *scroll {
@@ -1171,12 +1178,12 @@ impl Terminal {
             InternalEvent::ScrollToAlacPoint(point) => {
                 trace!("Scrolling to point: point={point:?}");
                 term.scroll_to_point(*point);
-                self.refresh_hovered_word(window);
+                self.refresh_hovered_word(window, cx);
             }
             InternalEvent::MoveViCursorToAlacPoint(point) => {
                 trace!("Move vi cursor to point: point={point:?}");
                 term.vi_goto_point(*point);
-                self.refresh_hovered_word(window);
+                self.refresh_hovered_word(window, cx);
             }
             InternalEvent::ToggleViMode => {
                 trace!("Toggling vi mode");
@@ -1207,8 +1214,7 @@ impl Terminal {
                         self.process_hyperlink(hyperlink, *open, cx);
                     }
                     None => {
-                        self.last_content.last_hovered_word = None;
-                        cx.emit(Event::NewNavigationTarget(None));
+                        self.clear_hyperlink(cx);
                     }
                 }
             }
@@ -1251,6 +1257,14 @@ impl Terminal {
             cx.emit(Event::Open(target));
         } else {
             self.update_selected_word(prev_hovered_word, url_match, maybe_url_or_path, target, cx);
+        }
+    }
+
+    fn clear_hyperlink(&mut self, cx: &mut Context<Self>) {
+        if self.last_content.last_hovered_word.is_some() {
+            self.last_content.last_hovered_word = None;
+            cx.emit(Event::NewNavigationTarget(None));
+            cx.notify();
         }
     }
 
@@ -1596,16 +1610,7 @@ impl Terminal {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
-        if self
-            .last_content
-            .terminal_bounds
-            .bounds
-            .contains(&window.mouse_position())
-            && modifiers.secondary()
-        {
-            self.refresh_hovered_word(window);
-        }
-        cx.notify();
+        self.schedule_find_hyperlink(*modifiers, window.mouse_position(), cx);
     }
 
     ///Paste text into the terminal
@@ -1621,13 +1626,79 @@ impl Terminal {
 
     pub fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let term = self.term.clone();
-        let mut terminal = term.lock_unfair();
-        //Note that the ordering of events matters for event processing
-        while let Some(e) = self.events.pop_front() {
-            self.process_terminal_event(&e, &mut terminal, window, cx)
+        let mut term = term.lock_unfair();
+
+        fn process_events(
+            terminal: &mut Terminal,
+            term: &mut Term<ZedListener>,
+            window: &mut Window,
+            cx: &mut Context<Terminal>,
+        ) {
+            //Note that the ordering of events matters for event processing
+            while let Some(e) = terminal.events.pop_front() {
+                terminal.process_terminal_event(&e, term, window, cx)
+            }
         }
 
-        self.last_content = Self::make_content(&terminal, &self.last_content);
+        process_events(self, &mut term, window, cx);
+        self.last_content = Self::make_content(&term, &self.last_content);
+        if self.last_content.last_hovered_word.is_none() {
+            self.refresh_hovered_word(window, cx);
+            // Note that cx.notify() has no effect here because we are called during prepaint so
+            // we must process events generated by refresh_hovered_word directly here.
+            process_events(self, &mut term, window, cx);
+        }
+    }
+
+    fn adjusted_last_hovered_word(
+        grid: &Grid<Cell>,
+        last_content: &TerminalContent,
+    ) -> Option<HoveredWord> {
+        let Some(last_hovered_word) = last_content.last_hovered_word.as_ref() else {
+            return None;
+        };
+
+        let grid_size_unchanged = grid.columns() == last_content.columns
+            && grid.screen_lines() == last_content.screen_lines;
+
+        let Some(total_lines_delta) = grid
+            .total_lines()
+            .checked_signed_diff(last_content.total_lines)
+        else {
+            return None;
+        };
+
+        let Some(display_offset_delta) = grid
+            .display_offset()
+            .checked_signed_diff(last_content.display_offset)
+        else {
+            return None;
+        };
+
+        let grid_visible_lines_unchanged = total_lines_delta == display_offset_delta;
+
+        if grid_size_unchanged && grid_visible_lines_unchanged {
+            if total_lines_delta == 0 {
+                // Viewport and content are the same, we can reuse existing match
+                Some(last_hovered_word.clone())
+            } else {
+                // Content is changed, but viewport is shifted the same, reuse
+                // the match, but need to shift the match lines by the same amount.
+                let mut adjusted_hovered_word = last_hovered_word.clone();
+                adjusted_hovered_word.word_match = AlacPoint::new(
+                    last_hovered_word.word_match.start().line - display_offset_delta as i32,
+                    last_hovered_word.word_match.start().column,
+                )
+                    ..=AlacPoint::new(
+                        last_hovered_word.word_match.end().line - display_offset_delta as i32,
+                        last_hovered_word.word_match.end().column,
+                    );
+
+                Some(adjusted_hovered_word)
+            }
+        } else {
+            None
+        }
     }
 
     fn make_content(term: &Term<ZedListener>, last_content: &TerminalContent) -> TerminalContent {
@@ -1648,16 +1719,20 @@ impl Terminal {
             None
         };
 
+        let grid = term.grid();
         TerminalContent {
             cells,
             mode: content.mode,
-            display_offset: content.display_offset,
+            total_lines: grid.total_lines(),
+            display_offset: grid.display_offset(),
+            columns: grid.columns(),
+            screen_lines: grid.screen_lines(),
             selection_text,
             selection: content.selection,
             cursor: content.cursor,
             cursor_char: term.grid()[content.cursor.point].c,
             terminal_bounds: last_content.terminal_bounds,
-            last_hovered_word: last_content.last_hovered_word.clone(),
+            last_hovered_word: Self::adjusted_last_hovered_word(grid, last_content),
             scrolled_to_top: content.display_offset == term.history_size(),
             scrolled_to_bottom: content.display_offset == 0,
         }
@@ -1775,17 +1850,22 @@ impl Terminal {
                 self.write_to_pty(bytes);
             }
         } else {
-            self.schedule_find_hyperlink(e.modifiers, e.position);
+            self.schedule_find_hyperlink(e.modifiers, e.position, cx);
         }
         cx.notify();
     }
 
-    fn schedule_find_hyperlink(&mut self, modifiers: Modifiers, position: Point<Pixels>) {
+    fn schedule_find_hyperlink(
+        &mut self,
+        modifiers: Modifiers,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
         if self.selection_phase == SelectionPhase::Selecting
             || !modifiers.secondary()
             || !self.last_content.terminal_bounds.bounds.contains(&position)
         {
-            self.last_content.last_hovered_word = None;
+            self.clear_hyperlink(cx);
             return;
         }
 
@@ -1798,7 +1878,8 @@ impl Terminal {
                 let distance_moved = ((position.x - last_pos.x).abs()
                     + (position.y - last_pos.y).abs())
                     > FIND_HYPERLINK_THROTTLE_PX;
-                let time_elapsed = now.duration_since(self.last_mouse_move_time).as_millis() > 100;
+                let time_elapsed =
+                    now.duration_since(self.last_mouse_move_time) > FIND_HYPERLINK_THROTTLE_MS;
                 distance_moved || time_elapsed
             })
         {
@@ -1808,6 +1889,7 @@ impl Terminal {
                 position - self.last_content.terminal_bounds.bounds.origin,
                 false,
             ));
+            cx.notify();
         }
     }
 
@@ -2058,8 +2140,8 @@ impl Terminal {
         }
     }
 
-    fn refresh_hovered_word(&mut self, window: &Window) {
-        self.schedule_find_hyperlink(window.modifiers(), window.mouse_position());
+    fn refresh_hovered_word(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.schedule_find_hyperlink(window.modifiers(), window.mouse_position(), cx);
     }
 
     fn determine_scroll_lines(
@@ -2570,11 +2652,12 @@ mod tests {
     use collections::HashMap;
     use gpui::{
         Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-        Point, TestAppContext, bounds, point, size,
+        Point, TestAppContext, VisualContext, VisualTestContext, bounds, point, size,
     };
     use parking_lot::Mutex;
     use rand::{Rng, distr, rngs::StdRng};
     use task::{Shell, ShellBuilder};
+    use util::default;
 
     #[cfg(not(target_os = "windows"))]
     fn init_test(cx: &mut TestAppContext) {
@@ -2668,6 +2751,51 @@ mod tests {
         terminal
     }
 
+    async fn init_terminal_test_with_window<'a>(
+        cx: &'a mut TestAppContext,
+        initial_content: &[u8],
+    ) -> (Entity<Terminal>, &'a mut VisualTestContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        cx.executor().allow_parking();
+
+        let window = cx.add_empty_window();
+        let builder = window
+            .update(|window, cx| {
+                let settings = TerminalSettings::get_global(cx);
+                const TEST_PATH_HYPERLINK_TIMEOUT_MS: u64 = 100;
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::System,
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    settings.path_hyperlink_regexes.clone(),
+                    TEST_PATH_HYPERLINK_TIMEOUT_MS,
+                    false,
+                    window.window_handle().window_id().as_u64(),
+                    None,
+                    cx,
+                    vec![],
+                    PathStyle::local(),
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = window.new(|cx| builder.subscribe(cx));
+
+        terminal.update(window, |term, cx| {
+            term.write_output(initial_content, cx);
+        });
+
+        (terminal, window)
+    }
+
     fn ctrl_mouse_down_at(
         terminal: &mut Terminal,
         position: Point<Pixels>,
@@ -2683,7 +2811,7 @@ mod tests {
         terminal.mouse_down(&mouse_down, cx);
     }
 
-    fn ctrl_mouse_move_to(
+    fn ctrl_mouse_drag_to(
         terminal: &mut Terminal,
         position: Point<Pixels>,
         cx: &mut Context<Terminal>,
@@ -2695,6 +2823,23 @@ mod tests {
             modifiers: Modifiers::secondary_key(),
         };
         terminal.mouse_drag(&drag_event, terminal_bounds, cx);
+    }
+
+    fn ctrl_mouse_move_to(
+        position: Point<Pixels>,
+        terminal: &mut Terminal,
+        window: &mut Window,
+        cx: &mut Context<Terminal>,
+    ) {
+        let modifiers = Modifiers::secondary_key();
+        let move_event = MouseMoveEvent {
+            position,
+            modifiers,
+            ..default()
+        };
+        window.set_modifiers(modifiers);
+        window.simulate_mouse_move(position, cx);
+        terminal.mouse_move(&move_event, cx);
     }
 
     fn ctrl_mouse_up_at(
@@ -3240,7 +3385,7 @@ mod tests {
             let up_position = point(px(10.0), px(50.0));
 
             ctrl_mouse_down_at(terminal, down_position, cx);
-            ctrl_mouse_move_to(terminal, up_position, cx);
+            ctrl_mouse_drag_to(terminal, up_position, cx);
             ctrl_mouse_up_at(terminal, up_position, cx);
 
             assert!(
@@ -3262,7 +3407,7 @@ mod tests {
             let up_position = point(px(130.0), px(10.0));
 
             ctrl_mouse_down_at(terminal, down_position, cx);
-            ctrl_mouse_move_to(terminal, up_position, cx);
+            ctrl_mouse_drag_to(terminal, up_position, cx);
             ctrl_mouse_up_at(terminal, up_position, cx);
 
             assert!(
@@ -3273,6 +3418,40 @@ mod tests {
                 "Should have ProcessHyperlink event when dragging within hyperlink bounds"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_hyperlink_hover_with_new_content(cx: &mut TestAppContext) {
+        let (terminal, cx) =
+            init_terminal_test_with_window(cx, b"Visit https://zed.dev/ for more\r\n").await;
+
+        let pt = point(px(30.0), px(2.5));
+
+        cx.update_window_entity(&terminal, |terminal, window, cx| {
+            ctrl_mouse_move_to(pt, terminal, window, cx);
+            assert!(
+                terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::FindHyperlink(_, false))),
+                "Should have FindHyperlink event on secondary modifier"
+            );
+            terminal.sync(window, cx);
+        });
+
+        let hovered_word = terminal.read_with(cx, |terminal, _| -> Option<HoveredWord> {
+            terminal.last_content().last_hovered_word.clone()
+        });
+
+        assert_eq!(
+            hovered_word,
+            Some(HoveredWord {
+                word: "https://zed.dev/".to_string(),
+                word_match: AlacPoint::new(Line(0), Column(6))
+                    ..=AlacPoint::new(Line(0), Column(21)),
+                id: 0
+            })
+        );
     }
 
     /// Test that kill_active_task properly terminates both the foreground process
@@ -3348,65 +3527,19 @@ mod tests {
     }
 
     mod perf {
-        use super::super::*;
-        use gpui::{
-            Entity, Point, ScrollDelta, ScrollWheelEvent, TestAppContext, VisualContext,
-            VisualTestContext, point,
-        };
+        use super::{super::*, init_terminal_test_with_window};
+        use gpui::{Point, ScrollDelta, ScrollWheelEvent, TestAppContext, VisualContext, point};
         use util::default;
         use util_macros::perf;
-
-        async fn init_scroll_perf_test(
-            cx: &mut TestAppContext,
-        ) -> (Entity<Terminal>, &mut VisualTestContext) {
-            cx.update(|cx| {
-                let settings_store = settings::SettingsStore::test(cx);
-                cx.set_global(settings_store);
-            });
-
-            cx.executor().allow_parking();
-
-            let window = cx.add_empty_window();
-            let builder = window
-                .update(|window, cx| {
-                    let settings = TerminalSettings::get_global(cx);
-                    let test_path_hyperlink_timeout_ms = 100;
-                    TerminalBuilder::new(
-                        None,
-                        None,
-                        task::Shell::System,
-                        HashMap::default(),
-                        CursorShape::default(),
-                        AlternateScroll::On,
-                        None,
-                        settings.path_hyperlink_regexes.clone(),
-                        test_path_hyperlink_timeout_ms,
-                        false,
-                        window.window_handle().window_id().as_u64(),
-                        None,
-                        cx,
-                        vec![],
-                        PathStyle::local(),
-                    )
-                })
-                .await
-                .unwrap();
-            let terminal = window.new(|cx| builder.subscribe(cx));
-
-            terminal.update(window, |term, cx| {
-                term.write_output("long line ".repeat(1000).as_bytes(), cx);
-            });
-
-            (terminal, window)
-        }
 
         #[perf]
         #[gpui::test]
         async fn scroll_long_line_benchmark(cx: &mut TestAppContext) {
-            let (terminal, window) = init_scroll_perf_test(cx).await;
+            let (terminal, cx) =
+                init_terminal_test_with_window(cx, "long line ".repeat(1000).as_bytes()).await;
             let wobble = point(FIND_HYPERLINK_THROTTLE_PX, px(0.0));
             let mut scroll_by = |lines: i32| {
-                window.update_window_entity(&terminal, |terminal, window, cx| {
+                cx.update_window_entity(&terminal, |terminal, window, cx| {
                     let bounds = terminal.last_content.terminal_bounds.bounds;
                     let center = bounds.origin + bounds.center();
                     let position = center + wobble * lines as f32;
