@@ -3497,7 +3497,9 @@ impl ThreadView {
         };
 
         let progress_color = |ratio: f32| -> Hsla {
-            if ratio >= 0.85 {
+            if ratio >= 0.75 {
+                cx.theme().status().error
+            } else if ratio >= 0.6 {
                 cx.theme().status().warning
             } else {
                 cx.theme().colors().text_muted
@@ -3515,10 +3517,11 @@ impl ThreadView {
             0.0
         };
 
-        let ring_size = px(16.0);
+        let ring_size = px(14.0);
         let stroke_width = px(2.);
 
         let percentage = format!("{}%", (progress_ratio * 100.0).round() as u32);
+        let percentage_label = percentage.clone();
 
         let tooltip_separator_color = Color::Custom(cx.theme().colors().text_disabled.opacity(0.6));
 
@@ -3588,88 +3591,31 @@ impl ThreadView {
             }
         };
 
-        if show_split {
-            let input_max_raw = usage.max_tokens.saturating_sub(max_output_tokens);
-            let output_max_raw = max_output_tokens;
-
-            let input_ratio = if input_max_raw > 0 {
-                usage.input_tokens as f32 / input_max_raw as f32
-            } else {
-                0.0
-            };
-            let output_ratio = if output_max_raw > 0 {
-                usage.output_tokens as f32 / output_max_raw as f32
-            } else {
-                0.0
-            };
-
-            Some(
-                h_flex()
-                    .id("split_token_usage")
-                    .flex_shrink_0()
-                    .gap_1p5()
-                    .mr_1()
-                    .child(
-                        h_flex()
-                            .gap_0p5()
-                            .child(
-                                Icon::new(IconName::ArrowUp)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                CircularProgress::new(
-                                    usage.input_tokens as f32,
-                                    input_max_raw as f32,
-                                    ring_size,
-                                    cx,
-                                )
-                                .stroke_width(stroke_width)
-                                .progress_color(progress_color(input_ratio)),
-                            ),
+        Some(
+            h_flex()
+                .id("context_usage_indicator")
+                .flex_shrink_0()
+                .items_center()
+                .gap_1()
+                .mr_1()
+                .child(
+                    CircularProgress::new(
+                        usage.used_tokens as f32,
+                        usage.max_tokens.max(1) as f32,
+                        ring_size,
+                        cx,
                     )
-                    .child(
-                        h_flex()
-                            .gap_0p5()
-                            .child(
-                                Icon::new(IconName::ArrowDown)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                CircularProgress::new(
-                                    usage.output_tokens as f32,
-                                    output_max_raw as f32,
-                                    ring_size,
-                                    cx,
-                                )
-                                .stroke_width(stroke_width)
-                                .progress_color(progress_color(output_ratio)),
-                            ),
-                    )
-                    .hoverable_tooltip(build_tooltip)
-                    .into_any_element(),
-            )
-        } else {
-            Some(
-                h_flex()
-                    .id("circular_progress_tokens")
-                    .mt_px()
-                    .mr_1()
-                    .child(
-                        CircularProgress::new(
-                            usage.used_tokens as f32,
-                            usage.max_tokens as f32,
-                            ring_size,
-                            cx,
-                        )
-                        .stroke_width(stroke_width)
-                        .progress_color(progress_color(progress_ratio)),
-                    )
-                    .hoverable_tooltip(build_tooltip)
-                    .into_any_element(),
-            )
-        }
+                    .stroke_width(stroke_width)
+                    .progress_color(progress_color(progress_ratio)),
+                )
+                .child(
+                    Label::new(percentage_label)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .tooltip(build_tooltip)
+                .into_any_element(),
+        )
     }
 
     fn fast_mode_available(&self, cx: &Context<Self>) -> bool {

@@ -462,6 +462,7 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
     match event {
         AcpThreadEvent::NewEntry
         | AcpThreadEvent::TitleUpdated
+        | AcpThreadEvent::TokenUsageUpdated
         | AcpThreadEvent::ToolAuthorizationRequested(_)
         | AcpThreadEvent::ToolAuthorizationReceived(_)
         | AcpThreadEvent::Stopped(_)
@@ -473,7 +474,6 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         AcpThreadEvent::EntryUpdated(_)
         | AcpThreadEvent::EntriesRemoved(_)
         | AcpThreadEvent::Retry(_)
-        | AcpThreadEvent::TokenUsageUpdated
         | AcpThreadEvent::PromptCapabilitiesUpdated
         | AcpThreadEvent::AvailableCommandsUpdated(_)
         | AcpThreadEvent::ModeUpdated(_)
@@ -952,6 +952,18 @@ impl ConversationView {
             this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(thread) => {
+                        if thread.read(cx).token_usage().is_none()
+                            && let Some(token_usage) = resume_session_id.as_ref().and_then(|id| {
+                                ThreadMetadataStore::try_global(cx)
+                                    .and_then(|store| store.read(cx).entry_by_session(id).cloned())
+                                    .and_then(|metadata| metadata.token_usage)
+                            })
+                        {
+                            thread.update(cx, |thread, cx| {
+                                thread.update_token_usage(Some(token_usage), cx);
+                            });
+                        }
+
                         let root_session_id = thread.read(cx).session_id().clone();
 
                         let conversation = cx.new(|cx| {
@@ -3438,6 +3450,7 @@ pub(crate) mod tests {
                         interacted_at: None,
                         worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
                         remote_connection: None,
+                        token_usage: None,
                         archived: false,
                     },
                     cx,

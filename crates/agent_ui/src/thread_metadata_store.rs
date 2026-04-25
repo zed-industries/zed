@@ -135,6 +135,7 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
                         interacted_at: None,
                         worktree_paths: WorktreePaths::from_folder_paths(&entry.folder_paths),
                         remote_connection: None,
+                        token_usage: None,
                         archived: true,
                     })
                 })
@@ -309,6 +310,7 @@ pub struct ThreadMetadata {
     pub interacted_at: Option<DateTime<Utc>>,
     pub worktree_paths: WorktreePaths,
     pub remote_connection: Option<RemoteConnectionOptions>,
+    pub token_usage: Option<acp_thread::TokenUsage>,
     pub archived: bool,
 }
 
@@ -1230,6 +1232,7 @@ impl ThreadMetadataStore {
             updated_at,
             worktree_paths,
             remote_connection,
+            token_usage: thread_ref.token_usage().cloned(),
             archived,
         };
 
@@ -1340,6 +1343,9 @@ impl Domain for ThreadMetadataDb {
         sql!(
             ALTER TABLE sidebar_threads ADD COLUMN interacted_at TEXT;
         ),
+        sql!(
+            ALTER TABLE sidebar_threads ADD COLUMN token_usage TEXT;
+        ),
     ];
 }
 
@@ -1357,7 +1363,7 @@ impl ThreadMetadataDb {
 
     const LIST_QUERY: &str = "SELECT thread_id, session_id, agent_id, title, updated_at, \
         created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, \
-        main_worktree_paths_order, remote_connection \
+        main_worktree_paths_order, remote_connection, token_usage \
         FROM sidebar_threads \
         WHERE session_id IS NOT NULL \
         ORDER BY updated_at DESC";
@@ -1409,12 +1415,18 @@ impl ThreadMetadataDb {
             .map(serde_json::to_string)
             .transpose()
             .context("serialize thread metadata remote connection")?;
+        let token_usage = row
+            .token_usage
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serialize thread metadata token usage")?;
         let thread_id = row.thread_id;
         let archived = row.archived;
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
+            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection, token_usage) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
                        ON CONFLICT(thread_id) DO UPDATE SET \
                            session_id = excluded.session_id, \
                            agent_id = excluded.agent_id, \
@@ -1427,7 +1439,8 @@ impl ThreadMetadataDb {
                            archived = excluded.archived, \
                            main_worktree_paths = excluded.main_worktree_paths, \
                            main_worktree_paths_order = excluded.main_worktree_paths_order, \
-                           remote_connection = excluded.remote_connection";
+                           remote_connection = excluded.remote_connection, \
+                           token_usage = excluded.token_usage";
             let mut stmt = Statement::prepare(conn, sql)?;
             let mut i = stmt.bind(&thread_id, 1)?;
             i = stmt.bind(&session_id, i)?;
@@ -1441,7 +1454,8 @@ impl ThreadMetadataDb {
             i = stmt.bind(&archived, i)?;
             i = stmt.bind(&main_worktree_paths, i)?;
             i = stmt.bind(&main_worktree_paths_order, i)?;
-            stmt.bind(&remote_connection, i)?;
+            i = stmt.bind(&remote_connection, i)?;
+            stmt.bind(&token_usage, i)?;
             stmt.exec()
         })
         .await
@@ -1598,6 +1612,7 @@ impl Column for ThreadMetadata {
             Column::column(statement, next)?;
         let (remote_connection_json, next): (Option<String>, i32) =
             Column::column(statement, next)?;
+        let (token_usage_json, next): (Option<String>, i32) = Column::column(statement, next)?;
 
         let agent_id = agent_id
             .map(|id| AgentId::new(id))
@@ -1639,6 +1654,11 @@ impl Column for ThreadMetadata {
             .map(serde_json::from_str::<RemoteConnectionOptions>)
             .transpose()
             .context("deserialize thread metadata remote connection")?;
+        let token_usage = token_usage_json
+            .as_deref()
+            .map(serde_json::from_str::<acp_thread::TokenUsage>)
+            .transpose()
+            .context("deserialize thread metadata token usage")?;
 
         let worktree_paths = WorktreePaths::from_path_lists(main_worktree_paths, folder_paths)
             .unwrap_or_else(|_| WorktreePaths::default());
@@ -1660,6 +1680,7 @@ impl Column for ThreadMetadata {
                 interacted_at,
                 worktree_paths,
                 remote_connection,
+                token_usage,
                 archived,
             },
             next,
@@ -1749,6 +1770,7 @@ mod tests {
             interacted_at: None,
             worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
             remote_connection: None,
+            token_usage: None,
         }
     }
 
@@ -1931,6 +1953,7 @@ mod tests {
             interacted_at: None,
             worktree_paths: WorktreePaths::from_folder_paths(&second_paths),
             remote_connection: None,
+            token_usage: None,
             archived: false,
         };
 
@@ -2015,6 +2038,7 @@ mod tests {
             interacted_at: None,
             worktree_paths: WorktreePaths::from_folder_paths(&project_a_paths),
             remote_connection: None,
+            token_usage: None,
             archived: false,
         };
 
@@ -2140,6 +2164,7 @@ mod tests {
             interacted_at: None,
             worktree_paths: WorktreePaths::from_folder_paths(&project_paths),
             remote_connection: None,
+            token_usage: None,
             archived: false,
         };
 
@@ -2879,6 +2904,7 @@ mod tests {
             interacted_at: None,
             worktree_paths: linked_worktree_paths.clone(),
             remote_connection: None,
+            token_usage: None,
         };
 
         let remote_linked_thread = ThreadMetadata {
@@ -2892,6 +2918,7 @@ mod tests {
             interacted_at: None,
             worktree_paths: linked_worktree_paths,
             remote_connection: Some(remote_a.clone()),
+            token_usage: None,
         };
 
         cx.update(|cx| {
