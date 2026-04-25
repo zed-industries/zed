@@ -7523,44 +7523,37 @@ impl Editor {
             && EditorSettings::get_global(cx).toolbar.code_actions
     }
 
-    pub fn has_cached_code_actions_at_cursor(&self, cx: &App) -> bool {
+    fn cursor_buffer_position_for_cache(&self, cx: &App) -> Option<(BufferId, BufferRow)> {
         let newest = self.selections.newest_anchor();
         if newest.head().diff_base_anchor().is_some() {
-            return false;
+            return None;
         }
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let head_point = newest.head().to_point(&snapshot);
-        let Some((buffer_snapshot, range)) =
-            snapshot.buffer_line_for_row(MultiBufferRow(head_point.row))
-        else {
+        let (buffer_snapshot, range) =
+            snapshot.buffer_line_for_row(MultiBufferRow(head_point.row))?;
+        Some((buffer_snapshot.remote_id(), range.start.row))
+    }
+
+    pub fn has_cached_code_actions_at_cursor(&self, cx: &App) -> bool {
+        let Some((buffer_id, buffer_row)) = self.cursor_buffer_position_for_cache(cx) else {
             return false;
         };
-        let buffer_id = buffer_snapshot.remote_id();
-        let buffer_row = range.start.row;
-        if let Some(cached) = self.code_action_cache.buffers.get(&buffer_id) {
-            cached
-                .actions
-                .iter()
-                .any(|a| a.row_range.start <= buffer_row && buffer_row < a.row_range.end)
-        } else {
-            false
-        }
+        self.code_action_cache
+            .buffers
+            .get(&buffer_id)
+            .is_some_and(|cached| {
+                cached
+                    .actions
+                    .iter()
+                    .any(|a| a.row_range.start <= buffer_row && buffer_row < a.row_range.end)
+            })
     }
 
     fn cursor_within_cached_code_action_rows(&self, cx: &App) -> bool {
-        let newest = self.selections.newest_anchor();
-        if newest.head().diff_base_anchor().is_some() {
-            return false;
-        }
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let head_point = newest.head().to_point(&snapshot);
-        let Some((buffer_snapshot, range)) =
-            snapshot.buffer_line_for_row(MultiBufferRow(head_point.row))
-        else {
+        let Some((buffer_id, buffer_row)) = self.cursor_buffer_position_for_cache(cx) else {
             return false;
         };
-        let buffer_id = buffer_snapshot.remote_id();
-        let buffer_row = range.start.row;
         self.code_action_cache
             .buffers
             .get(&buffer_id)
