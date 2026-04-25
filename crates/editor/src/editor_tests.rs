@@ -37134,7 +37134,6 @@ async fn test_viewport_code_action_cache_populated_on_edit(cx: &mut gpui::TestAp
         assert!(editor.code_action_cache.buffers.is_empty());
     });
 
-    // Type to trigger an edit, which triggers refresh_code_actions_for_viewport
     cx.simulate_keystroke("a");
     cx.executor().advance_clock(CODE_ACTIONS_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
