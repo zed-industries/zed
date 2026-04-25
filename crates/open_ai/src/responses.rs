@@ -364,13 +364,18 @@ pub async fn stream_response(
     request: Request,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
     let uri = format!("{api_url}/responses");
-    let request_builder = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()));
 
     let is_streaming = request.stream;
+    if is_streaming {
+        request_builder = request_builder
+            .header("Accept", "text/event-stream")
+            .header("Cache-Control", "no-cache");
+    }
     let request = request_builder
         .body(AsyncBody::from(
             serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,

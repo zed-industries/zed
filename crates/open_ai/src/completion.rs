@@ -184,7 +184,6 @@ pub fn into_open_ai_response(
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
 ) -> ResponseRequest {
-    let stream = !model_id.starts_with("o1-");
     let reasoning_effort = effective_reasoning_effort(
         request.thinking_allowed,
         request.thinking_effort.as_deref(),
@@ -232,7 +231,7 @@ pub fn into_open_ai_response(
     ResponseRequest {
         model: model_id.into(),
         input: input_items,
-        stream,
+        stream: true,
         temperature,
         top_p: None,
         max_output_tokens,
@@ -1323,6 +1322,23 @@ mod tests {
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(serialized["reasoning"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn into_open_ai_response_always_requests_streaming() {
+        let request = basic_language_model_request(true, Some("high"));
+
+        let response = into_open_ai_response(
+            request,
+            "o1-preview",
+            true,
+            true,
+            Some(2048),
+            Some(ReasoningEffort::Low),
+        );
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(serialized["stream"], json!(true));
     }
 
     #[test]
