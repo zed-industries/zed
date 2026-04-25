@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
@@ -165,6 +166,7 @@ pub enum Model {
         max_tokens: u64,
         max_output_tokens: Option<u64>,
         protocol: ApiProtocol,
+        reasoning_effort_levels: Option<Vec<ReasoningEffort>>,
         custom_model_api_url: Option<String>,
     },
 }
@@ -573,6 +575,36 @@ impl Model {
                     | ApiProtocol::OpenAiChat
                     | ApiProtocol::Google
             ),
+        }
+    }
+
+    pub fn supported_reasoning_effort_levels(&self) -> Option<Vec<ReasoningEffort>> {
+        match self {
+            Self::MimoV2_5Pro
+            | Self::MimoV2_5
+            | Self::MimoV2Pro
+            | Self::MimoV2Omni
+            | Self::Hy3PreviewFree => {
+                Some(vec![
+                    ReasoningEffort::Low,
+                    ReasoningEffort::Medium,
+                    ReasoningEffort::High,
+                ])
+            }
+
+            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ]),
+
+            Self::Custom {
+                reasoning_effort_levels,
+                ..
+            } => reasoning_effort_levels.clone(),
+
+            _ => None,
         }
     }
 }
