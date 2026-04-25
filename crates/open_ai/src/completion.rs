@@ -1443,6 +1443,74 @@ mod tests {
     }
 
     #[test]
+    fn into_open_ai_response_preserves_reasoning_details_without_reasoning_effort() {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Text("I checked that.".into())],
+                cache: false,
+                reasoning_details: Some(json!([
+                    {
+                        "type": "reasoning.encrypted",
+                        "data": "encrypted-reasoning"
+                    }
+                ])),
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+        };
+
+        let response = into_open_ai_response(request, "gpt-5.5", true, true, Some(2048), None);
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "reasoning",
+                    "summary": [],
+                    "encrypted_content": "encrypted-reasoning"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "I checked that.",
+                            "annotations": []
+                        }
+                    ]
+                }
+            ])
+        );
+        assert_eq!(
+            serialized["include"],
+            json!(["reasoning.encrypted_content"])
+        );
+        assert_eq!(serialized["reasoning"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn into_open_ai_response_omits_reasoning_include_without_effort_or_prior_reasoning() {
+        let request = basic_language_model_request(false, None);
+
+        let response = into_open_ai_response(request, "gpt-5.5", true, true, Some(2048), None);
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(serialized["include"], serde_json::Value::Null);
+        assert_eq!(serialized["reasoning"], serde_json::Value::Null);
+    }
+
+    #[test]
     fn responses_stream_maps_tool_calls() {
         let events = vec![
             ResponsesStreamEvent::OutputItemAdded {
