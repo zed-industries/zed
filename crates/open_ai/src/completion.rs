@@ -1405,10 +1405,12 @@ mod tests {
             json!([
                 {
                     "type": "reasoning",
+                    "summary": [],
                     "encrypted_content": "encrypted-reasoning"
                 },
                 {
                     "type": "reasoning",
+                    "summary": [],
                     "content": [
                         {
                             "type": "reasoning_text",

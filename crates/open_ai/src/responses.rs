@@ -310,7 +310,6 @@ pub struct ResponseReasoningItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     #[serde(default)]
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub summary: Vec<ReasoningSummaryPart>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
