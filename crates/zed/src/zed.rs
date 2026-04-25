@@ -1169,63 +1169,28 @@ fn register_actions(
                 .detach();
             }
         })
-        .register_action({
-            let app_state = app_state.clone();
-            move |workspace, _: &CloseProject, window, cx| {
-                let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
-                    return;
-                };
-                let app_state = app_state.clone();
-                let old_group_key = workspace.project_group_key(cx);
-                cx.spawn_in(window, async move |this, cx| {
-                    let should_continue = this
-                        .update_in(cx, |workspace, window, cx| {
-                            workspace.prepare_to_close(
-                                CloseIntent::ReplaceWindow,
-                                window,
-                                cx,
-                            )
-                        })?
-                        .await?;
-                    if should_continue {
-                        let task = cx.update(|_window, cx| {
-                            open_new(
-                                workspace::OpenOptions {
-                                    requesting_window: Some(window_handle),
-                                    ..Default::default()
-                                },
-                                app_state,
-                                cx,
-                                |workspace, window, cx| {
-                                    cx.activate(true);
-                                    let project = workspace.project().clone();
-                                    let buffer = project.update(cx, |project, cx| {
-                                        project.create_local_buffer("", None, true, cx)
-                                    });
-                                    let editor = cx.new(|cx| {
-                                        Editor::for_buffer(buffer, Some(project), window, cx)
-                                    });
-                                    workspace.add_item_to_active_pane(
-                                        Box::new(editor),
-                                        None,
-                                        true,
-                                        window,
-                                        cx,
-                                    );
-                                },
-                            )
-                        })?;
-                        task.await?;
-                        window_handle.update(cx, |mw, window, cx| {
-                            mw.remove_project_group(&old_group_key, window, cx)
-                        })?.await.log_err();
-                        Ok::<(), anyhow::Error>(())
-                    } else {
-                        Ok(())
-                    }
-                })
-                .detach_and_log_err(cx);
-            }
+        .register_action(move |workspace, _: &CloseProject, window, cx| {
+            let Some(window_handle) = window.window_handle().downcast::<MultiWorkspace>() else {
+                return;
+            };
+            let old_group_key = workspace.project_group_key(cx);
+
+            cx.spawn_in(window, async move |_this, cx| {
+                window_handle
+                    .update(cx, |mw, window, cx| {
+                        mw.remove_project_group(&old_group_key, window, cx)
+                    })?
+                    .await?;
+                window_handle
+                    .update(cx, |mw, window, cx| {
+                        mw.focus_active_workspace(window, cx);
+                    })
+                    .ok();
+                let flush = window_handle.update(cx, |mw, _, _cx| mw.flush_serialization())?;
+                flush.await;
+                Ok::<(), anyhow::Error>(())
+            })
+            .detach_and_log_err(cx);
         })
         .register_action({
             let app_state = app_state.clone();
