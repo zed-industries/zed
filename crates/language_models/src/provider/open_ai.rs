@@ -6,10 +6,10 @@ use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
-    RateLimiter, env_var,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID,
+    OPEN_AI_PROVIDER_NAME, RateLimiter, env_var,
 };
 use menu;
 use open_ai::{
@@ -352,6 +352,34 @@ impl LanguageModel for OpenAiLanguageModel {
 
     fn supports_thinking(&self) -> bool {
         self.model.reasoning_effort().is_some()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        let Some(default_effort) = self.model.reasoning_effort() else {
+            return Vec::new();
+        };
+
+        [
+            ("Minimal", open_ai::ReasoningEffort::Minimal),
+            ("Low", open_ai::ReasoningEffort::Low),
+            ("Medium", open_ai::ReasoningEffort::Medium),
+            ("High", open_ai::ReasoningEffort::High),
+            ("X High", open_ai::ReasoningEffort::XHigh),
+        ]
+        .into_iter()
+        .map(|(name, effort)| LanguageModelEffortLevel {
+            name: name.into(),
+            value: match effort {
+                open_ai::ReasoningEffort::Minimal => "minimal",
+                open_ai::ReasoningEffort::Low => "low",
+                open_ai::ReasoningEffort::Medium => "medium",
+                open_ai::ReasoningEffort::High => "high",
+                open_ai::ReasoningEffort::XHigh => "xhigh",
+            }
+            .into(),
+            is_default: effort == default_effort,
+        })
+        .collect()
     }
 
     fn supports_split_token_display(&self) -> bool {

@@ -8,8 +8,7 @@ use language_model_core::{
     Role, StopReason, TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
 };
-use std::pin::Pin;
-use std::sync::Arc;
+use std::{pin::Pin, str::FromStr, sync::Arc};
 
 use crate::responses::{
     Request as ResponseRequest, ResponseFunctionCallItem, ResponseFunctionCallOutputContent,
@@ -32,6 +31,11 @@ pub fn into_open_ai(
     interleaved_reasoning: bool,
 ) -> crate::Request {
     let stream = !model_id.starts_with("o1-");
+    let reasoning_effort = effective_reasoning_effort(
+        request.thinking_allowed,
+        request.thinking_effort.as_deref(),
+        reasoning_effort,
+    );
 
     let mut messages = Vec::new();
     let mut current_reasoning: Option<String> = None;
@@ -180,6 +184,11 @@ pub fn into_open_ai_response(
     reasoning_effort: Option<ReasoningEffort>,
 ) -> ResponseRequest {
     let stream = !model_id.starts_with("o1-");
+    let reasoning_effort = effective_reasoning_effort(
+        request.thinking_allowed,
+        request.thinking_effort.as_deref(),
+        reasoning_effort,
+    );
 
     let LanguageModelRequest {
         thread_id,
@@ -238,6 +247,20 @@ pub fn into_open_ai_response(
             summary: Some(crate::responses::ReasoningSummaryMode::Auto),
         }),
     }
+}
+
+fn effective_reasoning_effort(
+    thinking_allowed: bool,
+    selected_effort: Option<&str>,
+    default_effort: Option<ReasoningEffort>,
+) -> Option<ReasoningEffort> {
+    if !thinking_allowed {
+        return None;
+    }
+
+    selected_effort
+        .and_then(|effort| ReasoningEffort::from_str(effort).ok())
+        .or(default_effort)
 }
 
 fn append_message_to_response_items(
@@ -987,7 +1010,7 @@ mod tests {
             tool_choice: Some(LanguageModelToolChoice::Any),
             stop: vec!["<STOP>".into()],
             temperature: None,
-            thinking_allowed: false,
+            thinking_allowed: true,
             thinking_effort: None,
             speed: None,
         };
@@ -1056,6 +1079,99 @@ mod tests {
         });
 
         assert_eq!(serialized, expected);
+    }
+
+    fn basic_language_model_request(
+        thinking_allowed: bool,
+        thinking_effort: Option<&str>,
+    ) -> LanguageModelRequest {
+        LanguageModelRequest {
+            thread_id: Some("thread-123".into()),
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed,
+            thinking_effort: thinking_effort.map(ToOwned::to_owned),
+            speed: None,
+        }
+    }
+
+    #[test]
+    fn into_open_ai_uses_selected_reasoning_effort() {
+        let request = basic_language_model_request(true, Some("high"));
+
+        let request = into_open_ai(
+            request,
+            "custom-model",
+            true,
+            true,
+            Some(2048),
+            Some(ReasoningEffort::Low),
+            false,
+        );
+
+        let serialized = serde_json::to_value(&request).unwrap();
+        assert_eq!(serialized["reasoning_effort"], json!("high"));
+    }
+
+    #[test]
+    fn into_open_ai_response_uses_selected_reasoning_effort() {
+        let request = basic_language_model_request(true, Some("high"));
+
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            true,
+            true,
+            Some(2048),
+            Some(ReasoningEffort::Low),
+        );
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(serialized["reasoning"]["effort"], json!("high"));
+    }
+
+    #[test]
+    fn into_open_ai_response_falls_back_to_default_reasoning_effort() {
+        let request = basic_language_model_request(true, Some("unknown"));
+
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            true,
+            true,
+            Some(2048),
+            Some(ReasoningEffort::Low),
+        );
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(serialized["reasoning"]["effort"], json!("low"));
+    }
+
+    #[test]
+    fn into_open_ai_response_omits_reasoning_effort_when_thinking_is_disabled() {
+        let request = basic_language_model_request(false, Some("high"));
+
+        let response = into_open_ai_response(
+            request,
+            "custom-model",
+            true,
+            true,
+            Some(2048),
+            Some(ReasoningEffort::Low),
+        );
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(serialized["reasoning"], serde_json::Value::Null);
     }
 
     #[test]
