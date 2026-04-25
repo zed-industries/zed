@@ -610,13 +610,17 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 ```json [settings]
   "edit_predictions": {
     "disabled_globs": [
-      "**/.env*",
-      "**/*.pem",
-      "**/*.key",
-      "**/*.cert",
-      "**/*.crt",
       "**/.dev.vars",
-      "**/secrets.yml"
+      "**/.env*",
+      "**/*.{cert,crt}",
+      "**/*.key",
+      "**/*.pem",
+      "**/*.tfstate",
+      "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}",
+      "**/id_{dsa,ecdsa,ed25519,rsa}*",
+      "**/.zed/settings.json", // zed project settings
+      "/**/zed/settings.json", // zed user settings
+      "/**/zed/keymap.json",
     ]
   }
 ```
@@ -627,7 +631,23 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 
 - Description: A list of globs for which edit predictions should be disabled for. This list adds to a pre-existing, sensible default set of globs. Any additional ones you add are combined with them.
 - Setting: `disabled_globs`
-- Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml"]`
+- Default:
+
+```json [settings]
+  [
+    "**/.dev.vars",
+    "**/.env*",
+    "**/*.{cert,crt}",
+    "**/*.key",
+    "**/*.pem",
+    "**/*.tfstate",
+    "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}",
+    "**/id_{dsa,ecdsa,ed25519,rsa}*",
+    "**/.zed/settings.json", // zed project settings
+    "/**/zed/settings.json", // zed user settings
+    "/**/zed/keymap.json",
+  ]
+```
 
 **Options**
 
@@ -3355,7 +3375,19 @@ Examples:
 
 - Description: Globs to match against file paths to determine if a file is private
 - Setting: `private_files`
-- Default: `["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]`
+- Default:
+
+```json[settings]
+  [
+    "**/.env*",
+    "**/*.{cert,crt}",
+    "**/*.key",
+    "**/*.pem",
+    "**/*.tfstate",
+    "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}",
+    "**/id_{dsa,ecdsa,ed25519,rsa}*",
+  ]
+```
 
 **Options**
 

@@ -96,12 +96,14 @@ Certain files are always excluded from edit predictions—regardless of opt-in s
 {
   "edit_predictions": {
     "disabled_globs": [
+      "**/.dev.vars",
       "**/.env*",
-      "**/*.pem",
+      "**/*.{cert,crt}",
       "**/*.key",
-      "**/*.cert",
-      "**/*.crt",
-      "**/secrets.yml"
+      "**/*.pem",
+      "**/*.tfstate",
+      "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}",
+      "**/id_{dsa,ecdsa,ed25519,rsa}*",
     ]
   }
 }
