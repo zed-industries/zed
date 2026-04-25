@@ -13,7 +13,7 @@ use std::{pin::Pin, str::FromStr, sync::Arc};
 use crate::responses::{
     Request as ResponseRequest, ResponseFunctionCallItem, ResponseFunctionCallOutputContent,
     ResponseFunctionCallOutputItem, ResponseIncludable, ResponseInputContent, ResponseInputItem,
-    ResponseMessageItem, ResponseOutputItem, ResponseReasoningItem,
+    ResponseMessageItem, ResponseOutputItem, ResponseReasoningItem, ResponseStreamOptions,
     ResponseSummary as ResponsesSummary, ResponseUsage as ResponsesUsage,
     StreamEvent as ResponsesStreamEvent,
 };
@@ -232,6 +232,9 @@ pub fn into_open_ai_response(
         model: model_id.into(),
         input: input_items,
         stream: true,
+        stream_options: Some(ResponseStreamOptions {
+            include_obfuscation: true,
+        }),
         temperature,
         top_p: None,
         max_output_tokens,
@@ -1210,6 +1213,7 @@ mod tests {
                 }
             ],
             "stream": true,
+            "stream_options": { "include_obfuscation": true },
             "max_output_tokens": 2048,
             "parallel_tool_calls": true,
             "tool_choice": "required",
