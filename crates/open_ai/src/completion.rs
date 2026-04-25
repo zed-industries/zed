@@ -984,10 +984,7 @@ fn response_reasoning_details(item: &ResponseOutputItem) -> Option<(String, serd
     }
 
     let details = serde_json::Value::Array(details);
-    let item_id = reasoning
-        .id
-        .clone()
-        .unwrap_or_else(|| details.to_string());
+    let item_id = reasoning.id.clone().unwrap_or_else(|| details.to_string());
     Some((item_id, details))
 }
 
@@ -1332,17 +1329,19 @@ mod tests {
     fn built_in_open_ai_models_use_responses_api() {
         assert!(crate::Model::FivePointFive.uses_responses_api());
         assert!(crate::Model::FiveMini.uses_responses_api());
-        assert!(!crate::Model::Custom {
-            name: "custom-chat-model".into(),
-            display_name: None,
-            max_tokens: 128_000,
-            max_output_tokens: Some(16_384),
-            max_completion_tokens: None,
-            reasoning_effort: None,
-            supports_chat_completions: true,
-            supports_images: true,
-        }
-        .uses_responses_api());
+        assert!(
+            !crate::Model::Custom {
+                name: "custom-chat-model".into(),
+                display_name: None,
+                max_tokens: 128_000,
+                max_output_tokens: Some(16_384),
+                max_completion_tokens: None,
+                reasoning_effort: None,
+                supports_chat_completions: true,
+                supports_images: true,
+            }
+            .uses_responses_api()
+        );
     }
 
     #[test]
