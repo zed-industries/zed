@@ -29,6 +29,10 @@ pub struct Request {
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<ReasoningConfig>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<ResponseIncludable>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -37,6 +41,7 @@ pub enum ResponseInputItem {
     Message(ResponseMessageItem),
     FunctionCall(ResponseFunctionCallItem),
     FunctionCallOutput(ResponseFunctionCallOutputItem),
+    Reasoning(ResponseReasoningItem),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -95,6 +100,12 @@ pub enum ReasoningSummaryMode {
     Auto,
     Concise,
     Detailed,
+}
+
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponseIncludable {
+    #[serde(rename = "reasoning.encrypted_content")]
+    ReasoningEncryptedContent,
 }
 
 #[derive(Serialize, Debug)]
@@ -191,6 +202,18 @@ pub enum StreamEvent {
         output_index: usize,
         summary_index: usize,
     },
+    #[serde(rename = "response.reasoning_text.delta")]
+    ReasoningTextDelta {
+        item_id: String,
+        output_index: usize,
+        delta: String,
+    },
+    #[serde(rename = "response.reasoning_text.done")]
+    ReasoningTextDone {
+        item_id: String,
+        output_index: usize,
+        text: String,
+    },
     #[serde(rename = "response.function_call_arguments.delta")]
     FunctionCallArgumentsDelta {
         item_id: String,
@@ -227,7 +250,7 @@ pub struct ResponseSummary {
     pub id: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "incomplete_details")]
     pub status_details: Option<ResponseStatusDetails>,
     #[serde(default)]
     pub usage: Option<ResponseUsage>,
@@ -250,9 +273,25 @@ pub struct ResponseUsage {
     #[serde(default)]
     pub input_tokens: Option<u64>,
     #[serde(default)]
+    pub input_tokens_details: Option<ResponseInputTokensDetails>,
+    #[serde(default)]
     pub output_tokens: Option<u64>,
     #[serde(default)]
+    pub output_tokens_details: Option<ResponseOutputTokensDetails>,
+    #[serde(default)]
     pub total_tokens: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Default, Clone)]
+pub struct ResponseInputTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: Option<u64>,
+}
+
+#[derive(Deserialize, Debug, Default, Clone)]
+pub struct ResponseOutputTokensDetails {
+    #[serde(default)]
+    pub reasoning_tokens: Option<u64>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -265,15 +304,23 @@ pub enum ResponseOutputItem {
     Unknown,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ResponseReasoningItem {
     #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub summary: Vec<ReasoningSummaryPart>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub content: Vec<Value>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_content: Option<String>,
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ReasoningSummaryPart {
     SummaryText {

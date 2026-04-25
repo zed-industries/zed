@@ -412,7 +412,7 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        if self.model.supports_chat_completions() {
+        if !self.model.uses_responses_api() && self.model.supports_chat_completions() {
             let request = into_open_ai(
                 request,
                 self.model.id(),
