@@ -265,9 +265,21 @@ impl Model {
             Self::Custom {
                 reasoning_effort, ..
             } => reasoning_effort.to_owned(),
-            Self::FivePointThreeCodex | Self::FivePointFourPro | Self::FivePointFivePro => {
-                Some(ReasoningEffort::Medium)
-            }
+            Self::O1
+            | Self::O3Mini
+            | Self::O3
+            | Self::Five
+            | Self::FiveCodex
+            | Self::FiveMini
+            | Self::FiveNano
+            | Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::FivePointTwoCodex
+            | Self::FivePointThreeCodex
+            | Self::FivePointFour
+            | Self::FivePointFourPro
+            | Self::FivePointFive
+            | Self::FivePointFivePro => Some(ReasoningEffort::Medium),
             _ => None,
         }
     }
