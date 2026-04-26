@@ -501,7 +501,41 @@ impl LspCommand for GoToParentModule {
 }
 
 // https://rust-analyzer.github.io/book/contributing/lsp-extensions.html#runnables
-// Taken from https://github.com/rust-lang/rust-analyzer/blob/a73a37a757a58b43a796d3eb86a1f7dfd0036659/crates/rust-analyzer/src/lsp/ext.rs#L425-L489
+// Taken from https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/lsp/ext.rs#L425-L489
+//
+// Note that in rust-analyzer, `Runnable` is defined as:
+//
+// ```
+// #[derive(Deserialize, Serialize, Debug, Clone)]
+// #[serde(rename_all = "camelCase")]
+// pub struct Runnable {
+//     pub label: String,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub location: Option<lsp_types::LocationLink>,
+//     pub kind: RunnableKind,
+//     pub args: RunnableArgs,
+// }
+//
+// #[derive(Deserialize, Serialize, Debug, Clone)]
+// #[serde(rename_all = "camelCase")]
+// #[serde(untagged)]
+// pub enum RunnableArgs {
+//     Cargo(CargoRunnableArgs),
+//     Shell(ShellRunnableArgs),
+// }
+// ```
+//
+// i.e., RunnableArgs uses serde(untagged) and is not associated with
+// RunnableKind. But rust-analyzer always syncs RunnableKind with RunnableArgs:
+//
+// * https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/lsp/to_proto.rs#L1608-L1633
+// * https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/lsp/to_proto.rs#L1648-L1653
+// * https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/handlers/request.rs#L1052-L1066
+//
+// And it really doesn't make any sense for it to be any other way. On top of
+// that, the Shell and Cargo variants are similar enough that serde(untagged)
+// deserialization has been observed to confuse one for the other. So we rely on
+// RunnableKind to determine which variant to deserialize.
 pub enum Runnables {}
 
 impl lsp::request::Request for Runnables {
@@ -528,9 +562,8 @@ pub struct Runnable {
     pub args: RunnableArgs,
 }
 
-/// The `kind` field in the JSON determines which variant is deserialized:
-/// `"cargo"` maps to [`CargoRunnableArgs`], `"shell"` maps to
-/// [`ShellRunnableArgs`].
+/// The `kind` field in the JSON determines which variant is deserialized; see
+/// comment on `Runnables` above for more discussion.
 #[derive(Deserialize, Serialize, Debug, Clone)]
 #[serde(tag = "kind", content = "args")]
 #[serde(rename_all = "lowercase")]
