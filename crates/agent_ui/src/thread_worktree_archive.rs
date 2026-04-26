@@ -8,11 +8,10 @@ use gpui::{App, AsyncApp, Entity, Task};
 use project::{
     LocalProjectFlags, Project, WorktreeId,
     git_store::{Repository, resolve_git_worktree_to_main_repo, worktrees_directory_for_repo},
-    project_settings::ProjectSettings,
+    project_settings::worktree_directory_setting_for_repo,
 };
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
-use settings::{Settings, SettingsLocation};
-use util::{ResultExt, rel_path::RelPath};
+use util::ResultExt;
 use workspace::{AppState, MultiWorkspace, Workspace};
 
 use crate::thread_metadata_store::{ArchivedGitWorktree, ThreadId, ThreadMetadataStore};
@@ -72,24 +71,19 @@ fn archived_worktree_ref_name(id: i64) -> String {
     format!("refs/archived-worktrees/{}", id)
 }
 
-/// Resolves the Zed-managed worktrees base directory for a given repo using
-/// the archived worktree's project settings.
-fn worktrees_base_for_project(
+fn is_managed_worktree_path(
     main_repo_path: &Path,
-    affected_project: &AffectedProject,
+    worktree_path: &Path,
+    affected_projects: &[AffectedProject],
     cx: &App,
-) -> Option<PathBuf> {
-    let setting = ProjectSettings::get(
-        Some(SettingsLocation {
-            worktree_id: affected_project.worktree_id,
-            path: RelPath::empty(),
-        }),
-        cx,
-    )
-    .git
-    .worktree_directory
-    .clone();
-    worktrees_directory_for_repo(main_repo_path, &setting).log_err()
+) -> bool {
+    affected_projects.iter().any(|affected_project| {
+        let setting =
+            worktree_directory_setting_for_repo(&affected_project.project, main_repo_path, cx);
+        worktrees_directory_for_repo(main_repo_path, &setting)
+            .log_err()
+            .is_some_and(|worktrees_base| worktree_path.starts_with(&worktrees_base))
+    })
 }
 
 /// Builds a [`RootPlan`] for archiving the git worktree at `path`.
@@ -175,9 +169,7 @@ pub fn build_root_plan(
     // Only archive worktrees that live inside the Zed-managed worktrees
     // directory (configured via `git.worktree_directory`). Worktrees the
     // user created outside that directory should be left untouched.
-    let worktrees_base =
-        worktrees_base_for_project(&main_repo_path, affected_projects.first()?, cx)?;
-    if !path.starts_with(&worktrees_base) {
+    if !is_managed_worktree_path(&main_repo_path, &path, &affected_projects, cx) {
         return None;
     }
 
@@ -1255,9 +1247,7 @@ mod tests {
         });
         cx.update(|cx| {
             for (path, worktree_id) in worktree_ids {
-                if path == Path::new("/root/project")
-                    || path == Path::new("/root/custom-worktrees/project/feature/project")
-                {
+                if path == Path::new("/root/project") {
                     set_worktree_directory_setting(worktree_id, "../custom-worktrees", cx);
                 }
             }
@@ -1281,7 +1271,115 @@ mod tests {
             assert!(
                 plan.is_some(),
                 "build_root_plan should return Some for a nested repository worktree \
-                 inside the project-local worktree_directory",
+                 using the containing project's worktree_directory setting",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_build_root_plan_is_not_order_dependent_across_workspaces(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": { "main.rs": "fn main() {}" }
+                }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/root/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/root/project/.git"), &["main", "feature"]);
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/root/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/root/custom-worktrees/project/feature/project"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        let rooted_project = Project::test(
+            fs.clone(),
+            [
+                Path::new("/root/project"),
+                Path::new("/root/custom-worktrees/project/feature/project"),
+            ],
+            cx,
+        )
+        .await;
+        rooted_project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let standalone_project = Project::test(
+            fs.clone(),
+            [Path::new("/root/custom-worktrees/project/feature/project")],
+            cx,
+        )
+        .await;
+        standalone_project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let worktree_ids = rooted_project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    (worktree.abs_path().to_path_buf(), worktree.id())
+                })
+                .collect::<Vec<_>>()
+        });
+        cx.update(|cx| {
+            for (path, worktree_id) in worktree_ids {
+                if path == Path::new("/root/project") {
+                    set_worktree_directory_setting(worktree_id, "../custom-worktrees", cx);
+                }
+            }
+        });
+
+        let rooted_workspace = cx
+            .add_window(|window, cx| MultiWorkspace::test_new(rooted_project.clone(), window, cx));
+        let rooted_workspace = rooted_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        let standalone_workspace = cx.add_window(|window, cx| {
+            MultiWorkspace::test_new(standalone_project.clone(), window, cx)
+        });
+        let standalone_workspace = standalone_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        rooted_workspace.read_with(cx, |_workspace, cx| {
+            let workspaces = [standalone_workspace.clone(), rooted_workspace.clone()];
+            let plan = build_root_plan(
+                Path::new("/root/custom-worktrees/project/feature/project"),
+                None,
+                &workspaces,
+                cx,
+            );
+            assert!(
+                plan.is_some(),
+                "build_root_plan should not depend on workspace ordering when one \
+                 workspace provides the matching worktree_directory setting",
             );
         });
     }

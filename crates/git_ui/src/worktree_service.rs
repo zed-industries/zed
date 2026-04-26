@@ -7,10 +7,10 @@ use fs::Fs;
 use gpui::{AsyncWindowContext, Entity, SharedString, WeakEntity};
 use project::Project;
 use project::git_store::Repository;
-use project::project_settings::ProjectSettings;
+use project::project_settings::{ProjectSettings, worktree_directory_setting_for_repo};
 use project::trusted_worktrees::{PathTrust, TrustedWorktrees};
 use remote::RemoteConnectionOptions;
-use settings::{Settings, SettingsLocation};
+use settings::Settings;
 use workspace::{MultiWorkspace, OpenMode, PreviousWorkspaceState, Workspace, dock::DockPosition};
 use zed_actions::NewWorktreeBranchTarget;
 
@@ -80,42 +80,6 @@ pub fn resolve_worktree_branch_target(branch_target: &NewWorktreeBranchTarget) -
     }
 }
 
-fn worktree_directory_setting_for_repo(
-    project: &Entity<Project>,
-    repo: &Entity<Repository>,
-    cx: &gpui::App,
-) -> String {
-    let repo_work_directory = repo.read(cx).work_directory_abs_path.clone();
-    let settings_location = project
-        .read(cx)
-        .visible_worktrees(cx)
-        .filter_map(|worktree| {
-            let worktree = worktree.read(cx);
-            let worktree_path = worktree.abs_path();
-            let path = worktree
-                .path_style()
-                .strip_prefix(repo_work_directory.as_ref(), worktree_path.as_ref())?;
-            Some((
-                worktree.id(),
-                path.into_owned(),
-                worktree_path.as_ref().components().count(),
-            ))
-        })
-        .max_by_key(|(_, _, depth)| *depth);
-    let settings_location =
-        settings_location
-            .as_ref()
-            .map(|(worktree_id, path, _)| SettingsLocation {
-                worktree_id: *worktree_id,
-                path: path.as_rel_path(),
-            });
-
-    ProjectSettings::get(settings_location, cx)
-        .git
-        .worktree_directory
-        .clone()
-}
-
 /// Kicks off an async git-worktree creation for each repository. Returns:
 ///
 /// - `creation_infos`: a vec of `(repo, new_path, receiver)` tuples.
@@ -147,7 +111,9 @@ fn start_worktree_creations(
     });
 
     for repo in git_repos {
-        let worktree_directory_setting = worktree_directory_setting_for_repo(project, repo, cx);
+        let repo_work_directory = repo.read(cx).work_directory_abs_path.clone();
+        let worktree_directory_setting =
+            worktree_directory_setting_for_repo(project, repo_work_directory.as_ref(), cx);
         let (work_dir, new_path, receiver) = repo.update(cx, |repo, _cx| {
             let new_path =
                 repo.path_for_new_linked_worktree(&worktree_name, &worktree_directory_setting)?;
