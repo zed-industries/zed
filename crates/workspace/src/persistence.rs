@@ -2552,26 +2552,39 @@ pub async fn resolve_worktree_workspaces(
     }))
     .await;
 
-    // Second pass: deduplicate by workspace location plus PathList.
-    // Remote and local workspaces can legitimately point at the same checkout
-    // path, so only collapse entries that share both.
     let mut result: Vec<WorkspaceEntry> = Vec::new();
+    let mut entries_by_location_and_paths: HashMap<
+        (Option<RemoteConnectionIdentity>, Vec<PathBuf>),
+        usize,
+    > = HashMap::default();
 
     for entry in resolved {
-        let existing_idx = result
-            .iter()
-            .position(|existing| existing.1 == entry.1 && existing.2.paths() == entry.2.paths());
-        if let Some(existing_idx) = existing_idx {
-            // Keep the entry with the more recent timestamp
+        let key = (
+            workspace_location_identity(&entry.1),
+            entry.2.paths().to_vec(),
+        );
+        if let Some(existing_idx) = entries_by_location_and_paths.get(&key).copied() {
             if entry.3 > result[existing_idx].3 {
                 result[existing_idx] = entry;
             }
         } else {
+            entries_by_location_and_paths.insert(key, result.len());
             result.push(entry);
         }
     }
 
     result
+}
+
+fn workspace_location_identity(
+    location: &SerializedWorkspaceLocation,
+) -> Option<RemoteConnectionIdentity> {
+    match location {
+        SerializedWorkspaceLocation::Local => None,
+        SerializedWorkspaceLocation::Remote(connection) => {
+            Some(remote_connection_identity(connection))
+        }
+    }
 }
 
 pub fn delete_unloaded_items(

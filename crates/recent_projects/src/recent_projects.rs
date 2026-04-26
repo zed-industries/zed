@@ -17,7 +17,7 @@ use fs::Fs;
 #[cfg(target_os = "windows")]
 mod wsl_picker;
 
-use remote::RemoteConnectionOptions;
+use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 pub use remote_connection::{RemoteConnectionModal, connect};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 
@@ -2157,13 +2157,15 @@ fn location_matches_remote_host(
 ) -> bool {
     match location {
         SerializedWorkspaceLocation::Local => remote_host.is_none(),
-        SerializedWorkspaceLocation::Remote(connection) => Some(connection) == remote_host,
+        SerializedWorkspaceLocation::Remote(connection) => {
+            same_remote_connection_identity(Some(connection), remote_host)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{TestAppContext, UpdateGlobal};
     use remote::SshConnectionOptions;
 
     use serde_json::json;
@@ -2191,6 +2193,16 @@ mod tests {
         assert!(location_matches_remote_host(
             &SerializedWorkspaceLocation::Remote(remote.clone()),
             Some(&remote),
+        ));
+        assert!(location_matches_remote_host(
+            &SerializedWorkspaceLocation::Remote(remote.clone()),
+            Some(&RemoteConnectionOptions::Ssh(SshConnectionOptions {
+                host: "remote-host".into(),
+                nickname: Some("work".into()),
+                password: Some("secret".into()),
+                args: Some(vec!["-v".into()]),
+                ..Default::default()
+            })),
         ));
         assert!(!location_matches_remote_host(
             &SerializedWorkspaceLocation::Remote(remote),
