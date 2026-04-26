@@ -440,12 +440,14 @@ impl Model {
             Self::Glm5 | Self::Glm5_1 => 204_800,
             Self::KimiK2_6 | Self::KimiK2_5 => 262_144,
             Self::MimoV2_5Pro | Self::MimoV2Pro => 1_048_576,
-            Self::MimoV2_5 | Self::MimoV2Omni => 262_144,
+            Self::MimoV2_5 => 1_000_000,
+            Self::MimoV2Omni => 262_144,
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => 262_144,
             Self::BigPickle => 200_000,
             Self::Nemotron3SuperFree => 204_800,
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 200_000,
-            Self::Ling2_6FlashFree | Self::Hy3PreviewFree => 200_000,
+            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 1_000_000,
+            Self::Ling2_6FlashFree => 262_100,
+            Self::Hy3PreviewFree => 256_000,
 
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -486,7 +488,7 @@ impl Model {
             Self::Gemini3_1Pro | Self::Gemini3Flash => Some(65_536),
 
             // Anthropic-compatible models
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(64_000),
+            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => Some(131_072),
@@ -496,8 +498,9 @@ impl Model {
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => Some(65_536),
             Self::Nemotron3SuperFree => Some(128_000),
-            Self::MimoV2_5Pro | Self::MimoV2_5 | Self::MimoV2Pro | Self::MimoV2Omni => Some(64_000),
-            Self::Ling2_6FlashFree | Self::Hy3PreviewFree => Some(128_000),
+            Self::MimoV2_5Pro | Self::MimoV2_5 | Self::MimoV2Pro | Self::MimoV2Omni => Some(128_000),
+            Self::Ling2_6FlashFree => Some(32_800),
+            Self::Hy3PreviewFree => Some(64_000),
 
             Self::Custom {
                 max_output_tokens, ..
