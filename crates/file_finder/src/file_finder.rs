@@ -768,20 +768,30 @@ fn matching_history_items<'a>(
                 }
             })
             .filter_map(|path_match| {
-                candidates_paths
-                    .remove_entry(&ProjectPath {
-                        worktree_id: WorktreeId::from_usize(path_match.worktree_id),
-                        path: Arc::clone(&path_match.path),
-                    })
-                    .map(|(project_path, found_path)| {
-                        (
-                            project_path.clone(),
-                            Match::History {
-                                path: found_path.clone(),
-                                panel_match: Some(ProjectPanelOrdMatch(path_match)),
-                            },
-                        )
-                    })
+                let worktree_id = WorktreeId::from_usize(path_match.worktree_id);
+                let project_path = ProjectPath {
+                    worktree_id,
+                    path: Arc::clone(&path_match.path),
+                };
+                // For single-file worktrees, fuzzy_nucleo moves the worktree root name
+                // into path_match.path (root_is_file handling), so the stored key of ""
+                // won't match. Fall back to an empty-path lookup for those entries.
+                let (_, found_path) =
+                    candidates_paths.remove_entry(&project_path).or_else(|| {
+                        candidates_paths.remove_entry(&ProjectPath {
+                            worktree_id,
+                            path: RelPath::empty().into_arc(),
+                        })
+                    })?;
+                // Key with path_match.path so the deduplication check in push_new_matches
+                // (which also uses path_match.path) correctly suppresses the search duplicate.
+                Some((
+                    project_path,
+                    Match::History {
+                        path: found_path.clone(),
+                        panel_match: Some(ProjectPanelOrdMatch(path_match)),
+                    },
+                ))
             }),
         );
     }
@@ -1574,15 +1584,23 @@ impl FileFinderDelegate {
                         )
                     }
                 }
-                Match::Search(path_match) => split_or_open(
-                    workspace,
-                    ProjectPath {
-                        worktree_id: WorktreeId::from_usize(path_match.0.worktree_id),
-                        path: path_match.0.path.clone(),
-                    },
-                    window,
-                    cx,
-                ),
+                Match::Search(path_match) => {
+                    let worktree_id = WorktreeId::from_usize(path_match.0.worktree_id);
+                    // For single-file worktrees, path_match.path holds the root filename
+                    // rather than a relative path within the worktree. The correct relative
+                    // path for the only entry in a single-file worktree is always "".
+                    let path = if workspace
+                        .project()
+                        .read(cx)
+                        .worktree_for_id(worktree_id, cx)
+                        .is_some_and(|wt| wt.read(cx).is_single_file())
+                    {
+                        RelPath::empty().into_arc()
+                    } else {
+                        path_match.0.path.clone()
+                    };
+                    split_or_open(workspace, ProjectPath { worktree_id, path }, window, cx)
+                }
                 Match::Channel { .. } => unreachable!("handled above"),
             }
         });
