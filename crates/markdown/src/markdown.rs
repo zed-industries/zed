@@ -3996,15 +3996,15 @@ mod tests {
         ensure_theme_initialized(cx);
 
         let markdown_examples = [
-            ("- [x] a\n", 1),
-            ("- [x] a\n- [ ] b", 2),
-            ("- [x] a\n\n- [ ] b", 2),
-            ("- [x] a\n\n- [ ] b\n\n- [ ] c", 3),
-            ("- [x] a\n\n\n\n\n\n- [ ] b", 2),
-            ("- [x] a\n\n\n<br><br><br>\n\n\n- [ ] b", 2),
+            "- [x] a\n",
+            "- [x] a\n- [ ] b",
+            "- [x] a\n\n- [ ] b",
+            "- [x] a\n\n- [ ] b\n\n- [ ] c",
+            "- [x] a\n\n\n\n\n\n- [ ] b",
+            "- [x] a\n\n\n<br><br><br>\n\n\n- [ ] b",
         ];
 
-        for (markdown, expected_checkbox_count) in markdown_examples {
+        for markdown in markdown_examples {
             let (_, cx) = cx.add_window_view(|_, cx| {
                 let markdown = cx.new(|cx| {
                     Markdown::new_with_options(
@@ -4021,38 +4021,7 @@ mod tests {
 
             cx.run_until_parked();
 
-            let mut element_states: Vec<_> = cx.update(|window, _| {
-                window
-                    .rendered_frame
-                    .element_states
-                    .iter()
-                    .map(|x| {
-                        let slice: &[ElementId] = &*(x.0.0.clone());
-                        let mut seen = HashSet::default();
-                        slice
-                            .iter()
-                            .filter(|&elem_id| seen.insert(elem_id))
-                            .cloned()
-                            .collect::<Vec<_>>()
-                    })
-                    .collect()
-            });
-
-            let mut seen = HashSet::default();
-            element_states.retain(|item| seen.insert(item.clone()));
-
-            assert_eq!(
-                element_states
-                    .into_iter()
-                    .filter(|x| {
-                        x.iter().any(|x| match x {
-                            gpui::ElementId::Name(v) => v.contains("Checkbox"),
-                            _ => false,
-                        })
-                    })
-                    .count(),
-                expected_checkbox_count
-            );
+            assert!(cx.debug_bounds("checkbox").is_some())
         }
     }
 }

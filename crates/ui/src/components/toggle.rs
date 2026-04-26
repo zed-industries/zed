@@ -254,6 +254,7 @@ impl RenderOnce for Checkbox {
 
         h_flex()
             .id(self.id)
+            .debug_selector(|| "checkbox".into())
             .map(|this| {
                 if self.disabled {
                     this.cursor_not_allowed()
