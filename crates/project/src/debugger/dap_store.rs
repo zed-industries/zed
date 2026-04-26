@@ -30,7 +30,9 @@ use futures::{
     channel::mpsc::{self, UnboundedSender},
     future::{Shared, join_all},
 };
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+};
 use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
@@ -99,6 +101,7 @@ pub struct DapStore {
     sessions: BTreeMap<SessionId, Entity<Session>>,
     next_session_id: u32,
     adapter_options: BTreeMap<DebugAdapterName, Arc<PersistedAdapterOptions>>,
+    _release_subscription: Option<Subscription>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
@@ -229,6 +232,19 @@ impl DapStore {
         })
         .detach();
 
+        let release_subscription = matches!(mode, DapStoreMode::Local(_)).then(|| {
+            cx.on_release(|this, cx| {
+                let clients: Vec<Arc<dap::client::DebugAdapterClient>> = this
+                    .sessions
+                    .values()
+                    .filter_map(|session| session.read(cx).adapter_client())
+                    .collect();
+                for client in clients {
+                    client.kill();
+                }
+            })
+        });
+
         Self {
             mode,
             next_session_id: 0,
@@ -237,6 +253,7 @@ impl DapStore {
             worktree_store,
             sessions: Default::default(),
             adapter_options: Default::default(),
+            _release_subscription: release_subscription,
         }
     }
 

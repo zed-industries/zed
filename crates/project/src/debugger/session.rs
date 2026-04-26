@@ -1028,37 +1028,6 @@ impl Session {
         self.parent_session.as_ref()
     }
 
-    pub fn on_app_quit(&mut self, cx: &mut Context<Self>) -> Task<()> {
-        let Some(client) = self.adapter_client() else {
-            return Task::ready(());
-        };
-
-        let supports_terminate = self
-            .capabilities
-            .support_terminate_debuggee
-            .unwrap_or(false);
-
-        cx.background_spawn(async move {
-            if supports_terminate {
-                client
-                    .request::<dap::requests::Terminate>(dap::TerminateArguments {
-                        restart: Some(false),
-                    })
-                    .await
-                    .ok();
-            } else {
-                client
-                    .request::<dap::requests::Disconnect>(dap::DisconnectArguments {
-                        restart: Some(false),
-                        terminate_debuggee: Some(true),
-                        suspend_debuggee: Some(false),
-                    })
-                    .await
-                    .ok();
-            }
-        })
-    }
-
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
