@@ -1519,7 +1519,10 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 }
 
 #[gpui::test]
-async fn test_remote_lsp_adapter_registration(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+async fn test_local_registration_for_new_available_server_from_remote(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
     let mut server = TestServer::start(cx_a.executor()).await;
     let executor = cx_a.executor();
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -1533,7 +1536,7 @@ async fn test_remote_lsp_adapter_registration(cx_a: &mut TestAppContext, cx_b: &
     client_b.language_registry().add(rust_lang());
 
     // Client B has an "available" adapter for "the-language-server",
-    // but it's not yet registered for Rust.
+    // but it's not regitstered for Rust
     client_b
         .language_registry()
         .register_fake_available_lsp_adapter(
@@ -1582,11 +1585,8 @@ async fn test_remote_lsp_adapter_registration(cx_a: &mut TestAppContext, cx_b: &
     executor.run_until_parked();
 
     // Verify client B has registered the adapter for Rust locally
-    // and can see the language server status.
     project_b.read_with(cx_b, |project, cx| {
-        let statuses = project
-            .language_server_statuses(cx)
-            .collect::<Vec<_>>();
+        let statuses = project.language_server_statuses(cx).collect::<Vec<_>>();
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].1.name.0, "the-language-server");
     });
@@ -1594,11 +1594,15 @@ async fn test_remote_lsp_adapter_registration(cx_a: &mut TestAppContext, cx_b: &
     let rust_adapters = client_b
         .language_registry()
         .lsp_adapters(&language::LanguageName::new("Rust"));
-    assert!(rust_adapters.iter().any(|a| a.name().0 == "the-language-server"));
+    assert!(
+        rust_adapters
+            .iter()
+            .any(|a| a.name().0 == "the-language-server")
+    );
 }
 
 #[gpui::test]
-async fn test_remote_lsp_adapter_registration_on_join(
+async fn test_local_registration_for_existing_available_server_from_remote(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
@@ -1615,7 +1619,7 @@ async fn test_remote_lsp_adapter_registration_on_join(
     client_b.language_registry().add(rust_lang());
 
     // Client B has an "available" adapter for "the-language-server",
-    // but it's not yet registered for Rust.
+    // but it's not regitstered for Rust
     client_b
         .language_registry()
         .register_fake_available_lsp_adapter(
@@ -1656,7 +1660,6 @@ async fn test_remote_lsp_adapter_registration_on_join(
     let _fake_language_server = fake_language_servers.next().await.unwrap();
     executor.run_until_parked();
 
-    // Now Client A shares the project.
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
@@ -1669,7 +1672,6 @@ async fn test_remote_lsp_adapter_registration_on_join(
     executor.run_until_parked();
 
     // Verify client B has registered the adapter for Rust locally.
-    // THIS IS EXPECTED TO FAIL CURRENTLY because language_name is not sent for existing servers.
     let rust_adapters = client_b
         .language_registry()
         .lsp_adapters(&language::LanguageName::new("Rust"));
