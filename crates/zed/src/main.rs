@@ -338,28 +338,40 @@ fn main() {
         KeyValueStore::from_app_db(&app_db),
     ));
     let background_executor = app.background_executor();
-    crashes::init(
-        InitCrashHandler {
-            session_id,
-            // strip the build and channel information from the version string, we send them separately
-            zed_version: semver::Version::new(
-                app_version.major,
-                app_version.minor,
-                app_version.patch,
-            )
-            .to_string(),
-            binary: "zed".to_string(),
-            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-            commit_sha: app_commit_sha
-                .as_ref()
-                .map(|sha| sha.full())
-                .unwrap_or_else(|| "no sha".to_owned()),
-        },
-        |task| {
-            app.background_executor().spawn(task).detach();
-        },
-        move |duration| background_executor.timer(duration),
-    );
+
+    let should_install_crash_handler = matches!(
+        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
+        Ok("true" | "1")
+    ) || *release_channel::RELEASE_CHANNEL
+        != ReleaseChannel::Dev;
+
+    if should_install_crash_handler {
+        crashes::init(
+            InitCrashHandler {
+                session_id,
+                // strip the build and channel information from the version string, we send them separately
+                zed_version: semver::Version::new(
+                    app_version.major,
+                    app_version.minor,
+                    app_version.patch,
+                )
+                .to_string(),
+                binary: "zed".to_string(),
+                release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+                commit_sha: app_commit_sha
+                    .as_ref()
+                    .map(|sha| sha.full())
+                    .unwrap_or_else(|| "no sha".to_owned()),
+            },
+            |task| {
+                app.background_executor().spawn(task).detach();
+            },
+            paths::temp_dir(),
+            move |duration| background_executor.timer(duration),
+        );
+    } else {
+        crashes::force_backtrace();
+    }
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
