@@ -20,7 +20,7 @@ use futures::{
     select, select_biased,
 };
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Context, Entity, UpdateGlobal as _};
+use gpui::{App, AppContext as _, Context, Entity, UpdateGlobal as _, block_on};
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
@@ -467,8 +467,8 @@ pub fn execute_run(
         Ok("true" | "1")
     ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
 
-    if should_install_crash_handler {
-        crashes::init(
+    let crash_handler = if should_install_crash_handler {
+        Some(crashes::init(
             crashes::InitCrashHandler {
                 session_id: id,
                 zed_version: VERSION.to_owned(),
@@ -476,15 +476,20 @@ pub fn execute_run(
                 release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
                 commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
             },
-            |task| {
-                app.background_executor().spawn(task).detach();
+            {
+                let background_executor = app.background_executor();
+                move |task| {
+                    background_executor.spawn(task).detach();
+                }
             },
-            paths::temp_dir(),
+            |pid| paths::temp_dir().join(format!("zed-remote-server-crash-handler-{pid}")),
             // we are running outside gpui
             #[allow(clippy::disallowed_methods)]
             |duration| FutureExt::map(Timer::after(duration), |_| ()),
-        );
-    }
+        ))
+    } else {
+        None
+    };
     let log_rx = init_logging_server(&log_file)?;
     log::info!(
         "starting up with PID {}:\npid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
@@ -523,7 +528,14 @@ pub fn execute_run(
     let shell_env_loaded_rx: Option<oneshot::Receiver<()>> = None;
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    let run = move |cx: &mut _| {
+    let run = move |cx: &mut App| {
+        if let Some(crash_handler) = crash_handler {
+            cx.spawn(async move |_cx| {
+                let _crash_handler = crash_handler.await;
+                // cx.update(|cx| cx.set_global(CrashHandler(crash_handler)))
+            })
+            .detach();
+        }
         settings::init(cx);
         let app_commit_sha = option_env!("ZED_COMMIT_SHA").map(|s| AppCommitSha::new(s.to_owned()));
         let app_version = AppVersion::load(
@@ -734,23 +746,23 @@ pub(crate) fn execute_proxy(
     ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
 
     if should_install_crash_handler {
-        crashes::init(
+        block_on(crashes::init(
             crashes::InitCrashHandler {
                 session_id: id,
                 zed_version: VERSION.to_owned(),
-                binary: "zed-remote-server".to_string(),
+                binary: "zed-remote-proxy".to_string(),
                 release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
                 commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
             },
             |task| {
                 smol::spawn(task).detach();
             },
-            paths::temp_dir(),
+            |pid| paths::temp_dir().join(format!("zed-remote-server-proxy-crash-handler-{pid}")),
             // we are running outside gpui
             #[allow(clippy::disallowed_methods)]
             |duration| FutureExt::map(Timer::after(duration), |_| ()),
-        );
-    }
+        ));
+    };
     log::info!("starting proxy process. PID: {}", std::process::id());
     let server_pid = {
         let server_pid = check_pid_file(&server_paths.pid_file).map_err(|source| {

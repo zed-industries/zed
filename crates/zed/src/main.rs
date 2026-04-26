@@ -67,7 +67,7 @@ use zed::{
     handle_keymap_file_changes, initialize_workspace, open_paths_with_positions,
 };
 
-use crate::zed::{OpenRequestKind, eager_load_active_theme_and_icon_theme};
+use crate::zed::{CrashHandler, OpenRequestKind, eager_load_active_theme_and_icon_theme};
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -195,7 +195,7 @@ fn main() {
 
     // `zed --crash-handler` Makes zed operate in minidump crash handler mode
     if let Some(socket) = &args.crash_handler {
-        crashes::crash_server(socket.as_path());
+        crashes::crash_server(socket.as_path(), paths::logs_dir().clone());
         return;
     }
 
@@ -339,40 +339,6 @@ fn main() {
     ));
     let background_executor = app.background_executor();
 
-    let should_install_crash_handler = matches!(
-        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
-        Ok("true" | "1")
-    ) || *release_channel::RELEASE_CHANNEL
-        != ReleaseChannel::Dev;
-
-    if should_install_crash_handler {
-        crashes::init(
-            InitCrashHandler {
-                session_id,
-                // strip the build and channel information from the version string, we send them separately
-                zed_version: semver::Version::new(
-                    app_version.major,
-                    app_version.minor,
-                    app_version.patch,
-                )
-                .to_string(),
-                binary: "zed".to_string(),
-                release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-                commit_sha: app_commit_sha
-                    .as_ref()
-                    .map(|sha| sha.full())
-                    .unwrap_or_else(|| "no sha".to_owned()),
-            },
-            |task| {
-                app.background_executor().spawn(task).detach();
-            },
-            paths::temp_dir(),
-            move |duration| background_executor.timer(duration),
-        );
-    } else {
-        crashes::force_backtrace();
-    }
-
     let (open_listener, mut open_rx) = OpenListener::new();
 
     let failed_single_instance_check = if *zed_env_vars::ZED_STATELESS
@@ -400,6 +366,44 @@ fn main() {
         println!("zed is already running");
         return;
     }
+
+    let should_install_crash_handler = matches!(
+        env::var("ZED_GENERATE_MINIDUMPS").as_deref(),
+        Ok("true" | "1")
+    ) || *release_channel::RELEASE_CHANNEL
+        != ReleaseChannel::Dev;
+
+    let crash_handler = if should_install_crash_handler {
+        Some(crashes::init(
+            InitCrashHandler {
+                session_id,
+                // strip the build and channel information from the version string, we send them separately
+                zed_version: semver::Version::new(
+                    app_version.major,
+                    app_version.minor,
+                    app_version.patch,
+                )
+                .to_string(),
+                binary: "zed".to_string(),
+                release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+                commit_sha: app_commit_sha
+                    .as_ref()
+                    .map(|sha| sha.full())
+                    .unwrap_or_else(|| "no sha".to_owned()),
+            },
+            {
+                let background_executor1 = app.background_executor();
+                move |task| {
+                    background_executor1.spawn(task).detach();
+                }
+            },
+            |pid| paths::temp_dir().join(format!("zed-crash-handler-{pid}")),
+            move |duration| background_executor.timer(duration),
+        ))
+    } else {
+        crashes::force_backtrace();
+        None
+    };
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     let git_binary_path =
@@ -429,7 +433,7 @@ fn main() {
                 util::load_login_shell_environment().await.log_err();
                 shell_env_loaded_tx.send(()).ok();
             })
-            .detach()
+            .detach();
     } else {
         drop(shell_env_loaded_tx)
     }
@@ -458,6 +462,13 @@ fn main() {
     });
 
     app.run(move |cx| {
+        if let Some(crash_handler) = crash_handler {
+            cx.spawn(async move |cx| {
+                let crash_handler = crash_handler.await;
+                cx.update(|cx| cx.set_global(CrashHandler(crash_handler)))
+            })
+            .detach();
+        }
         cx.set_global(app_db);
         let db_trusted_paths = match workspace::WorkspaceDb::global(cx).fetch_trusted_worktrees() {
             Ok(trusted_paths) => trusted_paths,
@@ -585,12 +596,17 @@ fn main() {
         );
         cx.subscribe(&user_store, {
             let telemetry = telemetry.clone();
-            move |_, evt: &client::user::Event, _| match evt {
+            move |_, evt: &client::user::Event, cx| match evt {
                 client::user::Event::PrivateUserInfoUpdated => {
-                    crashes::set_user_info(crashes::UserInfo {
-                        metrics_id: telemetry.metrics_id().map(|s| s.to_string()),
-                        is_staff: telemetry.is_staff(),
-                    });
+                    if let Some(crash_client) = cx.try_global::<CrashHandler>() {
+                        crashes::set_user_info(
+                            &crash_client.0,
+                            crashes::UserInfo {
+                                metrics_id: telemetry.metrics_id().map(|s| s.to_string()),
+                                is_staff: telemetry.is_staff(),
+                            },
+                        );
+                    }
                 }
                 _ => {}
             }
