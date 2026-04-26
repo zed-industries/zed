@@ -5080,13 +5080,9 @@ impl LspStore {
         self.language_server_statuses
             .iter()
             .filter_map(|(server_id, server_status)| {
-                // Include servers that are either registered for this language OR
-                // available to be loaded (for SSH remote mode where adapters like
-                // ty/pylsp/pyright are registered via register_available_lsp_adapter
-                // but only loaded on the server side)
-                let is_relevant = registered_language_servers.contains(&server_status.name)
-                    || self.languages.is_lsp_adapter_available(&server_status.name);
-                is_relevant.then_some(*server_id)
+                registered_language_servers
+                    .contains(&server_status.name)
+                    .then_some(*server_id)
             })
             .collect()
     }
