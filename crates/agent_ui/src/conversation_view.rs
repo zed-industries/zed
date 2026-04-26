@@ -30,10 +30,10 @@ use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
-    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
-    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task,
-    TaskExt, TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img,
-    linear_color_stop, linear_gradient, list, pulsating_between,
+    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListState, ObjectFit,
+    PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task, TaskExt, TextRun,
+    TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop,
+    linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, Rope};
 use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
@@ -106,6 +106,7 @@ const TOKEN_THRESHOLD: u64 = 250;
 
 pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
 
+mod sticky_user_message_preview;
 mod thread_view;
 pub use thread_view::*;
 
