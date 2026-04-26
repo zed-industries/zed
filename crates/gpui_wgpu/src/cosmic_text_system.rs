@@ -226,17 +226,20 @@ impl CosmicTextSystemState {
             .collect::<SmallVec<[_; 4]>>();
 
         let mut loaded_font_ids = SmallVec::new();
+
+        // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
+        let allowed_bad_font_names = [
+            "SegoeFluentIcons", // NOTE: Segoe fluent icons postscript name is inconsistent
+            "Segoe Fluent Icons",
+            "AppleColorEmoji",
+            "Apple Color Emoji",
+        ];
+
         for (font_id, postscript_name) in families {
             let font = self
                 .font_system
                 .get_font(font_id, cosmic_text::Weight::NORMAL)
                 .context("Could not load font")?;
-
-            // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
-            let allowed_bad_font_names = [
-                "SegoeFluentIcons", // NOTE: Segoe fluent icons postscript name is inconsistent
-                "Segoe Fluent Icons",
-            ];
 
             if font.as_swash().charmap().map('m') == 0
                 && !allowed_bad_font_names.contains(&postscript_name.as_str())
@@ -641,5 +644,5 @@ fn face_info_into_properties(
 
 fn check_is_known_emoji_font(postscript_name: &str) -> bool {
     // TODO: Include other common emoji fonts
-    postscript_name == "NotoColorEmoji"
+    postscript_name == "NotoColorEmoji" || postscript_name == "AppleColorEmoji"
 }
