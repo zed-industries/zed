@@ -147,7 +147,6 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
         EditPredictionProvider::Mercury => Some(EditPredictionProviderConfig::Zed(
             EditPredictionModel::Mercury,
         )),
-        EditPredictionProvider::Experimental(_) => None,
     }
 }
 
