@@ -1337,7 +1337,8 @@ fn initialize_pane(
             toolbar.add_item(basedpyright_banner, window, cx);
             let image_view_toolbar = cx.new(|_| image_viewer::ImageViewToolbarControls::new());
             toolbar.add_item(image_view_toolbar, window, cx);
-            let svg_preview_toolbar = cx.new(|_| svg_preview::svg_preview_view::SvgPreviewToolbarControls::new());
+            let svg_preview_toolbar =
+                cx.new(|_| svg_preview::svg_preview_view::SvgPreviewToolbarControls::new());
             toolbar.add_item(svg_preview_toolbar, window, cx);
         })
     });
