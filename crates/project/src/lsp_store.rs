@@ -623,6 +623,7 @@ impl LocalLspStore {
                                     server.clone(),
                                     server_id,
                                     key,
+                                    language_name,
                                     pending_workspace_folders,
                                     cx,
                                 );
@@ -8463,6 +8464,7 @@ impl LspStore {
                             id: server_id.to_proto(),
                             name: status.name.to_string(),
                             worktree_id: status.worktree.map(|id| id.to_proto()),
+                            language_name: None,
                         }),
                         capabilities: serde_json::to_string(&server.capabilities())
                             .expect("serializing server LSP capabilities"),
@@ -8508,6 +8510,7 @@ impl LspStore {
 
                 let name = LanguageServerName::from_proto(server.name);
                 let worktree = server.worktree_id.map(WorktreeId::from_proto);
+                let language_name = server.language_name.map(LanguageName::from_proto);
 
                 if let Some(lsp_logs) = &lsp_logs {
                     lsp_logs.update(cx, |lsp_logs, cx| {
@@ -8523,6 +8526,10 @@ impl LspStore {
                             cx,
                         );
                     });
+                }
+
+                if let Some(ref lang_name) = language_name {
+                    self.try_register_remote_adapter_locally(&name, lang_name);
                 }
 
                 (
@@ -8543,6 +8550,38 @@ impl LspStore {
                 )
             })
             .collect();
+    }
+
+    fn try_register_remote_adapter_locally(
+        &self,
+        server_name: &LanguageServerName,
+        language_name: &LanguageName,
+    ) {
+        let already_registered = self
+            .languages
+            .lsp_adapters(language_name)
+            .iter()
+            .any(|adapter| adapter.name() == *server_name);
+
+        if already_registered {
+            return;
+        }
+
+        if let Some(adapter) = self.languages.load_available_lsp_adapter(server_name) {
+            log::info!(
+                "Registering LSP adapter '{}' for language '{}' on local client",
+                server_name.0,
+                language_name.0
+            );
+            self.languages
+                .register_lsp_adapter(language_name.clone(), adapter.adapter.clone());
+        } else {
+            log::warn!(
+                "LSP adapter '{}' for language '{}' not available locally",
+                server_name.0,
+                language_name.0
+            );
+        }
     }
 
     #[cfg(feature = "test-support")]
@@ -9713,9 +9752,15 @@ impl LspStore {
         lsp_store.update(&mut cx, |lsp_store, cx| {
             let server_id = LanguageServerId(server.id as usize);
             let server_name = LanguageServerName::from_proto(server.name.clone());
+            let language_name = server.language_name.map(LanguageName::from_proto);
             lsp_store
                 .lsp_server_capabilities
                 .insert(server_id, server_capabilities);
+
+            if let Some(ref lang_name) = language_name {
+                lsp_store.try_register_remote_adapter_locally(&server_name, lang_name);
+            }
+
             lsp_store.language_server_statuses.insert(
                 server_id,
                 LanguageServerStatus {
@@ -11606,6 +11651,7 @@ impl LspStore {
         language_server: Arc<LanguageServer>,
         server_id: LanguageServerId,
         key: LanguageServerSeed,
+        language_name: LanguageName,
         workspace_folders: Arc<Mutex<BTreeSet<Uri>>>,
         cx: &mut Context<Self>,
     ) {
@@ -11708,6 +11754,7 @@ impl LspStore {
                         id: server_id.to_proto(),
                         name: language_server.name().to_string(),
                         worktree_id: Some(key.worktree_id.to_proto()),
+                        language_name: Some(language_name.to_proto()),
                     }),
                     capabilities: serde_json::to_string(&server_capabilities)
                         .expect("serializing server LSP capabilities"),
