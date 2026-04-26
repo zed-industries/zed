@@ -9266,7 +9266,72 @@ pub(crate) fn open_link(
             MentionUri::GitDiff { .. } => {}
             MentionUri::MergeConflict { .. } => {}
         })
+    } else if !url.contains("://") {
+        // The link has no URL scheme — treat it as a bare file path (absolute or relative)
+        // and try to open it within the workspace. find_project_path handles both cases.
+        workspace.update(cx, |workspace, cx| {
+            let project = workspace.project();
+            let Some(path) = project.update(cx, |project, cx| {
+                project.find_project_path(url.as_ref(), cx)
+            }) else {
+                return;
+            };
+            workspace
+                .open_path(path, None, true, window, cx)
+                .detach_and_log_err(cx);
+        });
     } else {
         cx.open_url(&url);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use util::path;
+    use workspace::MultiWorkspace;
+
+    #[gpui::test]
+    async fn test_open_link_bare_path(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"src": {"main.rs": ""}}))
+            .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+
+        // Relative path — call from multi_workspace so the inner workspace entity is not locked
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_link("src/main.rs".into(), &workspace_weak, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let active = workspace
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .expect("file should be open");
+            assert!(*active.path == *"src/main.rs");
+        });
+
+        // Absolute path
+        let abs_path: SharedString = path!("/project/src/main.rs").to_string().into();
+        multi_workspace.update_in(cx, |_, window, cx| {
+            open_link(abs_path, &workspace_weak, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let active = workspace
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .expect("file should be open");
+            assert!(*active.path == *"src/main.rs");
+        });
     }
 }
