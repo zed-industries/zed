@@ -278,8 +278,10 @@ impl Model {
                 supports_chat_completions,
                 ..
             } => !*supports_chat_completions,
-            Self::ThreePointFiveTurbo | Self::Four | Self::FourTurbo => false,
-            Self::FourOmniMini
+            Self::ThreePointFiveTurbo
+            | Self::Four
+            | Self::FourTurbo
+            | Self::FourOmniMini
             | Self::FourPointOneNano
             | Self::O1
             | Self::O3
