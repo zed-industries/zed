@@ -272,18 +272,30 @@ impl Model {
         }
     }
 
-    pub fn supports_chat_completions(&self) -> bool {
+    pub fn uses_responses_api(&self) -> bool {
         match self {
             Self::Custom {
                 supports_chat_completions,
                 ..
-            } => *supports_chat_completions,
-            Self::FiveCodex
+            } => !*supports_chat_completions,
+            Self::ThreePointFiveTurbo | Self::Four | Self::FourTurbo => false,
+            Self::FourOmniMini
+            | Self::FourPointOneNano
+            | Self::O1
+            | Self::O3
+            | Self::O3Mini
+            | Self::Five
+            | Self::FiveCodex
+            | Self::FiveMini
+            | Self::FiveNano
+            | Self::FivePointOne
+            | Self::FivePointTwo
             | Self::FivePointTwoCodex
             | Self::FivePointThreeCodex
+            | Self::FivePointFour
             | Self::FivePointFourPro
-            | Self::FivePointFivePro => false,
-            _ => true,
+            | Self::FivePointFive
+            | Self::FivePointFivePro => true,
         }
     }
 
