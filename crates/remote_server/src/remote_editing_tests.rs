@@ -200,9 +200,13 @@ async fn do_search_and_assert(
 
     let mut buffers = Vec::new();
     for expected_path in expected_paths {
-        let response = receiver.rx.recv().await.unwrap();
-        let SearchResult::Buffer { buffer, .. } = response else {
-            panic!("incorrect result");
+        let buffer = loop {
+            let response = receiver.rx.recv().await.unwrap();
+            match response {
+                SearchResult::Buffer { buffer, .. } => break buffer,
+                SearchResult::LimitReached => panic!("incorrect result"),
+                SearchResult::WaitingForScan | SearchResult::Searching => continue,
+            }
         };
         buffer.update(&mut cx, |buffer, cx| {
             assert_eq!(
@@ -2369,6 +2373,148 @@ async fn test_remote_external_agent_server(
             ]))
         }
     );
+}
+
+#[gpui::test]
+async fn test_remote_apply_code_action_skips_unadvertised_command(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+
+    fs.insert_tree(
+        path!("/code/project1/.zed"),
+        json!({
+            "settings.json": r#"
+          {
+            "languages": {"Rust":{"language_servers":["rust-analyzer"]}},
+            "lsp": {
+              "rust-analyzer": {
+                "binary": {
+                  "path": "~/.cargo/bin/rust-analyzer"
+                }
+              }
+            }
+          }"#
+        }),
+    )
+    .await;
+
+    cx.update_entity(&project, |project, _| {
+        project.languages().register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                ..Default::default()
+            },
+        )
+    });
+
+    // Register the fake LSP with an empty execute_command_provider and a handler that panics
+    // if it is ever reached: commands not advertised by the server must be rejected by
+    // `apply_code_action` before dispatching to the language server.
+    let mut fake_lsp = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName("rust-analyzer".into()),
+            lsp::ServerCapabilities {
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: Vec::new(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            Some(Box::new(|fake| {
+                fake.set_request_handler::<lsp::request::ExecuteCommand, _, _>(
+                    |params, _| async move {
+                        panic!(
+                            "Unadvertised command {} must not reach the language server",
+                            params.command
+                        );
+                    },
+                );
+            })),
+        )
+    });
+
+    cx.run_until_parked();
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+
+    cx.run_until_parked();
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let _fake_lsp = fake_lsp.next().await.unwrap();
+
+    let server_id = server_cx.read(|cx| {
+        *headless
+            .read(cx)
+            .lsp_store
+            .read(cx)
+            .as_local()
+            .unwrap()
+            .language_servers
+            .keys()
+            .next()
+            .unwrap()
+    });
+    let buffer_id = cx.read(|cx| buffer.read(cx).remote_id());
+
+    let action = project::CodeAction {
+        server_id,
+        range: language::Anchor::min_min_range_for_buffer(buffer_id),
+        lsp_action: project::LspAction::Command(lsp::Command {
+            title: "\u{25b6}\u{fe0e} Run Tests".into(),
+            command: "rust-analyzer.runSingle".into(),
+            arguments: Some(vec![json!({"label": "test-mod tests"})]),
+        }),
+        resolved: true,
+    };
+
+    let transaction = project
+        .update(cx, |project, cx| {
+            project.apply_code_action(buffer.clone(), action, true, cx)
+        })
+        .await
+        .expect("Unadvertised command must not be forwarded to executeCommand");
+    assert_eq!(transaction.0.len(), 0);
 }
 
 pub async fn init_test(

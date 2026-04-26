@@ -189,6 +189,51 @@ When using `vtsls`:
 }
 ```
 
+## Code Lens
+
+Zed enables references and implementations code lenses for `vtsls` by default. These show reference counts and implementation counts above functions, classes, and interfaces. To use them, enable the `code_lens` setting:
+
+```json [settings]
+{
+  "code_lens": "on"
+}
+```
+
+You can override the default code lens settings in your `settings.json`:
+
+```json [settings]
+{
+  "lsp": {
+    "vtsls": {
+      "settings": {
+        "typescript": {
+          "implementationsCodeLens": {
+            "enabled": true,
+            "showOnAllClassMethods": true,
+            "showOnInterfaceMethods": true
+          },
+          "referencesCodeLens": {
+            "enabled": true,
+            "showOnAllFunctions": true
+          }
+        },
+        "javascript": {
+          "implementationsCodeLens": {
+            "enabled": true,
+            "showOnAllClassMethods": true,
+            "showOnInterfaceMethods": true
+          },
+          "referencesCodeLens": {
+            "enabled": true,
+            "showOnAllFunctions": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
 ## Debugging
 
 Zed supports debugging TypeScript code out of the box with `vscode-js-debug`.

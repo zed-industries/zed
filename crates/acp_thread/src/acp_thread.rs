@@ -3,7 +3,7 @@ mod diff;
 mod mention;
 mod terminal;
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent_client_protocol::{self as acp};
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashSet;
 pub use connection::*;
@@ -2125,9 +2125,7 @@ impl AcpThread {
         let curr_status = mem::replace(&mut call.status, new_status);
 
         if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } = curr_status {
-            respond_tx.send(outcome).log_err();
-        } else if cfg!(debug_assertions) {
-            panic!("tried to authorize an already authorized tool call");
+            respond_tx.send(outcome).ok();
         }
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -3049,6 +3047,7 @@ fn markdown_for_raw_output(
 mod tests {
     use super::*;
     use anyhow::anyhow;
+    use futures::stream::StreamExt as _;
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
     use gpui::{App, AsyncApp, TestAppContext, WeakEntity};
     use indoc::indoc;
@@ -3056,7 +3055,6 @@ mod tests {
     use rand::{distr, prelude::*};
     use serde_json::json;
     use settings::SettingsStore;
-    use smol::stream::StreamExt as _;
     use std::{
         any::Any,
         cell::RefCell,
@@ -3261,7 +3259,7 @@ mod tests {
 
         // Create a real PTY terminal that runs a command which prints output then sleeps
         // We use printf instead of echo and chain with && sleep to ensure proper execution
-        let (completion_tx, _completion_rx) = smol::channel::unbounded();
+        let (completion_tx, _completion_rx) = async_channel::unbounded();
         let (program, args) = ShellBuilder::new(&Shell::System, false).build(
             Some("printf 'output_before_kill\\n' && sleep 60".to_owned()),
             &[],

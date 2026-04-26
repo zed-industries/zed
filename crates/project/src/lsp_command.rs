@@ -33,6 +33,7 @@ use lsp::{
     OneOf, RenameOptions, ServerCapabilities,
 };
 use serde_json::Value;
+
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{
     cmp::Reverse, collections::hash_map, mem, ops::Range, path::Path, str::FromStr, sync::Arc,
@@ -3851,45 +3852,27 @@ impl LspCommand for GetCodeLens {
     async fn response_from_lsp(
         self,
         message: Option<Vec<lsp::CodeLens>>,
-        lsp_store: Entity<LspStore>,
+        _lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> anyhow::Result<Vec<CodeAction>> {
         let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-        let language_server = cx.update(|cx| {
-            lsp_store
-                .read(cx)
-                .language_server_for_id(server_id)
-                .with_context(|| {
-                    format!("Missing the language server that just returned a response {server_id}")
-                })
-        })?;
-        let server_capabilities = language_server.capabilities();
-        let available_commands = server_capabilities
-            .execute_command_provider
-            .as_ref()
-            .map(|options| options.commands.as_slice())
-            .unwrap_or_default();
-        Ok(message
-            .unwrap_or_default()
+        let code_lenses = message.unwrap_or_default();
+
+        Ok(code_lenses
             .into_iter()
-            .filter(|code_lens| {
-                code_lens
-                    .command
-                    .as_ref()
-                    .is_none_or(|command| available_commands.contains(&command.command))
-            })
             .map(|code_lens| {
                 let code_lens_range = range_from_lsp(code_lens.range);
                 let start = snapshot.clip_point_utf16(code_lens_range.start, Bias::Left);
                 let end = snapshot.clip_point_utf16(code_lens_range.end, Bias::Right);
                 let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                let resolved = code_lens.command.is_some();
                 CodeAction {
                     server_id,
                     range,
                     lsp_action: LspAction::CodeLens(code_lens),
-                    resolved: false,
+                    resolved,
                 }
             })
             .collect())

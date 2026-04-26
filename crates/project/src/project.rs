@@ -134,7 +134,7 @@ use std::{
 
 use task_store::TaskStore;
 use terminals::Terminals;
-use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
+use text::{Anchor, BufferId, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
@@ -761,7 +761,7 @@ impl LspAction {
         }
     }
 
-    fn edit(&self) -> Option<&lsp::WorkspaceEdit> {
+    pub fn edit(&self) -> Option<&lsp::WorkspaceEdit> {
         match self {
             Self::Action(action) => action.edit.as_ref(),
             Self::Command(_) => None,
@@ -769,7 +769,7 @@ impl LspAction {
         }
     }
 
-    fn command(&self) -> Option<&lsp::Command> {
+    pub fn command(&self) -> Option<&lsp::Command> {
         match self {
             Self::Action(action) => action.command.as_ref(),
             Self::Command(command) => Some(command),
@@ -2359,13 +2359,6 @@ impl Project {
     #[inline]
     pub fn host(&self) -> Option<&Collaborator> {
         self.collaborators.values().find(|c| c.is_host)
-    }
-
-    #[inline]
-    pub fn set_worktrees_reordered(&mut self, worktrees_reordered: bool, cx: &mut App) {
-        self.worktree_store.update(cx, |store, _| {
-            store.set_worktrees_reordered(worktrees_reordered);
-        });
     }
 
     /// Collect all worktrees, including ones that don't appear in the project panel
@@ -4385,45 +4378,6 @@ impl Project {
         })
     }
 
-    pub fn code_lens_actions<T: Clone + ToOffset>(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        range: Range<T>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<CodeAction>>>> {
-        let snapshot = buffer.read(cx).snapshot();
-        let range = range.to_point(&snapshot);
-        let range_start = snapshot.anchor_before(range.start);
-        let range_end = if range.start == range.end {
-            range_start
-        } else {
-            snapshot.anchor_after(range.end)
-        };
-        let range = range_start..range_end;
-        let code_lens_actions = self
-            .lsp_store
-            .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(buffer, cx));
-
-        cx.background_spawn(async move {
-            let mut code_lens_actions = code_lens_actions
-                .await
-                .map_err(|e| anyhow!("code lens fetch failed: {e:#}"))?;
-            if let Some(code_lens_actions) = &mut code_lens_actions {
-                code_lens_actions.retain(|code_lens_action| {
-                    range
-                        .start
-                        .cmp(&code_lens_action.range.start, &snapshot)
-                        .is_ge()
-                        && range
-                            .end
-                            .cmp(&code_lens_action.range.end, &snapshot)
-                            .is_le()
-                });
-            }
-            Ok(code_lens_actions)
-        })
-    }
-
     pub fn apply_code_action(
         &self,
         buffer_handle: Entity<Buffer>,
@@ -5270,7 +5224,7 @@ impl Project {
         envelope: TypedEnvelope<proto::LanguageServerPromptRequest>,
         mut cx: AsyncApp,
     ) -> Result<proto::LanguageServerPromptResponse> {
-        let (tx, rx) = smol::channel::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         let actions: Vec<_> = envelope
             .payload
             .actions
@@ -6080,6 +6034,10 @@ impl Project {
         self.git_store
             .read(cx)
             .git_init(path, fallback_branch_name, cx)
+    }
+
+    pub fn git_config(&self, path: Arc<Path>, args: Vec<String>, cx: &App) -> Task<Result<String>> {
+        self.git_store.read(cx).git_config(path, args, cx)
     }
 
     pub fn buffer_store(&self) -> &Entity<BufferStore> {

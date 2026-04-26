@@ -418,6 +418,12 @@ fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
     for repo in git_store.repositories().values() {
         let snapshot = repo.read(cx).snapshot();
         for (repo_path, _) in snapshot.merge.merge_heads_by_conflicted_path.iter() {
+            let is_currently_conflicted = snapshot
+                .status_for_path(repo_path)
+                .is_some_and(|entry| entry.status.is_conflicted());
+            if !is_currently_conflicted {
+                continue;
+            }
             if let Some(project_path) = repo.read(cx).repo_path_to_project_path(repo_path, cx) {
                 paths.push(
                     project_path

@@ -182,6 +182,14 @@ pub struct EditPredictionSettingsContent {
     pub open_ai_compatible_api: Option<CustomEditPredictionProviderSettingsContent>,
     /// The directory where manually captured edit prediction examples are stored.
     pub examples_dir: Option<Arc<Path>>,
+    /// Controls whether Zed may collect training data when using Zed's Edit Predictions.
+    /// Data is only ever captured for files in projects that are detected as open source.
+    ///
+    /// - `"default"`: use the preference previously set via the status-bar toggle,
+    ///   or false if no preference has been stored.
+    /// - `"yes"`: allow data collection for files in open-source projects.
+    /// - `"no"`: never allow data collection.
+    pub allow_data_collection: Option<EditPredictionDataCollectionChoice>,
 }
 
 #[with_fallible_options]
@@ -318,6 +326,33 @@ pub struct OllamaEditPredictionSettingsContent {
     pub prompt_format: Option<EditPredictionPromptFormat>,
 }
 
+/// Controls whether Zed collects training data when using Zed's Edit Predictions.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum EditPredictionDataCollectionChoice {
+    /// Use the preference previously set via the status-bar toggle, or false
+    /// if no preference has been stored.
+    #[default]
+    Default,
+    /// Allow Zed to collect training data from open-source projects.
+    Yes,
+    /// Never allow training data collection.
+    No,
+}
+
 /// The mode in which edit predictions should be displayed.
 #[derive(
     Copy,
@@ -449,6 +484,23 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub ensure_final_newline_on_save: Option<bool>,
+    /// How line endings should be handled for new files and during format and
+    /// save operations.
+    ///
+    /// - `detect`: Detect existing line endings and otherwise use the platform
+    ///   default (`lf` on Unix, `crlf` on Windows).
+    /// - `prefer_lf`: Prefer LF for new files and files with no existing line
+    ///   ending.
+    /// - `prefer_crlf`: Prefer CRLF for new files and files with no existing
+    ///   line ending.
+    /// - `enforce_lf`: Enforce LF during format and save.
+    /// - `enforce_crlf`: Enforce CRLF during format and save.
+    ///
+    /// The EditorConfig `end_of_line` property overrides this setting and
+    /// behaves like `enforce_lf` or `enforce_crlf`.
+    ///
+    /// Default: detect
+    pub line_ending: Option<LineEndingSetting>,
     /// How to perform a buffer format.
     ///
     /// Default: auto
@@ -897,6 +949,42 @@ pub enum FormatOnSave {
     On,
     /// Files should not be formatted on save.
     Off,
+}
+
+/// Controls how line endings are normalized when a buffer is saved.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LineEndingSetting {
+    /// Preserve the existing line endings of the file. New files use the
+    /// platform default line ending.
+    #[strum(serialize = "Detect")]
+    Detect,
+    /// Use LF for new files and files with no existing line-ending
+    /// convention, while preserving existing LF or CRLF files.
+    #[strum(serialize = "Prefer LF")]
+    PreferLf,
+    /// Use CRLF for new files and files with no existing line-ending
+    /// convention, while preserving existing LF or CRLF files.
+    #[strum(serialize = "Prefer CRLF")]
+    PreferCrlf,
+    /// Normalize line endings to LF (`\n`) during format and save.
+    #[strum(serialize = "Enforce LF")]
+    EnforceLf,
+    /// Normalize line endings to CRLF (`\r\n`) during format and save.
+    #[strum(serialize = "Enforce CRLF")]
+    EnforceCrlf,
 }
 
 /// Controls which formatters should be used when formatting code.

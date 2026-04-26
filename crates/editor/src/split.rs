@@ -207,14 +207,12 @@ where
             return;
         };
 
-        let Some(diff) =
-            source_snapshot.diff_for_buffer_id(first.source_buffer_snapshot.remote_id())
-        else {
+        let source_buffer_id = first.source_buffer_snapshot.remote_id();
+        let Some(diff) = source_snapshot.diff_for_buffer_id(source_buffer_id) else {
             pending.clear();
             return;
         };
-        let source_is_lhs =
-            first.source_buffer_snapshot.remote_id() == diff.base_text().remote_id();
+        let source_is_lhs = source_buffer_id == diff.base_text().remote_id();
         let target_buffer_id = if source_is_lhs {
             diff.buffer_id()
         } else {
@@ -232,28 +230,34 @@ where
 
         let patch = translate_fn(diff, union_start..=union_end, rhs_buffer);
 
-        for excerpt in pending.drain(..) {
-            let target_position = patch.old_to_new(excerpt.buffer_point_range.start);
-            let target_position = target_buffer.anchor_before(target_position);
-            let Some(target_position) = target_snapshot.anchor_in_excerpt(target_position) else {
-                continue;
-            };
-            let Some((target_buffer_snapshot, target_excerpt_range)) =
-                target_snapshot.excerpt_containing(target_position..target_position)
-            else {
-                continue;
-            };
+        let mut source_excerpts = source_snapshot
+            .excerpts_for_buffer(source_buffer_id)
+            .peekable();
+        let mut target_excerpts = target_snapshot
+            .excerpts_for_buffer(target_buffer_id)
+            .peekable();
 
-            result.push(patch_for_excerpt(
-                source_snapshot,
-                target_snapshot,
-                &excerpt.source_buffer_snapshot,
-                target_buffer_snapshot,
-                excerpt.source_excerpt_range,
-                target_excerpt_range,
-                &patch,
-                excerpt.buffer_point_range,
-            ));
+        for excerpt in pending.drain(..) {
+            while let Some(source_excerpt_range) = source_excerpts.peek()
+                && source_excerpt_range != &excerpt.source_excerpt_range
+            {
+                source_excerpts.next();
+                target_excerpts.next();
+            }
+            if let Some(source_excerpt_range) = source_excerpts.peek()
+                && let Some(target_excerpt_range) = target_excerpts.peek()
+            {
+                result.push(patch_for_excerpt(
+                    source_snapshot,
+                    target_snapshot,
+                    &excerpt.source_buffer_snapshot,
+                    target_buffer,
+                    source_excerpt_range.clone(),
+                    target_excerpt_range.clone(),
+                    &patch,
+                    excerpt.buffer_point_range,
+                ));
+            }
         }
     };
 
@@ -429,6 +433,17 @@ impl SplittableEditor {
         self.lhs.as_ref().map(|s| &s.editor)
     }
 
+    pub fn update_editors(
+        &self,
+        cx: &mut Context<Self>,
+        f: impl Fn(&mut Editor, &mut Context<Editor>),
+    ) {
+        if let Some(lhs) = &self.lhs {
+            lhs.editor.update(cx, &f);
+        }
+        self.rhs_editor.update(cx, &f);
+    }
+
     pub fn diff_view_style(&self) -> DiffViewStyle {
         self.diff_view_style
     }
@@ -442,15 +457,18 @@ impl SplittableEditor {
         render_diff_hunk_controls: RenderDiffHunkControlsFn,
         cx: &mut Context<Self>,
     ) {
-        self.rhs_editor.update(cx, |editor, cx| {
+        self.update_editors(cx, |editor, cx| {
             editor.set_render_diff_hunk_controls(render_diff_hunk_controls.clone(), cx);
         });
+    }
 
-        if let Some(lhs) = &self.lhs {
-            lhs.editor.update(cx, |editor, cx| {
-                editor.set_render_diff_hunk_controls(render_diff_hunk_controls.clone(), cx);
-            });
-        }
+    pub fn disable_diff_hunk_controls(&self, cx: &mut Context<Self>) {
+        let empty_controls = Arc::new(|_, _: &_, _, _, _, _: &_, _: &mut _, _: &mut _| {
+            gpui::Empty.into_any_element()
+        });
+        self.update_editors(cx, |editor, cx| {
+            editor.set_render_diff_hunk_controls(empty_controls.clone(), cx);
+        });
     }
 
     fn focused_side(&self) -> SplitSide {
@@ -487,6 +505,7 @@ impl SplittableEditor {
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_runnables();
             editor.disable_inline_diagnostics();
+            editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor.start_temporary_diff_override();
             editor
@@ -582,6 +601,7 @@ impl SplittableEditor {
             editor.disable_lsp_data();
             editor.disable_runnables();
             editor.disable_diagnostics(cx);
+            editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
         });
@@ -1901,9 +1921,15 @@ impl SearchableItem for SplittableEditor {
         }
     }
 
-    fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
-        self.focused_editor()
-            .update(cx, |editor, cx| editor.query_suggestion(window, cx))
+    fn query_suggestion(
+        &mut self,
+        ignore_settings: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
+        self.focused_editor().update(cx, |editor, cx| {
+            editor.query_suggestion(ignore_settings, window, cx)
+        })
     }
 
     fn activate_match(
@@ -2115,14 +2141,9 @@ mod tests {
                 window,
                 cx,
             );
-            editor.rhs_editor.update(cx, |editor, cx| {
+            editor.update_editors(cx, |editor, cx| {
                 editor.set_soft_wrap_mode(soft_wrap, cx);
             });
-            if let Some(lhs) = &editor.lhs {
-                lhs.editor.update(cx, |editor, cx| {
-                    editor.set_soft_wrap_mode(soft_wrap, cx);
-                });
-            }
             editor
         });
         (editor, cx)

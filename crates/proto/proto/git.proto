@@ -127,6 +127,7 @@ message UpdateRepository {
   optional string remote_origin_url = 15;
   optional string original_repo_abs_path = 16;
   repeated Worktree linked_worktrees = 17;
+  repeated Branch branch_list = 18;
 }
 
 message RemoveRepository {
@@ -308,29 +309,6 @@ message GitCheckoutFiles {
   uint64 repository_id = 3;
   string commit = 4;
   repeated string paths = 5;
-}
-
-message GitFileHistory {
-  uint64 project_id = 1;
-  reserved 2;
-  uint64 repository_id = 3;
-  string path = 4;
-  uint64 skip = 5;
-  optional uint64 limit = 6;
-}
-
-message GitFileHistoryResponse {
-  repeated FileHistoryEntry entries = 1;
-  string path = 2;
-}
-
-message FileHistoryEntry {
-  string sha = 1;
-  string subject = 2;
-  string message = 3;
-  int64 commit_timestamp = 4;
-  string author_name = 5;
-  string author_email = 6;
 }
 
 // Move to `git.proto` once collab's min version is >=0.171.0.
@@ -691,4 +669,24 @@ message RunGitHook {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   GitHook hook = 3;
+}
+
+message GetCommitData {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  repeated string shas = 3;
+}
+
+message CommitData {
+  string sha = 1;
+  repeated string parents = 2;
+  string author_name = 3;
+  string author_email = 4;
+  int64 commit_timestamp = 5;
+  string subject = 6;
+  string message = 7;
+}
+
+message GetCommitDataResponse {
+  repeated CommitData commits = 1;
 }

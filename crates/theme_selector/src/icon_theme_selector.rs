@@ -26,7 +26,18 @@ impl Focusable for IconThemeSelector {
     }
 }
 
-impl ModalView for IconThemeSelector {}
+impl ModalView for IconThemeSelector {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> workspace::DismissDecision {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.revert_theme(cx);
+        });
+        workspace::DismissDecision::Dismiss(true)
+    }
+}
 
 impl IconThemeSelector {
     pub fn new(
@@ -132,6 +143,13 @@ impl IconThemeSelectorDelegate {
             .unwrap_or(self.selected_index);
     }
 
+    fn revert_theme(&mut self, cx: &mut App) {
+        if !self.selection_completed {
+            Self::set_icon_theme(self.original_theme.clone(), cx);
+            self.selection_completed = true;
+        }
+    }
+
     fn set_icon_theme(name: IconThemeName, cx: &mut App) {
         SettingsStore::update_global(cx, |store, _| {
             let mut theme_settings = store.get::<ThemeSettings>(None).clone();
@@ -185,10 +203,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<IconThemeSelectorDelegate>>) {
-        if !self.selection_completed {
-            Self::set_icon_theme(self.original_theme.clone(), cx);
-            self.selection_completed = true;
-        }
+        self.revert_theme(cx);
 
         self.selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
