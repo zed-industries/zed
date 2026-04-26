@@ -3100,8 +3100,8 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
     }
 
     fn languages_list_section(cx: &App) -> Box<[SettingsPageItem]> {
-        // todo(settings_ui): Refresh on extension (un)/installed
-        // Note that `crates/json_schema_store` solves the same problem, there is probably a way to unify the two
+        // When extensions add/remove languages, `SettingsWindow` rebuilds pages on
+        // `extension::Event` (see `settings_ui.rs`), matching `all_language_names` to the registry.
         std::iter::once(SettingsPageItem::SectionHeader("Languages"))
             .chain(all_language_names(cx).into_iter().map(|language_name| {
                 let link = format!("languages.{language_name}");
