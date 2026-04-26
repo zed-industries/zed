@@ -4107,6 +4107,7 @@ pub enum LspStoreEvent {
 #[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerStatus {
     pub name: LanguageServerName,
+    pub language_name: Option<LanguageName>,
     pub server_version: Option<SharedString>,
     pub server_readable_version: Option<SharedString>,
     pub pending_work: BTreeMap<ProgressToken, LanguageServerProgress>,
@@ -8464,7 +8465,10 @@ impl LspStore {
                             id: server_id.to_proto(),
                             name: status.name.to_string(),
                             worktree_id: status.worktree.map(|id| id.to_proto()),
-                            language_name: None,
+                            language_name: status
+                                .language_name
+                                .as_ref()
+                                .map(|name| name.to_proto()),
                         }),
                         capabilities: serde_json::to_string(&server.capabilities())
                             .expect("serializing server LSP capabilities"),
@@ -8536,6 +8540,7 @@ impl LspStore {
                     server_id,
                     LanguageServerStatus {
                         name,
+                        language_name: language_name,
                         server_version: None,
                         server_readable_version: None,
                         pending_work: Default::default(),
@@ -9765,6 +9770,7 @@ impl LspStore {
                 server_id,
                 LanguageServerStatus {
                     name: server_name.clone(),
+                    language_name,
                     server_version: None,
                     server_readable_version: None,
                     pending_work: Default::default(),
@@ -11726,6 +11732,7 @@ impl LspStore {
             server_id,
             LanguageServerStatus {
                 name: language_server.name(),
+                language_name: Some(language_name.clone()),
                 server_version: language_server.version(),
                 server_readable_version: language_server.readable_version(),
                 pending_work: Default::default(),
