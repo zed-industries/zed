@@ -11,8 +11,8 @@ use project::{
     project_settings::ProjectSettings,
 };
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
-use settings::Settings;
-use util::ResultExt;
+use settings::{Settings, SettingsLocation};
+use util::{ResultExt, rel_path::RelPath};
 use workspace::{AppState, MultiWorkspace, Workspace};
 
 use crate::thread_metadata_store::{ArchivedGitWorktree, ThreadId, ThreadMetadataStore};
@@ -72,14 +72,24 @@ fn archived_worktree_ref_name(id: i64) -> String {
     format!("refs/archived-worktrees/{}", id)
 }
 
-/// Resolves the Zed-managed worktrees base directory for a given repo.
-///
-/// This intentionally reads the *global* `git.worktree_directory` setting
-/// rather than any project-local override, because Zed always uses the
-/// global value when creating worktrees and the archive check must match.
-fn worktrees_base_for_repo(main_repo_path: &Path, cx: &App) -> Option<PathBuf> {
-    let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
-    worktrees_directory_for_repo(main_repo_path, setting).log_err()
+/// Resolves the Zed-managed worktrees base directory for a given repo using
+/// the archived worktree's project settings.
+fn worktrees_base_for_project(
+    main_repo_path: &Path,
+    affected_project: &AffectedProject,
+    cx: &App,
+) -> Option<PathBuf> {
+    let setting = ProjectSettings::get(
+        Some(SettingsLocation {
+            worktree_id: affected_project.worktree_id,
+            path: RelPath::empty(),
+        }),
+        cx,
+    )
+    .git
+    .worktree_directory
+    .clone();
+    worktrees_directory_for_repo(main_repo_path, &setting).log_err()
 }
 
 /// Builds a [`RootPlan`] for archiving the git worktree at `path`.
@@ -165,7 +175,8 @@ pub fn build_root_plan(
     // Only archive worktrees that live inside the Zed-managed worktrees
     // directory (configured via `git.worktree_directory`). Worktrees the
     // user created outside that directory should be left untouched.
-    let worktrees_base = worktrees_base_for_repo(&main_repo_path, cx)?;
+    let worktrees_base =
+        worktrees_base_for_project(&main_repo_path, affected_projects.first()?, cx)?;
     if !path.starts_with(&worktrees_base) {
         return None;
     }
@@ -843,7 +854,8 @@ mod tests {
     use gpui::{BorrowAppContext, TestAppContext};
     use project::Project;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore};
+    use util::rel_path::rel_path;
     use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -853,6 +865,31 @@ mod tests {
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+    }
+
+    fn set_worktree_directory_setting(
+        worktree_id: WorktreeId,
+        worktree_directory: &str,
+        cx: &mut App,
+    ) {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            let settings_content = format!(
+                r#"{{
+  "git": {{
+    "worktree_directory": "{worktree_directory}"
+  }}
+}}"#
+            );
+            store
+                .set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(rel_path("").into()),
+                    LocalSettingsKind::Settings,
+                    Some(&settings_content),
+                    cx,
+                )
+                .expect("should set local worktree settings");
         });
     }
 
@@ -1048,18 +1085,6 @@ mod tests {
     async fn test_build_root_plan_with_custom_worktree_directory(cx: &mut TestAppContext) {
         init_test(cx);
 
-        // Override the worktree_directory setting to a non-default location.
-        // With main repo at /project and setting "../custom-worktrees", the
-        // resolved base is /custom-worktrees/project.
-        cx.update(|cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings(cx, |s| {
-                    s.git.get_or_insert(Default::default()).worktree_directory =
-                        Some("../custom-worktrees".to_string());
-                });
-            });
-        });
-
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/project",
@@ -1114,6 +1139,26 @@ mod tests {
         project
             .update(cx, |project, cx| project.git_scans_complete(cx))
             .await;
+
+        let worktree_ids = project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    (worktree.abs_path().to_path_buf(), worktree.id())
+                })
+                .collect::<Vec<_>>()
+        });
+        cx.update(|cx| {
+            for (path, worktree_id) in worktree_ids {
+                if path == PathBuf::from("/project")
+                    || path == PathBuf::from("/custom-worktrees/project/feature/project")
+                    || path == PathBuf::from("/worktrees/project/feature2/project")
+                {
+                    set_worktree_directory_setting(worktree_id, "../custom-worktrees", cx);
+                }
+            }
+        });
 
         let multi_workspace =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));

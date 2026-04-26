@@ -1,4 +1,4 @@
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use collections::HashMap;
 use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 pub use settings::BinarySettings;
 pub use settings::DirenvSettings;
 pub use settings::LspSettings;
+use settings::settings_content::MergeFromTrait;
 use settings::{
     DapSettingsContent, EditorconfigEvent, InvalidSettingsError, LocalSettingsKind,
     LocalSettingsPath, RegisterSetting, SemanticTokenRules, Settings, SettingsLocation,
@@ -616,7 +617,12 @@ impl Settings for ProjectSettings {
         let lsp_pull_diagnostics = diagnostics.lsp_pull_diagnostics.as_ref().unwrap();
         let inline_diagnostics = diagnostics.inline.as_ref().unwrap();
 
-        let git = content.git.as_ref().unwrap();
+        let mut git = content
+            .git
+            .clone()
+            .ok_or_else(|| anyhow!("missing git settings defaults"))
+            .unwrap();
+        git.merge_from_option(project.git.as_ref());
         let git_enabled = {
             GitEnabledSettings {
                 status: git.enabled.as_ref().unwrap().is_git_status_enabled(),
