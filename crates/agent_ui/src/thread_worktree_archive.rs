@@ -1151,9 +1151,9 @@ mod tests {
         });
         cx.update(|cx| {
             for (path, worktree_id) in worktree_ids {
-                if path == PathBuf::from("/project")
-                    || path == PathBuf::from("/custom-worktrees/project/feature/project")
-                    || path == PathBuf::from("/worktrees/project/feature2/project")
+                if path == Path::new("/project")
+                    || path == Path::new("/custom-worktrees/project/feature/project")
+                    || path == Path::new("/worktrees/project/feature2/project")
                 {
                     set_worktree_directory_setting(worktree_id, "../custom-worktrees", cx);
                 }
@@ -1194,6 +1194,94 @@ mod tests {
                 plan.is_none(),
                 "build_root_plan should return None for a worktree outside \
                  the custom worktree_directory, even if it would match the default",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_build_root_plan_uses_project_worktree_directory_for_nested_repo(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": { "main.rs": "fn main() {}" }
+                }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/root/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/root/project/.git"), &["main", "feature"]);
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/root/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/root/custom-worktrees/project/feature/project"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new("/root/project"),
+                Path::new("/root/custom-worktrees/project/feature/project"),
+            ],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let worktree_ids = project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    (worktree.abs_path().to_path_buf(), worktree.id())
+                })
+                .collect::<Vec<_>>()
+        });
+        cx.update(|cx| {
+            for (path, worktree_id) in worktree_ids {
+                if path == Path::new("/root/project")
+                    || path == Path::new("/root/custom-worktrees/project/feature/project")
+                {
+                    set_worktree_directory_setting(worktree_id, "../custom-worktrees", cx);
+                }
+            }
+        });
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |_workspace, cx| {
+            let plan = build_root_plan(
+                Path::new("/root/custom-worktrees/project/feature/project"),
+                None,
+                std::slice::from_ref(&workspace),
+                cx,
+            );
+            assert!(
+                plan.is_some(),
+                "build_root_plan should return Some for a nested repository worktree \
+                 inside the project-local worktree_directory",
             );
         });
     }

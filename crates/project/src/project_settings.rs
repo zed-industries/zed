@@ -21,7 +21,6 @@ use serde::{Deserialize, Serialize};
 pub use settings::BinarySettings;
 pub use settings::DirenvSettings;
 pub use settings::LspSettings;
-use settings::settings_content::MergeFromTrait;
 use settings::{
     DapSettingsContent, EditorconfigEvent, InvalidSettingsError, LocalSettingsKind,
     LocalSettingsPath, RegisterSetting, SemanticTokenRules, Settings, SettingsLocation,
@@ -622,7 +621,13 @@ impl Settings for ProjectSettings {
             .clone()
             .ok_or_else(|| anyhow!("missing git settings defaults"))
             .unwrap();
-        git.merge_from_option(project.git.as_ref());
+        if let Some(worktree_directory) = project
+            .git
+            .as_ref()
+            .and_then(|git| git.worktree_directory.clone())
+        {
+            git.worktree_directory = Some(worktree_directory);
+        }
         let git_enabled = {
             GitEnabledSettings {
                 status: git.enabled.as_ref().unwrap().is_git_status_enabled(),
@@ -659,7 +664,6 @@ impl Settings for ProjectSettings {
             path_style: git.path_style.unwrap().into(),
             worktree_directory: git
                 .worktree_directory
-                .clone()
                 .unwrap_or_else(|| DEFAULT_WORKTREE_DIRECTORY.to_string()),
         };
         Self {
