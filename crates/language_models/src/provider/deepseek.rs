@@ -378,15 +378,26 @@ pub fn into_deepseek(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            messages.push(deepseek::RequestMessage::Tool {
-                                content: text.to_string(),
-                                tool_call_id: tool_result.tool_use_id.to_string(),
-                            });
+                    let mut text_parts: Vec<String> = Vec::new();
+                    for part in &tool_result.content {
+                        match part {
+                            LanguageModelToolResultContent::Text(text) => {
+                                text_parts.push(text.to_string());
+                            }
+                            LanguageModelToolResultContent::Image(_) => {
+                                text_parts.push("[Tool responded with an image]".to_string());
+                            }
                         }
-                        LanguageModelToolResultContent::Image(_) => {}
+                    }
+                    let content = if text_parts.is_empty() {
+                        "<Tool returned an empty string>".to_string()
+                    } else {
+                        text_parts.join("\n")
                     };
+                    messages.push(deepseek::RequestMessage::Tool {
+                        content,
+                        tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
                 }
             }
         }

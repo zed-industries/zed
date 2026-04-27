@@ -14003,7 +14003,8 @@ impl Editor {
                                     Some(CommentFormat::BlockCommentWithEnd(config.clone()))
                                 }
                                 (Some(config), _) | (_, Some(config))
-                                    if buffer.contains_str_at(indent_end, &config.prefix) =>
+                                    if !config.prefix.is_empty()
+                                        && buffer.contains_str_at(indent_end, &config.prefix) =>
                                 {
                                     Some(CommentFormat::BlockLine(config.prefix.to_string()))
                                 }

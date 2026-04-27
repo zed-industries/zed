@@ -8452,6 +8452,62 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_rewrap_line_comment_in_go(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.languages.0.extend([(
+            "Go".into(),
+            LanguageSettingsContent {
+                allow_rewrap: Some(language_settings::RewrapBehavior::InComments),
+                preferred_line_length: Some(40),
+                ..Default::default()
+            },
+        )])
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let go_lang = languages::language("go", tree_sitter_go::LANGUAGE.into());
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(go_lang), cx));
+    cx.set_state(indoc! {"
+        // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.assert_editor_state(indoc! {"
+        // Lorem ipsum dolor sit amet,
+        // consectetur adipiscing elit.ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_rewrap_line_comment_in_c(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.languages.0.extend([(
+            "C".into(),
+            LanguageSettingsContent {
+                allow_rewrap: Some(language_settings::RewrapBehavior::InComments),
+                preferred_line_length: Some(40),
+                ..Default::default()
+            },
+        )])
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let c_lang = languages::language("c", tree_sitter_c::LANGUAGE.into());
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(c_lang), cx));
+    cx.set_state(indoc! {"
+        // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.assert_editor_state(indoc! {"
+        // Lorem ipsum dolor sit amet,
+        // consectetur adipiscing elit.ˇ
+    "});
+}
+
+#[gpui::test]
 async fn test_hard_wrap(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
