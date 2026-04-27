@@ -3430,8 +3430,12 @@ pub struct AgentToolOutput {
 impl From<anyhow::Error> for AgentToolOutput {
     fn from(error: anyhow::Error) -> Self {
         let llm_output = vec![error.into()];
+        let raw_output = serde_json::to_value(&llm_output).unwrap_or_else(|e| {
+            log::error!("Failed to serialize tool output: {e}");
+            serde_json::Value::Null
+        });
         Self {
-            raw_output: serde_json::json!(&llm_output),
+            raw_output,
             llm_output,
         }
     }
