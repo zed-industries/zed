@@ -3719,12 +3719,12 @@ impl ThreadView {
         let thread = self.as_native_thread(cx)?.read(cx);
         let model = thread.model()?;
 
-        if !model.supports_thinking() {
+        let supports_thinking = model.supports_thinking();
+        if !supports_thinking {
             return None;
         }
 
         let thinking = thread.thinking_enabled();
-        let effort_levels = model.supported_effort_levels();
 
         let (tooltip_label, icon, color) = if thinking {
             (
@@ -3776,13 +3776,17 @@ impl ThreadView {
                 }
             }));
 
-        if effort_levels.is_empty() || !thinking {
+        if model.supported_effort_levels().is_empty() {
+            return Some(thinking_toggle.into_any_element());
+        }
+
+        if !model.supported_effort_levels().is_empty() && !thinking {
             return Some(thinking_toggle.into_any_element());
         }
 
         let left_btn = thinking_toggle;
         let right_btn = self.render_effort_selector(
-            effort_levels,
+            model.supported_effort_levels(),
             thread.thinking_effort().cloned(),
             cx,
         );
@@ -3808,7 +3812,10 @@ impl ThreadView {
             .cloned();
 
         let selected = selected_effort.and_then(|effort| {
-            Self::normalize_effort_level(&supported_effort_levels, &effort).cloned()
+            supported_effort_levels
+                .iter()
+                .find(|level| level.value == effort)
+                .cloned()
         });
 
         let label = selected
@@ -3939,24 +3946,6 @@ impl ThreadView {
                 y: px(-2.0),
             })
             .anchor(gpui::Anchor::BottomLeft)
-    }
-
-    fn normalize_effort_level<'a>(
-        supported_effort_levels: &'a [LanguageModelEffortLevel],
-        selected_effort: &str,
-    ) -> Option<&'a LanguageModelEffortLevel> {
-        supported_effort_levels
-            .iter()
-            .find(|level| level.value == selected_effort)
-            .or_else(|| match selected_effort {
-                "xhigh" => supported_effort_levels
-                    .iter()
-                    .find(|level| level.value == "max"),
-                "max" => supported_effort_levels
-                    .iter()
-                    .find(|level| level.value == "xhigh"),
-                _ => None,
-            })
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -8908,11 +8897,9 @@ impl ThreadView {
         };
 
         let current_index = current_effort.and_then(|current| {
-            Self::normalize_effort_level(&effort_levels, &current).and_then(|selected| {
-                effort_levels
-                    .iter()
-                    .position(|level| level.value == selected.value)
-            })
+            effort_levels
+                .iter()
+                .position(|level| level.value == current)
         });
         let next_index = match current_index {
             Some(index) => (index + 1) % effort_levels.len(),

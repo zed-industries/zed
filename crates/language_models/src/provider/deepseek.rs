@@ -422,8 +422,6 @@ pub fn into_deepseek(
         }
     }
 
-    apply_deepseek_reasoning_retention(&mut messages);
-
     deepseek::Request {
         model: model.id().to_string(),
         messages,
@@ -455,46 +453,6 @@ pub fn into_deepseek(
     }
 }
 
-fn apply_deepseek_reasoning_retention(messages: &mut [deepseek::RequestMessage]) {
-    let mut span_start = 0;
-
-    while span_start < messages.len() {
-        let span_end = messages
-            .iter()
-            .enumerate()
-            .skip(span_start + 1)
-            .find_map(|(index, message)| {
-                matches!(message, deepseek::RequestMessage::User { .. }).then_some(index)
-            })
-            .unwrap_or(messages.len());
-
-        clear_reasoning_for_non_tool_span(&mut messages[span_start..span_end]);
-        span_start = span_end;
-    }
-}
-
-fn clear_reasoning_for_non_tool_span(messages: &mut [deepseek::RequestMessage]) {
-    let has_tool_call = messages.iter().any(|message| {
-        matches!(
-            message,
-            deepseek::RequestMessage::Assistant { tool_calls, .. } if !tool_calls.is_empty()
-        )
-    });
-
-    if has_tool_call {
-        return;
-    }
-
-    for message in messages {
-        if let deepseek::RequestMessage::Assistant {
-            reasoning_content, ..
-        } = message
-        {
-            *reasoning_content = None;
-        }
-    }
-}
-
 fn deepseek_thinking(
     model: &deepseek::Model,
     thinking_allowed: bool,
@@ -515,8 +473,8 @@ fn deepseek_thinking(
 
 fn into_deepseek_reasoning_effort(effort: Option<&str>) -> Option<deepseek::ReasoningEffort> {
     match effort {
-        Some("low" | "medium" | "high") => Some(deepseek::ReasoningEffort::High),
-        Some("xhigh" | "max") => Some(deepseek::ReasoningEffort::Max),
+        Some("high") => Some(deepseek::ReasoningEffort::High),
+        Some("max") => Some(deepseek::ReasoningEffort::Max),
         _ => None,
     }
 }

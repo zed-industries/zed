@@ -226,7 +226,12 @@ pub fn language_model_to_selection(
             effort: current
                 .effort
                 .clone()
-                .and_then(|value| normalize_effort_for_model(model, &value))
+                .filter(|value| {
+                    model
+                        .supported_effort_levels()
+                        .iter()
+                        .any(|level| level.value.as_ref() == value.as_str())
+                })
                 .or_else(|| {
                     model
                         .default_effort_level()
@@ -243,35 +248,6 @@ pub fn language_model_to_selection(
                 .map(|effort| effort.value.to_string()),
             speed: None,
         },
-    }
-}
-
-fn normalize_effort_for_model(model: &Arc<dyn LanguageModel>, effort: &str) -> Option<String> {
-    let supported_effort_levels = model.supported_effort_levels();
-
-    if supported_effort_levels
-        .iter()
-        .any(|level| level.value.as_ref() == effort)
-    {
-        return Some(effort.to_string());
-    }
-
-    match effort {
-        "xhigh"
-            if supported_effort_levels
-                .iter()
-                .any(|level| level.value.as_ref() == "max") =>
-        {
-            Some("max".to_string())
-        }
-        "max"
-            if supported_effort_levels
-                .iter()
-                .any(|level| level.value.as_ref() == "xhigh") =>
-        {
-            Some("xhigh".to_string())
-        }
-        _ => None,
     }
 }
 
