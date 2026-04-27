@@ -1,7 +1,7 @@
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
     EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore, StoredEvent,
-    ZedUpdateRequiredError,
+    ZedUpdateRequiredError, buffer_path_with_id_fallback,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
     prediction::EditPredictionResult,
 };
@@ -70,10 +70,7 @@ pub fn request_prediction_with_zeta(
     let preferred_experiment = store.preferred_experiment().map(|s| s.to_owned());
     let open_ai_compatible_api_key = load_open_ai_compatible_api_key_if_needed(provider, cx);
 
-    let excerpt_path: Arc<Path> = snapshot
-        .file()
-        .map(|file| -> Arc<Path> { file.full_path(cx).into() })
-        .unwrap_or_else(|| Arc::from(Path::new("untitled")));
+    let excerpt_path = buffer_path_with_id_fallback(snapshot.file(), &snapshot.text, cx);
 
     let repo_url = if can_collect_data {
         let buffer_id = buffer.read(cx).remote_id();
