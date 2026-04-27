@@ -734,6 +734,7 @@ mod tests {
         );
     }
 
+    #[gpui::test]
     async fn test_reopen_existing_remote_root_treats_root_as_directory(
         cx: &mut TestAppContext,
         server_cx: &mut TestAppContext,
