@@ -634,19 +634,19 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 - Default:
 
 ```json [settings]
-  [
-    "**/.dev.vars",
-    "**/.env*",
-    "**/*.{cert,crt}",
-    "**/*.key",
-    "**/*.pem",
-    "**/*.tfstate",
-    "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}",
-    "**/id_{dsa,ecdsa,ed25519,rsa}*",
-    "**/.zed/settings.json", // zed project settings
-    "/**/zed/settings.json", // zed user settings
-    "/**/zed/keymap.json",
-  ]
+[
+  "**/.dev.vars",
+  "**/.env*",
+  "**/*.{cert,crt}",
+  "**/*.key",
+  "**/*.pem",
+  "**/*.tfstate",
+  "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}",
+  "**/id_{dsa,ecdsa,ed25519,rsa}*",
+  "**/.zed/settings.json", // zed project settings
+  "/**/zed/settings.json", // zed user settings
+  "/**/zed/keymap.json"
+]
 ```
 
 **Options**

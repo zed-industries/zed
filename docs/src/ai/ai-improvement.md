@@ -103,7 +103,7 @@ Certain files are always excluded from edit predictions—regardless of opt-in s
       "**/*.pem",
       "**/*.tfstate",
       "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}",
-      "**/id_{dsa,ecdsa,ed25519,rsa}*",
+      "**/id_{dsa,ecdsa,ed25519,rsa}*"
     ]
   }
 }
