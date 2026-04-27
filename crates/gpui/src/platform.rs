@@ -651,6 +651,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         false
     }
     fn set_edited(&mut self, _edited: bool) {}
+    fn set_document_path(&self, _path: Option<&std::path::Path>) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
     fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
@@ -1048,7 +1049,7 @@ impl<T> AtlasTextureList<T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct AtlasTile {
@@ -1981,6 +1982,8 @@ pub enum ImageFormat {
     Tiff,
     /// .ico
     Ico,
+    /// Netpbm image formats (.pbm, .ppm, .pgm).
+    Pnm,
 }
 
 impl ImageFormat {
@@ -1995,20 +1998,25 @@ impl ImageFormat {
             ImageFormat::Bmp => "image/bmp",
             ImageFormat::Tiff => "image/tiff",
             ImageFormat::Ico => "image/ico",
+            ImageFormat::Pnm => "image/x-portable-anymap",
         }
     }
 
-    /// Returns the ImageFormat for the given mime type
+    /// Returns the ImageFormat for the given mime type, including known aliases.
     pub fn from_mime_type(mime_type: &str) -> Option<Self> {
+        use strum::IntoEnumIterator;
+        Self::iter()
+            .find(|format| format.mime_type() == mime_type)
+            .or_else(|| Self::from_mime_type_alias(mime_type))
+    }
+
+    /// Non-canonical mime types that some producers use in the wild.
+    /// Unlike `mime_type()` which returns the single canonical form,
+    /// these are legacy or shortened variants we still need to recognize.
+    fn from_mime_type_alias(mime_type: &str) -> Option<Self> {
         match mime_type {
-            "image/png" => Some(Self::Png),
-            "image/jpeg" | "image/jpg" => Some(Self::Jpeg),
-            "image/webp" => Some(Self::Webp),
-            "image/gif" => Some(Self::Gif),
-            "image/svg+xml" => Some(Self::Svg),
-            "image/bmp" => Some(Self::Bmp),
-            "image/tiff" | "image/tif" => Some(Self::Tiff),
-            "image/ico" => Some(Self::Ico),
+            "image/jpg" => Some(Self::Jpeg),
+            "image/tif" => Some(Self::Tiff),
             _ => None,
         }
     }
@@ -2131,6 +2139,7 @@ impl Image {
                     .render_single_frame(&self.bytes, 1.0)
                     .map_err(Into::into);
             }
+            ImageFormat::Pnm => frames_for_image(&self.bytes, image::ImageFormat::Pnm)?,
         };
 
         Ok(Arc::new(RenderImage::new(frames)))

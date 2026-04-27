@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use acp_thread::{AgentConnection, LoadError};
+use agent_servers::AcpConnection;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
 use collections::HashMap;
@@ -10,7 +11,7 @@ use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Subscri
 use project::{AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
 
-use crate::{Agent, ThreadHistory};
+use crate::Agent;
 
 pub enum AgentConnectionEntry {
     Connecting {
@@ -25,7 +26,6 @@ pub enum AgentConnectionEntry {
 #[derive(Clone)]
 pub struct AgentConnectedState {
     pub connection: Rc<dyn AgentConnection>,
-    pub history: Option<Entity<ThreadHistory>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,13 +44,6 @@ impl AgentConnectionEntry {
         }
     }
 
-    pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
-        match self {
-            AgentConnectionEntry::Connected(state) => state.history.as_ref(),
-            _ => None,
-        }
-    }
-
     pub fn status(&self) -> AgentConnectionStatus {
         match self {
             AgentConnectionEntry::Connecting { .. } => AgentConnectionStatus::Connecting,
@@ -65,6 +58,12 @@ pub enum AgentConnectionEntryEvent {
 }
 
 impl EventEmitter<AgentConnectionEntryEvent> for AgentConnectionEntry {}
+
+#[derive(Clone)]
+pub struct ActiveAcpConnection {
+    pub agent_id: project::AgentId,
+    pub connection: Rc<AcpConnection>,
+}
 
 pub struct AgentConnectionStore {
     project: Entity<Project>,
@@ -96,6 +95,25 @@ impl AgentConnectionStore {
             .get(key)
             .map(|entry| entry.read(cx).status())
             .unwrap_or(AgentConnectionStatus::Disconnected)
+    }
+
+    pub fn active_acp_connections(&self, cx: &App) -> Vec<ActiveAcpConnection> {
+        self.entries
+            .values()
+            .filter_map(|entry| match entry.read(cx) {
+                AgentConnectionEntry::Connected(state) => state
+                    .connection
+                    .clone()
+                    .downcast::<AcpConnection>()
+                    .map(|connection| ActiveAcpConnection {
+                        agent_id: state.connection.agent_id(),
+                        connection,
+                    }),
+                AgentConnectionEntry::Connecting { .. } | AgentConnectionEntry::Error { .. } => {
+                    None
+                }
+            })
+            .collect()
     }
 
     pub fn restart_connection(
@@ -152,6 +170,7 @@ impl AgentConnectionStore {
                                 }
                             })
                             .ok();
+                        cx.notify();
                     })
                     .ok();
                 }
@@ -241,16 +260,8 @@ impl AgentConnectionStore {
         let delegate = AgentServerDelegate::new(agent_server_store, Some(new_version_tx));
 
         let connect_task = server.connect(delegate, self.project.clone(), cx);
-        let connect_task = cx.spawn(async move |_this, cx| match connect_task.await {
-            Ok(connection) => cx.update(|cx| {
-                let history = connection
-                    .session_list(cx)
-                    .map(|session_list| cx.new(|cx| ThreadHistory::new(session_list, cx)));
-                Ok(AgentConnectedState {
-                    connection,
-                    history,
-                })
-            }),
+        let connect_task = cx.spawn(async move |_this, _cx| match connect_task.await {
+            Ok(connection) => Ok(AgentConnectedState { connection }),
             Err(err) => match err.downcast::<LoadError>() {
                 Ok(load_error) => Err(load_error),
                 Err(err) => Err(LoadError::Other(SharedString::from(err.to_string()))),

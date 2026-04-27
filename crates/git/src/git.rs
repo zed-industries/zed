@@ -102,8 +102,11 @@ actions!(
         OpenModifiedFiles,
         /// Clones a repository.
         Clone,
+        ViewCommit,
         /// Adds a file to .gitignore.
         AddToGitignore,
+        /// Copies the current branch name to the clipboard.
+        CopyBranchName,
     ]
 );
 

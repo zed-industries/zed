@@ -103,15 +103,16 @@ impl ExcerptAnchor {
     }
 
     pub(crate) fn cmp(&self, other: &Self, snapshot: &MultiBufferSnapshot) -> Ordering {
-        let Some(self_path_key) = snapshot.path_keys_by_index.get(&self.path) else {
+        let Some(self_path_key) = snapshot.path_keys.get_index(self.path.0 as usize) else {
             panic!("anchor's path was never added to multibuffer")
         };
-        let Some(other_path_key) = snapshot.path_keys_by_index.get(&other.path) else {
+        let Some(other_path_key) = snapshot.path_keys.get_index(other.path.0 as usize) else {
             panic!("anchor's path was never added to multibuffer")
         };
 
-        if self_path_key.cmp(other_path_key) != Ordering::Equal {
-            return self_path_key.cmp(other_path_key);
+        match self_path_key.cmp(other_path_key) {
+            Ordering::Equal => (),
+            ordering => return ordering,
         }
 
         // in the case that you removed the buffer containing self,
@@ -122,16 +123,19 @@ impl ExcerptAnchor {
         }
 
         // two anchors into the same buffer at the same path
-        // TODO(cole) buffer_for_path is slow
         let Some(buffer) = snapshot
-            .buffer_for_path(&self_path_key)
-            .filter(|buffer| buffer.remote_id() == self.text_anchor.buffer_id)
+            .buffers
+            .get(&self.text_anchor.buffer_id)
+            .filter(|buffer_state| buffer_state.path_key == *self_path_key)
         else {
             // buffer no longer exists at the original path (which may have been reused for a different buffer),
             // so no way to compare the anchors
             return Ordering::Equal;
         };
-        let text_cmp = self.text_anchor().cmp(&other.text_anchor(), buffer);
+        // two anchors into the same buffer at the same path that still exists at that path in the multibuffer
+        let text_cmp = self
+            .text_anchor()
+            .cmp(&other.text_anchor(), &buffer.buffer_snapshot);
         if text_cmp != Ordering::Equal {
             return text_cmp;
         }

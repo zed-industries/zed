@@ -1,8 +1,5 @@
 {
   "$schema": "zed://schemas/settings",
-  /// The displayed name of this project. If not set or null, the root directory name
-  /// will be displayed.
-  "project_name": null,
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -342,11 +339,29 @@
     // The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
     "delay": 300,
   },
+  // Whether and how to display code lenses from language servers.
+  //
+  // Possible values:
+  //
+  // 1. Do not display code lenses.
+  //      "code_lens": "off",
+  // 2. Display code lenses from language servers above code elements.
+  //      "code_lens": "on",
+  // 3. Display code lenses in the code action menu.
+  //      "code_lens": "menu",
+  "code_lens": "off",
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`
   // 2. Find references for the same symbol: `find_all_references` (default)
   "go_to_definition_fallback": "find_all_references",
+  // How to scroll the target into view when navigating to a definition or reference
+  // (e.g. Go to Definition, Go to Type Definition, Find All References).
+  //
+  // 1. Vertically center the target in the viewport: `center` (default)
+  // 2. Scroll the minimum amount needed to make the target visible: `minimum`
+  // 3. Scroll so the target appears near the top of the viewport: `top`
+  "go_to_definition_scroll_strategy": "center",
   // Which level to use to filter out diagnostics displayed in the editor.
   //
   // Affects the editor rendering only, and does not interrupt
@@ -473,8 +488,8 @@
   "use_system_window_tabs": false,
   // Titlebar related settings
   "title_bar": {
-    // Whether to show the branch icon beside branch switcher in the titlebar.
-    "show_branch_icon": false,
+    // Whether to show git status indicators on the branch icon in the titlebar.
+    "show_branch_status_icon": false,
     // Whether to show the branch name button in the titlebar.
     "show_branch_name": true,
     // Whether to show the project host and name in the titlebar.
@@ -614,6 +629,8 @@
     "line_numbers": true,
     // Whether to show runnables buttons in the gutter.
     "runnables": true,
+    // Whether to show bookmarks in the gutter.
+    "bookmarks": true,
     // Whether to show breakpoints in the gutter.
     "breakpoints": true,
     // Whether to show fold buttons in the gutter.
@@ -965,6 +982,11 @@
     //
     // Default: true
     "diff_stats": true,
+    // Maximum length of the commit message title before a warning is shown.
+    // Set to 0 to disable.
+    //
+    // Default: 72
+    "commit_title_max_length": 72,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
@@ -990,7 +1012,11 @@
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
-    // Maximum content width when the agent panel is wider than this value.
+    // Whether to limit the content width in the agent panel. When enabled,
+    // content will be constrained to `max_content_width` and centered when
+    // the panel is wider, for optimal readability.
+    "limit_content_width": true,
+    // Maximum content width in pixels when limit_content_width is enabled.
     // Content will be centered within the panel.
     "max_content_width": 850,
     // The default model to use when creating new threads.
@@ -1357,6 +1383,24 @@
   // Removes any lines containing only whitespace at the end of the file and
   // ensures just one newline at the end.
   "ensure_final_newline_on_save": true,
+  // How line endings should be handled for new files and during format and save.
+  // This setting can take five values:
+  //
+  // 1. Detect existing line endings and otherwise use the platform default
+  //    (`lf` on Unix, `crlf` on Windows):
+  //    "line_ending": "detect"
+  // 2. Prefer LF (`\n`) for new files and files with no existing line ending:
+  //    "line_ending": "prefer_lf"
+  // 3. Prefer CRLF (`\r\n`) for new files and files with no existing line ending:
+  //    "line_ending": "prefer_crlf"
+  // 4. Enforce LF (`\n`) during format and save:
+  //    "line_ending": "enforce_lf"
+  // 5. Enforce CRLF (`\r\n`) during format and save:
+  //    "line_ending": "enforce_crlf"
+  //
+  // The EditorConfig `end_of_line` property overrides this setting and behaves
+  // like `enforce_lf` or `enforce_crlf`.
+  "line_ending": "detect",
   // Whether or not to perform a buffer format before saving: [on, off]
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "on",
@@ -1391,9 +1435,7 @@
   //      "soft_wrap": "prefer_line", // (deprecated, same as "none")
   // 2. Soft wrap lines that overflow the editor.
   //      "soft_wrap": "editor_width",
-  // 3. Soft wrap lines at the preferred line length.
-  //      "soft_wrap": "preferred_line_length",
-  // 4. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
+  // 3. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
   //      "soft_wrap": "bounded",
   "soft_wrap": "none",
   // The column at which to soft-wrap lines, for buffers where soft-wrap
@@ -1653,6 +1695,14 @@
       "prompt_format": "infer",
       "max_output_tokens": 64,
     },
+    // Controls whether Zed may collect training data when using Zed's Edit Predictions.
+    // Data is only captured when the project is detected as open source.
+    // Possible values:
+    //   - "default": use the preference previously set via the status-bar toggle,
+    //     or false if no preference has been stored.
+    //   - "yes": allow data collection for files in open-source projects.
+    //   - "no": never allow data collection.
+    "allow_data_collection": "default",
   },
   // Settings specific to journaling
   "journal": {
@@ -1916,6 +1966,8 @@
     "path_hyperlink_timeout_ms": 1,
     // Whether to show a badge on the terminal panel icon with the count of open terminals.
     "show_count_badge": false,
+    // Whether to invoke the OS-specific alert sound when the terminal bell (BEL character) is printed.
+    "bell": "off",
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.
@@ -2478,6 +2530,11 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "nightly": {
     // "theme": "Andromeda"
+    "instrumentation": {
+      "performance_profiler": {
+        "enabled": true,
+      },
+    },
   },
   // Settings overrides to use when using Zed Stable.
   // Mostly useful for developers who are managing multiple instances of Zed.
@@ -2488,6 +2545,11 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
+    "instrumentation": {
+      "performance_profiler": {
+        "enabled": true,
+      },
+    },
   },
   // Settings overrides to use when using Linux.
   "linux": {},
@@ -2607,4 +2669,16 @@
   //
   // Example: {"log": {"client": "warn"}}
   "log": {},
+
+  // Configuration for developer-oriented instrumentation tools that can be
+  // toggled at runtime.
+  "instrumentation": {
+    // Performance profiler, accessed via the `zed: open performance profiler`
+    // action. Collects timing data for foreground and background executor
+    // tasks. Enabling this may lead to increased memory usage, hence it's
+    // disabled by default for regular builds.
+    "performance_profiler": {
+      "enabled": false,
+    },
+  },
 }

@@ -216,6 +216,9 @@ impl ChannelView {
                     })
                 }))
             });
+            editor.set_show_bookmarks(false, cx);
+            editor.set_show_breakpoints(false, cx);
+            editor.set_show_runnables(false, cx);
             editor
         });
         let _editor_event_subscription =

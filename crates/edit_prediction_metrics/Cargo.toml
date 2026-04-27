@@ -14,6 +14,7 @@ path = "src/edit_prediction_metrics.rs"
 [dependencies]
 language.workspace = true
 serde.workspace = true
+serde_json = "1.0"
 similar = "2.7.0"
 tree-sitter.workspace = true
 zeta_prompt.workspace = true
