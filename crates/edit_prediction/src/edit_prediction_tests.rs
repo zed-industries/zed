@@ -3439,6 +3439,7 @@ fn test_buffer_path_with_id_fallback_for_untitled_buffers(cx: &mut TestAppContex
     assert_ne!(path_1.as_ref(), path_2.as_ref());
 }
 
+#[gpui::test]
 async fn test_data_collection_disabled_by_default(cx: &mut TestAppContext) {
     let (ep_store, _channels) = init_test_with_fake_client(cx);
 
