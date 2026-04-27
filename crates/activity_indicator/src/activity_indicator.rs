@@ -733,7 +733,8 @@ impl Render for ActivityIndicator {
                         this.start_icon(
                             Icon::new(IconName::LoadCircle)
                                 .color(Color::Muted)
-                                .size(IconSize::Small),
+                                .size(IconSize::Small)
+                                .with_rotate_animation(2),
                         )
                     })
                     .map(|button| {
