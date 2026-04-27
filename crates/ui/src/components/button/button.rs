@@ -83,8 +83,8 @@ pub struct Button {
     label_size: Option<LabelSize>,
     selected_label: Option<SharedString>,
     selected_label_color: Option<Color>,
-    start_icon: Option<AnyElement>,
-    end_icon: Option<AnyElement>,
+    start_icon: Option<Icon>,
+    end_icon: Option<Icon>,
     key_binding: Option<KeyBinding>,
     key_binding_position: KeybindingPosition,
     alpha: Option<f32>,
@@ -144,16 +144,16 @@ impl Button {
     /// Sets an icon to display at the start (left) of the button label.
     ///
     /// The icon's color will be overridden to `Color::Disabled` when the button is disabled.
-    pub fn start_icon<E: IntoElement>(mut self, start_icon: impl Into<Option<E>>) -> Self {
-        self.start_icon = start_icon.into().map(IntoElement::into_any_element);
+    pub fn start_icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
+        self.start_icon = icon.into();
         self
     }
 
     /// Sets an icon to display at the end (right) of the button label.
     ///
     /// The icon's color will be overridden to `Color::Disabled` when the button is disabled.
-    pub fn end_icon<E: IntoElement>(mut self, end_icon: impl Into<Option<E>>) -> Self {
-        self.end_icon = end_icon.into().map(IntoElement::into_any_element);
+    pub fn end_icon(mut self, icon: impl Into<Option<Icon>>) -> Self {
+        self.end_icon = icon.into();
         self
     }
 
