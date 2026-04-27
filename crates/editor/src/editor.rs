@@ -4852,48 +4852,112 @@ impl Editor {
             }
             all_selections_read_only = false;
 
-            if let Some(scope) = snapshot.language_scope_at(selection.head()) {
+            {
+                let all_scopes = snapshot.language_scopes_at(selection.head());
+                // Track which scope the winning bracket pair comes from,
+                // so we use the correct autoclose_before setting.
+                let scope = snapshot.language_scope_at(selection.head());
+                let mut bracket_pair_scope: Option<&LanguageScope> = None;
+
                 // Determine if the inserted text matches the opening or closing
                 // bracket of any of this language's bracket pairs.
+                // We collect pairs from ALL scopes and prefer the longest match.
                 let mut bracket_pair = None;
                 let mut is_bracket_pair_start = false;
                 let mut is_bracket_pair_end = false;
                 if !text.is_empty() {
+                    // First, find the best match from the deepest scope only.
+                    let mut deepest_start_match: Option<BracketPair> = None;
+                    let mut deepest_start_len: usize = 0;
                     let mut bracket_pair_matching_end = None;
                     // `text` can be empty when a user is using IME (e.g. Chinese Wubi Simplified)
                     //  and they are removing the character that triggered IME popup.
-                    for (pair, enabled) in scope.brackets() {
-                        if !pair.close && !pair.surround {
-                            continue;
-                        }
+                    if let Some(deepest_scope) = all_scopes.first() {
+                        for (pair, enabled) in deepest_scope.brackets() {
+                            if !pair.close && !pair.surround {
+                                continue;
+                            }
 
-                        if enabled && pair.start.ends_with(text.as_ref()) {
-                            let prefix_len = pair.start.len() - text.len();
-                            let preceding_text_matches_prefix = prefix_len == 0
-                                || (selection.start.column >= (prefix_len as u32)
-                                    && snapshot.contains_str_at(
-                                        Point::new(
-                                            selection.start.row,
-                                            selection.start.column - (prefix_len as u32),
-                                        ),
-                                        &pair.start[..prefix_len],
-                                    ));
-                            if preceding_text_matches_prefix {
-                                bracket_pair = Some(pair.clone());
-                                is_bracket_pair_start = true;
-                                break;
+                            if enabled && pair.start.ends_with(text.as_ref()) {
+                                let prefix_len = pair.start.len() - text.len();
+                                let preceding_text_matches_prefix = prefix_len == 0
+                                    || (selection.start.column >= (prefix_len as u32)
+                                        && snapshot.contains_str_at(
+                                            Point::new(
+                                                selection.start.row,
+                                                selection.start.column - (prefix_len as u32),
+                                            ),
+                                            &pair.start[..prefix_len],
+                                        ));
+                                if preceding_text_matches_prefix
+                                    && pair.start.len() > deepest_start_len
+                                {
+                                    deepest_start_len = pair.start.len();
+                                    deepest_start_match = Some(pair.clone());
+                                }
+                            }
+                            if pair.end.as_str() == text.as_ref()
+                                && bracket_pair_matching_end.is_none()
+                            {
+                                bracket_pair_matching_end = Some(pair.clone());
                             }
                         }
-                        if pair.end.as_str() == text.as_ref() && bracket_pair_matching_end.is_none()
-                        {
-                            // take first bracket pair matching end, but don't break in case a later bracket
-                            // pair matches start
-                            bracket_pair_matching_end = Some(pair.clone());
+                    }
+
+                    // Check outer scopes for longer bracket pairs. Two cases:
+                    // 1. Deepest scope matched (e.g., `{`): look for longer pairs
+                    //    in outer scopes (e.g., `{{` from Liquid).
+                    // 2. Deepest scope had NO match: still check outer scopes, but
+                    //    only for multi-character pairs (start.len() > 1). This lets
+                    //    host language delimiters like `{%`/`%}` work inside injected
+                    //    regions, while preventing single-char bracket leaking (e.g.,
+                    //    HTML's `<`/`>` won't auto-close inside JavaScript).
+                    let mut best_start_match = deepest_start_match.clone();
+                    let mut best_start_len = deepest_start_len;
+                    if deepest_start_match.is_some() {
+                        bracket_pair_scope = all_scopes.first();
+                    }
+                    let min_outer_len = if deepest_start_len > 0 {
+                        // Must be strictly longer than the deepest match
+                        deepest_start_len + 1
+                    } else {
+                        // No deepest match: only consider multi-char pairs from outer scopes
+                        2
+                    };
+                    for current_scope in all_scopes.iter().skip(1) {
+                        for (pair, enabled) in current_scope.brackets() {
+                            if !pair.close && !pair.surround {
+                                continue;
+                            }
+                            if enabled
+                                && pair.start.ends_with(text.as_ref())
+                                && pair.start.len() >= min_outer_len
+                                && pair.start.len() > best_start_len
+                            {
+                                let prefix_len = pair.start.len() - text.len();
+                                let preceding_text_matches_prefix = prefix_len == 0
+                                    || (selection.start.column >= (prefix_len as u32)
+                                        && snapshot.contains_str_at(
+                                            Point::new(
+                                                selection.start.row,
+                                                selection.start.column
+                                                    - (prefix_len as u32),
+                                            ),
+                                            &pair.start[..prefix_len],
+                                        ));
+                                if preceding_text_matches_prefix {
+                                    best_start_len = pair.start.len();
+                                    best_start_match = Some(pair.clone());
+                                    bracket_pair_scope = Some(current_scope);
+                                }
+                            }
                         }
                     }
-                    if let Some(end) = bracket_pair_matching_end
-                        && bracket_pair.is_none()
-                    {
+
+                    if let Some(start) = best_start_match {
+                        bracket_pair = Some(start);
+                        is_bracket_pair_start = true;
+                    } else if let Some(end) = bracket_pair_matching_end {
                         bracket_pair = Some(end);
                         is_bracket_pair_end = true;
                     }
@@ -4909,10 +4973,19 @@ impl Editor {
                             // If the inserted text is a suffix of an opening bracket and the
                             // selection is preceded by the rest of the opening bracket, then
                             // insert the closing bracket.
-                            let following_text_allows_autoclose = snapshot
-                                .chars_at(selection.start)
-                                .next()
-                                .is_none_or(|c| scope.should_autoclose_before(c));
+                            // Use the scope that owns the bracket pair for the
+                            // autoclose_before check. When a bracket pair comes from
+                            // an outer scope (e.g., Liquid's `{%`/`%}`), the outer
+                            // scope's autoclose_before should be used, not the
+                            // injected language's (e.g., HTML's `>})`).
+                            let autoclose_scope = bracket_pair_scope.or(scope.as_ref());
+                            let following_text_allows_autoclose =
+                                autoclose_scope.is_none_or(|s| {
+                                    snapshot
+                                        .chars_at(selection.start)
+                                        .next()
+                                        .is_none_or(|c| s.should_autoclose_before(c))
+                                });
 
                             let preceding_text_allows_autoclose = selection.start.column == 0
                                 || snapshot
@@ -4979,11 +5052,30 @@ impl Editor {
                                 false
                             };
 
+                            // Don't auto-close if the cursor is inside an existing
+                            // autoclose region (but not at its end) and the new pair
+                            // extends the region's pair. This prevents `{%-`/`-%}` from
+                            // auto-closing when editing inside an existing `{%`/`%}` pair.
+                            let is_extending_inside_region =
+                                if let Some(region) = autoclose_region {
+                                    let region_end_point =
+                                        region.range.end.to_point(&snapshot);
+                                    selection.end != region_end_point
+                                        && bracket_pair.start.starts_with(
+                                            &region.pair.start,
+                                        )
+                                        && region.pair.start.len()
+                                            < bracket_pair.start.len()
+                                } else {
+                                    false
+                                };
+
                             if autoclose
                                 && bracket_pair.close
                                 && following_text_allows_autoclose
                                 && preceding_text_allows_autoclose
                                 && !is_closing_quote
+                                && !is_extending_inside_region
                             {
                                 let anchor = snapshot.anchor_before(selection.end);
                                 new_selections.push((selection.map(|_| anchor), text.len()));
@@ -4993,8 +5085,53 @@ impl Editor {
                                     selection.id,
                                     bracket_pair.clone(),
                                 ));
+                                // When a multi-character bracket pair supersedes a
+                                // previous auto-close, replace the stale closing bracket
+                                // with the typed character + new closing bracket.
+                                //
+                                // Example: `{|}` + type `{` for pair `{{`/`}}`:
+                                //   Range: cursor..end_of_`}` → insert `{` + `}}`
+                                //   Result: `{{|}}`
+                                //
+                                // Example: `{{|}}` + type `-` for pair `{{-`/`-}}`:
+                                //   Range: cursor..end_of_`}}` → insert `-` + `-}}`
+                                //   Result: `{{-|-}}`
+                                let edit_end = if bracket_pair.start.len() > 1 {
+                                    if let Some(region) = autoclose_region {
+                                        let region_end_point =
+                                            region.range.end.to_point(&snapshot);
+                                        // Only supersede if:
+                                        // 1. Cursor is at the autoclose region end
+                                        // 2. The previous pair's start is a proper prefix
+                                        //    of the new pair's start (e.g., `{` → `{{`,
+                                        //    `{{` → `{{-`). This prevents stale autoclose
+                                        //    regions from triggering supersession when the
+                                        //    user edits existing text.
+                                        let is_valid_supersession =
+                                            selection.end == region_end_point
+                                                && bracket_pair.start.starts_with(
+                                                    &region.pair.start,
+                                                )
+                                                && region.pair.start.len()
+                                                    < bracket_pair.start.len();
+                                        if is_valid_supersession {
+                                            // Extend past the stale auto-closed bracket
+                                            Point::new(
+                                                region_end_point.row,
+                                                region_end_point.column
+                                                    + region.pair.end.len() as u32,
+                                            )
+                                        } else {
+                                            selection.end
+                                        }
+                                    } else {
+                                        selection.end
+                                    }
+                                } else {
+                                    selection.end
+                                };
                                 edits.push((
-                                    selection.range(),
+                                    selection.start..edit_end,
                                     format!("{}{}", text, bracket_pair.end).into(),
                                 ));
                                 bracket_inserted = true;
