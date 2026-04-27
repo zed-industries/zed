@@ -220,7 +220,7 @@ impl UserStore {
                 let weak = Arc::downgrade(&client);
                 drop(client);
                 while let Some(status) = status.next().await {
-                    // if the client is dropped, the app is shutting down.
+                    // If the client is dropped, the app is shutting down.
                     let Some(client) = weak.upgrade() else {
                         return Ok(());
                     };
@@ -740,6 +740,21 @@ impl UserStore {
             .get(&current_organization.id)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_current_organization_configuration_for_test(
+        &mut self,
+        organization: Arc<Organization>,
+        configuration: OrganizationConfiguration,
+        cx: &mut Context<Self>,
+    ) {
+        self.current_organization = Some(organization.clone());
+        self.organizations = vec![organization.clone()];
+        self.configuration_by_organization
+            .insert(organization.id.clone(), configuration);
+        cx.emit(Event::OrganizationChanged);
+        cx.notify();
+    }
+
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
@@ -755,10 +770,8 @@ impl UserStore {
             };
         }
 
-        if let Some(organization) = &self.current_organization
-            && let Some(plan) = self.plan_for_organization(&organization.id)
-        {
-            return Some(plan);
+        if let Some(organization) = &self.current_organization {
+            return self.plan_for_organization(&organization.id);
         }
 
         self.plan_info.as_ref().map(|info| info.plan())
@@ -784,7 +797,16 @@ impl UserStore {
     }
 
     /// Returns whether the user's account is too new to use the service.
+    ///
+    /// This only applies when operating under the user's personal organization,
+    /// not a business organization.
     pub fn account_too_young(&self) -> bool {
+        if let Some(org) = &self.current_organization {
+            if !org.is_personal {
+                return false;
+            }
+        }
+
         self.plan_info
             .as_ref()
             .map(|plan| plan.is_account_too_young)

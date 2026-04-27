@@ -628,6 +628,7 @@ impl MacWindow {
             display_id,
             window_min_size,
             tabbing_identifier,
+            ..
         }: WindowParams,
         foreground_executor: ForegroundExecutor,
         background_executor: BackgroundExecutor,
@@ -1436,6 +1437,14 @@ impl PlatformWindow for MacWindow {
         // Changing the document edited state resets the traffic light position,
         // so we have to move it again.
         self.0.lock().move_traffic_light();
+    }
+
+    fn set_document_path(&self, path: Option<&std::path::Path>) {
+        unsafe {
+            let window = self.0.lock().native_window;
+            let filename = path.map_or(ns_string(""), |p| ns_string(&p.to_string_lossy()));
+            let _: () = msg_send![window, setRepresentedFilename: filename];
+        }
     }
 
     fn show_character_palette(&self) {

@@ -56,6 +56,7 @@ pub struct Organization {
 pub struct OrganizationConfiguration {
     pub is_zed_model_provider_enabled: bool,
     pub is_agent_thread_feedback_enabled: bool,
+    pub is_collaboration_enabled: bool,
     pub edit_prediction: OrganizationEditPredictionConfiguration,
 }
 

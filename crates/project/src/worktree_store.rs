@@ -24,6 +24,7 @@ use rpc::{
 use text::ReplicaId;
 use util::{
     ResultExt,
+    path_list::PathList,
     paths::{PathStyle, RemotePathBuf, SanitizedPath},
     rel_path::RelPath,
 };
@@ -33,6 +34,121 @@ use worktree::{
 };
 
 use crate::{ProjectPath, trusted_worktrees::TrustedWorktrees};
+
+/// The current paths for a project's worktrees. Each folder path has a corresponding
+/// main worktree path at the same position. The two lists are always the
+/// same length and are modified together via `add_path` / `remove_main_path`.
+///
+/// For non-linked worktrees, the main path and folder path are identical.
+/// For linked worktrees, the main path is the original repo and the folder
+/// path is the linked worktree location.
+#[derive(Default, Debug, Clone)]
+pub struct WorktreePaths {
+    paths: PathList,
+    main_paths: PathList,
+}
+
+impl PartialEq for WorktreePaths {
+    fn eq(&self, other: &Self) -> bool {
+        self.paths == other.paths && self.main_paths == other.main_paths
+    }
+}
+
+impl WorktreePaths {
+    /// Build from two parallel `PathList`s that already share the same
+    /// insertion order. Used for deserialization from DB.
+    ///
+    /// Returns an error if the two lists have different lengths, which
+    /// indicates corrupted data from a prior migration bug.
+    pub fn from_path_lists(
+        main_worktree_paths: PathList,
+        folder_paths: PathList,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            main_worktree_paths.paths().len() == folder_paths.paths().len(),
+            "main_worktree_paths has {} entries but folder_paths has {}",
+            main_worktree_paths.paths().len(),
+            folder_paths.paths().len(),
+        );
+        Ok(Self {
+            paths: folder_paths,
+            main_paths: main_worktree_paths,
+        })
+    }
+
+    /// Build for non-linked worktrees where main == folder for every path.
+    pub fn from_folder_paths(folder_paths: &PathList) -> Self {
+        Self {
+            paths: folder_paths.clone(),
+            main_paths: folder_paths.clone(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.paths.is_empty()
+    }
+
+    /// The folder paths (for workspace matching / `threads_by_paths` index).
+    pub fn folder_path_list(&self) -> &PathList {
+        &self.paths
+    }
+
+    /// The main worktree paths (for group key / `threads_by_main_paths` index).
+    pub fn main_worktree_path_list(&self) -> &PathList {
+        &self.main_paths
+    }
+
+    /// Iterate the (main_worktree_path, folder_path) pairs in insertion order.
+    pub fn ordered_pairs(&self) -> impl Iterator<Item = (&PathBuf, &PathBuf)> {
+        self.main_paths
+            .ordered_paths()
+            .zip(self.paths.ordered_paths())
+    }
+
+    /// Add a new path pair. If the exact (main, folder) pair already exists,
+    /// this is a no-op. Rebuilds both internal `PathList`s to maintain
+    /// consistent ordering.
+    pub fn add_path(&mut self, main_path: &Path, folder_path: &Path) {
+        let already_exists = self
+            .ordered_pairs()
+            .any(|(m, f)| m.as_path() == main_path && f.as_path() == folder_path);
+        if already_exists {
+            return;
+        }
+        let (mut mains, mut folders): (Vec<PathBuf>, Vec<PathBuf>) = self
+            .ordered_pairs()
+            .map(|(m, f)| (m.clone(), f.clone()))
+            .unzip();
+        mains.push(main_path.to_path_buf());
+        folders.push(folder_path.to_path_buf());
+        self.main_paths = PathList::new(&mains);
+        self.paths = PathList::new(&folders);
+    }
+
+    /// Remove all pairs whose main worktree path matches the given path.
+    /// This removes the corresponding entries from both lists.
+    pub fn remove_main_path(&mut self, main_path: &Path) {
+        let (mains, folders): (Vec<PathBuf>, Vec<PathBuf>) = self
+            .ordered_pairs()
+            .filter(|(m, _)| m.as_path() != main_path)
+            .map(|(m, f)| (m.clone(), f.clone()))
+            .unzip();
+        self.main_paths = PathList::new(&mains);
+        self.paths = PathList::new(&folders);
+    }
+
+    /// Remove all pairs whose folder path matches the given path.
+    /// This removes the corresponding entries from both lists.
+    pub fn remove_folder_path(&mut self, folder_path: &Path) {
+        let (mains, folders): (Vec<PathBuf>, Vec<PathBuf>) = self
+            .ordered_pairs()
+            .filter(|(_, f)| f.as_path() != folder_path)
+            .map(|(m, f)| (m.clone(), f.clone()))
+            .unzip();
+        self.main_paths = PathList::new(&mains);
+        self.paths = PathList::new(&folders);
+    }
+}
 
 enum WorktreeStoreState {
     Local {
@@ -72,7 +188,6 @@ pub struct WorktreeStore {
     downstream_client: Option<(AnyProtoClient, u64)>,
     retain_worktrees: bool,
     worktrees: Vec<WorktreeHandle>,
-    worktrees_reordered: bool,
     scanning_enabled: bool,
     #[allow(clippy::type_complexity)]
     loading_worktrees:
@@ -120,7 +235,6 @@ impl WorktreeStore {
             loading_worktrees: Default::default(),
             downstream_client: None,
             worktrees: Vec::new(),
-            worktrees_reordered: false,
             scanning_enabled: true,
             retain_worktrees,
             initial_scan_complete: watch::channel_with(true),
@@ -141,7 +255,6 @@ impl WorktreeStore {
             loading_worktrees: Default::default(),
             downstream_client: None,
             worktrees: Vec::new(),
-            worktrees_reordered: false,
             scanning_enabled: true,
             retain_worktrees,
             initial_scan_complete: watch::channel_with(true),
@@ -775,18 +888,7 @@ impl WorktreeStore {
         } else {
             WorktreeHandle::Weak(worktree.downgrade())
         };
-        if self.worktrees_reordered {
-            self.worktrees.push(handle);
-        } else {
-            let i = match self
-                .worktrees
-                .binary_search_by_key(&Some(worktree.read(cx).abs_path()), |other| {
-                    other.upgrade().map(|worktree| worktree.read(cx).abs_path())
-                }) {
-                Ok(i) | Err(i) => i,
-            };
-            self.worktrees.insert(i, handle);
-        }
+        self.worktrees.push(handle);
 
         cx.emit(WorktreeStoreEvent::WorktreeAdded(worktree.clone()));
         self.send_project_updates(cx);
@@ -814,7 +916,7 @@ impl WorktreeStore {
                     // The worktree root itself has been deleted (for single-file worktrees)
                     // The worktree will be removed via the observe_release callback
                 }
-                worktree::Event::UpdatedRootRepoCommonDir => {
+                worktree::Event::UpdatedRootRepoCommonDir { .. } => {
                     cx.emit(WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(
                         worktree_id,
                     ));
@@ -869,10 +971,6 @@ impl WorktreeStore {
                 worktree.abs_path().as_ref() == path
             }
         })
-    }
-
-    pub fn set_worktrees_reordered(&mut self, worktrees_reordered: bool) {
-        self.worktrees_reordered = worktrees_reordered;
     }
 
     fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {
@@ -974,7 +1072,6 @@ impl WorktreeStore {
 
         let worktree_to_move = self.worktrees.remove(source_index);
         self.worktrees.insert(destination_index, worktree_to_move);
-        self.worktrees_reordered = true;
         cx.emit(WorktreeStoreEvent::WorktreeOrderChanged);
         cx.notify();
         Ok(())
@@ -1261,6 +1358,26 @@ impl WorktreeStore {
         match &self.state {
             WorktreeStoreState::Local { fs } => Some(fs.clone()),
             WorktreeStoreState::Remote { .. } => None,
+        }
+    }
+
+    pub fn paths(&self, cx: &App) -> WorktreePaths {
+        let (mains, folders): (Vec<PathBuf>, Vec<PathBuf>) = self
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let snapshot = worktree.read(cx).snapshot();
+                let folder_path = snapshot.abs_path().to_path_buf();
+                let main_path = snapshot
+                    .root_repo_common_dir()
+                    .and_then(|dir| Some(dir.parent()?.to_path_buf()))
+                    .unwrap_or_else(|| folder_path.clone());
+                (main_path, folder_path)
+            })
+            .unzip();
+
+        WorktreePaths {
+            paths: PathList::new(&folders),
+            main_paths: PathList::new(&mains),
         }
     }
 }

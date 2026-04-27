@@ -5468,7 +5468,7 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_reveal_in_project_panel_notifications(cx: &mut gpui::TestAppContext) {
+async fn test_reveal_in_project_panel_fallback(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
@@ -5485,37 +5485,38 @@ async fn test_reveal_in_project_panel_notifications(cx: &mut gpui::TestAppContex
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
-    let panel = workspace.update_in(cx, ProjectPanel::new);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
     cx.run_until_parked();
 
-    // Ensure that, attempting to run `pane: reveal in project panel` without
-    // any active item does nothing, i.e., does not focus the project panel but
-    // it also does not show a notification.
+    // Project panel should still be activated and focused, when using `pane:
+    // reveal in project panel` without an active item.
     cx.dispatch_action(workspace::RevealInProjectPanel::default());
     cx.run_until_parked();
 
     panel.update_in(cx, |panel, window, cx| {
-        assert!(
-            !panel.focus_handle(cx).is_focused(window),
-            "Project panel should not be focused after attempting to reveal an invisible worktree entry"
-        );
+        panel
+            .workspace
+            .update(cx, |workspace, cx| {
+                assert!(
+                    workspace.active_item(cx).is_none(),
+                    "Workspace should not have an active item."
+                );
+            })
+            .unwrap();
 
-        panel.workspace.update(cx, |workspace, cx| {
-            assert!(
-                workspace.active_item(cx).is_none(),
-                "Workspace should not have an active item"
-            );
-            assert_eq!(
-                workspace.notification_ids(),
-                vec![],
-                "No notification should be shown when there's no active item"
-            );
-        }).unwrap();
+        assert!(
+            panel.focus_handle(cx).is_focused(window),
+            "Project panel should be focused, even when there's no active item."
+        );
     });
 
-    // Create a file in a different folder than the one in the project so we can
-    // later open it and ensure that, attempting to reveal it in the project
-    // panel shows a notification and does not focus the project panel.
+    // When working with a file that doesn't belong to an open project, we
+    // should still activate the project panel on `pane: reveal in project
+    // panel`.
     fs.insert_tree(
         "/external",
         json!({
@@ -5543,40 +5544,58 @@ async fn test_reveal_in_project_panel_notifications(cx: &mut gpui::TestAppContex
         .unwrap();
     cx.run_until_parked();
 
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            !panel.focus_handle(cx).is_focused(window),
+            "Project panel should not be focused after opening an external file."
+        );
+    });
+
     cx.dispatch_action(workspace::RevealInProjectPanel::default());
     cx.run_until_parked();
 
     panel.update_in(cx, |panel, window, cx| {
+        panel
+            .workspace
+            .update(cx, |workspace, cx| {
+                assert!(
+                    workspace.active_item(cx).is_some(),
+                    "Workspace should have an active item."
+                );
+            })
+            .unwrap();
+
         assert!(
-            !panel.focus_handle(cx).is_focused(window),
-            "Project panel should not be focused after attempting to reveal an invisible worktree entry"
+            panel.focus_handle(cx).is_focused(window),
+            "Project panel should be focused even for invisible worktree entry."
         );
-
-        panel.workspace.update(cx, |workspace, cx| {
-            assert!(
-                workspace.active_item(cx).is_some(),
-                "Workspace should have an active item"
-            );
-
-            let notification_ids = workspace.notification_ids();
-            assert_eq!(
-                notification_ids.len(),
-                1,
-                "A notification should be shown when trying to reveal an invisible worktree entry"
-            );
-
-            workspace.dismiss_notification(&notification_ids[0], cx);
-            assert_eq!(
-                workspace.notification_ids().len(),
-                0,
-                "No notifications should be left after dismissing"
-            );
-        }).unwrap();
     });
 
-    // Create an empty buffer so we can ensure that, attempting to reveal it in
-    // the project panel shows a notification and does not focus the project
-    // panel.
+    // Focus again on the center pane so we're sure that the focus doesn't
+    // remain on the project panel, otherwise later assertions wouldn't matter.
+    panel.update_in(cx, |panel, window, cx| {
+        panel
+            .workspace
+            .update(cx, |workspace, cx| {
+                workspace.focus_center_pane(window, cx);
+            })
+            .log_err();
+
+        assert!(
+            !panel.focus_handle(cx).is_focused(window),
+            "Project panel should not be focused after focusing on center pane."
+        );
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            !panel.focus_handle(cx).is_focused(window),
+            "Project panel should not be focused after focusing the center pane."
+        );
+    });
+
+    // Create an unsaved buffer and verify that pane: reveal in project panel`
+    // still activates and focuses the panel.
     let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
     pane.update_in(cx, |pane, window, cx| {
         let item = cx.new(|cx| TestItem::new(cx).with_label("Unsaved buffer"));
@@ -5587,27 +5606,20 @@ async fn test_reveal_in_project_panel_notifications(cx: &mut gpui::TestAppContex
     cx.run_until_parked();
 
     panel.update_in(cx, |panel, window, cx| {
-        assert!(
-            !panel.focus_handle(cx).is_focused(window),
-            "Project panel should not be focused after attempting to reveal an unsaved buffer"
-        );
-
         panel
             .workspace
             .update(cx, |workspace, cx| {
                 assert!(
                     workspace.active_item(cx).is_some(),
-                    "Workspace should have an active item"
-                );
-
-                let notification_ids = workspace.notification_ids();
-                assert_eq!(
-                    notification_ids.len(),
-                    1,
-                    "A notification should be shown when trying to reveal an unsaved buffer"
+                    "Workspace should have an active item."
                 );
             })
             .unwrap();
+
+        assert!(
+            panel.focus_handle(cx).is_focused(window),
+            "Project panel should be focused even for an unsaved buffer."
+        );
     });
 }
 
@@ -8050,6 +8062,104 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
     assert!(
         fs.is_dir(Path::new("/root/new_dir_at_root")).await,
         "Directory should be created in the actual root directory"
+    );
+}
+
+#[gpui::test]
+async fn test_context_menu_new_file_in_empty_hidden_root(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({})).await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    assert!(
+        visible_entries_as_strings(&panel, 0..20, cx).is_empty(),
+        "Empty worktree with hide_root=true should render no entries"
+    );
+
+    panel.update(cx, |panel, _| {
+        assert!(
+            panel.selection.is_none(),
+            "Project panel should start without a selection"
+        );
+        assert!(
+            panel.state.last_worktree_root_id.is_some(),
+            "Project panel should still track the hidden root entry"
+        );
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        let root_entry_id = panel
+            .state
+            .last_worktree_root_id
+            .expect("hidden root should be available for background context menu actions");
+        panel.deploy_context_menu(
+            gpui::point(gpui::px(1.), gpui::px(1.)),
+            root_entry_id,
+            window,
+            cx,
+        );
+        panel.new_file(&NewFile, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            panel.filename_editor.read(cx).is_focused(window),
+            "New File from the background context menu should open the filename editor"
+        );
+    });
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &["  [EDITOR: '']  <== selected"],
+        "New file editor should appear at the hidden root level"
+    );
+
+    let confirm = panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("new_file_from_context_menu.txt", window, cx)
+        });
+        panel.confirm_edit(true, window, cx).unwrap()
+    });
+    confirm.await.unwrap();
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &["  new_file_from_context_menu.txt  <== selected  <== marked"],
+        "Confirmed file should appear at the hidden root level"
+    );
+
+    assert!(
+        fs.is_file(Path::new("/root/new_file_from_context_menu.txt"))
+            .await,
+        "File should be created in the empty root directory"
     );
 }
 

@@ -1,5 +1,6 @@
 #![allow(clippy::format_collect)]
 
+mod bookmark_store;
 mod color_extractor;
 mod context_server_store;
 mod debugger;
@@ -45,7 +46,9 @@ use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
     ManifestQuery, OffsetRangeExt, Point, ToPoint, Toolchain, ToolchainList, ToolchainLister,
     ToolchainMetadata,
-    language_settings::{LanguageSettings, LanguageSettingsContent},
+    language_settings::{
+        Formatter, FormatterList, LanguageSettings, LanguageSettingsContent, LineEndingSetting,
+    },
     markdown_lang, rust_lang, tree_sitter_typescript,
 };
 use lsp::{
@@ -317,6 +320,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     assert_eq!(settings_a.hard_tabs, true);
     assert_eq!(settings_a.ensure_final_newline_on_save, true);
     assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
+    assert_eq!(settings_a.line_ending, LineEndingSetting::EnforceLf);
     assert_eq!(settings_a.preferred_line_length, 120);
 
     // .editorconfig in b/ overrides .editorconfig in root
@@ -1329,14 +1333,30 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
                 delegate,
             }: ManifestQuery,
         ) -> Option<Arc<RelPath>> {
+            const WORKSPACE_LOCKFILES: &[&str] =
+                &["uv.lock", "poetry.lock", "pdm.lock", "Pipfile.lock"];
+
+            let mut innermost_pyproject = None;
+            let mut outermost_workspace_root = None;
+
             for path in path.ancestors().take(depth) {
-                let p = path.join(rel_path("pyproject.toml"));
-                if delegate.exists(&p, Some(false)) {
-                    return Some(path.into());
+                let pyproject_path = path.join(rel_path("pyproject.toml"));
+                if delegate.exists(&pyproject_path, Some(false)) {
+                    if innermost_pyproject.is_none() {
+                        innermost_pyproject = Some(Arc::from(path));
+                    }
+
+                    let has_lockfile = WORKSPACE_LOCKFILES.iter().any(|lockfile| {
+                        let lockfile_path = path.join(rel_path(lockfile));
+                        delegate.exists(&lockfile_path, Some(false))
+                    });
+                    if has_lockfile {
+                        outermost_workspace_root = Some(Arc::from(path));
+                    }
                 }
             }
 
-            None
+            outermost_workspace_root.or(innermost_pyproject)
         }
     }
 
@@ -1913,6 +1933,84 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await,
         close_message,
     );
+}
+
+#[gpui::test]
+async fn test_late_lsp_adapter_registration(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "test.rs": "const A: i32 = 1;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    // Add the language first so the buffer gets assigned a language.
+    language_registry.add(rust_lang());
+    cx.executor().run_until_parked();
+
+    // Open a buffer — it gets assigned the Rust language but there is no LSP adapter yet.
+    let (rust_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/test.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    rust_buffer.update(cx, |buffer, _| {
+        assert_eq!(buffer.language().map(|l| l.name()), Some("Rust".into()));
+    });
+
+    // Now register the LSP adapter late (simulating an extension loading after startup).
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-rust-language-server",
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), "::".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    cx.executor().run_until_parked();
+
+    // The language server should start and receive a DidOpenTextDocument notification
+    // for the already-open buffer.
+    let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+    assert_eq!(
+        fake_rust_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentItem {
+            uri: lsp::Uri::from_file_path(path!("/dir/test.rs")).unwrap(),
+            version: 0,
+            text: "const A: i32 = 1;".to_string(),
+            language_id: "rust".to_string(),
+        }
+    );
+
+    // The buffer should be configured with the language server's capabilities.
+    rust_buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .completion_triggers()
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            &[".".to_string(), "::".to_string()]
+        );
+    });
 }
 
 #[gpui::test]
@@ -4474,8 +4572,8 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             list_worktrees(&project, cx),
             [
+                (path!("/dir/b.rs").as_ref(), true),
                 (path!("/dir/a.rs").as_ref(), false),
-                (path!("/dir/b.rs").as_ref(), true)
             ],
         );
 
@@ -4899,6 +4997,85 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         .collect::<Vec<_>>();
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fully\nQualified\nName");
+}
+
+#[gpui::test]
+async fn test_supports_range_formatting_ignores_unrelated_language_servers(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+                ));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.ts": "",
+            "b.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    language_registry.add(rust_lang());
+
+    let mut typescript_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            name: "typescript-fake-language-server",
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let mut rust_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-fake-language-server",
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                document_range_formatting_provider: Some(lsp::OneOf::Left(false)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (typescript_buffer, _typescript_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .unwrap();
+    let (rust_buffer, _rust_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/b.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _typescript_language_server = typescript_language_servers.next().await.unwrap();
+    let _rust_language_server = rust_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    assert!(project.read_with(cx, |project, cx| {
+        project.supports_range_formatting(&typescript_buffer, cx)
+    }));
+    assert!(!project.read_with(cx, |project, cx| {
+        project.supports_range_formatting(&rust_buffer, cx)
+    }));
 }
 
 #[gpui::test(iterations = 10)]
@@ -6102,6 +6279,39 @@ async fn test_dirty_buffer_reloads_after_undo(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_buffer_file_change_to_binary_fails(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+
+    fs.write(
+        path!("/dir/file.txt").as_ref(),
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01",
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+
+    // Test that existing buffer is left untouched
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "");
+    });
+}
+
+#[gpui::test]
 async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -6244,6 +6454,289 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
         fs.load(path!("/dir/file2").as_ref()).await.unwrap(),
         "one\r\ntwo\r\nthree\r\nfour\r\n",
     );
+}
+
+#[gpui::test]
+async fn test_line_ending_user_settings_on_format(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let cases = [
+        (
+            "default",
+            None,
+            [
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::default()),
+            ],
+        ),
+        (
+            "detect",
+            Some(LineEndingSetting::Detect),
+            [
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::default()),
+            ],
+        ),
+        (
+            "prefer_lf",
+            Some(LineEndingSetting::PreferLf),
+            [
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::Unix),
+            ],
+        ),
+        (
+            "prefer_crlf",
+            Some(LineEndingSetting::PreferCrlf),
+            [
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::Windows),
+            ],
+        ),
+        (
+            "enforce_lf",
+            Some(LineEndingSetting::EnforceLf),
+            [
+                ("crlf_file.rs", LineEnding::Unix),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::Unix),
+            ],
+        ),
+        (
+            "enforce_crlf",
+            Some(LineEndingSetting::EnforceCrlf),
+            [
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Windows),
+                ("no_newline.rs", LineEnding::Windows),
+            ],
+        ),
+    ];
+
+    for (case_name, line_ending_setting, expected_line_endings) in cases {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "crlf_file.rs": "one\r\ntwo\r\nthree\r\n",
+                "lf_file.rs": "one\ntwo\nthree\n",
+                "no_newline.rs": "single line",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.line_ending = line_ending_setting;
+                });
+            });
+        });
+        cx.executor().run_until_parked();
+
+        assert_line_endings_after_format(
+            cx,
+            &project,
+            worktree_id,
+            case_name,
+            &expected_line_endings,
+        )
+        .await;
+    }
+}
+
+#[gpui::test]
+async fn test_line_ending_editorconfig_on_format_and_save(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let cases = [
+        (
+            "editorconfig lf",
+            "lf",
+            "crlf_file.rs",
+            LineEnding::Windows,
+            [
+                ("crlf_file.rs", LineEnding::Unix),
+                ("lf_file.rs", LineEnding::Unix),
+                ("no_newline.rs", LineEnding::Unix),
+            ],
+            "one\ntwo\nthree\n",
+        ),
+        (
+            "editorconfig crlf",
+            "crlf",
+            "lf_file.rs",
+            LineEnding::Unix,
+            [
+                ("crlf_file.rs", LineEnding::Windows),
+                ("lf_file.rs", LineEnding::Windows),
+                ("no_newline.rs", LineEnding::Windows),
+            ],
+            "one\r\ntwo\r\nthree\r\n",
+        ),
+    ];
+
+    for (
+        case_name,
+        editorconfig_end_of_line,
+        buffer_path,
+        initial_line_ending,
+        expected_line_endings,
+        expected_saved_contents,
+    ) in cases
+    {
+        let file_system = FakeFs::new(cx.executor());
+        file_system
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    ".editorconfig": format!("root = true\n[*.rs]\nend_of_line = {editorconfig_end_of_line}\n"),
+                    "crlf_file.rs": "one\r\ntwo\r\nthree\r\n",
+                    "lf_file.rs": "one\ntwo\nthree\n",
+                    "no_newline.rs": "single line",
+                }),
+            )
+            .await;
+
+        let project = Project::test(file_system.clone(), [path!("/dir").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+        cx.executor().run_until_parked();
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path(buffer_path)), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, _| {
+            assert_eq!(buffer.line_ending(), initial_line_ending);
+        });
+
+        assert_line_endings_after_format(
+            cx,
+            &project,
+            worktree_id,
+            case_name,
+            &expected_line_endings,
+        )
+        .await;
+
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer, cx))
+            .await
+            .unwrap();
+        let saved_path = PathBuf::from(path!("/dir")).join(buffer_path);
+        assert_eq!(
+            file_system.load(&saved_path).await.unwrap(),
+            expected_saved_contents,
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_line_ending_initialization_for_new_buffers(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let cases = [
+        (Some(LineEndingSetting::Detect), LineEnding::default()),
+        (Some(LineEndingSetting::PreferLf), LineEnding::Unix),
+        (Some(LineEndingSetting::PreferCrlf), LineEnding::Windows),
+        (Some(LineEndingSetting::EnforceLf), LineEnding::Unix),
+        (Some(LineEndingSetting::EnforceCrlf), LineEnding::Windows),
+    ];
+
+    for (line_ending_setting, expected_line_ending) in cases {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({})).await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.line_ending = line_ending_setting;
+                });
+            });
+        });
+        cx.executor().run_until_parked();
+
+        let created_buffer = project
+            .update(cx, |project, cx| project.create_buffer(None, false, cx))
+            .unwrap()
+            .await;
+        created_buffer.update(cx, |buffer, _| {
+            assert_eq!(buffer.line_ending(), expected_line_ending);
+        });
+
+        let local_buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("single line", None, false, cx)
+        });
+        local_buffer.update(cx, |buffer, _| {
+            assert_eq!(buffer.line_ending(), expected_line_ending);
+        });
+
+        let opened_missing_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/new_file.rs"), cx)
+            })
+            .await
+            .unwrap();
+        opened_missing_buffer.update(cx, |buffer, _| {
+            assert_eq!(buffer.line_ending(), expected_line_ending);
+        });
+    }
+}
+
+async fn assert_line_endings_after_format(
+    cx: &mut gpui::TestAppContext,
+    project: &Entity<Project>,
+    worktree_id: WorktreeId,
+    case_name: &str,
+    expected_line_endings: &[(&str, LineEnding)],
+) {
+    for (path, expected_line_ending) in expected_line_endings {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path(path)), cx)
+            })
+            .await
+            .unwrap();
+        let mut buffers = HashSet::default();
+        buffers.insert(buffer.clone());
+        project
+            .update(cx, |project, cx| {
+                project.format(
+                    buffers,
+                    project::lsp_store::LspFormatTarget::Buffers,
+                    false,
+                    project::lsp_store::FormatTrigger::Save,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, _| {
+            assert_eq!(
+                buffer.line_ending(),
+                *expected_line_ending,
+                "unexpected line ending for {path} in {case_name}"
+            );
+        });
+    }
 }
 
 #[gpui::test]
@@ -9090,6 +9583,68 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_uncommitted_diff_opened_before_unstaged_diff(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_contents = "one\ntwo\nthree\n";
+    let file_contents = "one\nTWO\nthree\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": file_contents,
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("file.txt", committed_contents.into())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file.txt", cx)
+        })
+        .await
+        .unwrap();
+
+    let uncommitted_diff_task = project.update(cx, |project, cx| {
+        project.open_uncommitted_diff(buffer.clone(), cx)
+    });
+    let unstaged_diff_task = project.update(cx, |project, cx| {
+        project.open_unstaged_diff(buffer.clone(), cx)
+    });
+    let (uncommitted_diff, _unstaged_diff) =
+        futures::future::join(uncommitted_diff_task, unstaged_diff_task).await;
+    let uncommitted_diff = uncommitted_diff.unwrap();
+    let _unstaged_diff = _unstaged_diff.unwrap();
+
+    cx.run_until_parked();
+
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            diff.snapshot(cx).hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                &snapshot,
+            ),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(HasSecondaryHunk),
+            )],
+        );
+    });
+}
+
 #[gpui::test(seeds(340, 472))]
 async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext) {
     use DiffHunkSecondaryStatus::*;
@@ -11758,7 +12313,8 @@ async fn search(
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
             }
-            SearchResult::LimitReached => {}
+            SearchResult::LimitReached | SearchResult::WaitingForScan | SearchResult::Searching => {
+            }
         }
     }
     Ok(results

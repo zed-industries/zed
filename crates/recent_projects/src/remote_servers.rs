@@ -12,7 +12,7 @@ use dev_container::{
 use editor::Editor;
 
 use extension_host::ExtensionStore;
-use futures::{FutureExt, channel::oneshot, future::Shared};
+use futures::{FutureExt, StreamExt as _, channel::oneshot, future::Shared};
 use gpui::{
     Action, AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task,
@@ -31,7 +31,6 @@ use settings::{
     RemoteProject, RemoteSettingsContent, Settings as _, SettingsStore, update_settings_file,
     watch_config_file,
 };
-use smol::stream::StreamExt as _;
 use std::{
     borrow::Cow,
     collections::BTreeSet,
@@ -45,8 +44,8 @@ use std::{
 
 use ui::{
     CommonAnimationExt, IconButtonShape, KeyBinding, List, ListItem, ListSeparator, Modal,
-    ModalFooter, ModalHeader, Navigable, NavigableEntry, Section, Tooltip, WithScrollbar,
-    prelude::*,
+    ModalFooter, ModalHeader, Navigable, NavigableEntry, ScrollAxes, Scrollbars, Section, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt,
@@ -488,21 +487,24 @@ impl ProjectPicker {
                     })
                     .log_err();
 
-                    let options = cx
-                        .update(|_, cx| (app_state.build_window_options)(None, cx))
-                        .log_err()?;
-                    let window = cx
-                        .open_window(options, |window, cx| {
+                    let window = if create_new_window {
+                        let options = cx
+                            .update(|_, cx| (app_state.build_window_options)(None, cx))
+                            .log_err()?;
+                        cx.open_window(options, |window, cx| {
                             let workspace = cx.new(|cx| {
                                 telemetry::event!("SSH Project Created");
                                 Workspace::new(None, project.clone(), app_state.clone(), window, cx)
                             });
                             cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
                         })
-                        .log_err()?;
+                        .log_err()
+                    } else {
+                        cx.window_handle().downcast::<MultiWorkspace>()
+                    }?;
 
                     let items = open_remote_project_with_existing_connection(
-                        connection, project, paths, app_state, window, None, cx,
+                        connection, project, paths, app_state, window, None, None, cx,
                     )
                     .await
                     .log_err();
@@ -2824,7 +2826,12 @@ impl RemoteServerProjects {
                             )
                             .size_full(),
                         )
-                        .vertical_scrollbar_for(&state.scroll_handle, window, cx),
+                        .custom_scrollbars(
+                            Scrollbars::always_visible(ScrollAxes::Vertical)
+                                .tracked_scroll_handle(&state.scroll_handle),
+                            window,
+                            cx,
+                        ),
                 ),
             )
             .footer(ModalFooter::new().end_slot({

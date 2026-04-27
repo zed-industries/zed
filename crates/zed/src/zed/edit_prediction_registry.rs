@@ -62,8 +62,9 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         let editors = editors.clone();
         let client = client.clone();
 
-        move |user_store, event, cx| {
-            if let client::user::Event::PrivateUserInfoUpdated = event {
+        move |user_store, event, cx| match event {
+            client::user::Event::PrivateUserInfoUpdated
+            | client::user::Event::OrganizationChanged => {
                 let provider_config = edit_prediction_provider_config_for_settings(cx);
                 assign_edit_prediction_providers(
                     &editors,
@@ -73,6 +74,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                     cx,
                 );
             }
+            _ => {}
         }
     })
     .detach();
@@ -274,6 +276,18 @@ fn assign_edit_prediction_provider(
         }
         Some(EditPredictionProviderConfig::Zed(model)) => {
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
+
+            if let Some(organization_configuration) =
+                user_store.read(cx).current_organization_configuration()
+            {
+                if !organization_configuration.edit_prediction.is_enabled {
+                    editor.set_edit_prediction_provider::<ZedEditPredictionDelegate>(
+                        None, window, cx,
+                    );
+
+                    return;
+                }
+            }
 
             if let Some(project) = editor.project() {
                 ep_store.update(cx, |ep_store, cx| {

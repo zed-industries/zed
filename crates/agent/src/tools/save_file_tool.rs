@@ -1,4 +1,4 @@
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use collections::FxHashSet;
 use futures::FutureExt as _;
@@ -13,12 +13,12 @@ use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 use super::tool_permissions::{
-    ResolvedProjectPath, SensitiveSettingsKind, authorize_symlink_access,
-    canonicalize_worktree_roots, path_has_symlink_escape, resolve_project_path,
-    sensitive_settings_kind,
+    ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
+    path_has_symlink_escape, resolve_project_path, sensitive_settings_kind,
 };
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_path,
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    authorize_with_sensitive_settings, decide_permission_for_path,
 };
 
 /// Saves files that have unsaved changes.
@@ -155,14 +155,17 @@ impl AgentTool for SaveFileTool {
                         break;
                     }
                 }
-                let title = match settings_kind {
-                    Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
-                    Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                    None => title,
-                };
                 let context =
                     crate::ToolPermissionContext::new(Self::NAME, confirmation_paths.clone());
-                let authorize = cx.update(|cx| event_stream.authorize(title, context, cx));
+                let authorize = cx.update(|cx| {
+                    authorize_with_sensitive_settings(
+                        settings_kind,
+                        context,
+                        &title,
+                        &event_stream,
+                        cx,
+                    )
+                });
                 authorize.await.map_err(|e| e.to_string())?;
             }
 
