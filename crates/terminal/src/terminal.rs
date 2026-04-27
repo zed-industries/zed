@@ -2689,14 +2689,10 @@ mod tests {
     };
     use async_channel::Receiver;
     use collections::HashMap;
-    use gpui::{
-        Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-        Point, TestAppContext, VisualContext, VisualTestContext, bounds, point, size,
-    };
+    use gpui::{Entity, Pixels, Point, TestAppContext, VisualTestContext, bounds, point, size};
     use parking_lot::Mutex;
     use rand::{Rng, distr, rngs::StdRng};
     use task::{Shell, ShellBuilder};
-    use util::default;
 
     #[cfg(not(target_os = "windows"))]
     fn init_test(cx: &mut TestAppContext) {
@@ -2748,48 +2744,6 @@ mod tests {
         (terminal, completion_rx)
     }
 
-    fn init_ctrl_click_hyperlink_test(cx: &mut TestAppContext, output: &[u8]) -> Entity<Terminal> {
-        cx.update(|cx| {
-            let settings_store = settings::SettingsStore::test(cx);
-            cx.set_global(settings_store);
-        });
-
-        let terminal = cx.new(|cx| {
-            TerminalBuilder::new_display_only(
-                CursorShape::default(),
-                AlternateScroll::On,
-                None,
-                0,
-                cx.background_executor(),
-                PathStyle::local(),
-            )
-            .unwrap()
-            .subscribe(cx)
-        });
-
-        terminal.update(cx, |terminal, cx| {
-            terminal.write_output(output, cx);
-        });
-
-        cx.run_until_parked();
-
-        terminal.update(cx, |terminal, _cx| {
-            let term_lock = terminal.term.lock();
-            terminal.last_content = Terminal::make_content(&term_lock, &terminal.last_content);
-            drop(term_lock);
-
-            let terminal_bounds = TerminalBounds::new(
-                px(20.0),
-                px(10.0),
-                bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
-            );
-            terminal.last_content.terminal_bounds = terminal_bounds;
-            terminal.events.clear();
-        });
-
-        terminal
-    }
-
     async fn init_terminal_test_with_window<'a>(
         cx: &'a mut TestAppContext,
         initial_content: &[u8],
@@ -2833,66 +2787,6 @@ mod tests {
         });
 
         (terminal, window)
-    }
-
-    fn ctrl_mouse_down_at(
-        terminal: &mut Terminal,
-        position: Point<Pixels>,
-        cx: &mut Context<Terminal>,
-    ) {
-        let mouse_down = MouseDownEvent {
-            button: MouseButton::Left,
-            position,
-            modifiers: Modifiers::secondary_key(),
-            click_count: 1,
-            first_mouse: true,
-        };
-        terminal.mouse_down(&mouse_down, cx);
-    }
-
-    fn ctrl_mouse_drag_to(
-        terminal: &mut Terminal,
-        position: Point<Pixels>,
-        cx: &mut Context<Terminal>,
-    ) {
-        let terminal_bounds = terminal.last_content.terminal_bounds.bounds;
-        let drag_event = MouseMoveEvent {
-            position,
-            pressed_button: Some(MouseButton::Left),
-            modifiers: Modifiers::secondary_key(),
-        };
-        terminal.mouse_drag(&drag_event, terminal_bounds, cx);
-    }
-
-    fn ctrl_mouse_move_to(
-        position: Point<Pixels>,
-        terminal: &mut Terminal,
-        window: &mut Window,
-        cx: &mut Context<Terminal>,
-    ) {
-        let modifiers = Modifiers::secondary_key();
-        let move_event = MouseMoveEvent {
-            position,
-            modifiers,
-            ..default()
-        };
-        window.set_modifiers(modifiers);
-        window.simulate_mouse_move(position, cx);
-        terminal.mouse_move(&move_event, cx);
-    }
-
-    fn ctrl_mouse_up_at(
-        terminal: &mut Terminal,
-        position: Point<Pixels>,
-        cx: &mut Context<Terminal>,
-    ) {
-        let mouse_up = MouseUpEvent {
-            button: MouseButton::Left,
-            position,
-            modifiers: Modifiers::secondary_key(),
-            click_count: 1,
-        };
-        terminal.mouse_up(&mouse_up, cx);
     }
 
     #[gpui::test]
@@ -3438,86 +3332,112 @@ mod tests {
         );
     }
 
-    macro_rules! any_event_matches {
-        ($terminal:ident, $event:pat) => {
-            $terminal.events.iter().any(|event| matches!(event, $event))
+    mod hyperlinks {
+        use super::init_terminal_test_with_window;
+        use crate::*;
+        use alacritty_terminal::index::{Column, Line, Point as AlacPoint};
+        use gpui::{
+            Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+            Point, TestAppContext, VisualContext, bounds, point, size,
         };
-    }
+        use util::default;
 
-    #[gpui::test]
-    async fn test_hyperlink_ctrl_click_same_position(cx: &mut TestAppContext) {
-        let terminal = init_ctrl_click_hyperlink_test(cx, b"Visit https://zed.dev/ for more\r\n");
+        fn init_ctrl_click_hyperlink_test(
+            cx: &mut TestAppContext,
+            output: &[u8],
+        ) -> Entity<Terminal> {
+            cx.update(|cx| {
+                let settings_store = settings::SettingsStore::test(cx);
+                cx.set_global(settings_store);
+            });
 
-        terminal.update(cx, |terminal, cx| {
-            let click_position = point(px(80.0), px(10.0));
-            ctrl_mouse_down_at(terminal, click_position, cx);
-            ctrl_mouse_up_at(terminal, click_position, cx);
+            let terminal = cx.new(|cx| {
+                TerminalBuilder::new_display_only(
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    0,
+                    cx.background_executor(),
+                    PathStyle::local(),
+                )
+                .unwrap()
+                .subscribe(cx)
+            });
 
-            assert!(
-                any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, true)),
-                "Should have ProcessHyperlink event when ctrl+clicking on same hyperlink position"
-            );
-        });
-    }
+            terminal.update(cx, |terminal, cx| {
+                terminal.write_output(output, cx);
+            });
 
-    #[gpui::test]
-    async fn test_hyperlink_ctrl_click_drag_outside_bounds(cx: &mut TestAppContext) {
-        let terminal = init_ctrl_click_hyperlink_test(
-            cx,
-            b"Visit https://zed.dev/ for more\r\nThis is another line\r\n",
-        );
+            cx.run_until_parked();
 
-        terminal.update(cx, |terminal, cx| {
-            let down_position = point(px(80.0), px(10.0));
-            let up_position = point(px(10.0), px(50.0));
+            terminal.update(cx, |terminal, _cx| {
+                let term_lock = terminal.term.lock();
+                terminal.last_content = Terminal::make_content(&term_lock, &terminal.last_content);
+                drop(term_lock);
 
-            ctrl_mouse_down_at(terminal, down_position, cx);
-            ctrl_mouse_drag_to(terminal, up_position, cx);
-            ctrl_mouse_up_at(terminal, up_position, cx);
+                let terminal_bounds = TerminalBounds::new(
+                    px(20.0),
+                    px(10.0),
+                    bounds(point(px(0.0), px(0.0)), size(px(400.0), px(400.0))),
+                );
+                terminal.last_content.terminal_bounds = terminal_bounds;
+                terminal.events.clear();
+            });
 
-            assert!(
-                !any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, _)),
-                "Should NOT have ProcessHyperlink event when dragging outside the hyperlink"
-            );
-        });
-    }
+            terminal
+        }
 
-    #[gpui::test]
-    async fn test_hyperlink_ctrl_click_drag_within_bounds(cx: &mut TestAppContext) {
-        let terminal = init_ctrl_click_hyperlink_test(cx, b"Visit https://zed.dev/ for more\r\n");
-
-        terminal.update(cx, |terminal, cx| {
-            let down_position = point(px(70.0), px(10.0));
-            let up_position = point(px(130.0), px(10.0));
-
-            ctrl_mouse_down_at(terminal, down_position, cx);
-            ctrl_mouse_drag_to(terminal, up_position, cx);
-            ctrl_mouse_up_at(terminal, up_position, cx);
-
-            assert!(
-                any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, true)),
-                "Should have ProcessHyperlink event when dragging within hyperlink bounds"
-            );
-        });
-    }
-
-    impl From<(&str, RangeInclusive<(i32, usize)>, usize)> for HoveredWord {
-        fn from(value: (&str, RangeInclusive<(i32, usize)>, usize)) -> Self {
-            Self {
-                word: value.0.to_string(),
-                word_match: AlacPoint::new(Line(value.1.start().0), Column(value.1.start().1))
-                    ..=AlacPoint::new(Line(value.1.end().0), Column(value.1.end().1)),
-                id: value.2,
+        impl<T: AsRef<str>> From<(T, RangeInclusive<(i32, usize)>, usize)> for HoveredWord {
+            fn from(value: (T, RangeInclusive<(i32, usize)>, usize)) -> Self {
+                Self {
+                    word: value.0.as_ref().to_string(),
+                    word_match: AlacPoint::new(Line(value.1.start().0), Column(value.1.start().1))
+                        ..=AlacPoint::new(Line(value.1.end().0), Column(value.1.end().1)),
+                    id: value.2,
+                }
             }
         }
-    }
 
-    #[gpui::test]
-    async fn test_hyperlink_hover_with_changing_content(cx: &mut TestAppContext) {
-        fn check_hovered_word_is_zed_dev(
+        trait WithLineAndId {
+            fn with_line(&self, line: i32) -> Self;
+            fn with_id(&self, id: usize) -> Self;
+            fn with_line_and_id(&self, line: i32, id: usize) -> Self;
+        }
+
+        impl WithLineAndId for HoveredWord {
+            fn with_line(&self, line: i32) -> Self {
+                (
+                    self.word.clone(),
+                    (line, self.word_match.start().column.0)
+                        ..=(line, self.word_match.end().column.0),
+                    self.id,
+                )
+                    .into()
+            }
+
+            fn with_id(&self, id: usize) -> Self {
+                Self {
+                    word: self.word.clone(),
+                    word_match: self.word_match.clone(),
+                    id,
+                }
+            }
+
+            fn with_line_and_id(&self, line: i32, id: usize) -> Self {
+                (
+                    self.word.clone(),
+                    (line, self.word_match.start().column.0)
+                        ..=(line, self.word_match.end().column.0),
+                    id,
+                )
+                    .into()
+            }
+        }
+
+        fn check_hovered_word(
             terminal: &mut Terminal,
             expected_hovered_word: Option<&HoveredWord>,
-            source_location: &str,
+            source_location: String,
         ) {
             assert_eq!(
                 terminal.last_content().last_hovered_word.as_ref(),
@@ -3529,8 +3449,8 @@ mod tests {
 
         fn check_visible_lines_match(
             terminal: &mut Terminal,
-            expected_lines: impl IntoIterator<Item = (usize, &'static str)>,
-            source_location: &str,
+            expected_lines: impl IntoIterator<Item = (i32, &'static str)>,
+            source_location: String,
         ) {
             let lines = visible_lines(terminal);
             let mut expected_lines = expected_lines.into_iter();
@@ -3541,40 +3461,46 @@ mod tests {
                 };
                 assert_eq!(
                     *line, expected_line,
-                    "Mismatched line at line {line} at {}",
+                    "Mismatched line at line {line} at {} {lines:#?}",
                     source_location
                 );
                 assert_eq!(
                     *text, expected_text,
-                    "Mismatched text at line {line} at {}",
+                    "Mismatched text at line {line} at {} {lines:#?}",
                     source_location
                 );
             }
 
             assert!(
                 expected_lines.next().is_none(),
-                "Extra expected lines at {}",
+                "Extra expected lines at {} {lines:#?}",
                 source_location
             )
         }
 
-        fn visible_lines(terminal: &mut Terminal) -> Vec<(usize, String)> {
+        fn visible_lines(terminal: &mut Terminal) -> Vec<(i32, String)> {
             let term = terminal.term.lock_unfair();
             let grid = term.grid();
-            let start_line = grid.display_offset();
-            let end_line = start_line + grid.screen_lines();
             let columns = grid.columns();
-            (start_line..end_line)
+            // From Grid::display_iter()
+            let start_line = Line(-(grid.display_offset() as i32));
+            let end_line = min(start_line + grid.screen_lines(), grid.bottommost_line());
+            (start_line.0..end_line.0)
                 .map(|line| {
                     (
                         line,
                         term.bounds_to_string(
-                            AlacPoint::new(Line(line as i32), Column(0)),
-                            AlacPoint::new(Line(line as i32), Column(columns)),
+                            AlacPoint::new(Line(line), Column(0)),
+                            AlacPoint::new(Line(line), Column(columns)),
                         ),
                     )
                 })
                 .collect()
+        }
+
+        fn unthrottle(terminal: &mut Terminal) {
+            // Suppress hyperlink throttling for testing
+            terminal.last_mouse_move_time = Instant::now() - FIND_HYPERLINK_THROTTLE_MS * 2;
         }
 
         fn ctrl_mouse_move_to_and_sync(
@@ -3583,9 +3509,21 @@ mod tests {
             window: &mut Window,
             cx: &mut Context<Terminal>,
         ) {
+            unthrottle(terminal);
             ctrl_mouse_move_to(position, terminal, window, cx);
-            // Suppress hyperlink throttling for testing
-            terminal.last_mouse_move_time = Instant::now() - FIND_HYPERLINK_THROTTLE_MS * 2;
+            unthrottle(terminal);
+            terminal.sync(window, cx);
+        }
+
+        fn try_modifiers_change_and_sync(
+            modifiers: &Modifiers,
+            terminal: &mut Terminal,
+            window: &mut Window,
+            cx: &mut Context<Terminal>,
+        ) {
+            unthrottle(terminal);
+            terminal.try_modifiers_change(modifiers, window, cx);
+            unthrottle(terminal);
             terminal.sync(window, cx);
         }
 
@@ -3600,78 +3538,314 @@ mod tests {
                 terminal.write_output(output.as_bytes(), cx);
                 terminal.write_output(b"\n", cx);
             }
-            // Suppress hyperlink throttling for testing
-            terminal.last_mouse_move_time = Instant::now() - FIND_HYPERLINK_THROTTLE_MS * 2;
+            unthrottle(terminal);
             terminal.sync(window, cx);
         }
 
-        let (terminal, cx) = init_terminal_test_with_window(cx, b"").await;
-        cx.update_window_entity(&terminal, |terminal, window, cx| {
-            macro_rules! write_output_lines_and_sync {
-                ($output:expr, $repeat:expr) => {
-                    output_lines_and_sync($output, $repeat, terminal, window, cx)
-                };
-            }
+        fn scroll_up_by_and_sync(
+            lines: usize,
+            terminal: &mut Terminal,
+            window: &mut Window,
+            cx: &mut Context<Terminal>,
+        ) {
+            unthrottle(terminal);
+            terminal.scroll_up_by(lines);
+            unthrottle(terminal);
+            terminal.sync(window, cx);
+        }
 
-            macro_rules! ctrl_mouse_move_to_and_sync {
-                ($position:expr) => {
-                    ctrl_mouse_move_to_and_sync($position, terminal, window, cx)
-                };
-            }
+        fn ctrl_mouse_down_at(
+            terminal: &mut Terminal,
+            position: Point<Pixels>,
+            cx: &mut Context<Terminal>,
+        ) {
+            let mouse_down = MouseDownEvent {
+                button: MouseButton::Left,
+                position,
+                modifiers: Modifiers::secondary_key(),
+                click_count: 1,
+                first_mouse: true,
+            };
+            terminal.mouse_down(&mouse_down, cx);
+        }
 
-            macro_rules! check_visible_lines_match {
-                ($expected_lines:expr) => {
-                    let source_location = format!("{}:{}", std::file!(), std::line!());
-                    check_visible_lines_match(terminal, $expected_lines, &source_location)
-                };
-            }
+        fn ctrl_mouse_drag_to(
+            terminal: &mut Terminal,
+            position: Point<Pixels>,
+            cx: &mut Context<Terminal>,
+        ) {
+            let terminal_bounds = terminal.last_content.terminal_bounds.bounds;
+            let drag_event = MouseMoveEvent {
+                position,
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Modifiers::secondary_key(),
+            };
+            terminal.mouse_drag(&drag_event, terminal_bounds, cx);
+        }
 
-            macro_rules! check_hovered_word {
-                ($expected_hovered_word:expr) => {
-                    let source_location = format!("{}:{}", std::file!(), std::line!());
-                    check_hovered_word_is_zed_dev(
-                        terminal,
-                        $expected_hovered_word,
-                        &source_location,
-                    )
-                };
-            }
+        fn ctrl_mouse_move_to(
+            position: Point<Pixels>,
+            terminal: &mut Terminal,
+            window: &mut Window,
+            cx: &mut Context<Terminal>,
+        ) {
+            let modifiers = Modifiers::secondary_key();
+            let move_event = MouseMoveEvent {
+                position,
+                modifiers,
+                ..default()
+            };
+            window.set_modifiers(modifiers);
+            window.simulate_mouse_move(position, cx);
+            terminal.mouse_move(&move_event, cx);
+        }
 
-            const OUTPUT: &str = "Visit https://zed.dev/ for more";
-            const ZED_DEV_STR: &str = "https://zed.dev/";
-            const ZED_DEV_PT: Point<Pixels> = point(px(30.0), px(2.5));
+        fn ctrl_mouse_up_at(
+            terminal: &mut Terminal,
+            position: Point<Pixels>,
+            cx: &mut Context<Terminal>,
+        ) {
+            let mouse_up = MouseUpEvent {
+                button: MouseButton::Left,
+                position,
+                modifiers: Modifiers::secondary_key(),
+                click_count: 1,
+            };
+            terminal.mouse_up(&mouse_up, cx);
+        }
 
-            // Set initial expected hovered word
-            let mut expected_hovered_word: HoveredWord = (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
-            write_output_lines_and_sync!(OUTPUT, 1);
-            ctrl_mouse_move_to_and_sync!(ZED_DEV_PT);
-            check_hovered_word!(Some(&expected_hovered_word));
+        macro_rules! any_event_matches {
+            ($terminal:ident, $event:pat) => {
+                $terminal.events.iter().any(|event| matches!(event, $event))
+            };
+        }
 
-            // Existing hovered_word IS reused when viewport is static
-            write_output_lines_and_sync!(OUTPUT, 1);
-            check_visible_lines_match!(vec![(0, OUTPUT), (1, OUTPUT)]);
-            check_hovered_word!(Some(&expected_hovered_word));
+        #[gpui::test]
+        async fn test_ctrl_click_same_position(cx: &mut TestAppContext) {
+            let terminal =
+                init_ctrl_click_hyperlink_test(cx, b"Visit https://zed.dev/ for more\r\n");
 
-            // Existing hovered_word IS NOT reused when viewport is changing (total lines changed,
-            // but display offset did not have a corresponding change) AND new hovered_word is set
-            // if secondary is held.
-            expected_hovered_word.id += 1;
-            write_output_lines_and_sync!(OUTPUT, 8);
-            check_visible_lines_match!(vec![
-                (0, OUTPUT),
-                (1, OUTPUT),
-                (2, OUTPUT),
-                (3, OUTPUT),
-                (4, OUTPUT),
-                (5, ""),
-            ]);
-            check_hovered_word!(Some(&expected_hovered_word));
+            terminal.update(cx, |terminal, cx| {
+            let click_position = point(px(80.0), px(10.0));
+            ctrl_mouse_down_at(terminal, click_position, cx);
+            ctrl_mouse_up_at(terminal, click_position, cx);
 
-            // TODO: Add more test cases for new content
+            assert!(
+                any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, true)),
+                "Should have ProcessHyperlink event when ctrl+clicking on same hyperlink position"
+            );
         });
-    }
+        }
 
-    // TODO: Add hyperlink test for changing modifiers
+        #[gpui::test]
+        async fn test_ctrl_click_drag_outside_bounds(cx: &mut TestAppContext) {
+            let terminal = init_ctrl_click_hyperlink_test(
+                cx,
+                b"Visit https://zed.dev/ for more\r\nThis is another line\r\n",
+            );
+
+            terminal.update(cx, |terminal, cx| {
+                let down_position = point(px(80.0), px(10.0));
+                let up_position = point(px(10.0), px(50.0));
+
+                ctrl_mouse_down_at(terminal, down_position, cx);
+                ctrl_mouse_drag_to(terminal, up_position, cx);
+                ctrl_mouse_up_at(terminal, up_position, cx);
+
+                assert!(
+                    !any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, _)),
+                    "Should NOT have ProcessHyperlink event when dragging outside the hyperlink"
+                );
+            });
+        }
+
+        #[gpui::test]
+        async fn test_ctrl_click_drag_within_bounds(cx: &mut TestAppContext) {
+            let terminal =
+                init_ctrl_click_hyperlink_test(cx, b"Visit https://zed.dev/ for more\r\n");
+
+            terminal.update(cx, |terminal, cx| {
+                let down_position = point(px(70.0), px(10.0));
+                let up_position = point(px(130.0), px(10.0));
+
+                ctrl_mouse_down_at(terminal, down_position, cx);
+                ctrl_mouse_drag_to(terminal, up_position, cx);
+                ctrl_mouse_up_at(terminal, up_position, cx);
+
+                assert!(
+                    any_event_matches!(terminal, InternalEvent::ProcessHyperlink(_, true)),
+                    "Should have ProcessHyperlink event when dragging within hyperlink bounds"
+                );
+            });
+        }
+
+        #[gpui::test]
+        async fn test_ctrl_hover_with_changing_content(cx: &mut TestAppContext) {
+            let (terminal, cx) = init_terminal_test_with_window(cx, b"").await;
+            cx.update_window_entity(&terminal, |terminal, window, cx| {
+                macro_rules! ctrl_mouse_move_to_and_sync {
+                    ($position:expr) => {
+                        ctrl_mouse_move_to_and_sync($position, terminal, window, cx)
+                    };
+                }
+
+                macro_rules! write_output_lines_and_sync {
+                    ($output:expr, $repeat:expr) => {
+                        output_lines_and_sync($output, $repeat, terminal, window, cx)
+                    };
+                }
+
+                macro_rules! scroll_up_by_and_sync {
+                    ($lines:expr) => {
+                        scroll_up_by_and_sync($lines, terminal, window, cx)
+                    };
+                }
+
+                macro_rules! source_location {
+                    () => {
+                        format!("{}:{}", std::file!(), std::line!())
+                    };
+                }
+
+                macro_rules! check_visible_lines_match {
+                    ($expected_lines:expr) => {
+                        check_visible_lines_match(terminal, $expected_lines, source_location!())
+                    };
+                }
+
+                macro_rules! check_hovered_word {
+                    ($expected_hovered_word:expr) => {
+                        check_hovered_word(terminal, $expected_hovered_word, source_location!())
+                    };
+                }
+
+                const OUTPUT: &str = "Visit https://zed.dev/ for more";
+                const ZED_DEV_STR: &str = "https://zed.dev/";
+                const ZED_DEV_PT: Point<Pixels> = point(px(30.0), px(2.5));
+
+                // Set initial expected hovered word
+                let mut expected_hovered_word: HoveredWord =
+                    (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
+                write_output_lines_and_sync!(OUTPUT, 1);
+                check_visible_lines_match!(vec![(0, OUTPUT)]);
+                ctrl_mouse_move_to_and_sync!(ZED_DEV_PT);
+                check_hovered_word!(Some(&expected_hovered_word));
+
+                // Existing hovered_word IS reused when viewport is static
+                write_output_lines_and_sync!(OUTPUT, 1);
+                check_visible_lines_match!(vec![(0, OUTPUT), (1, OUTPUT)]);
+                check_hovered_word!(Some(&expected_hovered_word));
+
+                // Existing hovered_word IS NOT reused when viewport is changing (total lines changed,
+                // but display offset did not have a corresponding change) AND new hovered_word is set
+                // if secondary is held.
+                write_output_lines_and_sync!(OUTPUT, 8);
+                check_visible_lines_match!(vec![
+                    (0, OUTPUT),
+                    (1, OUTPUT),
+                    (2, OUTPUT),
+                    (3, OUTPUT),
+                    (4, OUTPUT),
+                ]);
+                expected_hovered_word = expected_hovered_word.with_id(expected_hovered_word.id + 1);
+                check_hovered_word!(Some(&expected_hovered_word));
+
+                // Existing hovered word IS NOT reused when scrolling
+                scroll_up_by_and_sync!(2);
+                ctrl_mouse_move_to_and_sync!(ZED_DEV_PT);
+                check_visible_lines_match!(vec![
+                    (-2, OUTPUT),
+                    (-1, OUTPUT),
+                    (0, OUTPUT),
+                    (1, OUTPUT),
+                    (2, OUTPUT),
+                    (3, OUTPUT),
+                ]);
+                expected_hovered_word =
+                    expected_hovered_word.with_line_and_id(-2, expected_hovered_word.id + 2);
+                check_hovered_word!(Some(&expected_hovered_word));
+
+                // Existing hovered word IS reused when total lines changed, but visible lines unchanged
+                write_output_lines_and_sync!(OUTPUT, 3);
+                check_visible_lines_match!(vec![
+                    (-5, OUTPUT),
+                    (-4, OUTPUT),
+                    (-3, OUTPUT),
+                    (-2, OUTPUT),
+                    (-1, OUTPUT),
+                    (0, OUTPUT),
+                ]);
+                expected_hovered_word = expected_hovered_word.with_line(-5);
+                check_hovered_word!(Some(&expected_hovered_word));
+            });
+        }
+
+        #[gpui::test]
+        async fn test_ctrl_hover_with_modifier_change_only(cx: &mut TestAppContext) {
+            let (terminal, cx) = init_terminal_test_with_window(cx, b"").await;
+            cx.update_window_entity(&terminal, |terminal, window, cx| {
+                macro_rules! ctrl_mouse_move_to_and_sync {
+                    ($position:expr) => {
+                        ctrl_mouse_move_to_and_sync($position, terminal, window, cx)
+                    };
+                }
+
+                macro_rules! try_modifiers_change_and_sync {
+                    ($modifiers:expr) => {
+                        try_modifiers_change_and_sync(&$modifiers, terminal, window, cx)
+                    };
+                }
+
+                macro_rules! write_output_lines_and_sync {
+                    ($output:expr, $repeat:expr) => {
+                        output_lines_and_sync($output, $repeat, terminal, window, cx)
+                    };
+                }
+
+                macro_rules! source_location {
+                    () => {
+                        format!("{}:{}", std::file!(), std::line!())
+                    };
+                }
+
+                macro_rules! check_visible_lines_match {
+                    ($expected_lines:expr) => {
+                        check_visible_lines_match(terminal, $expected_lines, source_location!())
+                    };
+                }
+
+                macro_rules! check_hovered_word {
+                    ($expected_hovered_word:expr) => {
+                        check_hovered_word(terminal, $expected_hovered_word, source_location!())
+                    };
+                }
+
+                const OUTPUT: &str = "Visit https://zed.dev/ for more";
+                const ZED_DEV_STR: &str = "https://zed.dev/";
+                const ZED_DEV_PT: Point<Pixels> = point(px(30.0), px(2.5));
+
+                // Set initial expected hovered word
+                let mut expected_hovered_word: HoveredWord =
+                    (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
+                write_output_lines_and_sync!(OUTPUT, 1);
+                check_visible_lines_match!(vec![(0, OUTPUT)]);
+                ctrl_mouse_move_to_and_sync!(ZED_DEV_PT);
+                check_hovered_word!(Some(&expected_hovered_word));
+
+                for _ in 0..10 {
+                    // Existing hovered_word cleared when secondary not held
+                    try_modifiers_change_and_sync!(default());
+                    check_hovered_word!(None);
+
+                    // Existing hovered_word set when secondary is held
+                    try_modifiers_change_and_sync!(Modifiers::secondary_key());
+                    expected_hovered_word =
+                        expected_hovered_word.with_id(expected_hovered_word.id + 1);
+                    check_hovered_word!(Some(&expected_hovered_word));
+                }
+            });
+        }
+    }
 
     /// Test that kill_active_task properly terminates both the foreground process
     /// and the shell, allowing wait_for_completed_task to complete and output to be captured.
