@@ -1538,16 +1538,18 @@ impl SettingsWindow {
         .detach();
 
         if let Some(extension_events) = extension::ExtensionEvents::try_global(cx) {
-            cx.subscribe_in(&extension_events, window, |this, _, event, window, cx| {
-                match event {
+            cx.subscribe_in(
+                &extension_events,
+                window,
+                |this, _, event, window, cx| match event {
                     extension::Event::ExtensionInstalled(_)
                     | extension::Event::ExtensionUninstalled(_)
                     | extension::Event::ExtensionsInstalledChanged => {
                         this.rebuild_pages(window, cx);
                     }
                     extension::Event::ConfigureExtensionRequested(_) => {}
-                }
-            })
+                },
+            )
             .detach();
         }
 
