@@ -37,11 +37,32 @@ use std::{
 /// Strategy injected into `#[gpui::property_test]` tests to control the seed
 /// given to the scheduler. Doesn't shrink, since all scheduler seeds are
 /// equivalent in complexity. If `$SEED` is set, it always uses that value.
+///
+/// Note: this function is not intended to be used directly. Rather, it is
+/// public so that it can be used from the `property_test` macro.
 pub fn seed_strategy() -> impl Strategy<Value = u64> {
     match std::env::var("SEED") {
         Ok(val) => Just(val.parse().unwrap()).boxed(),
         Err(_) => any::<u64>().no_shrink().boxed(),
     }
+}
+
+/// Applies a fixed RNG seed to a proptest config so that case generation
+/// is deterministic. Uses `$SEED` if set, otherwise defaults to `0`.
+/// This bridges the GPUI `SEED` env var to proptest's RNG seed, so that
+/// a single variable controls both the scheduler seed and case generation.
+///
+/// Note: this function is not intended to be used directly. Rather, it is
+/// public so that it can be used from the `property_test` macro.
+pub fn apply_seed_to_proptest_config(
+    mut config: proptest::test_runner::Config,
+) -> proptest::test_runner::Config {
+    let seed = env::var("SEED")
+        .ok()
+        .and_then(|val| val.parse::<u64>().ok())
+        .unwrap_or(0);
+    config.rng_seed = proptest::test_runner::RngSeed::Fixed(seed);
+    config
 }
 
 /// Similar to [`run_test`], but only runs the callback once, allowing
@@ -186,7 +207,7 @@ pub fn observe<T: 'static>(entity: &Entity<T>, cx: &mut TestAppContext) -> Obser
     let (tx, rx) = async_channel::unbounded();
     let _subscription = cx.update(|cx| {
         cx.observe(entity, move |_, _| {
-            let _ = pollster::block_on(tx.send(()));
+            let _ = gpui::block_on(tx.send(()));
         })
     });
     let rx = Box::pin(rx);

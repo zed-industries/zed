@@ -31,6 +31,7 @@ Zed supports these providers with your own API keys:
 - [Ollama](#ollama)
 - [OpenAI](#openai)
 - [OpenAI API Compatible](#openai-api-compatible)
+- [OpenCode](#opencode)
 - [OpenRouter](#openrouter)
 - [Vercel AI Gateway](#vercel-ai-gateway)
 - [Vercel](#vercel-v0)
@@ -167,7 +168,7 @@ Anthropic models on Bedrock support a 1M token extended context window through t
 }
 ```
 
-Zed enables extended context for supported models (Claude Sonnet 4.5 and Claude Opus 4.6). Extended context usage may increase API costs—refer to AWS Bedrock pricing for details.
+Zed enables extended context for supported models (Claude Sonnet 4.5, Claude Opus 4.6, and Claude Opus 4.7). Extended context usage may increase API costs—refer to AWS Bedrock pricing for details.
 
 #### Image Support {#bedrock-image-support}
 
@@ -607,11 +608,80 @@ By default, OpenAI-compatible models inherit the following capabilities:
 - `parallel_tool_calls`: false (does not support `parallel_tool_calls` parameter)
 - `prompt_cache_key`: false (does not support `prompt_cache_key` parameter)
 - `chat_completions`: true (calls the `/chat/completions` endpoint)
+- `interleaved_reasoning`: false (thinking tokens are sent inline in message text; set to true to send them as a dedicated `reasoning_content` field for models that expect it)
 
 If a provider exposes models that only work with the Responses API, set `chat_completions` to `false` for those entries. Zed uses the Responses endpoint for these models.
 
 Note that LLM API keys aren't stored in your settings file.
 So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the example above, it would be `TOGETHER_AI_API_KEY=<your api key>`.
+
+### OpenCode {#opencode}
+
+OpenCode offers multiple ways to access AI models:
+
+- [OpenCode Zen](https://opencode.ai/zen/): a pay-as-you-go subscription with access to a large number of tested and verified models
+- [OpenCode Zen Free](https://opencode.ai/docs/zen/#pricing): free access to a limited set of models, with data and feedback collected to improve the models
+- [OpenCode Go](https://opencode.ai/go): a low-cost monthly subscription with access to a validated set of open coding models
+
+1. Visit [OpenCode Console](https://opencode.ai/auth) and create an account
+2. Free models are available without payment. To use Zen or Go models, make sure you have enough credits or an active subscription
+3. Generate an API key from the "API Keys" section in the OpenCode Console
+4. Open the settings view (`agent: open settings`) and go to the OpenCode section
+5. Enter your OpenCode API key
+
+The OpenCode API key will be saved in your keychain.
+
+Zed will also use the `OPENCODE_API_KEY` environment variable if it's defined.
+
+By default, models from all subscription types are shown. Optionally, you can hide subscriptions that are not relevant to you by clicking the toggles or by adding the following to your settings:
+
+```json [settings]
+{
+  "language_models": {
+    "opencode": {
+      "show_zen_models": true,
+      "show_go_models": false,
+      "show_free_models": false
+    }
+  }
+}
+```
+
+#### Custom Models {#opencode-custom-models}
+
+The Zed agent comes pre-configured with OpenCode models. If you wish to use newer models or models with custom endpoints, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
+
+```json [settings]
+{
+  "language_models": {
+    "opencode": {
+      "available_models": [
+        {
+          "name": "my-custom-model",
+          "display_name": "My Custom Model",
+          "max_tokens": 123456,
+          "max_output_tokens": 98765,
+          "protocol": "openai_chat",
+          "subscription": "go",
+          "custom_model_api_url": "https://example.com/zen"
+        }
+      ]
+    }
+  }
+}
+```
+
+The available configuration options for custom models are:
+
+- `name` (required): model id used by OpenCode, for example `glm-9000`
+- `display_name` (optional): human-readable model name shown in the UI, for example `Custom GLM 9000`
+- `max_tokens` (required): maximum model context window size, for example `1000000`
+- `max_output_tokens` (optional): maximum tokens the model can generate, for example `64000`
+- `protocol` (required): model API protocol, one of `"anthropic"`, `"openai_responses"`, `"openai_chat"`, or `"google"`
+- `subscription` (optional): `"zen"`, `"go"`, or `"free"` (defaults to `"zen"`)
+- `custom_model_api_url` (optional): custom API base URL to use instead of the default OpenCode API
+
+Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### OpenRouter {#openrouter}
 
@@ -762,7 +832,7 @@ You can also set a custom endpoint for Vercel AI Gateway in your settings file:
 [Vercel v0](https://v0.app/docs/api/model) is a model for generating full-stack apps, with framework-aware completions for stacks like Next.js and Vercel.
 It supports text and image inputs and provides fast streaming responses.
 
-The v0 models are [OpenAI-compatible models](/#openai-api-compatible), and Vercel appears as a dedicated provider in the panel's settings view.
+The v0 models are [OpenAI-compatible models](#openai-api-compatible), and Vercel appears as a dedicated provider in the panel's settings view.
 
 To start using it with Zed, ensure you have first created a [v0 API key](https://v0.dev/chat/settings/keys).
 Once you have it, paste it directly into the Vercel provider section in the panel's settings view.

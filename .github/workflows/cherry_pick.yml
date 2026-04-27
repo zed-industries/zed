@@ -44,8 +44,10 @@ jobs:
         BRANCH: ${{ inputs.branch }}
         COMMIT: ${{ inputs.commit }}
         CHANNEL: ${{ inputs.channel }}
-        GIT_COMMITTER_NAME: Zed Zippy
-        GIT_COMMITTER_EMAIL: hi@zed.dev
+        GIT_AUTHOR_NAME: zed-zippy[bot]
+        GIT_AUTHOR_EMAIL: <234243425+zed-zippy[bot]@users.noreply.github.com>
+        GIT_COMMITTER_NAME: zed-zippy[bot]
+        GIT_COMMITTER_EMAIL: <234243425+zed-zippy[bot]@users.noreply.github.com>
         GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
 defaults:
   run:

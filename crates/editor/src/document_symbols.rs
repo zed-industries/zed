@@ -331,7 +331,7 @@ mod tests {
 
     use futures::StreamExt as _;
     use gpui::TestAppContext;
-    use settings::DocumentSymbols;
+    use settings::{DocumentSymbols, SettingsStore};
     use util::path;
     use zed_actions::editor::{MoveDown, MoveUp};
 
@@ -874,5 +874,135 @@ mod tests {
             0,
             "Should not have made any LSP document symbol requests when setting is off"
         );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_highlights_update_on_theme_change(cx: &mut TestAppContext) {
+        use collections::IndexMap;
+        use gpui::{Hsla, Rgba, UpdateGlobal as _};
+        use theme_settings::{HighlightStyleContent, ThemeStyleContent};
+        use ui::ActiveTheme as _;
+
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+        // Set the initial theme with a red keyword color and sync it to the
+        // language registry so tree-sitter highlight maps are up to date.
+        let red_color: Hsla = Rgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }
+        .into();
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
+                        syntax: IndexMap::from_iter([(
+                            "keyword".to_string(),
+                            HighlightStyleContent {
+                                color: Some("#ff0000".to_string()),
+                                background_color: None,
+                                font_style: None,
+                                font_weight: None,
+                            },
+                        )]),
+                        ..ThemeStyleContent::default()
+                    });
+                });
+            });
+        });
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        cx.set_state("fn maˇin() {}");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let breadcrumbs = editor
+                .breadcrumbs_inner(cx)
+                .expect("Should have breadcrumbs");
+            let symbol_segment = breadcrumbs
+                .iter()
+                .find(|b| b.text.as_ref() == "fn main")
+                .expect("Should have 'fn main' breadcrumb");
+            let keyword_highlight = symbol_segment
+                .highlights
+                .iter()
+                .find(|(range, _)| &symbol_segment.text[range.clone()] == "fn")
+                .expect("Should have a highlight for the 'fn' keyword");
+            assert_eq!(
+                keyword_highlight.1.color,
+                Some(red_color),
+                "The 'fn' keyword should have red color"
+            );
+        });
+
+        // Change the theme to use a blue keyword color. This simulates a user
+        // switching themes. The language registry set_theme call mirrors what
+        // the application does in main.rs on theme change.
+        let blue_color: Hsla = Rgba {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+            a: 1.0,
+        }
+        .into();
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
+                        syntax: IndexMap::from_iter([(
+                            "keyword".to_string(),
+                            HighlightStyleContent {
+                                color: Some("#0000ff".to_string()),
+                                background_color: None,
+                                font_style: None,
+                                font_weight: None,
+                            },
+                        )]),
+                        ..ThemeStyleContent::default()
+                    });
+                });
+            });
+        });
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let breadcrumbs = editor
+                .breadcrumbs_inner(cx)
+                .expect("Should have breadcrumbs after theme change");
+            let symbol_segment = breadcrumbs
+                .iter()
+                .find(|b| b.text.as_ref() == "fn main")
+                .expect("Should have 'fn main' breadcrumb after theme change");
+            let keyword_highlight = symbol_segment
+                .highlights
+                .iter()
+                .find(|(range, _)| &symbol_segment.text[range.clone()] == "fn")
+                .expect("Should have a highlight for the 'fn' keyword after theme change");
+            assert_eq!(
+                keyword_highlight.1.color,
+                Some(blue_color),
+                "The 'fn' keyword should have blue color after theme change"
+            );
+        });
     }
 }

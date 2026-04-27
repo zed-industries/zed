@@ -50,7 +50,6 @@ pub struct LayoutState {
     mode: TermMode,
     display_offset: usize,
     hyperlink_tooltip: Option<AnyElement>,
-    gutter: Pixels,
     block_below_cursor_element: Option<AnyElement>,
     base_text_style: TextStyle,
     content_mode: ContentMode,
@@ -550,11 +549,13 @@ impl TerminalElement {
         minimum_contrast: f32,
     ) -> TextRun {
         let flags = indexed.cell.flags;
+        let is_true_color = matches!(fg, terminal::alacritty_terminal::vte::ansi::Color::Spec(_));
         let mut fg = convert_color(&fg, colors);
         let bg = convert_color(&bg, colors);
 
-        // Only apply contrast adjustment to non-decorative characters
-        if !Self::is_decorative_character(indexed.c) {
+        // Skip contrast adjustment for true-color (24-bit RGB) foregrounds — the
+        // application chose that exact color. Also skip for decorative characters.
+        if !is_true_color && !Self::is_decorative_character(indexed.c) {
             fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
         }
 
@@ -968,6 +969,7 @@ impl Element for TerminalElement {
 
                     let mut size = bounds.size;
                     size.width -= gutter;
+                    let available_height = size.height;
 
                     // https://github.com/zed-industries/zed/issues/2750
                     // if the terminal is one column wide, rendering 🦀
@@ -978,6 +980,43 @@ impl Element for TerminalElement {
 
                     let mut origin = bounds.origin;
                     origin.x += gutter;
+
+                    if matches!(self.terminal_view.read(cx).mode, TerminalMode::Standalone) {
+                        let scale_factor = window.scale_factor();
+                        let line_height_pixels = px(line_height);
+                        let line_height_device_px = (f32::from(line_height_pixels) * scale_factor)
+                            .round()
+                            .max(1.0) as i32;
+                        let available_height_device_px =
+                            (f32::from(available_height) * scale_factor)
+                                .floor()
+                                .max(0.0) as i32;
+
+                        let rows =
+                            ((available_height_device_px / line_height_device_px) as usize).max(1);
+                        let snapped_height_device_px = (rows as i32) * line_height_device_px;
+                        let padding_device_px =
+                            (available_height_device_px - snapped_height_device_px).max(0);
+
+                        let snapped_height =
+                            px(snapped_height_device_px as f32 / scale_factor.max(1.0));
+                        let padding = px(padding_device_px as f32 / scale_factor.max(1.0));
+
+                        size.height = snapped_height;
+                        if self.terminal.read(cx).scrolled_to_bottom() {
+                            origin.y += padding;
+                        }
+                    }
+
+                    // Snap to device pixels to avoid subpixel jitter while resizing.
+                    // Terminal rendering is grid-based; allowing fractional origins can cause the
+                    // glyph rasterization to shift between frames, which looks like flicker.
+                    let scale_factor = window.scale_factor();
+                    let snap_px = |value: Pixels| {
+                        Pixels::from((f32::from(value) * scale_factor).floor() / scale_factor)
+                    };
+                    origin.x = snap_px(origin.x);
+                    origin.y = snap_px(origin.y);
 
                     (
                         TerminalBounds::new(px(line_height), cell_width, Bounds { origin, size }),
@@ -1016,7 +1055,7 @@ impl Element for TerminalElement {
 
                 let scroll_top = self.terminal_view.read(cx).scroll_top;
                 let hyperlink_tooltip = hover_tooltip.map(|hover_tooltip| {
-                    let offset = bounds.origin + point(gutter, px(0.)) - point(px(0.), scroll_top);
+                    let offset = dimensions.bounds.origin - point(px(0.), scroll_top);
                     let mut element = div()
                         .size_full()
                         .id("terminal-element")
@@ -1060,8 +1099,9 @@ impl Element for TerminalElement {
                 //
                 // This optimization is analogous to the editor optimization in PR #45077
                 // which fixed performance issues with large AutoHeight editors inside Lists.
+                let content_bounds = dimensions.bounds;
                 let visible_bounds = window.content_mask().bounds;
-                let intersection = visible_bounds.intersect(&bounds);
+                let intersection = visible_bounds.intersect(&content_bounds);
 
                 // If the terminal is entirely outside the viewport, skip all cell processing.
                 // This handles the case where the terminal has been scrolled past (above or
@@ -1071,7 +1111,7 @@ impl Element for TerminalElement {
                     || intersection.size.width <= px(0.)
                 {
                     (Vec::new(), Vec::new())
-                } else if intersection == bounds {
+                } else if intersection == content_bounds {
                     // Fast path: terminal fully visible, no clipping needed.
                     // Avoid grouping/allocation overhead by streaming cells directly.
                     TerminalElement::layout_grid(
@@ -1090,9 +1130,9 @@ impl Element for TerminalElement {
                     // by screen position (enumerated line group index), not by the cell's
                     // internal line number (which can be negative in Scrollable mode for
                     // scrollback history).
-                    let rows_above_viewport =
-                        f32::from((intersection.top() - bounds.top()).max(px(0.)) / line_height_px)
-                            as usize;
+                    let rows_above_viewport = f32::from(
+                        (intersection.top() - content_bounds.top()).max(px(0.)) / line_height_px,
+                    ) as usize;
                     let visible_row_count =
                         f32::from((intersection.size.height / line_height_px).ceil()) as usize + 1;
 
@@ -1160,7 +1200,9 @@ impl Element for TerminalElement {
                         let (shape, text) = match cursor.shape {
                             AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
                             AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
+                            AlacCursorShape::Underline if !focused => (CursorShape::Hollow, None),
                             AlacCursorShape::Underline => (CursorShape::Underline, None),
+                            AlacCursorShape::Beam if !focused => (CursorShape::Hollow, None),
                             AlacCursorShape::Beam => (CursorShape::Bar, None),
                             AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
                             AlacCursorShape::Hidden => unreachable!(),
@@ -1195,7 +1237,7 @@ impl Element for TerminalElement {
                                 block.height as f32 * dimensions.line_height(),
                             ),
                         );
-                        let origin = bounds.origin
+                        let origin = Point::new(bounds.origin.x, dimensions.bounds.origin.y)
                             + point(px(0.), target_line as f32 * dimensions.line_height())
                             - point(px(0.), scroll_top);
                         window.with_rem_size(rem_size, |window| {
@@ -1221,7 +1263,6 @@ impl Element for TerminalElement {
                     mode,
                     display_offset,
                     hyperlink_tooltip,
-                    gutter,
                     block_below_cursor_element,
                     base_text_style: text_style,
                     content_mode,
@@ -1245,8 +1286,12 @@ impl Element for TerminalElement {
             let scroll_top = self.terminal_view.read(cx).scroll_top;
 
             window.paint_quad(fill(bounds, layout.background_color));
-            let origin =
-                bounds.origin + Point::new(layout.gutter, px(0.)) - Point::new(px(0.), scroll_top);
+            let origin = layout.dimensions.bounds.origin - Point::new(px(0.), scroll_top);
+            let scale_factor = window.scale_factor();
+            let snap_px = |value: Pixels| {
+                Pixels::from((f32::from(value) * scale_factor).floor() / scale_factor)
+            };
+            let origin = point(snap_px(origin.x), snap_px(origin.y));
 
             let marked_text_cloned: Option<String> = {
                 let ime_state = &self.terminal_view.read(cx).ime_state;
@@ -1846,6 +1891,42 @@ mod tests {
             good_contrast, black_fg,
             "Good contrast should not be adjusted"
         );
+    }
+
+    #[test]
+    fn test_true_color_red_blue_not_washed_out_on_dark_bg() {
+        // Red and blue have inherently low perceptual luminance in APCA.
+        // Pure #ff0000 only achieves Lc ~35 against #1e1e1e — below the
+        // default Lc 45 threshold. ensure_minimum_contrast would lighten
+        // them, washing out the color. This is why cell_style skips the
+        // adjustment for Color::Spec (24-bit true color).
+        let dark_bg = gpui::Hsla {
+            h: 0.0,
+            s: 0.0,
+            l: 0.05,
+            a: 1.0,
+        };
+
+        for (name, r, g, b) in [
+            ("red", 225, 80, 80),
+            ("blue", 80, 80, 225),
+            ("pure red", 255, 0, 0),
+        ] {
+            let color = terminal::rgba_color(r, g, b);
+            let contrast = apca_contrast(color, dark_bg).abs();
+            assert!(
+                contrast < 45.0,
+                "{name} should have APCA < 45 on dark bg, got {contrast}",
+            );
+
+            let adjusted = ensure_minimum_contrast(color, dark_bg, 45.0);
+            assert!(
+                adjusted.l > color.l,
+                "{name} would be lightened by contrast adjustment (l: {} -> {})",
+                color.l,
+                adjusted.l,
+            );
+        }
     }
 
     #[test]

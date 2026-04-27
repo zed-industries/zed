@@ -651,6 +651,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         false
     }
     fn set_edited(&mut self, _edited: bool) {}
+    fn set_document_path(&self, _path: Option<&std::path::Path>) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
     fn on_move_tab_to_new_window(&self, _callback: Box<dyn FnMut()>) {}
@@ -1048,7 +1049,7 @@ impl<T> AtlasTextureList<T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct AtlasTile {
@@ -1424,6 +1425,9 @@ pub struct WindowOptions {
     /// Note that this may be ignored.
     pub window_decorations: Option<WindowDecorations>,
 
+    /// Icon image (X11 only)
+    pub icon: Option<Arc<image::RgbaImage>>,
+
     /// Tab group name, allows opening the window as a native tab on macOS 10.12+. Windows with the same tabbing identifier will be grouped together.
     pub tabbing_identifier: Option<String>,
 }
@@ -1469,6 +1473,10 @@ pub struct WindowParams {
 
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub show: bool,
+
+    /// An image to set as the window icon (x11 only)
+    #[cfg_attr(feature = "wayland", allow(dead_code))]
+    pub icon: Option<Arc<image::RgbaImage>>,
 
     #[cfg_attr(feature = "wayland", allow(dead_code))]
     pub display_id: Option<DisplayId>,
@@ -1530,6 +1538,7 @@ impl Default for WindowOptions {
             is_minimizable: true,
             display_id: None,
             window_background: WindowBackgroundAppearance::default(),
+            icon: None,
             app_id: None,
             window_min_size: None,
             window_decorations: None,
@@ -1973,6 +1982,8 @@ pub enum ImageFormat {
     Tiff,
     /// .ico
     Ico,
+    /// Netpbm image formats (.pbm, .ppm, .pgm).
+    Pnm,
 }
 
 impl ImageFormat {
@@ -1987,20 +1998,25 @@ impl ImageFormat {
             ImageFormat::Bmp => "image/bmp",
             ImageFormat::Tiff => "image/tiff",
             ImageFormat::Ico => "image/ico",
+            ImageFormat::Pnm => "image/x-portable-anymap",
         }
     }
 
-    /// Returns the ImageFormat for the given mime type
+    /// Returns the ImageFormat for the given mime type, including known aliases.
     pub fn from_mime_type(mime_type: &str) -> Option<Self> {
+        use strum::IntoEnumIterator;
+        Self::iter()
+            .find(|format| format.mime_type() == mime_type)
+            .or_else(|| Self::from_mime_type_alias(mime_type))
+    }
+
+    /// Non-canonical mime types that some producers use in the wild.
+    /// Unlike `mime_type()` which returns the single canonical form,
+    /// these are legacy or shortened variants we still need to recognize.
+    fn from_mime_type_alias(mime_type: &str) -> Option<Self> {
         match mime_type {
-            "image/png" => Some(Self::Png),
-            "image/jpeg" | "image/jpg" => Some(Self::Jpeg),
-            "image/webp" => Some(Self::Webp),
-            "image/gif" => Some(Self::Gif),
-            "image/svg+xml" => Some(Self::Svg),
-            "image/bmp" => Some(Self::Bmp),
-            "image/tiff" | "image/tif" => Some(Self::Tiff),
-            "image/ico" => Some(Self::Ico),
+            "image/jpg" => Some(Self::Jpeg),
+            "image/tif" => Some(Self::Tiff),
             _ => None,
         }
     }
@@ -2092,12 +2108,22 @@ impl Image {
                 let mut frames = SmallVec::new();
 
                 for frame in decoder.into_frames() {
-                    let mut frame = frame?;
-                    // Convert from RGBA to BGRA.
-                    for pixel in frame.buffer_mut().chunks_exact_mut(4) {
-                        pixel.swap(0, 2);
+                    match frame {
+                        Ok(mut frame) => {
+                            // Convert from RGBA to BGRA.
+                            for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                                pixel.swap(0, 2);
+                            }
+                            frames.push(frame);
+                        }
+                        Err(err) => {
+                            log::debug!("Skipping GIF frame due to decode error: {err}");
+                        }
                     }
-                    frames.push(frame);
+                }
+
+                if frames.is_empty() {
+                    anyhow::bail!("GIF could not be decoded: all frames failed");
                 }
 
                 frames
@@ -2113,6 +2139,7 @@ impl Image {
                     .render_single_frame(&self.bytes, 1.0)
                     .map_err(Into::into);
             }
+            ImageFormat::Pnm => frames_for_image(&self.bytes, image::ImageFormat::Pnm)?,
         };
 
         Ok(Arc::new(RenderImage::new(frames)))

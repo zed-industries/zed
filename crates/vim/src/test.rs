@@ -18,7 +18,7 @@ use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use itertools::Itertools;
 use language::{CursorShape, Language, LanguageConfig, Point};
 pub use neovim_backed_test_context::*;
-use settings::SettingsStore;
+use settings::{ActionName, SettingsStore};
 use ui::Pixels;
 use util::{path, test::marked_text_ranges};
 pub use vim_test_context::*;
@@ -1696,6 +1696,134 @@ async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
 
 #[perf]
 #[gpui::test]
+async fn test_toggle_block_comments(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    let language = std::sync::Arc::new(language::Language::new(
+        language::LanguageConfig {
+            block_comment: Some(language::BlockCommentConfig {
+                start: "/* ".into(),
+                prefix: "".into(),
+                end: " */".into(),
+                tab_size: 1,
+            }),
+            ..Default::default()
+        },
+        Some(language::tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // works in normal mode with current-line shorthand
+    cx.set_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("g b c");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone */
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // toggle off with cursor inside the comment
+    cx.simulate_keystrokes("g b c");
+    cx.assert_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works in visual line mode (wraps full lines)
+    cx.simulate_keystrokes("shift-v j g b");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone
+        two */
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works in visual mode and restores the cursor to the selection start
+    cx.set_state(
+        indoc! {"
+        «oneˇ»
+        two
+        three
+        "},
+        Mode::Visual,
+    );
+    cx.simulate_keystrokes("g b");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone */
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works with multiple visual selections and restores each cursor
+    cx.set_state(
+        indoc! {"
+        «oneˇ» «twoˇ»
+        three
+        "},
+        Mode::Visual,
+    );
+    cx.simulate_keystrokes("g b");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone */ /* ˇtwo */
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works with count
+    cx.set_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("g b 2 j");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone
+        two
+        three */
+        "},
+        Mode::Normal,
+    );
+
+    // works with motion object
+    cx.simulate_keystrokes("shift-g");
+    cx.simulate_keystrokes("g b g g");
+    cx.assert_state(
+        indoc! {"
+        one
+        two
+        three
+        ˇ"},
+        Mode::Normal,
+    );
+}
+
+#[perf]
+#[gpui::test]
 async fn test_find_multibyte(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -1798,7 +1926,7 @@ async fn test_command_alias(cx: &mut gpui::TestAppContext) {
     cx.update_global(|store: &mut SettingsStore, cx| {
         store.update_user_settings(cx, |s| {
             let mut aliases = HashMap::default();
-            aliases.insert("Q".to_string(), "upper".to_string());
+            aliases.insert("Q".to_string(), ActionName::new("upper"));
             s.workspace.command_aliases = aliases
         });
     });
