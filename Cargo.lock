@@ -13442,7 +13442,6 @@ dependencies = [
  "indexmap 2.11.4",
  "itertools 0.14.0",
  "language",
- "libc",
  "log",
  "lsp",
  "markdown",
