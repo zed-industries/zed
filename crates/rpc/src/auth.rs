@@ -67,8 +67,9 @@ impl PublicKey {
 impl PrivateKey {
     /// Decrypt a base64-encoded string that was encrypted by the corresponding public key.
     pub fn decrypt_string(&self, encrypted_string: &str) -> Result<String> {
-        let encrypted_bytes = BASE64_URL_SAFE
-            .decode(encrypted_string)
+        let unpadded = encrypted_string.trim_end_matches('=');
+        let encrypted_bytes = BASE64_URL_SAFE_NO_PAD
+            .decode(unpadded)
             .context("failed to base64-decode encrypted string")?;
         let bytes = self
             .0
@@ -223,6 +224,23 @@ mod tests {
             assert_printable(&public_key_str);
             assert_printable(&encrypted_token);
         }
+    }
+
+    #[test]
+    fn test_decrypt_string_with_unpadded_base64() {
+        let (public, private) = keypair().unwrap();
+        let token = random_token();
+        let encrypted_token = public.encrypt_string(&token, EncryptionFormat::V1).unwrap();
+
+        // Simulate the server stripping trailing '=' padding (standard URL-safe practice).
+        let unpadded = encrypted_token.trim_end_matches('=');
+        assert!(
+            !unpadded.contains('='),
+            "test precondition: token should have no padding"
+        );
+
+        let decrypted_token = private.decrypt_string(unpadded).unwrap();
+        assert_eq!(decrypted_token, token);
     }
 
     fn assert_printable(token: &str) {
