@@ -13,6 +13,7 @@ pub mod clangd_ext;
 mod code_lens;
 mod document_colors;
 mod document_symbols;
+mod eslint_ext;
 mod folding_ranges;
 mod inlay_hints;
 pub mod json_language_server_ext;
@@ -1304,6 +1305,7 @@ impl LocalLspStore {
         json_language_server_ext::register_requests(lsp_store.clone(), language_server);
         rust_analyzer_ext::register_notifications(lsp_store.clone(), language_server);
         clangd_ext::register_notifications(lsp_store, language_server, adapter);
+        eslint_ext::register_notifications(language_server);
     }
 
     fn shutdown_language_servers_on_quit(&mut self) -> impl Future<Output = ()> + use<> {
