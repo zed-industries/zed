@@ -52,7 +52,7 @@ pub(crate) fn run_tests() -> Workflow {
             .and_not_in_merge_queue()
             .then(clippy(Platform::Windows, None)),
         should_run_tests
-            .and_not_in_merge_queue()
+            .and_always()
             .then(clippy(Platform::Linux, None)),
         should_run_tests
             .and_not_in_merge_queue()
@@ -792,7 +792,7 @@ pub(crate) fn check_scripts() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
             .add_step(run_shellcheck())
             .add_step(download_actionlint().id("get_actionlint"))

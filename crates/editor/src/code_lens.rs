@@ -1,4 +1,4 @@
-use std::{iter, ops::Range, sync::Arc};
+use std::sync::Arc;
 
 use collections::{HashMap, HashSet};
 use futures::future::join_all;
@@ -7,17 +7,15 @@ use itertools::Itertools;
 use language::{BufferId, ClientCommand};
 use multi_buffer::{Anchor, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
 use project::{CodeAction, TaskSourceKind};
-use settings::Settings as _;
 use task::TaskContext;
-use text::Point;
 
 use ui::{Context, Window, div, prelude::*};
-use workspace::PreviewTabsSettings;
 
 use crate::{
-    Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, MultibufferSelectionMode, SelectionEffects,
+    Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT, SelectionEffects,
     actions::ToggleCodeLens,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
+    hover_links::HoverLink,
 };
 
 #[derive(Clone, Debug)]
@@ -78,7 +76,6 @@ fn group_lenses_by_row(
 }
 
 fn render_code_lens_line(
-    line_number: usize,
     lens: CodeLensLine,
     editor: WeakEntity<Editor>,
 ) -> impl Fn(&mut crate::display_map::BlockContext) -> gpui::AnyElement {
@@ -104,11 +101,10 @@ fn render_code_lens_line(
             let action = item.action.clone();
             let editor_handle = editor.clone();
             let position = lens.position;
-            let id = (line_number as u64) << 32 | (i as u64);
 
             children.push(
                 div()
-                    .id(ElementId::Integer(id))
+                    .id(ElementId::from(i))
                     .font(font.clone())
                     .text_size(font_size)
                     .text_color(cx.app.theme().colors().text_muted)
@@ -165,6 +161,7 @@ fn render_code_lens_line(
         }
 
         div()
+            .id(cx.block_id)
             .pl(cx.margins.gutter.full_width() + cx.em_width * (lens.indent_column as f32 + 0.5))
             .h_full()
             .flex()
@@ -206,7 +203,7 @@ pub(super) fn try_handle_client_command(
             schedule_task(task_template, action, editor, workspace, window, cx)
         }
         Some(ClientCommand::ShowLocations) => {
-            try_show_references(arguments, action, workspace, window, cx)
+            try_show_references(arguments, action, editor, window, cx)
         }
         None => false,
     }
@@ -261,7 +258,7 @@ fn schedule_task(
 fn try_show_references(
     arguments: &[serde_json::Value],
     action: &CodeAction,
-    workspace: &gpui::Entity<workspace::Workspace>,
+    editor: &mut Editor,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> bool {
@@ -276,71 +273,16 @@ fn try_show_references(
     }
 
     let server_id = action.server_id;
-    let project = workspace.read(cx).project().clone();
-    let workspace = workspace.clone();
-
-    cx.spawn_in(window, async move |_editor, cx| {
-        let mut buffer_locations = std::collections::HashMap::default();
-
-        for location in &locations {
-            let open_task = cx.update(|_, cx| {
-                project.update(cx, |project, cx| {
-                    let uri: lsp::Uri = location.uri.clone();
-                    project.open_local_buffer_via_lsp(uri, server_id, cx)
-                })
-            })?;
-            let buffer = open_task.await?;
-
-            let range = range_from_lsp(location.range);
-            buffer_locations
-                .entry(buffer)
-                .or_insert_with(Vec::new)
-                .push(range);
-        }
-
-        workspace.update_in(cx, |workspace, window, cx| {
-            let target = buffer_locations
-                .iter()
-                .flat_map(|(k, v)| iter::repeat(k.clone()).zip(v))
-                .map(|(buffer, location)| {
-                    buffer
-                        .read(cx)
-                        .text_for_range(location.clone())
-                        .collect::<String>()
-                })
-                .filter(|text| !text.contains('\n'))
-                .unique()
-                .take(3)
-                .join(", ");
-            let title = if target.is_empty() {
-                "References".to_owned()
-            } else {
-                format!("References to {target}")
-            };
-            let allow_preview =
-                PreviewTabsSettings::get_global(cx).enable_preview_multibuffer_from_code_navigation;
-            Editor::open_locations_in_multibuffer(
-                workspace,
-                buffer_locations,
-                title,
-                false,
-                allow_preview,
-                MultibufferSelectionMode::First,
-                window,
-                cx,
-            );
-        })?;
-        anyhow::Ok(())
-    })
-    .detach_and_log_err(cx);
+    let nav_entry = editor.navigation_entry(editor.selections.newest_anchor().head(), cx);
+    let links = locations
+        .into_iter()
+        .map(|location| HoverLink::InlayHint(location, server_id))
+        .collect();
+    editor
+        .navigate_to_hover_links(None, links, nav_entry, false, window, cx)
+        .detach_and_log_err(cx);
 
     true
-}
-
-fn range_from_lsp(range: lsp::Range) -> Range<Point> {
-    let start = Point::new(range.start.line, range.start.character);
-    let end = Point::new(range.end.line, range.end.character);
-    start..end
 }
 
 impl Editor {
@@ -461,15 +403,13 @@ impl Editor {
                         }
                         let blocks = lens_lines
                             .into_iter()
-                            .enumerate()
-                            .map(|(line_number, lens_line)| {
+                            .map(|lens_line| {
                                 let position = lens_line.position;
                                 BlockProperties {
                                     placement: BlockPlacement::Above(position),
                                     height: Some(1),
                                     style: BlockStyle::Flex,
                                     render: Arc::new(render_code_lens_line(
-                                        line_number,
                                         lens_line,
                                         editor_handle.clone(),
                                     )),
@@ -601,18 +541,13 @@ impl Editor {
                 .collect();
 
             let blocks = group_lenses_by_row(lenses, &multi_buffer_snapshot)
-                .enumerate()
-                .map(|(line_number, lens_line)| {
+                .map(|lens_line| {
                     let position = lens_line.position;
                     BlockProperties {
                         placement: BlockPlacement::Above(position),
                         height: Some(1),
                         style: BlockStyle::Flex,
-                        render: Arc::new(render_code_lens_line(
-                            line_number,
-                            lens_line,
-                            editor_handle.clone(),
-                        )),
+                        render: Arc::new(render_code_lens_line(lens_line, editor_handle.clone())),
                         priority: 0,
                     }
                 })

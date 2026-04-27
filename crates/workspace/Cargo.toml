@@ -36,6 +36,7 @@ clock.workspace = true
 collections.workspace = true
 component.workspace = true
 db.workspace = true
+futures-lite.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
@@ -82,5 +83,7 @@ session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
+proptest.workspace = true
+proptest-derive.workspace = true
 tempfile.workspace = true
 zlog.workspace = true

@@ -501,7 +501,41 @@ impl LspCommand for GoToParentModule {
 }
 
 // https://rust-analyzer.github.io/book/contributing/lsp-extensions.html#runnables
-// Taken from https://github.com/rust-lang/rust-analyzer/blob/a73a37a757a58b43a796d3eb86a1f7dfd0036659/crates/rust-analyzer/src/lsp/ext.rs#L425-L489
+// Taken from https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/lsp/ext.rs#L425-L489
+//
+// Note that in rust-analyzer, `Runnable` is defined as:
+//
+// ```
+// #[derive(Deserialize, Serialize, Debug, Clone)]
+// #[serde(rename_all = "camelCase")]
+// pub struct Runnable {
+//     pub label: String,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub location: Option<lsp_types::LocationLink>,
+//     pub kind: RunnableKind,
+//     pub args: RunnableArgs,
+// }
+//
+// #[derive(Deserialize, Serialize, Debug, Clone)]
+// #[serde(rename_all = "camelCase")]
+// #[serde(untagged)]
+// pub enum RunnableArgs {
+//     Cargo(CargoRunnableArgs),
+//     Shell(ShellRunnableArgs),
+// }
+// ```
+//
+// i.e., RunnableArgs uses serde(untagged) and is not associated with
+// RunnableKind. But rust-analyzer always syncs RunnableKind with RunnableArgs:
+//
+// * https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/lsp/to_proto.rs#L1608-L1633
+// * https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/lsp/to_proto.rs#L1648-L1653
+// * https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/handlers/request.rs#L1052-L1066
+//
+// And it really doesn't make any sense for it to be any other way. On top of
+// that, the Shell and Cargo variants are similar enough that serde(untagged)
+// deserialization has been observed to confuse one for the other. So we rely on
+// RunnableKind to determine which variant to deserialize.
 pub enum Runnables {}
 
 impl lsp::request::Request for Runnables {
@@ -524,23 +558,18 @@ pub struct Runnable {
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<lsp::LocationLink>,
-    pub kind: RunnableKind,
+    #[serde(flatten)]
     pub args: RunnableArgs,
 }
 
+/// The `kind` field in the JSON determines which variant is deserialized; see
+/// comment on `Runnables` above for more discussion.
 #[derive(Deserialize, Serialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-#[serde(untagged)]
+#[serde(tag = "kind", content = "args")]
+#[serde(rename_all = "lowercase")]
 pub enum RunnableArgs {
     Cargo(CargoRunnableArgs),
     Shell(ShellRunnableArgs),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum RunnableKind {
-    Cargo,
-    Shell,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -790,4 +819,62 @@ pub struct RunFlycheckParams {
 impl lsp::notification::Notification for LspExtClearFlycheck {
     type Params = ();
     const METHOD: &'static str = "rust-analyzer/clearFlycheck";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_runnable_deserializes_as_shell() {
+        // rust-analyzer sends this when `runnables.test.overrideCommand` is
+        // configured (e.g. for nextest).
+        let json = serde_json::json!({
+            "label": "test my_test",
+            "kind": "shell",
+            "args": {
+                "environment": {"RUSTC_TOOLCHAIN": "/path/to/toolchain"},
+                "cwd": "/project",
+                "program": "cargo",
+                "args": ["nextest", "run", "--package", "my-crate", "--lib", "--", "my_test", "--exact", "--include-ignored"]
+            }
+        });
+
+        let runnable: Runnable =
+            serde_json::from_value(json).expect("shell runnable should deserialize");
+        let RunnableArgs::Shell(shell) = &runnable.args else {
+            panic!("expected Shell variant, got {:?}", runnable.args);
+        };
+        assert_eq!(shell.program, "cargo");
+        assert_eq!(shell.args[0], "nextest");
+        assert_eq!(shell.args[1], "run");
+    }
+
+    #[test]
+    fn cargo_runnable_deserializes_as_cargo() {
+        // Standard cargo runnable from rust-analyzer.
+        let json = serde_json::json!({
+            "label": "cargo test -p my-crate",
+            "kind": "cargo",
+            "args": {
+                "environment": {},
+                "cwd": "/project",
+                "overrideCargo": null,
+                "workspaceRoot": "/project",
+                "cargoArgs": ["test", "--package", "my-crate", "--lib"],
+                "executableArgs": ["my_test", "--exact"]
+            }
+        });
+
+        let runnable: Runnable =
+            serde_json::from_value(json).expect("cargo runnable should deserialize");
+        let RunnableArgs::Cargo(cargo) = &runnable.args else {
+            panic!("expected Cargo variant, got {:?}", runnable.args);
+        };
+        assert_eq!(
+            cargo.cargo_args,
+            vec!["test", "--package", "my-crate", "--lib"]
+        );
+        assert_eq!(cargo.executable_args, vec!["my_test", "--exact"]);
+    }
 }

@@ -355,6 +355,13 @@
   // 1. Do nothing: `none`
   // 2. Find references for the same symbol: `find_all_references` (default)
   "go_to_definition_fallback": "find_all_references",
+  // How to scroll the target into view when navigating to a definition or reference
+  // (e.g. Go to Definition, Go to Type Definition, Find All References).
+  //
+  // 1. Vertically center the target in the viewport: `center` (default)
+  // 2. Scroll the minimum amount needed to make the target visible: `minimum`
+  // 3. Scroll so the target appears near the top of the viewport: `top`
+  "go_to_definition_scroll_strategy": "center",
   // Which level to use to filter out diagnostics displayed in the editor.
   //
   // Affects the editor rendering only, and does not interrupt
@@ -975,6 +982,11 @@
     //
     // Default: true
     "diff_stats": true,
+    // Maximum length of the commit message title before a warning is shown.
+    // Set to 0 to disable.
+    //
+    // Default: 72
+    "commit_title_max_length": 72,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
@@ -1683,6 +1695,14 @@
       "prompt_format": "infer",
       "max_output_tokens": 64,
     },
+    // Controls whether Zed may collect training data when using Zed's Edit Predictions.
+    // Data is only captured when the project is detected as open source.
+    // Possible values:
+    //   - "default": use the preference previously set via the status-bar toggle,
+    //     or false if no preference has been stored.
+    //   - "yes": allow data collection for files in open-source projects.
+    //   - "no": never allow data collection.
+    "allow_data_collection": "default",
   },
   // Settings specific to journaling
   "journal": {
@@ -1946,6 +1966,8 @@
     "path_hyperlink_timeout_ms": 1,
     // Whether to show a badge on the terminal panel icon with the count of open terminals.
     "show_count_badge": false,
+    // Whether to invoke the OS-specific alert sound when the terminal bell (BEL character) is printed.
+    "bell": "off",
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.
@@ -2508,6 +2530,11 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "nightly": {
     // "theme": "Andromeda"
+    "instrumentation": {
+      "performance_profiler": {
+        "enabled": true,
+      },
+    },
   },
   // Settings overrides to use when using Zed Stable.
   // Mostly useful for developers who are managing multiple instances of Zed.
@@ -2518,6 +2545,11 @@
   // Mostly useful for developers who are managing multiple instances of Zed.
   "dev": {
     // "theme": "Andromeda"
+    "instrumentation": {
+      "performance_profiler": {
+        "enabled": true,
+      },
+    },
   },
   // Settings overrides to use when using Linux.
   "linux": {},
@@ -2637,4 +2669,16 @@
   //
   // Example: {"log": {"client": "warn"}}
   "log": {},
+
+  // Configuration for developer-oriented instrumentation tools that can be
+  // toggled at runtime.
+  "instrumentation": {
+    // Performance profiler, accessed via the `zed: open performance profiler`
+    // action. Collects timing data for foreground and background executor
+    // tasks. Enabling this may lead to increased memory usage, hence it's
+    // disabled by default for regular builds.
+    "performance_profiler": {
+      "enabled": false,
+    },
+  },
 }
