@@ -1386,7 +1386,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                             .unwrap_or_default();
 
                         let border_color = if has_border {
-                            cx.theme().colors().border_variant
+                            cx.theme().colors().border_variant.opacity(0.6)
                         } else {
                             Hsla::transparent_black()
                         };
