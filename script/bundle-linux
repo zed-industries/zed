@@ -88,6 +88,8 @@ cargo build --release --target "${target_triple}" --package zed --package cli
 # from influencing dynamic libraries required by it.
 if [[ "$remote_server_triple" == "$musl_triple" ]]; then
     export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
+    musl_cc_var="CC_$(echo "$remote_server_triple" | tr '-' '_')"
+    export "$musl_cc_var"=musl-gcc
 fi
 cargo build --release --target "${remote_server_triple}" --package remote_server
 
