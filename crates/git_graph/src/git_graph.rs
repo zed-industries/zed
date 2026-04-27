@@ -18,7 +18,6 @@ use gpui::{
     px, uniform_list,
 };
 use language::line_diff;
-use log;
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::git_store::{
     CommitDataState, GitGraphEvent, GitStore, GitStoreEvent, GraphDataResponse, Repository,
@@ -1339,12 +1338,10 @@ impl GitGraph {
     }
 
     fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
-        log::debug!("GitGraph::select_first");
         self.select_entry(0, ScrollStrategy::Nearest, cx);
     }
 
     fn select_prev(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
-        log::debug!("GitGraph::select_prev");
         if let Some(selected_entry_idx) = &self.selected_entry_idx {
             self.select_entry(
                 selected_entry_idx.saturating_sub(1),
@@ -1357,7 +1354,6 @@ impl GitGraph {
     }
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
-        log::debug!("GitGraph::select_next");
         if let Some(selected_entry_idx) = &self.selected_entry_idx {
             self.select_entry(
                 selected_entry_idx
@@ -1372,7 +1368,6 @@ impl GitGraph {
     }
 
     fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
-        log::debug!("GitGraph::select_last");
         self.select_entry(
             self.graph_data.commits.len().saturating_sub(1),
             ScrollStrategy::Nearest,
@@ -4206,7 +4201,9 @@ mod tests {
         );
         cx.run_until_parked();
 
-        git_graph.read_with(&*cx, |graph, _| { assert_eq!(graph.graph_data.commits.len(), 10); });
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.graph_data.commits.len(), 10);
+        });
         // Initial state: no selection
         git_graph.read_with(&*cx, |graph, _| {
             assert_eq!(graph.selected_entry_idx, None);
