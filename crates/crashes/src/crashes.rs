@@ -3,15 +3,14 @@ use log::info;
 use minidumper::{LoopAction, MinidumpBinary, Server, SocketName};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::pin::Pin;
+use std::{panic::Location, pin::Pin};
 
 use system_specs::GpuSpecs;
 
 use std::{
     env,
     fs::{self, File},
-    io,
-    panic::{self, PanicHookInfo},
+    io, panic,
     path::{Path, PathBuf},
     process::{self},
     sync::{
@@ -74,14 +73,11 @@ where
     S: FnOnce(Pin<Box<dyn Future<Output = ()> + Send + 'static>>),
     P: FnOnce(u32) -> PathBuf,
 {
-    #[cfg(not(target_os = "windows"))]
     let exe = env::current_exe().expect("unable to find ourselves");
     let socket_path = socket_path(process::id());
+    let mut _crash_handler = spawn_crash_handler(&exe, &socket_path);
+    info!("spawning crash handler process");
     async move {
-        let _crash_handler = spawn_crash_handler(&exe, &socket_path);
-
-        info!("spawning crash handler process");
-
         let mut elapsed = Duration::ZERO;
         let retry_frequency = Duration::from_millis(100);
         let client = loop {
@@ -96,7 +92,13 @@ where
 
         panic::set_hook({
             let client = client.clone();
-            Box::new(move |payload| panic_hook(client.clone(), payload))
+            Box::new(move |payload| {
+                panic_hook(
+                    client.clone(),
+                    payload.payload_as_str().unwrap_or("Box<Any>"),
+                    payload.location(),
+                )
+            })
         });
         info!("panic handler registered");
         let handler = CrashHandler::attach(unsafe {
@@ -117,7 +119,13 @@ where
                     // `client.send_message` calls have been processed before we trigger the
                     // minidump request.
                     client.ping().ok();
-                    client.request_dump(crash_context).is_ok()
+                    let r = client.request_dump(crash_context);
+                    if let Err(e) = &r {
+                        eprintln!("failed to request dump: {:?}", e);
+                    }
+                    #[cfg(target_os = "macos")]
+                    macos::resume_all_other_threads();
+                    r.is_ok()
                 } else {
                     true
                 };
@@ -139,7 +147,17 @@ where
             async move {
                 let _handler = { handler };
                 loop {
-                    client.ping().ok();
+                    if let Err(e) = client.ping() {
+                        #[cfg(not(target_os = "windows"))]
+                        log::error!(
+                            "ping failed: {:?}, process exit status: {:?}",
+                            e,
+                            _crash_handler.try_status()
+                        );
+                        #[cfg(target_os = "windows")]
+                        log::error!("ping failed: {:?}", e,);
+                        break;
+                    };
                     wait_timer(Duration::from_secs(10)).await;
                 }
             }
@@ -342,26 +360,17 @@ fn strip_user_string_from_panic(message: &str) -> String {
     message.to_owned()
 }
 
-pub fn panic_hook(crash_client: Arc<Client>, info: &PanicHookInfo) {
-    let message = strip_user_string_from_panic(info.payload_as_str().unwrap_or("Box<Any>"));
+pub fn panic_hook(crash_client: Arc<Client>, message: &str, location: Option<&Location>) {
+    let message = strip_user_string_from_panic(message);
 
-    let span = info
-        .location()
+    let span = location
         .map(|loc| format!("{}:{}", loc.file(), loc.line()))
         .unwrap_or_default();
 
     let current_thread = std::thread::current();
     let thread_name = current_thread.name().unwrap_or("<unnamed>");
 
-    // wait 500ms for the crash handler process to start up
-    // if it's still not there just write panic info and no minidump
-    let retry_frequency = Duration::from_millis(100);
-    for _ in 0..5 {
-        thread::sleep(retry_frequency);
-    }
-    let location = info
-        .location()
-        .map_or_else(|| "<unknown>".to_owned(), |location| location.to_string());
+    let location = location.map_or_else(|| "<unknown>".to_owned(), |location| location.to_string());
     log::error!("thread '{thread_name}' panicked at {location}:\n{message}...");
 
     send_crash_server_message(
@@ -402,11 +411,26 @@ mod macos {
             mach2::task::task_threads(task, &raw mut threads, &raw mut count);
         }
         let current = unsafe { mach2::mach_init::mach_thread_self() };
-        let panic_thread = PANIC_THREAD_ID.load(std::sync::atomic::Ordering::Acquire);
         for i in 0..count {
             let t = unsafe { *threads.add(i as usize) };
-            if t != current && t != panic_thread {
+            if t != current {
                 unsafe { mach2::thread_act::thread_suspend(t) };
+            }
+        }
+    }
+
+    pub(super) unsafe fn resume_all_other_threads() {
+        let task = unsafe { mach2::traps::current_task() };
+        let mut threads: mach2::mach_types::thread_act_array_t = std::ptr::null_mut();
+        let mut count = 0;
+        unsafe {
+            mach2::task::task_threads(task, &raw mut threads, &raw mut count);
+        }
+        let current = unsafe { mach2::mach_init::mach_thread_self() };
+        for i in 0..count {
+            let t = unsafe { *threads.add(i as usize) };
+            if t != current {
+                unsafe { mach2::thread_act::thread_resume(t) };
             }
         }
     }

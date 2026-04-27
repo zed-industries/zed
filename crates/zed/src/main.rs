@@ -23,6 +23,7 @@ use git::GitHostingProviderRegistry;
 use git_ui::clone::clone_and_open;
 use gpui::{
     App, AppContext, Application, AsyncApp, Focusable as _, QuitMode, Task, UpdateGlobal as _,
+    block_on,
 };
 use gpui_platform;
 
@@ -43,6 +44,7 @@ use recent_projects::{RemoteSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
+use smol::future::poll_once;
 use std::{
     cell::RefCell,
     env,
@@ -299,6 +301,8 @@ fn main() {
             app_version,
             app_commit_sha,
             *release_channel::RELEASE_CHANNEL,
+            client::telemetry::os_name(),
+            client::telemetry::os_version(),
         );
         println!("Zed System Specs (from CLI):\n{}", system_specs);
         return;
@@ -374,32 +378,34 @@ fn main() {
         != ReleaseChannel::Dev;
 
     let crash_handler = if should_install_crash_handler {
-        Some(crashes::init(
-            InitCrashHandler {
-                session_id,
-                // strip the build and channel information from the version string, we send them separately
-                zed_version: semver::Version::new(
-                    app_version.major,
-                    app_version.minor,
-                    app_version.patch,
-                )
-                .to_string(),
-                binary: "zed".to_string(),
-                release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-                commit_sha: app_commit_sha
-                    .as_ref()
-                    .map(|sha| sha.full())
-                    .unwrap_or_else(|| "no sha".to_owned()),
-            },
-            {
-                let background_executor1 = app.background_executor();
-                move |task| {
-                    background_executor1.spawn(task).detach();
-                }
-            },
-            |pid| paths::temp_dir().join(format!("zed-crash-handler-{pid}")),
-            move |duration| background_executor.timer(duration),
-        ))
+        Some(
+            app.background_executor().spawn(crashes::init(
+                InitCrashHandler {
+                    session_id,
+                    // strip the build and channel information from the version string, we send them separately
+                    zed_version: semver::Version::new(
+                        app_version.major,
+                        app_version.minor,
+                        app_version.patch,
+                    )
+                    .to_string(),
+                    binary: "zed".to_string(),
+                    release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+                    commit_sha: app_commit_sha
+                        .as_ref()
+                        .map(|sha| sha.full())
+                        .unwrap_or_else(|| "no sha".to_owned()),
+                },
+                {
+                    let background_executor1 = app.background_executor();
+                    move |task| {
+                        background_executor1.spawn(task).detach();
+                    }
+                },
+                |pid| paths::temp_dir().join(format!("zed-crash-handler-{pid}")),
+                move |duration| background_executor.timer(duration),
+            )),
+        )
     } else {
         crashes::force_backtrace();
         None
@@ -462,13 +468,6 @@ fn main() {
     });
 
     app.run(move |cx| {
-        if let Some(crash_handler) = crash_handler {
-            cx.spawn(async move |cx| {
-                let crash_handler = crash_handler.await;
-                cx.update(|cx| cx.set_global(CrashHandler(crash_handler)))
-            })
-            .detach();
-        }
         cx.set_global(app_db);
         let db_trusted_paths = match workspace::WorkspaceDb::global(cx).fetch_trusted_worktrees() {
             Ok(trusted_paths) => trusted_paths,
@@ -838,6 +837,25 @@ fn main() {
 
         let menus = app_menus(cx);
         cx.set_menus(menus);
+
+        if let Some(mut crash_handler) = crash_handler {
+            let crash_handler2 = block_on(poll_once(&mut crash_handler));
+            match crash_handler2 {
+                Some(crash_handler) => {
+                    cx.set_global(CrashHandler(crash_handler));
+                }
+                None => {
+                    cx.spawn(async move |cx| {
+                        let client1 = crash_handler.await;
+                        cx.update(|cx| {
+                            cx.set_global(CrashHandler(client1));
+                        });
+                    })
+                    .detach();
+                }
+            }
+        }
+
         initialize_workspace(app_state.clone(), cx);
 
         cx.activate(true);

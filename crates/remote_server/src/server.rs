@@ -20,7 +20,7 @@ use futures::{
     select, select_biased,
 };
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Context, Entity, UpdateGlobal as _, block_on};
+use gpui::{App, AppContext as _, Context, Entity, UpdateGlobal as _};
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
@@ -468,7 +468,7 @@ pub fn execute_run(
     ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
 
     let crash_handler = if should_install_crash_handler {
-        Some(crashes::init(
+        Some(app.background_executor().spawn(crashes::init(
             crashes::InitCrashHandler {
                 session_id: id,
                 zed_version: VERSION.to_owned(),
@@ -486,8 +486,9 @@ pub fn execute_run(
             // we are running outside gpui
             #[allow(clippy::disallowed_methods)]
             |duration| FutureExt::map(Timer::after(duration), |_| ()),
-        ))
+        )))
     } else {
+        crashes::force_backtrace();
         None
     };
     let log_rx = init_logging_server(&log_file)?;
@@ -746,7 +747,7 @@ pub(crate) fn execute_proxy(
     ) || *RELEASE_CHANNEL != ReleaseChannel::Dev;
 
     if should_install_crash_handler {
-        block_on(crashes::init(
+        smol::spawn(crashes::init(
             crashes::InitCrashHandler {
                 session_id: id,
                 zed_version: VERSION.to_owned(),
@@ -761,7 +762,8 @@ pub(crate) fn execute_proxy(
             // we are running outside gpui
             #[allow(clippy::disallowed_methods)]
             |duration| FutureExt::map(Timer::after(duration), |_| ()),
-        ));
+        ))
+        .detach();
     };
     log::info!("starting proxy process. PID: {}", std::process::id());
     let server_pid = {
