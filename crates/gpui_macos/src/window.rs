@@ -26,12 +26,12 @@ use cocoa::{
 use dispatch2::DispatchQueue;
 use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalPaths,
-    FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams, point,
-    px, size,
+    FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyDownHandledByInputMethodEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind,
+    WindowParams, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -2026,6 +2026,9 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 if let Some(handled) = window_state.as_ref().lock().do_command_handled.take() {
                     return handled as BOOL;
                 } else if handled == YES {
+                    run_callback(PlatformInput::KeyDownHandledByInputMethod(
+                        KeyDownHandledByInputMethodEvent,
+                    ));
                     return YES;
                 }
 

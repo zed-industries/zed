@@ -4373,6 +4373,10 @@ impl Window {
                     PlatformInput::FileDrop(FileDropEvent::Exited)
                 }
             },
+            PlatformInput::KeyDownHandledByInputMethod(_) => {
+                self.pending_modifier.saw_keystroke = true;
+                event
+            }
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 

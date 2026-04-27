@@ -57,6 +57,17 @@ impl InputEvent for KeyUpEvent {
 }
 impl KeyEvent for KeyUpEvent {}
 
+/// The key down event handled by the input method equivalent for the platform.
+#[derive(Clone, Debug)]
+pub struct KeyDownHandledByInputMethodEvent;
+
+impl Sealed for KeyDownHandledByInputMethodEvent {}
+impl InputEvent for KeyDownHandledByInputMethodEvent {
+    fn to_platform_input(self) -> PlatformInput {
+        PlatformInput::KeyDownHandledByInputMethod(self)
+    }
+}
+
 /// The modifiers changed event equivalent for the platform.
 #[derive(Clone, Debug, Default)]
 pub struct ModifiersChangedEvent {
@@ -652,6 +663,8 @@ pub enum PlatformInput {
     KeyDown(KeyDownEvent),
     /// A key was released.
     KeyUp(KeyUpEvent),
+    /// A key down event was handled by the input method.
+    KeyDownHandledByInputMethod(KeyDownHandledByInputMethodEvent),
     /// The keyboard modifiers were changed.
     ModifiersChanged(ModifiersChangedEvent),
     /// The mouse was pressed.
@@ -677,6 +690,7 @@ impl PlatformInput {
         match self {
             PlatformInput::KeyDown { .. } => None,
             PlatformInput::KeyUp { .. } => None,
+            PlatformInput::KeyDownHandledByInputMethod { .. } => None,
             PlatformInput::ModifiersChanged { .. } => None,
             PlatformInput::MouseDown(event) => Some(event),
             PlatformInput::MouseUp(event) => Some(event),
@@ -693,6 +707,7 @@ impl PlatformInput {
         match self {
             PlatformInput::KeyDown(event) => Some(event),
             PlatformInput::KeyUp(event) => Some(event),
+            PlatformInput::KeyDownHandledByInputMethod(_) => None,
             PlatformInput::ModifiersChanged(event) => Some(event),
             PlatformInput::MouseDown(_) => None,
             PlatformInput::MouseUp(_) => None,
