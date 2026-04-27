@@ -3953,16 +3953,25 @@ pub(crate) fn update_settings_file(
     };
 
     cx.spawn(async move |cx| {
-        if let Err(err) = update_result.await {
-            if let Some(settings_window) = settings_window {
-                settings_window.update(cx, |this, cx| {
-                    this.settings_write_error = Some(format!("{err:#}"));
-                    cx.notify();
-                });
-            } else {
+        let result = update_result.await;
+        let Some(settings_window) = settings_window else {
+            if let Err(err) = result {
                 log::error!("Failed to update settings: {err:#}");
             }
-        }
+            return;
+        };
+
+        settings_window.update(cx, |this, cx| match result {
+            Ok(()) => {
+                if this.settings_write_error.take().is_some() {
+                    cx.notify();
+                }
+            }
+            Err(err) => {
+                this.settings_write_error = Some(format!("{err:#}"));
+                cx.notify();
+            }
+        });
     })
     .detach();
 }
