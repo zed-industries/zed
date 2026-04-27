@@ -27,7 +27,7 @@ const SCROLLBAR_HIDE_DELAY_INTERVAL: Duration = Duration::from_secs(1);
 const SCROLLBAR_HIDE_DURATION: Duration = Duration::from_millis(400);
 const SCROLLBAR_SHOW_DURATION: Duration = Duration::from_millis(50);
 
-pub const EDITOR_SCROLLBAR_WIDTH: Pixels = ScrollbarWidth::Editor.to_pixels();
+pub const EDITOR_SCROLLBAR_WIDTH: Pixels = ScrollbarStyle::Editor.to_pixels();
 const SCROLLBAR_PADDING: Pixels = px(4.);
 const BORDER_WIDTH: Pixels = px(1.);
 
@@ -342,26 +342,6 @@ impl ReservedSpace {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-enum ScrollbarWidth {
-    #[default]
-    Normal,
-    Editor,
-    Small,
-    XSmall,
-}
-
-impl ScrollbarWidth {
-    const fn to_pixels(&self) -> Pixels {
-        match self {
-            ScrollbarWidth::Editor => px(15.),
-            ScrollbarWidth::Normal => px(8.),
-            ScrollbarWidth::Small => px(6.),
-            ScrollbarWidth::XSmall => px(4.),
-        }
-    }
-}
-
 #[derive(Clone)]
 enum Handle<T: ScrollableHandle> {
     Tracked(T),
@@ -371,8 +351,17 @@ enum Handle<T: ScrollableHandle> {
 #[derive(Clone, Copy, Default, PartialEq)]
 pub enum ScrollbarStyle {
     #[default]
-    Rounded,
+    Regular,
     Editor,
+}
+
+impl ScrollbarStyle {
+    pub const fn to_pixels(&self) -> Pixels {
+        match self {
+            ScrollbarStyle::Regular => px(6.),
+            ScrollbarStyle::Editor => px(15.),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -385,7 +374,6 @@ pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     style: Option<ScrollbarStyle>,
     track_color: Option<Hsla>,
     border_color: Option<Hsla>,
-    scrollbar_width: ScrollbarWidth,
 }
 
 impl Scrollbars {
@@ -413,7 +401,6 @@ impl Scrollbars {
             style: None,
             track_color: None,
             border_color: None,
-            scrollbar_width: ScrollbarWidth::Normal,
         }
     }
 }
@@ -450,7 +437,6 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
         let Self {
             id,
             tracked_entity: tracked_entity_id,
-            scrollbar_width,
             visibility,
             get_visibility,
             track_color,
@@ -464,7 +450,6 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             id,
             tracked_entity: tracked_entity_id,
             visibility,
-            scrollbar_width,
             track_color,
             border_color,
             get_visibility,
@@ -497,21 +482,6 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
         self.visibility = along.apply_to(self.visibility, ReservedSpace::StableTrack);
         self.track_color = Some(background_color);
         self.border_color = track_border_color;
-        self
-    }
-
-    pub fn width_sm(mut self) -> Self {
-        self.scrollbar_width = ScrollbarWidth::Small;
-        self
-    }
-
-    pub fn width_xs(mut self) -> Self {
-        self.scrollbar_width = ScrollbarWidth::XSmall;
-        self
-    }
-
-    pub fn width_editor(mut self) -> Self {
-        self.scrollbar_width = ScrollbarWidth::Editor;
         self
     }
 }
@@ -663,7 +633,6 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
     notify_id: Option<EntityId>,
     manually_added: bool,
     scroll_handle: T,
-    width: ScrollbarWidth,
     show_behavior: ShowBehavior,
     get_visibility: fn(&App) -> ShowScrollbar,
     visibility: Point<ReservedSpace>,
@@ -688,7 +657,6 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             notify_id: config.tracked_entity.map(|id| id.unwrap_or(parent_id)),
             manually_added,
             scroll_handle,
-            width: config.scrollbar_width,
             visibility: config.visibility,
             track_color: config.track_color.map(|color| TrackColors {
                 background: color,
@@ -782,7 +750,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
     }
 
     fn space_to_reserve(&self) -> Pixels {
-        self.width.to_pixels() + 2 * SCROLLBAR_PADDING
+        self.style.to_pixels() + 2 * SCROLLBAR_PADDING
     }
 
     fn handle_to_track<Handle: ScrollableHandle>(&self) -> Option<&Handle> {
@@ -1193,7 +1161,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     thumbs: {
                         let state = self.state.read(cx);
                         let thumb_ranges = state.thumb_ranges().collect::<SmallVec<[_; 2]>>();
-                        let width = state.width.to_pixels();
+                        let width = state.style.to_pixels();
                         let track_color = state.track_color.as_ref();
 
                         let additional_padding = if thumb_ranges.len() == 2 {
@@ -1216,7 +1184,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                     bounds.size.apply_along(axis.invert(), |_| {
                                         width
                                             + match state.style {
-                                                ScrollbarStyle::Rounded => 2 * SCROLLBAR_PADDING,
+                                                ScrollbarStyle::Regular => 2 * SCROLLBAR_PADDING,
                                                 ScrollbarStyle::Editor => Pixels::ZERO,
                                             }
                                     }),
@@ -1228,7 +1196,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                 // Rounded style needs a bit of padding, whereas for editor scrollbars,
                                 // we want the full length of the track
                                 let thumb_container_bounds = match state.style {
-                                    ScrollbarStyle::Rounded => {
+                                    ScrollbarStyle::Regular => {
                                         scroll_track_bounds.dilate(-SCROLLBAR_PADDING)
                                     }
                                     ScrollbarStyle::Editor if has_border => scroll_track_bounds
@@ -1441,7 +1409,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     window.paint_quad(quad(
                         *thumb_bounds,
                         match style {
-                            ScrollbarStyle::Rounded => Corners::all(Pixels::MAX)
+                            ScrollbarStyle::Regular => Corners::all(Pixels::MAX)
                                 .clamp_radii_for_quad_size(thumb_bounds.size),
                             ScrollbarStyle::Editor => Corners::default(),
                         },

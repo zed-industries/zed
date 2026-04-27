@@ -1283,8 +1283,6 @@ impl Render for TerminalView {
                         div.custom_scrollbars(
                             Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
                                 .show_along(ScrollAxes::Vertical)
-                                .style(ui::ScrollbarStyle::Editor)
-                                .width_editor()
                                 .with_stable_track_along(
                                     ScrollAxes::Vertical,
                                     colors.editor_background,
