@@ -2448,9 +2448,10 @@ impl Thread {
                                 .collect();
                             (false, output)
                         } else {
-                            let output = AgentToolOutput::from_error(
+                            let output = anyhow::anyhow!(
                                 "Attempted to read an image, but this model doesn't support it.",
-                            );
+                            )
+                            .into();
                             (true, output)
                         }
                     } else {
@@ -3426,14 +3427,11 @@ pub struct AgentToolOutput {
     pub raw_output: serde_json::Value,
 }
 
-impl AgentToolOutput {
-    pub fn from_error(message: impl Into<String>) -> Self {
-        let message = message.into();
-        let llm_output = vec![LanguageModelToolResultContent::Text(Arc::from(
-            message.as_str(),
-        ))];
+impl From<anyhow::Error> for AgentToolOutput {
+    fn from(error: anyhow::Error) -> Self {
+        let llm_output = vec![error.into()];
         Self {
-            raw_output: serde_json::Value::String(message),
+            raw_output: serde_json::json!(&llm_output),
             llm_output,
         }
     }
@@ -3512,12 +3510,13 @@ where
         let task = self.0.clone().run(tool_input, event_stream, cx);
         cx.spawn(async move |_cx| match task.await {
             Ok(output) => {
-                let raw_output = serde_json::to_value(&output).map_err(|e| {
-                    AgentToolOutput::from_error(format!("Failed to serialize tool output: {e}"))
-                })?;
+                let raw_output = serde_json::to_value(&output).unwrap_or_else(|e| {
+                    log::error!("Failed to serialize tool output: {e}");
+                    serde_json::Value::Null
+                });
                 Ok(AgentToolOutput {
-                    llm_output: vec![output.into()],
                     raw_output,
+                    llm_output: vec![output.into()],
                 })
             }
             Err(error_output) => {

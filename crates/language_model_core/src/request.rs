@@ -273,6 +273,12 @@ impl From<String> for LanguageModelToolResultContent {
     }
 }
 
+impl From<anyhow::Error> for LanguageModelToolResultContent {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Text(Arc::from(error.to_string()))
+    }
+}
+
 impl From<LanguageModelImage> for LanguageModelToolResultContent {
     fn from(image: LanguageModelImage) -> Self {
         Self::Image(image)
