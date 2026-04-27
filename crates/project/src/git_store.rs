@@ -5281,9 +5281,7 @@ impl Repository {
                     }
                 }
                 Err(error) => {
-                    log::error!(
-                        "failed to read commit data batch for [{first_sha}]: {error:?}"
-                    );
+                    log::error!("failed to read commit data batch for [{first_sha}]: {error:?}");
                 }
             }
         }
