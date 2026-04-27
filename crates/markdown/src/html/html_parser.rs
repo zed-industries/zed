@@ -8,8 +8,6 @@ use markup5ever_rcdom::{Node, NodeData, RcDom};
 use pulldown_cmark::{Alignment, HeadingLevel};
 use stacksafe::stacksafe;
 
-use std::cell::Cell;
-
 use crate::html::html_minifier::{Minifier, MinifierOptions};
 
 #[derive(Debug, Clone, Default)]
@@ -51,7 +49,6 @@ impl ParsedHtmlElement {
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct ParsedHtmlDetails {
-    pub id: usize,
     pub source_range: Range<usize>,
     pub summary: HtmlParagraph,
     pub children: Vec<ParsedHtmlElement>,
@@ -186,15 +183,11 @@ impl HtmlImage {
 #[derive(Debug)]
 struct ParseHtmlNodeContext {
     list_item_depth: u16,
-    details_counter: Cell<usize>,
 }
 
 impl Default for ParseHtmlNodeContext {
     fn default() -> Self {
-        Self {
-            list_item_depth: 1,
-            details_counter: Cell::new(0),
-        }
+        Self { list_item_depth: 1 }
     }
 }
 
@@ -365,11 +358,6 @@ fn parse_html_node(
                     }
                 }
                 elements.push(ParsedHtmlElement::Details(ParsedHtmlDetails {
-                    id: {
-                        let id = context.details_counter.get();
-                        context.details_counter.set(id + 1);
-                        id
-                    },
                     source_range,
                     summary,
                     children,
@@ -713,7 +701,6 @@ fn extract_html_list(
                 &mut content,
                 &ParseHtmlNodeContext {
                     list_item_depth: depth + 1,
-                    details_counter: Cell::new(0),
                 },
             );
 

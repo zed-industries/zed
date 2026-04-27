@@ -133,51 +133,19 @@ impl MarkdownElement {
         markdown_end: usize,
         cx: &mut App,
     ) {
-        let details_id = details.id;
-        let is_open = self
-            .markdown
-            .read(cx)
-            .details_open_states
-            .get(&details_id)
-            .copied()
-            .unwrap_or(true);
+        if !details.summary.is_empty() {
+            builder.push_div(div(), &details.source_range, markdown_end);
+            self.render_html_paragraph(
+                &details.summary,
+                source_allocator,
+                builder,
+                cx,
+                markdown_end,
+            );
+            builder.pop_div();
+        }
 
-        let markdown = self.markdown.clone();
-        let summary_text: String = details
-            .summary
-            .iter()
-            .filter_map(|chunk| {
-                if let crate::html::html_parser::HtmlParagraphChunk::Text(t) = chunk {
-                    Some(t.contents.as_ref().to_string())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let indicator = if is_open { "▼ " } else { "▶ " };
-        let label = format!("{}{}", indicator, summary_text);
-
-        let summary_div = div()
-            .id(("html-details-summary", details_id))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_1()
-            .cursor_pointer()
-            .on_click(move |_, _window, cx| {
-                markdown.update(cx, |m, cx| {
-                    let open = m.details_open_states.entry(details_id).or_insert(true);
-                    *open = !*open;
-                    cx.notify();
-                });
-            });
-
-        builder.push_div(summary_div, &details.source_range, markdown_end);
-        builder.push_text(&label, details.source_range.clone());
-        builder.pop_div();
-
-        if is_open {
+        if !details.children.is_empty() {
             builder.push_div(div().pl_4(), &details.source_range, markdown_end);
             self.render_html_elements(
                 &details.children,
