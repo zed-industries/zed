@@ -423,9 +423,11 @@ A font size from `6` to `100` pixels (inclusive)
 - Default:
 
 ```json [settings]
-"centered_layout": {
-  "left_padding": 0.2,
-  "right_padding": 0.2,
+{
+  "centered_layout": {
+    "left_padding": 0.2,
+    "right_padding": 0.2
+  }
 }
 ```
 
@@ -447,6 +449,24 @@ left and right padding of the central pane from the workspace when the centered 
 When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
 
 Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
+
+## Code Lens
+
+- Description: Whether and how to display code lenses from language servers. Code lenses show contextual information such as reference counts, implementations, and other metadata provided by the language server.
+- Setting: `code_lens`
+- Default: `off`
+
+**Options**
+
+1. `off`: Do not query and display code lenses.
+2. `on`: Display code lenses from language servers above code elements.
+3. `menu`: Display code lenses in the code action menu.
+
+```json [settings]
+{
+  "code_lens": "on"
+}
+```
 
 ## Confirm Quit
 
@@ -505,6 +525,19 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
   "diagnostics_max_severity": "hint"
 }
 ```
+
+## Diff View Style
+
+- Description: How to display diffs in the editor.
+- Setting: `diff_view_style`
+- Default: `"split"`
+
+**Options**
+
+- `"unified"`: Show changes inline with added and deleted lines stacked vertically
+- `"split"`: Display old and new versions side by side in separate panes (default)
+
+See [Git documentation](../git.md#diff-view-styles) for more details.
 
 ## Disable AI
 
@@ -613,13 +646,17 @@ List of `string` values
 1. Don't show edit predictions in comments:
 
 ```json [settings]
-"disabled_in": ["comment"]
+{
+  "edit_predictions_disabled_in": ["comment"]
+}
 ```
 
 2. Don't show edit predictions in strings and comments:
 
 ```json [settings]
-"disabled_in": ["comment", "string"]
+{
+  "edit_predictions_disabled_in": ["comment", "string"]
+}
 ```
 
 3. Only in Go, don't show edit predictions in strings and comments:
@@ -645,25 +682,33 @@ List of `string` values
 1. Don't highlight the current line:
 
 ```json [settings]
-"current_line_highlight": "none"
+{
+  "current_line_highlight": "none"
+}
 ```
 
 2. Highlight the gutter area:
 
 ```json [settings]
-"current_line_highlight": "gutter"
+{
+  "current_line_highlight": "gutter"
+}
 ```
 
 3. Highlight the editor area:
 
 ```json [settings]
-"current_line_highlight": "line"
+{
+  "current_line_highlight": "line"
+}
 ```
 
 4. Highlight the full line:
 
 ```json [settings]
-"current_line_highlight": "all"
+{
+  "current_line_highlight": "all"
+}
 ```
 
 ## Selection Highlight
@@ -699,25 +744,33 @@ List of `string` values
 1. A vertical bar:
 
 ```json [settings]
-"cursor_shape": "bar"
+{
+  "cursor_shape": "bar"
+}
 ```
 
 2. A block that surrounds the following character:
 
 ```json [settings]
-"cursor_shape": "block"
+{
+  "cursor_shape": "block"
+}
 ```
 
 3. An underline / underscore that runs along the following character:
 
 ```json [settings]
-"cursor_shape": "underline"
+{
+  "cursor_shape": "underline"
+}
 ```
 
 4. An box drawn around the following character:
 
 ```json [settings]
-"cursor_shape": "hollow"
+{
+  "cursor_shape": "hollow"
+}
 ```
 
 ## Gutter
@@ -757,19 +810,25 @@ List of `string` values
 1. Never hide the mouse cursor:
 
 ```json [settings]
-"hide_mouse": "never"
+{
+  "hide_mouse": "never"
+}
 ```
 
 2. Hide only when typing:
 
 ```json [settings]
-"hide_mouse": "on_typing"
+{
+  "hide_mouse": "on_typing"
+}
 ```
 
 3. Hide on both typing and cursor movement:
 
 ```json [settings]
-"hide_mouse": "on_typing_and_movement"
+{
+  "hide_mouse": "on_typing_and_movement"
+}
 ```
 
 ## Snippet Sort Order
@@ -783,25 +842,33 @@ List of `string` values
 1. Place snippets at the top of the completion list:
 
 ```json [settings]
-"snippet_sort_order": "top"
+{
+  "snippet_sort_order": "top"
+}
 ```
 
 2. Place snippets normally without any preference:
 
 ```json [settings]
-"snippet_sort_order": "inline"
+{
+  "snippet_sort_order": "inline"
+}
 ```
 
 3. Place snippets at the bottom of the completion list:
 
 ```json [settings]
-"snippet_sort_order": "bottom"
+{
+  "snippet_sort_order": "bottom"
+}
 ```
 
 4. Do not show snippets in the completion list at all:
 
 ```json [settings]
-"snippet_sort_order": "none"
+{
+  "snippet_sort_order": "none"
+}
 ```
 
 ## Editor Scrollbar
@@ -811,19 +878,21 @@ List of `string` values
 - Default:
 
 ```json [settings]
-"scrollbar": {
-  "show": "auto",
-  "cursors": true,
-  "git_diff": true,
-  "search_results": true,
-  "selected_text": true,
-  "selected_symbol": true,
-  "diagnostics": "all",
-  "axes": {
-    "horizontal": true,
-    "vertical": true,
-  },
-},
+{
+  "scrollbar": {
+    "show": "auto",
+    "cursors": true,
+    "git_diff": true,
+    "search_results": true,
+    "selected_text": true,
+    "selected_symbol": true,
+    "diagnostics": "all",
+    "axes": {
+      "horizontal": true,
+      "vertical": true
+    }
+  }
+}
 ```
 
 ### Show Mode
@@ -837,32 +906,40 @@ List of `string` values
 1. Show the scrollbar if there's important information or follow the system's configured behavior:
 
 ```json [settings]
-"scrollbar": {
-  "show": "auto"
+{
+  "scrollbar": {
+    "show": "auto"
+  }
 }
 ```
 
 2. Match the system's configured behavior:
 
 ```json [settings]
-"scrollbar": {
-  "show": "system"
+{
+  "scrollbar": {
+    "show": "system"
+  }
 }
 ```
 
 3. Always show the scrollbar:
 
 ```json [settings]
-"scrollbar": {
-  "show": "always"
+{
+  "scrollbar": {
+    "show": "always"
+  }
 }
 ```
 
 4. Never show the scrollbar:
 
 ```json [settings]
-"scrollbar": {
-  "show": "never"
+{
+  "scrollbar": {
+    "show": "never"
+  }
 }
 ```
 
@@ -940,7 +1017,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "show_diagnostics": "all"
+  "scrollbar": {
+    "diagnostics": "all"
+  }
 }
 ```
 
@@ -948,7 +1027,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "show_diagnostics": "off"
+  "scrollbar": {
+    "diagnostics": "none"
+  }
 }
 ```
 
@@ -956,7 +1037,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "show_diagnostics": "error"
+  "scrollbar": {
+    "diagnostics": "error"
+  }
 }
 ```
 
@@ -964,7 +1047,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "show_diagnostics": "warning"
+  "scrollbar": {
+    "diagnostics": "warning"
+  }
 }
 ```
 
@@ -972,7 +1057,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "show_diagnostics": "info"
+  "scrollbar": {
+    "diagnostics": "information"
+  }
 }
 ```
 
@@ -983,11 +1070,13 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 - Default:
 
 ```json [settings]
-"scrollbar": {
-  "axes": {
-    "horizontal": true,
-    "vertical": true,
-  },
+{
+  "scrollbar": {
+    "axes": {
+      "horizontal": true,
+      "vertical": true
+    }
+  }
 }
 ```
 
@@ -1040,7 +1129,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "show": "always"
+  "minimap": {
+    "show": "always"
+  }
 }
 ```
 
@@ -1048,7 +1139,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "show": "auto"
+  "minimap": {
+    "show": "auto"
+  }
 }
 ```
 
@@ -1056,7 +1149,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "show": "never"
+  "minimap": {
+    "show": "never"
+  }
 }
 ```
 
@@ -1072,7 +1167,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "thumb": "hover"
+  "minimap": {
+    "thumb": "hover"
+  }
 }
 ```
 
@@ -1080,7 +1177,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "thumb": "always"
+  "minimap": {
+    "thumb": "always"
+  }
 }
 ```
 
@@ -1096,7 +1195,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "thumb_border": "full"
+  "minimap": {
+    "thumb_border": "full"
+  }
 }
 ```
 
@@ -1104,7 +1205,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "thumb_border": "left_open"
+  "minimap": {
+    "thumb_border": "left_open"
+  }
 }
 ```
 
@@ -1112,7 +1215,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "thumb_border": "right_open"
+  "minimap": {
+    "thumb_border": "right_open"
+  }
 }
 ```
 
@@ -1120,7 +1225,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "thumb_border": "left_only"
+  "minimap": {
+    "thumb_border": "left_only"
+  }
 }
 ```
 
@@ -1128,7 +1235,9 @@ Diagnostic indicators appear as colored marks showing errors, warnings, and othe
 
 ```json [settings]
 {
-  "thumb_border": "none"
+  "minimap": {
+    "thumb_border": "none"
+  }
 }
 ```
 
@@ -1197,10 +1306,12 @@ or
 - Default:
 
 ```json [settings]
-"tab_bar": {
-  "show": true,
-  "show_nav_history_buttons": true,
-  "show_tab_bar_buttons": true
+{
+  "tab_bar": {
+    "show": true,
+    "show_nav_history_buttons": true,
+    "show_tab_bar_buttons": true
+  }
 }
 ```
 
@@ -1241,14 +1352,16 @@ or
 - Default:
 
 ```json [settings]
-"tabs": {
-  "close_position": "right",
-  "file_icons": false,
-  "git_status": false,
-  "activate_on_close": "history",
-  "show_close_button": "hover",
-  "show_diagnostics": "off"
-},
+{
+  "tabs": {
+    "close_position": "right",
+    "file_icons": false,
+    "git_status": false,
+    "activate_on_close": "history",
+    "show_close_button": "hover",
+    "show_diagnostics": "off"
+  }
+}
 ```
 
 ### Close Position
@@ -1263,7 +1376,9 @@ or
 
 ```json [settings]
 {
-  "close_position": "right"
+  "tabs": {
+    "close_position": "right"
+  }
 }
 ```
 
@@ -1271,7 +1386,9 @@ or
 
 ```json [settings]
 {
-  "close_position": "left"
+  "tabs": {
+    "close_position": "left"
+  }
 }
 ```
 
@@ -1299,7 +1416,9 @@ or
 
 ```json [settings]
 {
-  "activate_on_close": "history"
+  "tabs": {
+    "activate_on_close": "history"
+  }
 }
 ```
 
@@ -1307,7 +1426,9 @@ or
 
 ```json [settings]
 {
-  "activate_on_close": "neighbour"
+  "tabs": {
+    "activate_on_close": "neighbour"
+  }
 }
 ```
 
@@ -1315,7 +1436,9 @@ or
 
 ```json [settings]
 {
-  "activate_on_close": "left_neighbour"
+  "tabs": {
+    "activate_on_close": "left_neighbour"
+  }
 }
 ```
 
@@ -1331,7 +1454,9 @@ or
 
 ```json [settings]
 {
-  "show_close_button": "hover"
+  "tabs": {
+    "show_close_button": "hover"
+  }
 }
 ```
 
@@ -1339,7 +1464,9 @@ or
 
 ```json [settings]
 {
-  "show_close_button": "always"
+  "tabs": {
+    "show_close_button": "always"
+  }
 }
 ```
 
@@ -1347,7 +1474,9 @@ or
 
 ```json [settings]
 {
-  "show_close_button": "hidden"
+  "tabs": {
+    "show_close_button": "hidden"
+  }
 }
 ```
 
@@ -1363,7 +1492,9 @@ or
 
 ```json [settings]
 {
-  "show_diagnostics": "off"
+  "tabs": {
+    "show_diagnostics": "off"
+  }
 }
 ```
 
@@ -1371,7 +1502,9 @@ or
 
 ```json [settings]
 {
-  "show_diagnostics": "errors"
+  "tabs": {
+    "show_diagnostics": "errors"
+  }
 }
 ```
 
@@ -1379,7 +1512,9 @@ or
 
 ```json [settings]
 {
-  "show_diagnostics": "all"
+  "tabs": {
+    "show_diagnostics": "all"
+  }
 }
 ```
 
@@ -1441,9 +1576,11 @@ When trusted, project settings are synchronized automatically, language and MCP 
 - Default:
 
 ```json [settings]
-"drag_and_drop_selection": {
-  "enabled": true,
-  "delay": 300
+{
+  "drag_and_drop_selection": {
+    "enabled": true,
+    "delay": 300
+  }
 }
 ```
 
@@ -1454,13 +1591,15 @@ When trusted, project settings are synchronized automatically, language and MCP 
 - Default:
 
 ```json [settings]
-"toolbar": {
-  "breadcrumbs": true,
-  "quick_actions": true,
-  "selections_menu": true,
-  "agent_review": true,
-  "code_actions": false
-},
+{
+  "toolbar": {
+    "breadcrumbs": true,
+    "quick_actions": true,
+    "selections_menu": true,
+    "agent_review": true,
+    "code_actions": false
+  }
+}
 ```
 
 **Options**
@@ -1496,6 +1635,56 @@ This setting enables integration with macOS’s native window tabbing feature. W
 **Options**
 
 `boolean` values
+
+## Line Ending
+
+- Description: How line endings should be handled for new files and during format and save. This can be specified on a per-language basis.
+- Setting: `line_ending`
+- Default: `detect`
+
+**Options**
+
+1. To detect existing line endings and otherwise use the platform default (`lf` on Unix, `crlf` on Windows), set it to `detect`:
+
+```json [settings]
+{
+  "line_ending": "detect"
+}
+```
+
+2. To prefer LF (`\n`) for new files and files with no existing line ending, use `prefer_lf`:
+
+```json [settings]
+{
+  "line_ending": "prefer_lf"
+}
+```
+
+3. To prefer CRLF (`\r\n`) for new files and files with no existing line ending, use `prefer_crlf`:
+
+```json [settings]
+{
+  "line_ending": "prefer_crlf"
+}
+```
+
+4. To enforce LF (`\n`) during format and save, use `enforce_lf`:
+
+```json [settings]
+{
+  "line_ending": "enforce_lf"
+}
+```
+
+5. To enforce CRLF (`\r\n`) during format and save, use `enforce_crlf`:
+
+```json [settings]
+{
+  "line_ending": "enforce_crlf"
+}
+```
+
+The [`.editorconfig`](https://editorconfig.org) `end_of_line` property overrides this setting and behaves like `enforce_lf` or `enforce_crlf`.
 
 ## Expand Excerpt Lines
 
@@ -1534,11 +1723,13 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 - Default:
 
 ```json [settings]
-"status_bar": {
-  "active_language_button": true,
-  "cursor_position_button": true,
-  "line_endings_button": false
-},
+{
+  "status_bar": {
+    "active_language_button": true,
+    "cursor_position_button": true,
+    "line_endings_button": false
+  }
+}
 ```
 
 There is an experimental setting that completely hides the status bar. This causes major usability problems (you will be unable to use many of Zed's features), but is provided for those who value screen real-estate above all else.
@@ -1569,11 +1760,13 @@ Some options are passed via `initialization_options` to the language server. The
 For example to pass the `check` option to `rust-analyzer`, use the following configuration:
 
 ```json [settings]
-"lsp": {
-  "rust-analyzer": {
-    "initialization_options": {
-      "check": {
-        "command": "clippy" // rust-analyzer.check.command (default: "check")
+{
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "check": {
+          "command": "clippy" // rust-analyzer.check.command (default: "check")
+        }
       }
     }
   }
@@ -1583,11 +1776,13 @@ For example to pass the `check` option to `rust-analyzer`, use the following con
 While other options may be changed at a runtime and should be placed under `settings`:
 
 ```json [settings]
-"lsp": {
-  "yaml-language-server": {
-    "settings": {
-      "yaml": {
-        "keyOrdering": true // Enforces alphabetical ordering of keys in maps
+{
+  "lsp": {
+    "yaml-language-server": {
+      "settings": {
+        "yaml": {
+          "keyOrdering": true // Enforces alphabetical ordering of keys in maps
+        }
       }
     }
   }
@@ -1639,8 +1834,8 @@ While other options may be changed at a runtime and should be placed under `sett
 
 ```json [settings]
 {
-  "features": {
-    "edit_prediction_provider": "zed"
+  "edit_predictions": {
+    "provider": "zed"
   }
 }
 ```
@@ -1657,8 +1852,8 @@ While other options may be changed at a runtime and should be placed under `sett
 
 ```json [settings]
 {
-  "features": {
-    "edit_prediction_provider": "zed"
+  "edit_predictions": {
+    "provider": "zed"
   }
 }
 ```
@@ -1667,28 +1862,18 @@ While other options may be changed at a runtime and should be placed under `sett
 
 ```json [settings]
 {
-  "features": {
-    "edit_prediction_provider": "copilot"
+  "edit_predictions": {
+    "provider": "copilot"
   }
 }
 ```
 
-3. Use Supermaven as the edit prediction provider:
+3. Turn off edit predictions across all providers
 
 ```json [settings]
 {
-  "features": {
-    "edit_prediction_provider": "supermaven"
-  }
-}
-```
-
-4. Turn off edit predictions across all providers
-
-```json [settings]
-{
-  "features": {
-    "edit_prediction_provider": "none"
+  "edit_predictions": {
+    "provider": "none"
   }
 }
 ```
@@ -1791,6 +1976,14 @@ WARNING: `{buffer_path}` should not be used to direct your formatter to read fro
 Here `rust-analyzer` will be used first to format the code, followed by a call of sed.
 If any of the formatters fails, the subsequent ones will still be executed.
 
+6. To disable the formatter, use `"none"`. This setting disables the configured formatter, but any actions in `code_actions_on_format` will still be executed:
+
+```json [settings]
+{
+  "formatter": "none"
+}
+```
+
 ## Auto close
 
 - Description: Whether to automatically add matching closing characters when typing opening parenthesis, bracket, brace, single or double quote characters.
@@ -1828,17 +2021,19 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 - Default:
 
 ```json [settings]
-"file_scan_exclusions": [
-  "**/.git",
-  "**/.svn",
-  "**/.hg",
-  "**/.jj",
-  "**/CVS",
-  "**/.DS_Store",
-  "**/Thumbs.db",
-  "**/.classpath",
-  "**/.settings"
-],
+{
+  "file_scan_exclusions": [
+    "**/.git",
+    "**/.svn",
+    "**/.hg",
+    "**/.jj",
+    "**/CVS",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/.classpath",
+    "**/.settings"
+  ]
+}
 ```
 
 Note, specifying `file_scan_exclusions` in settings.json will override the defaults (shown above). If you are looking to exclude additional items you will need to include all the default values in your settings.
@@ -1850,7 +2045,9 @@ Note, specifying `file_scan_exclusions` in settings.json will override the defau
 - Default:
 
 ```json [settings]
-"file_scan_inclusions": [".env*"],
+{
+  "file_scan_inclusions": [".env*"]
+}
 ```
 
 ## File Types
@@ -1860,9 +2057,16 @@ Note, specifying `file_scan_exclusions` in settings.json will override the defau
 - Default:
 
 ```json [settings]
-"file_types": {
-  "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
-  "Shell Script": [".env.*"]
+{
+  "file_types": {
+    "JSONC": [
+      "**/.zed/**/*.json",
+      "**/zed/**/*.json",
+      "**/Zed/**/*.json",
+      "**/.vscode/**/*.json"
+    ],
+    "Shell Script": [".env.*"]
+  }
 }
 ```
 
@@ -1892,10 +2096,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "include_warnings": true,
     "inline": {
       "enabled": false
-    },
-    "update_with_cursor": false,
-    "primary_only": false,
-    "use_rendered": false
+    }
   }
 }
 ```
@@ -2223,6 +2424,38 @@ Example:
 }
 ```
 
+## Go to Definition Scroll Strategy
+
+- Description: How to scroll the target into view when navigating to a definition or reference (e.g. {#action editor::GoToDefinition}, {#action editor::GoToTypeDefinition}, {#action editor::FindAllReferences}).
+- Setting: `go_to_definition_scroll_strategy`
+- Default: `"center"`
+
+**Options**
+
+1. Vertically center the target in the viewport (default):
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "center"
+}
+```
+
+2. Scroll the minimum amount needed to make the target visible:
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "minimum"
+}
+```
+
+3. Scroll so the target appears near the top of the viewport:
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "top"
+}
+```
+
 ## Hard Tabs
 
 - Description: Whether to indent lines using tab characters or multiple spaces.
@@ -2332,6 +2565,26 @@ Example:
 
 `integer` values representing milliseconds
 
+## Hover Popover Sticky
+
+- Description: Whether the hover popover sticks when the mouse moves toward it, allowing interaction with its contents before it disappears.
+- Setting: `hover_popover_sticky`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+## Hover Popover Hiding Delay
+
+- Description: Time to wait in milliseconds before hiding the hover popover after the mouse moves away from the hover target. Only applies when `hover_popover_sticky` is enabled.
+- Setting: `hover_popover_hiding_delay`
+- Default: `300`
+
+**Options**
+
+`integer` values representing milliseconds
+
 ## Icon Theme
 
 - Description: The icon theme setting can be specified in two forms - either as the name of an icon theme or as an object containing the `mode`, `dark`, and `light` icon themes for files/folders inside Zed.
@@ -2345,11 +2598,13 @@ Example:
 - Default:
 
 ```json [settings]
-"icon_theme": {
-  "mode": "system",
-  "dark": "Zed (Default)",
-  "light": "Zed (Default)"
-},
+{
+  "icon_theme": {
+    "mode": "system",
+    "dark": "Zed (Default)",
+    "light": "Zed (Default)"
+  }
+}
 ```
 
 ### Mode
@@ -2364,7 +2619,11 @@ Example:
 
 ```json [settings]
 {
-  "mode": "dark"
+  "icon_theme": {
+    "mode": "dark",
+    "dark": "Zed (Default)",
+    "light": "Zed (Default)"
+  }
 }
 ```
 
@@ -2372,7 +2631,11 @@ Example:
 
 ```json [settings]
 {
-  "mode": "light"
+  "icon_theme": {
+    "mode": "light",
+    "dark": "Zed (Default)",
+    "light": "Zed (Default)"
+  }
 }
 ```
 
@@ -2380,7 +2643,11 @@ Example:
 
 ```json [settings]
 {
-  "mode": "system"
+  "icon_theme": {
+    "mode": "system",
+    "dark": "Zed (Default)",
+    "light": "Zed (Default)"
+  }
 }
 ```
 
@@ -2455,15 +2722,17 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
 - Default:
 
 ```json [settings]
-"inlay_hints": {
-  "enabled": false,
-  "show_type_hints": true,
-  "show_parameter_hints": true,
-  "show_other_hints": true,
-  "show_background": false,
-  "edit_debounce_ms": 700,
-  "scroll_debounce_ms": 50,
-  "toggle_on_modifiers_press": null
+{
+  "inlay_hints": {
+    "enabled": false,
+    "show_type_hints": true,
+    "show_parameter_hints": true,
+    "show_other_hints": true,
+    "show_background": false,
+    "edit_debounce_ms": 700,
+    "scroll_debounce_ms": 50,
+    "toggle_on_modifiers_press": null
+  }
 }
 ```
 
@@ -2488,13 +2757,15 @@ Settings-related hint updates are not debounced.
 All possible config values for `toggle_on_modifiers_press` are:
 
 ```json [settings]
-"inlay_hints": {
-  "toggle_on_modifiers_press": {
-    "control": true,
-    "shift": true,
-    "alt": true,
-    "platform": true,
-    "function": true
+{
+  "inlay_hints": {
+    "toggle_on_modifiers_press": {
+      "control": true,
+      "shift": true,
+      "alt": true,
+      "platform": true,
+      "function": true
+    }
   }
 }
 ```
@@ -2508,11 +2779,12 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 - Default:
 
 ```json [settings]
-"journal": {
-  "path": "~",
-  "hour_format": "hour12"
+{
+  "journal": {
+    "path": "~",
+    "hour_format": "hour12"
+  }
 }
-
 ```
 
 ### Path
@@ -2537,7 +2809,9 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 
 ```json [settings]
 {
-  "hour_format": "hour12"
+  "journal": {
+    "hour_format": "hour12"
+  }
 }
 ```
 
@@ -2545,7 +2819,9 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 
 ```json [settings]
 {
-  "hour_format": "hour24"
+  "journal": {
+    "hour_format": "hour24"
+  }
 }
 ```
 
@@ -2578,14 +2854,16 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 To override settings for a language, add an entry for that languages name to the `languages` value. Example:
 
 ```json [settings]
-"languages": {
-  "C": {
-    "format_on_save": "off",
-    "preferred_line_length": 64,
-    "soft_wrap": "preferred_line_length"
-  },
-  "JSON": {
-    "tab_size": 4
+{
+  "languages": {
+    "C": {
+      "format_on_save": "off",
+      "preferred_line_length": 64,
+      "soft_wrap": "bounded"
+    },
+    "JSON": {
+      "tab_size": 4
+    }
   }
 }
 ```
@@ -2594,6 +2872,7 @@ The following settings can be overridden for each specific language:
 
 - [`enable_language_server`](#enable-language-server)
 - [`ensure_final_newline_on_save`](#ensure-final-newline-on-save)
+- [`line_ending`](#line-ending)
 - [`format_on_save`](#format-on-save)
 - [`formatter`](#formatter)
 - [`hard_tabs`](#hard-tabs)
@@ -2609,6 +2888,31 @@ The following settings can be overridden for each specific language:
 - [`always_treat_brackets_as_autoclosed`](#always-treat-brackets-as-autoclosed)
 
 These values take in the same options as the root-level settings with the same name.
+
+### Document Symbols
+
+- Description: Controls the source of document symbols used for outlines and breadcrumbs.
+- Setting: `document_symbols`
+- Default: `off`
+
+**Options**
+
+- `"off"`: Use tree-sitter queries to compute document symbols (default)
+- `"on"`: Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols
+
+LSP document symbols can provide more accurate symbols for complex language features (e.g., generic types, macros, decorators) that tree-sitter may not handle well. Use this when your language server provides better symbol information than the tree-sitter grammar.
+
+Example:
+
+```json [settings]
+{
+  "languages": {
+    "TypeScript": {
+      "document_symbols": "on"
+    }
+  }
+}
+```
 
 ## Language Models
 
@@ -2817,23 +3121,64 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 }
 ```
 
+## Instrumentation
+
+- Description: Configuration for developer-oriented instrumentation tools (profilers, tracers, etc.) that can be toggled at runtime.
+- Setting: `instrumentation`
+- Default:
+
+```json
+{
+  "instrumentation": {
+    "performance_profiler": {
+      "enabled": false
+    }
+  }
+}
+```
+
+### Performance Profiler
+
+- Description: Collects timing data for foreground and background executor tasks so they can be inspected via the `zed: open performance profiler` action. Enabling this may lead to increased memory usage, hence it's disabled by default for regular builds.
+- Setting: `instrumentation.performance_profiler.enabled`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Profiles
 
-- Description: Configuration profiles that can be applied on top of existing settings
+- Description: Configuration profiles that can be temporarily applied on top of existing settings or Zed's defaults.
 - Setting: `profiles`
 - Default: `{}`
 
 **Options**
 
-Configuration object for defining settings profiles. Example:
+Each profile is an object with the following optional fields:
+
+- `base`: What settings to start from before applying the profile's overrides.
+  - `"user"` (default): Apply on top of your current user settings.
+  - `"default"`: Apply on top of Zed's default settings, ignoring user customizations.
+- `settings`: The settings overrides for this profile.
+
+Examples:
 
 ```json [settings]
 {
   "profiles": {
-    "presentation": {
-      "buffer_font_size": 20,
-      "ui_font_size": 18,
-      "theme": "One Light"
+    "Presentation": {
+      "settings": {
+        "buffer_font_size": 20,
+        "ui_font_size": 18,
+        "theme": "One Light"
+      }
+    },
+    "Clean Slate": {
+      "base": "default",
+      "settings": {
+        "theme": "Ayu Dark"
+      }
     }
   }
 }
@@ -2855,14 +3200,16 @@ Configuration object for defining settings profiles. Example:
 - Default:
 
 ```json [settings]
-"preview_tabs": {
-  "enabled": true,
-  "enable_preview_from_project_panel": true,
-  "enable_preview_from_file_finder": false,
-  "enable_preview_from_multibuffer": true,
-  "enable_preview_multibuffer_from_code_navigation": false,
-  "enable_preview_file_from_code_navigation": true,
-  "enable_keep_preview_on_code_navigation": false,
+{
+  "preview_tabs": {
+    "enabled": true,
+    "enable_preview_from_project_panel": true,
+    "enable_preview_from_file_finder": false,
+    "enable_preview_from_multibuffer": true,
+    "enable_preview_multibuffer_from_code_navigation": false,
+    "enable_preview_file_from_code_navigation": true,
+    "enable_keep_preview_on_code_navigation": false
+  }
 }
 ```
 
@@ -3196,6 +3543,16 @@ List of strings containing any combination of:
 
 Positive `float` values
 
+### Mouse Wheel Zoom
+
+- Description: Whether to zoom the editor font size with the mouse wheel while holding the primary modifier key (Cmd on macOS, Ctrl on other platforms).
+- Setting: `mouse_wheel_zoom`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ### Fast Scroll Sensitivity
 
 - Description: Scroll sensitivity multiplier for fast scrolling. This multiplier is applied to both the horizontal and vertical delta values while scrolling. Fast scrolling happens when a user holds the alt or option key while scrolling.
@@ -3233,14 +3590,16 @@ Non-negative `integer` values
 - Default:
 
 ```json [settings]
-"search": {
-  "button": true,
-  "whole_word": false,
-  "case_sensitive": false,
-  "include_ignored": false,
-  "regex": false,
-  "center_on_match": false
-},
+{
+  "search": {
+    "button": true,
+    "whole_word": false,
+    "case_sensitive": false,
+    "include_ignored": false,
+    "regex": false,
+    "center_on_match": false
+  }
+}
 ```
 
 ### Button
@@ -3274,18 +3633,6 @@ Non-negative `integer` values
 - Description: Whether to interpret the search query as a regular expression.
 - Setting: `regex`
 - Default: `false`
-
-### Search On Input
-
-- Description: Whether to search on input in project search.
-- Setting: `search_on_input`
-- Default: `false`
-
-### Search On Input Debounce Ms
-
-- Description: Debounce time in milliseconds for search on input in project search. Set to 0 to disable debouncing.
-- Setting: `search_on_input_debounce_ms`
-- Default: `200`
 
 ### Center On Match
 
@@ -3678,10 +4025,12 @@ List of `integer` column numbers
 - Default:
 
 ```json [settings]
-"telemetry": {
-  "diagnostics": true,
-  "metrics": true
-},
+{
+  "telemetry": {
+    "diagnostics": true,
+    "metrics": true
+  }
+}
 ```
 
 **Options**
@@ -4330,14 +4679,16 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 - Default:
 
 ```json [settings]
-"repl": {
-  // Maximum number of columns to keep in REPL's scrollback buffer.
-  // Clamped with [20, 512] range.
-  "max_columns": 128,
-  // Maximum number of lines to keep in REPL's scrollback buffer.
-  // Clamped with [4, 256] range.
-  "max_lines": 32
-},
+{
+  "repl": {
+    // Maximum number of columns to keep in REPL's scrollback buffer.
+    // Clamped with [20, 512] range.
+    "max_columns": 128,
+    // Maximum number of lines to keep in REPL's scrollback buffer.
+    // Clamped with [4, 256] range.
+    "max_lines": 32
+  }
+}
 ```
 
 ## Theme
@@ -4353,11 +4704,13 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 - Default:
 
 ```json [settings]
-"theme": {
-  "mode": "system",
-  "dark": "One Dark",
-  "light": "One Light"
-},
+{
+  "theme": {
+    "mode": "system",
+    "dark": "One Dark",
+    "light": "One Light"
+  }
+}
 ```
 
 ### Mode
@@ -4372,7 +4725,11 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 ```json [settings]
 {
-  "mode": "dark"
+  "theme": {
+    "mode": "dark",
+    "dark": "One Dark",
+    "light": "One Light"
+  }
 }
 ```
 
@@ -4380,7 +4737,11 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 ```json [settings]
 {
-  "mode": "light"
+  "theme": {
+    "mode": "light",
+    "dark": "One Dark",
+    "light": "One Light"
+  }
 }
 ```
 
@@ -4388,7 +4749,11 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 ```json [settings]
 {
-  "mode": "system"
+  "theme": {
+    "mode": "system",
+    "dark": "One Dark",
+    "light": "One Light"
+  }
 }
 ```
 
@@ -4419,21 +4784,24 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - Default:
 
 ```json [settings]
-"title_bar": {
-  "show_branch_icon": false,
-  "show_branch_name": true,
-  "show_project_items": true,
-  "show_onboarding_banner": true,
-  "show_user_picture": true,
-  "show_user_menu": true,
-  "show_sign_in": true,
-  "show_menus": false
+{
+  "title_bar": {
+    "show_branch_status_icon": false,
+    "show_branch_name": true,
+    "show_project_items": true,
+    "show_onboarding_banner": true,
+    "show_user_picture": true,
+    "show_user_menu": true,
+    "show_sign_in": true,
+    "show_menus": false,
+    "button_layout": "platform_default"
+  }
 }
 ```
 
 **Options**
 
-- `show_branch_icon`: Whether to show the branch icon beside branch switcher in the titlebar
+- `show_branch_status_icon`: Whether to show git status indicators on the branch icon in the titlebar
 - `show_branch_name`: Whether to show the branch name button in the titlebar
 - `show_project_items`: Whether to show the project host and name in the titlebar
 - `show_onboarding_banner`: Whether to show onboarding banners in the titlebar
@@ -4441,6 +4809,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_user_menu`: Whether to show the user menu button in the titlebar (the one that displays your avatar by default and contains options like Settings, Keymap, Themes, etc.)
 - `show_sign_in`: Whether to show the sign in button in the titlebar
 - `show_menus`: Whether to show the menus in the titlebar
+- `button_layout`: The layout of window control buttons in the title bar (Linux only). Can be set to `"platform_default"` to follow the system setting, `"standard"` to use Zed's built-in layout, or a custom format like `"close:minimize,maximize"`
 
 ## Vim
 
@@ -4502,7 +4871,8 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "bold_folder_labels": false,
     "drag_and_drop": true,
     "scrollbar": {
-      "show": null
+      "show": null,
+      "horizontal_scroll": true
     },
     "sticky_scroll": true,
     "show_diagnostics": "all",
@@ -4534,7 +4904,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "dock": "left"
+  "project_panel": {
+    "dock": "left"
+  }
 }
 ```
 
@@ -4542,7 +4914,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "dock": "right"
+  "project_panel": {
+    "dock": "right"
+  }
 }
 ```
 
@@ -4558,7 +4932,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "entry_spacing": "comfortable"
+  "project_panel": {
+    "entry_spacing": "comfortable"
+  }
 }
 ```
 
@@ -4566,7 +4942,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "entry_spacing": "standard"
+  "project_panel": {
+    "entry_spacing": "standard"
+  }
 }
 ```
 
@@ -4582,7 +4960,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "git_status": true
+  "project_panel": {
+    "git_status": true
+  }
 }
 ```
 
@@ -4590,7 +4970,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "git_status": false
+  "project_panel": {
+    "git_status": false
+  }
 }
 ```
 
@@ -4616,7 +4998,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "auto_reveal_entries": true
+  "project_panel": {
+    "auto_reveal_entries": true
+  }
 }
 ```
 
@@ -4624,7 +5008,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "auto_reveal_entries": false
+  "project_panel": {
+    "auto_reveal_entries": false
+  }
 }
 ```
 
@@ -4640,7 +5026,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "auto_fold_dirs": true
+  "project_panel": {
+    "auto_fold_dirs": true
+  }
 }
 ```
 
@@ -4648,7 +5036,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "auto_fold_dirs": false
+  "project_panel": {
+    "auto_fold_dirs": false
+  }
 }
 ```
 
@@ -4664,7 +5054,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "bold_folder_labels": true
+  "project_panel": {
+    "bold_folder_labels": true
+  }
 }
 ```
 
@@ -4672,7 +5064,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "bold_folder_labels": false
+  "project_panel": {
+    "bold_folder_labels": false
+  }
 }
 ```
 
@@ -4689,8 +5083,12 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - Default:
 
 ```json [settings]
-"indent_guides": {
-  "show": "always"
+{
+  "project_panel": {
+    "indent_guides": {
+      "show": "always"
+    }
+  }
 }
 ```
 
@@ -4700,8 +5098,10 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "indent_guides": {
-    "show": "always"
+  "project_panel": {
+    "indent_guides": {
+      "show": "always"
+    }
   }
 }
 ```
@@ -4710,45 +5110,35 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "indent_guides": {
-    "show": "never"
+  "project_panel": {
+    "indent_guides": {
+      "show": "never"
+    }
   }
 }
 ```
 
-### Scrollbar: Show
+### Scrollbar
 
-- Description: Whether to show a scrollbar in the project panel. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
+- Description: Scrollbar-related settings for the project panel.
 - Setting: `scrollbar`
 - Default:
 
 ```json [settings]
-"scrollbar": {
-  "show": null
+{
+  "project_panel": {
+    "scrollbar": {
+      "show": null,
+      "horizontal_scroll": true
+    }
+  }
 }
 ```
 
 **Options**
 
-1. Show scrollbar in the project panel
-
-```json [settings]
-{
-  "scrollbar": {
-    "show": "always"
-  }
-}
-```
-
-2. Hide scrollbar in the project panel
-
-```json [settings]
-{
-  "scrollbar": {
-    "show": "never"
-  }
-}
-```
+- `show`: Whether to show a scrollbar in the project panel. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
+- `horizontal_scroll`: Whether to allow horizontal scrolling in the project panel. When `false`, the view is locked to the leftmost position and long file names are clipped.
 
 ### Sort Mode
 
@@ -4762,7 +5152,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "sort_mode": "directories_first"
+  "project_panel": {
+    "sort_mode": "directories_first"
+  }
 }
 ```
 
@@ -4770,7 +5162,9 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "sort_mode": "mixed"
+  "project_panel": {
+    "sort_mode": "mixed"
+  }
 }
 ```
 
@@ -4778,7 +5172,57 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json [settings]
 {
-  "sort_mode": "files_first"
+  "project_panel": {
+    "sort_mode": "files_first"
+  }
+}
+```
+
+### Sort Order
+
+- Description: Whether to sort file and folder names case-sensitively in the project panel. This setting works in combination with `sort_mode`. `sort_mode` controls how files and directories are grouped (e.g., directories first), while this setting controls how names are compared within those groups.
+- Setting: `sort_order`
+- Default: `default`
+
+**Options**
+
+1. Case-insensitive natural sort with lowercase preferred in ties. Numbers in file names are compared by their numeric value (e.g., `file2` sorts before `file10`). Names that differ only in casing are sorted with lowercase first (e.g., `apple` before `Apple`).
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "default"
+  }
+}
+```
+
+2. Uppercase names are grouped before lowercase names, with case-insensitive natural sort within each group. Dot-prefixed names (e.g., `.gitignore`) sort before both groups. Accented uppercase letters like `É` are treated as uppercase.
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "upper"
+  }
+}
+```
+
+3. Lowercase names are grouped before uppercase names, with case-insensitive natural sort within each group. Dot-prefixed names sort before both groups.
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "lower"
+  }
+}
+```
+
+4. Pure Unicode codepoint comparison. No case folding and no natural number sorting. Uppercase ASCII letters (`A`–`Z`) sort before lowercase (`a`–`z`) as a natural consequence of their codepoint values. Accented characters like `É` (U+00C9) sort after all ASCII letters. Numbers are compared lexicographically (`file10` sorts before `file2`).
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "unicode"
+  }
 }
 ```
 
@@ -4789,10 +5233,14 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - Default:
 
 ```json [settings]
-"auto_open": {
-  "on_create": true,
-  "on_paste": true,
-  "on_drop": true
+{
+  "project_panel": {
+    "auto_open": {
+      "on_create": true,
+      "on_paste": true,
+      "on_drop": true
+    }
+  }
 }
 ```
 
@@ -4865,7 +5313,8 @@ See the [debugger page](../debugger.md) for more information about debugging sup
     "collapse_untracked_diff": false,
     "scrollbar": {
       "show": null
-    }
+    },
+    "starts_open": false
   }
 }
 ```
@@ -4880,6 +5329,33 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `sort_by_path`: Whether to sort entries in the panel by path or by status (the default)
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
+- `starts_open`: Whether the git panel should open on startup
+
+## Git Worktree Directory
+
+- Description: Directory where git worktrees are created, relative to the repository working directory.
+- Setting: `git.worktree_directory`
+- Default: `"../worktrees"`
+
+When the resolved directory falls outside the project root, the project's directory name is automatically appended so that sibling repos don't collide. For example, with the default `"../worktrees"` and a project at `~/code/zed`, worktrees are created under `~/code/worktrees/zed/`.
+
+When the resolved directory is inside the project root, no extra component is added (it's already project-scoped).
+
+**Examples**:
+
+- `"../worktrees"` — `~/code/worktrees/<project>/` (default)
+- `".git/zed-worktrees"` — `<project>/.git/zed-worktrees/`
+- `"my-worktrees"` — `<project>/my-worktrees/`
+
+Trailing slashes are ignored.
+
+```json [settings]
+{
+  "git": {
+    "worktree_directory": "../worktrees"
+  }
+}
+```
 
 ## Git Hosting Providers
 
@@ -4916,21 +5392,23 @@ You can define these in user or project settings; project settings are merged on
 - Default:
 
 ```json [settings]
-"outline_panel": {
-  "button": true,
-  "default_width": 300,
-  "dock": "left",
-  "file_icons": true,
-  "folder_icons": true,
-  "git_status": true,
-  "indent_size": 20,
-  "auto_reveal_entries": true,
-  "auto_fold_dirs": true,
-  "indent_guides": {
-    "show": "always"
-  },
-  "scrollbar": {
-    "show": null
+{
+  "outline_panel": {
+    "button": true,
+    "default_width": 300,
+    "dock": "left",
+    "file_icons": true,
+    "folder_icons": true,
+    "git_status": true,
+    "indent_size": 20,
+    "auto_reveal_entries": true,
+    "auto_fold_dirs": true,
+    "indent_guides": {
+      "show": "always"
+    },
+    "scrollbar": {
+      "show": null
+    }
   }
 }
 ```
@@ -4942,12 +5420,14 @@ You can define these in user or project settings; project settings are merged on
 - Default:
 
 ```json [settings]
-"calls": {
-  // Join calls with the microphone live by default
-  "mute_on_join": false,
-  // Share your project when you are the first to join a channel
-  "share_on_join": false
-},
+{
+  "calls": {
+    // Join calls with the microphone live by default
+    "mute_on_join": false,
+    // Share your project when you are the first to join a channel
+    "share_on_join": false
+  }
+}
 ```
 
 ## Colorize Brackets
@@ -5000,8 +5480,10 @@ The name of any font family installed on the system, `".ZedSans"` to use the Zed
 - Default:
 
 ```json [settings]
-"ui_font_features": {
-  "calt": false
+{
+  "ui_font_features": {
+    "calt": false
+  }
 }
 ```
 
@@ -5070,36 +5552,44 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 ## Settings Profiles
 
-- Description: Configure any number of settings profiles that are temporarily applied on top of your existing user settings when selected from `settings profile selector: toggle`.
+- Description: Configure any number of settings profiles that are temporarily applied when selected from `settings profile selector: toggle`.
 - Setting: `profiles`
 - Default: `{}`
 
 In your `settings.json` file, add the `profiles` object.
-Each key within this object is the name of a settings profile, and each value is an object that can include any of Zed's settings.
+Each key within this object is the name of a settings profile. Each profile has an optional `base` field (`"user"` or `"default"`) and a `settings` object containing any of Zed's settings.
 
 Example:
 
 ```json [settings]
-"profiles": {
-  "Presenting (Dark)": {
-    "agent_buffer_font_size": 18.0,
-    "buffer_font_size": 18.0,
-    "theme": "One Dark",
-    "ui_font_size": 18.0
-  },
-  "Presenting (Light)": {
-    "agent_buffer_font_size": 18.0,
-    "buffer_font_size": 18.0,
-    "theme": "One Light",
-    "ui_font_size": 18.0
-  },
-  "Writing": {
-    "agent_buffer_font_size": 15.0,
-    "buffer_font_size": 15.0,
-    "theme": "Catppuccin Frappé - No Italics",
-    "ui_font_size": 15.0,
-    "tab_bar": { "show": false },
-    "toolbar": { "breadcrumbs": false }
+{
+  "profiles": {
+    "Presenting (Dark)": {
+      "settings": {
+        "agent_buffer_font_size": 18.0,
+        "buffer_font_size": 18.0,
+        "theme": "One Dark",
+        "ui_font_size": 18.0
+      }
+    },
+    "Presenting (Light)": {
+      "settings": {
+        "agent_buffer_font_size": 18.0,
+        "buffer_font_size": 18.0,
+        "theme": "One Light",
+        "ui_font_size": 18.0
+      }
+    },
+    "Writing": {
+      "settings": {
+        "agent_buffer_font_size": 15.0,
+        "buffer_font_size": 15.0,
+        "theme": "Catppuccin Frappé - No Italics",
+        "ui_font_size": 15.0,
+        "tab_bar": { "show": false },
+        "toolbar": { "breadcrumbs": false }
+      }
+    }
   }
 }
 ```
@@ -5122,7 +5612,6 @@ To preview and enable a settings profile, open the command palette via {#kb comm
   "autosave": "on_focus_change",
   "format_on_save": "off",
   "vim_mode": false,
-  "projects_online_by_default": true,
   "terminal": {
     "font_family": "FiraCode Nerd Font Mono",
     "blinking": "off"
@@ -5132,7 +5621,7 @@ To preview and enable a settings profile, open the command palette via {#kb comm
       "format_on_save": "on",
       "formatter": "language_server",
       "preferred_line_length": 64,
-      "soft_wrap": "preferred_line_length"
+      "soft_wrap": "bounded"
     }
   }
 }

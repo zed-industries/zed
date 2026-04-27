@@ -8,7 +8,7 @@ use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
 use http_client::HttpClient;
 use icons::IconName;
 use language::{
-    Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint, language_settings::all_language_settings,
+    Anchor, Buffer, BufferSnapshot, EditPreview, language_settings::all_language_settings,
 };
 use language_model::{ApiKeyState, AuthenticateError, EnvVar, env_var};
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use text::{OffsetRangeExt as _, ToOffset};
+use text::ToOffset;
 
 pub const CODESTRAL_API_URL: &str = "https://codestral.mistral.ai";
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
@@ -48,9 +48,10 @@ pub fn codestral_api_key(cx: &App) -> Option<Arc<str>> {
 }
 
 pub fn load_codestral_api_key(cx: &mut App) -> Task<Result<(), AuthenticateError>> {
+    let credentials_provider = zed_credentials_provider::global(cx);
     let api_url = codestral_api_url(cx);
     codestral_api_key_state(cx).update(cx, |key_state, cx| {
-        key_state.load_if_needed(api_url, |s| s, cx)
+        key_state.load_if_needed(api_url, |s| s, credentials_provider, cx)
     })
 }
 
@@ -259,28 +260,31 @@ impl EditPredictionDelegate for CodestralEditPredictionDelegate {
             }
 
             let cursor_offset = cursor_position.to_offset(&snapshot);
-            let cursor_point = cursor_offset.to_point(&snapshot);
 
+            const MAX_EDITABLE_TOKENS: usize = 350;
             const MAX_CONTEXT_TOKENS: usize = 150;
-            const MAX_REWRITE_TOKENS: usize = 350;
 
-            let (_, context_range) =
-                cursor_excerpt::editable_and_context_ranges_for_cursor_position(
-                    cursor_point,
-                    &snapshot,
-                    MAX_REWRITE_TOKENS,
-                    MAX_CONTEXT_TOKENS,
-                );
-
-            let context_range = context_range.to_offset(&snapshot);
-            let excerpt_text = snapshot
-                .text_for_range(context_range.clone())
-                .collect::<String>();
-            let cursor_within_excerpt = cursor_offset
+            let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
+                cursor_excerpt::compute_cursor_excerpt(&snapshot, cursor_offset);
+            let syntax_ranges = cursor_excerpt::compute_syntax_ranges(
+                &snapshot,
+                cursor_offset,
+                &excerpt_offset_range,
+            );
+            let excerpt_text: String = snapshot.text_for_range(excerpt_point_range).collect();
+            let (_, context_range) = zeta_prompt::compute_editable_and_context_ranges(
+                &excerpt_text,
+                cursor_offset_in_excerpt,
+                &syntax_ranges,
+                MAX_EDITABLE_TOKENS,
+                MAX_CONTEXT_TOKENS,
+            );
+            let context_text = &excerpt_text[context_range.clone()];
+            let cursor_within_excerpt = cursor_offset_in_excerpt
                 .saturating_sub(context_range.start)
-                .min(excerpt_text.len());
-            let prompt = excerpt_text[..cursor_within_excerpt].to_string();
-            let suffix = excerpt_text[cursor_within_excerpt..].to_string();
+                .min(context_text.len());
+            let prompt = context_text[..cursor_within_excerpt].to_string();
+            let suffix = context_text[cursor_within_excerpt..].to_string();
 
             let completion_text = match Self::fetch_completion(
                 http_client,

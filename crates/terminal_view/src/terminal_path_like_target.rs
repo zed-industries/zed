@@ -109,7 +109,8 @@ fn possible_hover_target(
             .update(cx, |terminal_view, _| match file_to_open {
                 Some(OpenTarget::File(path, _) | OpenTarget::Worktree(path, ..)) => {
                     terminal_view.hover = Some(HoverTarget {
-                        tooltip: path.to_string(|path| path.to_string_lossy().into_owned()),
+                        tooltip: path
+                            .to_string(&|path: &PathBuf| path.to_string_lossy().into_owned()),
                         hovered_word,
                     });
                 }
@@ -553,7 +554,7 @@ mod tests {
         let fs = app_cx.update(AppState::test).fs.as_fake().clone();
 
         app_cx.update(|cx| {
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
         });
 

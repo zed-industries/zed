@@ -4,6 +4,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, OnceLock};
 
+use util::paths::SanitizedPath;
 pub use util::paths::home_dir;
 use util::rel_path::RelPath;
 
@@ -71,8 +72,14 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
     CUSTOM_DATA_DIR.get_or_init(|| {
         let path = PathBuf::from(dir);
         std::fs::create_dir_all(&path).expect("failed to create custom data directory");
-        path.canonicalize()
-            .expect("failed to canonicalize custom data directory's path to an absolute path")
+        let canonicalized = path
+            .canonicalize()
+            .expect("failed to canonicalize custom data directory's path to an absolute path");
+        // On Windows, `canonicalize` produces extended-length paths prefixed
+        // with `\\?\`. Strip that prefix so downstream consumers (e.g.
+        // Node.js language servers) that receive derived paths as arguments
+        // don't choke on the verbatim syntax.
+        SanitizedPath::new(&canonicalized).as_path().to_path_buf()
     })
 }
 
@@ -310,30 +317,6 @@ pub fn snippets_dir() -> &'static PathBuf {
     SNIPPETS_DIR.get_or_init(|| config_dir().join("snippets"))
 }
 
-// Returns old path to contexts directory.
-// Fallback
-fn text_threads_dir_fallback() -> &'static PathBuf {
-    static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    CONTEXTS_DIR.get_or_init(|| {
-        if cfg!(target_os = "macos") {
-            config_dir().join("conversations")
-        } else {
-            data_dir().join("conversations")
-        }
-    })
-}
-/// Returns the path to the contexts directory.
-///
-/// This is where the saved contexts from the Assistant are stored.
-pub fn text_threads_dir() -> &'static PathBuf {
-    let fallback_dir = text_threads_dir_fallback();
-    if fallback_dir.exists() {
-        return fallback_dir;
-    }
-    static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    CONTEXTS_DIR.get_or_init(|| state_dir().join("conversations"))
-}
-
 /// Returns the path to the contexts directory.
 ///
 /// This is where the prompts for use with the Assistant are stored.
@@ -417,12 +400,6 @@ pub fn external_agents_dir() -> &'static PathBuf {
 pub fn copilot_dir() -> &'static PathBuf {
     static COPILOT_DIR: OnceLock<PathBuf> = OnceLock::new();
     COPILOT_DIR.get_or_init(|| data_dir().join("copilot"))
-}
-
-/// Returns the path to the Supermaven directory.
-pub fn supermaven_dir() -> &'static PathBuf {
-    static SUPERMAVEN_DIR: OnceLock<PathBuf> = OnceLock::new();
-    SUPERMAVEN_DIR.get_or_init(|| data_dir().join("supermaven"))
 }
 
 /// Returns the path to the default Prettier directory.

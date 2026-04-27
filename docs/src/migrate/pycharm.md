@@ -119,7 +119,7 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 | Action            | Shortcut                   | Notes                          |
 | ----------------- | -------------------------- | ------------------------------ |
-| Toggle Right Dock | `Cmd + R`                  | Assistant panel, notifications |
+| Toggle Right Dock | `Cmd + R`                  | Agent panel, notifications     |
 | Split Panes       | `Cmd + K`, then arrow keys | Create splits in any direction |
 
 ### How to Customize Keybindings
@@ -319,7 +319,6 @@ Zed's extension catalog is smaller and more focused:
 
 - Language support and syntax highlighting
 - Themes
-- Slash commands for AI
 - Context servers
 
 Several features that require plugins in PyCharm are built into Zed:
@@ -369,7 +368,7 @@ Once signed in, just start typing. Zed will offer suggestions inline for you to 
 
 To use other AI models in Zed, you have several options:
 
-- Use Zed's hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/accounts.html) and subscription to [Zed Pro](https://zed.dev/docs/ai/subscription.html).
+- Use Zed's hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/authentication) and subscription to [Zed Pro](https://zed.dev/docs/ai/subscription.html).
 - Bring your own [API keys](https://zed.dev/docs/ai/llm-providers.html), no authentication needed
 - Use [external agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html)
 

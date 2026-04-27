@@ -18,7 +18,7 @@ use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use itertools::Itertools;
 use language::{CursorShape, Language, LanguageConfig, Point};
 pub use neovim_backed_test_context::*;
-use settings::SettingsStore;
+use settings::{ActionName, SettingsStore};
 use ui::Pixels;
 use util::{path, test::marked_text_ranges};
 pub use vim_test_context::*;
@@ -91,6 +91,117 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     cx.disable_vim();
     cx.enable_vim();
     assert_eq!(cx.mode(), Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_delete_x(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    cx.simulate_keystrokes("x");
+    cx.assert_editor_state("<diˇ></di>");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_change_iw(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    cx.simulate_keystrokes("c i w s p a n escape");
+    cx.assert_editor_state("<spaˇn></span>");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_substitute_s(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    cx.simulate_keystrokes("s s p a n escape");
+    cx.assert_editor_state("<dispaˇn></dispan>");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_visual_change(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    // Visual change routes through substitute; visual `s` shares this path.
+    cx.simulate_keystrokes("v i w c s p a n escape");
+    cx.assert_editor_state("<spaˇn></span>");
+}
+
+#[perf]
+#[gpui::test]
+async fn test_vim_linked_edits_visual_substitute_s(app_cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_html(app_cx).await;
+
+    cx.set_state("<diˇv></div>", Mode::Normal);
+    cx.update_editor(|editor, _window, cx| {
+        editor
+            .set_linked_edit_ranges_for_testing(
+                vec![(
+                    Point::new(0, 1)..Point::new(0, 4),
+                    vec![Point::new(0, 7)..Point::new(0, 10)],
+                )],
+                cx,
+            )
+            .expect("linked edit ranges should be set");
+    });
+
+    cx.simulate_keystrokes("v i w s s p a n escape");
+    cx.assert_editor_state("<spaˇn></span>");
 }
 
 #[perf]
@@ -1585,6 +1696,134 @@ async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
 
 #[perf]
 #[gpui::test]
+async fn test_toggle_block_comments(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    let language = std::sync::Arc::new(language::Language::new(
+        language::LanguageConfig {
+            block_comment: Some(language::BlockCommentConfig {
+                start: "/* ".into(),
+                prefix: "".into(),
+                end: " */".into(),
+                tab_size: 1,
+            }),
+            ..Default::default()
+        },
+        Some(language::tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // works in normal mode with current-line shorthand
+    cx.set_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("g b c");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone */
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // toggle off with cursor inside the comment
+    cx.simulate_keystrokes("g b c");
+    cx.assert_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works in visual line mode (wraps full lines)
+    cx.simulate_keystrokes("shift-v j g b");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone
+        two */
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works in visual mode and restores the cursor to the selection start
+    cx.set_state(
+        indoc! {"
+        «oneˇ»
+        two
+        three
+        "},
+        Mode::Visual,
+    );
+    cx.simulate_keystrokes("g b");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone */
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works with multiple visual selections and restores each cursor
+    cx.set_state(
+        indoc! {"
+        «oneˇ» «twoˇ»
+        three
+        "},
+        Mode::Visual,
+    );
+    cx.simulate_keystrokes("g b");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone */ /* ˇtwo */
+        three
+        "},
+        Mode::Normal,
+    );
+
+    // works with count
+    cx.set_state(
+        indoc! {"
+        ˇone
+        two
+        three
+        "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("g b 2 j");
+    cx.assert_state(
+        indoc! {"
+        /* ˇone
+        two
+        three */
+        "},
+        Mode::Normal,
+    );
+
+    // works with motion object
+    cx.simulate_keystrokes("shift-g");
+    cx.simulate_keystrokes("g b g g");
+    cx.assert_state(
+        indoc! {"
+        one
+        two
+        three
+        ˇ"},
+        Mode::Normal,
+    );
+}
+
+#[perf]
+#[gpui::test]
 async fn test_find_multibyte(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -1687,7 +1926,7 @@ async fn test_command_alias(cx: &mut gpui::TestAppContext) {
     cx.update_global(|store: &mut SettingsStore, cx| {
         store.update_user_settings(cx, |s| {
             let mut aliases = HashMap::default();
-            aliases.insert("Q".to_string(), "upper".to_string());
+            aliases.insert("Q".to_string(), ActionName::new("upper"));
             s.workspace.command_aliases = aliases
         });
     });
@@ -2006,7 +2245,12 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
         );
         let mut editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
 
-        let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
+        let buffer_ids = multi_buffer
+            .read(cx)
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>();
         // fold all but the second buffer, so that we test navigating between two
         // adjacent folded buffers, as well as folded buffers at the start and
         // end the multibuffer
@@ -2151,7 +2395,13 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
         "
     });
     cx.update_editor(|editor, _, cx| {
-        let buffer_ids = editor.buffer().read(cx).excerpt_buffer_ids();
+        let buffer_ids = editor
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>();
         editor.fold_buffer(buffer_ids[1], cx);
     });
 

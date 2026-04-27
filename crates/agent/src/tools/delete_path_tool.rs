@@ -1,12 +1,14 @@
 use super::tool_permissions::{
-    SensitiveSettingsKind, authorize_symlink_access, canonicalize_worktree_roots,
-    detect_symlink_escape, sensitive_settings_kind,
+    authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
+    sensitive_settings_kind,
 };
-use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    authorize_with_sensitive_settings, decide_permission_for_path,
+};
 use action_log::ActionLog;
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
-use anyhow::{Context as _, Result, anyhow};
 use futures::{FutureExt as _, SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::{Project, ProjectPath};
@@ -54,8 +56,8 @@ impl AgentTool for DeletePathTool {
 
     const NAME: &'static str = "delete_path";
 
-    fn kind() -> ToolKind {
-        ToolKind::Delete
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Delete
     }
 
     fn initial_title(
@@ -72,22 +74,27 @@ impl AgentTool for DeletePathTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<Self::Output>> {
-        let path = input.path;
-
-        let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_for_path(Self::NAME, &path, settings);
-
-        if let ToolPermissionDecision::Deny(reason) = decision {
-            return Task::ready(Err(anyhow!("{}", reason)));
-        }
-
+    ) -> Task<Result<Self::Output, Self::Output>> {
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let path = input.path;
+
+            let decision = cx.update(|cx| {
+                decide_permission_for_path(Self::NAME, &path, AgentSettings::get_global(cx))
+            });
+
+            if let ToolPermissionDecision::Deny(reason) = decision {
+                return Err(reason);
+            }
+
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
@@ -126,34 +133,33 @@ impl AgentTool for DeletePathTool {
                         let context =
                             crate::ToolPermissionContext::new(Self::NAME, vec![path.clone()]);
                         let title = format!("Delete {}", MarkdownInlineCode(&path));
-                        let title = match settings_kind {
-                            Some(SensitiveSettingsKind::Local) => {
-                                format!("{title} (local settings)")
-                            }
-                            Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                            None => title,
-                        };
-                        event_stream.authorize(title, context, cx)
+                        authorize_with_sensitive_settings(
+                            settings_kind,
+                            context,
+                            &title,
+                            &event_stream,
+                            cx,
+                        )
                     })),
                     ToolPermissionDecision::Deny(_) => None,
                 }
             };
 
             if let Some(authorize) = authorize {
-                authorize.await?;
+                authorize.await.map_err(|e| e.to_string())?;
             }
 
             let (project_path, worktree_snapshot) = project.read_with(cx, |project, cx| {
                 let project_path = project.find_project_path(&path, cx).ok_or_else(|| {
-                    anyhow!("Couldn't delete {path} because that path isn't in this project.")
+                    format!("Couldn't delete {path} because that path isn't in this project.")
                 })?;
                 let worktree = project
                     .worktree_for_id(project_path.worktree_id, cx)
                     .ok_or_else(|| {
-                        anyhow!("Couldn't delete {path} because that path isn't in this project.")
+                        format!("Couldn't delete {path} because that path isn't in this project.")
                     })?;
                 let worktree_snapshot = worktree.read(cx).snapshot();
-                anyhow::Ok((project_path, worktree_snapshot))
+                Result::<_, String>::Ok((project_path, worktree_snapshot))
             })?;
 
             let (mut paths_tx, mut paths_rx) = mpsc::channel(256);
@@ -182,7 +188,7 @@ impl AgentTool for DeletePathTool {
                 let path_result = futures::select! {
                     path = paths_rx.next().fuse() => path,
                     _ = event_stream.cancelled_by_user().fuse() => {
-                        anyhow::bail!("Delete cancelled by user");
+                        return Err("Delete cancelled by user".to_string());
                     }
                 };
                 let Some(path) = path_result else {
@@ -202,16 +208,16 @@ impl AgentTool for DeletePathTool {
                 .update(cx, |project, cx| {
                     project.delete_file(project_path, false, cx)
                 })
-                .with_context(|| {
+                .ok_or_else(|| {
                     format!("Couldn't delete {path} because that path isn't in this project.")
                 })?;
 
             futures::select! {
                 result = deletion_task.fuse() => {
-                    result.with_context(|| format!("Deleting {path}"))?;
+                    result.map_err(|e| format!("Deleting {path}: {e}"))?;
                 }
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    anyhow::bail!("Delete cancelled by user");
+                    return Err("Delete cancelled by user".to_string());
                 }
             }
             Ok(format!("Deleted {path}"))
@@ -222,7 +228,6 @@ impl AgentTool for DeletePathTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::TestAppContext;
     use project::{FakeFs, Project};
@@ -279,9 +284,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.run(
-                DeletePathToolInput {
+                ToolInput::resolved(DeletePathToolInput {
                     path: "project/link_to_external".into(),
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -295,7 +300,10 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let result = task.await;
@@ -346,9 +354,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.run(
-                DeletePathToolInput {
+                ToolInput::resolved(DeletePathToolInput {
                     path: "project/link_to_external".into(),
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -406,9 +414,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.run(
-                DeletePathToolInput {
+                ToolInput::resolved(DeletePathToolInput {
                     path: "project/link_to_external".into(),
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -422,13 +430,16 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Expected a single authorization prompt",
         );
@@ -489,9 +500,9 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.run(
-                    DeletePathToolInput {
+                    ToolInput::resolved(DeletePathToolInput {
                         path: "project/link_to_external".into(),
-                    },
+                    }),
                     event_stream,
                     cx,
                 )
@@ -501,8 +512,8 @@ mod tests {
         assert!(result.is_err(), "Tool should fail when policy denies");
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Deny policy should not emit symlink authorization prompt",
         );

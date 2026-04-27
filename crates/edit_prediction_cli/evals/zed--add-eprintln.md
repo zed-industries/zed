@@ -1,43 +1,37 @@
 +++
 repository_url = "git@github.com:zed-industries/zed"
-revision = "780a87dd98f26816876d12e2728933b17faca78d"
+revision = "b7090c9fae7390a82021b994994c0f587744d96c"
 +++
+
+This example shows the model's preference for making conservative predictions, and ability to place
+the cursor within the predicted output.
 
 ## Edit History
 
 ```diff
 --- a/crates/edit_prediction_ui/src/rate_prediction_modal.rs
 +++ b/crates/edit_prediction_ui/src/rate_prediction_modal.rs
-@@ -206,6 +206,7 @@
-         self.select_next_edit(&Default::default(), window, cx);
-         self.confirm(&Default::default(), window, cx);
-
+@@ -144,7 +144,7 @@
+     fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {
 +        epr
-         cx.notify();
-     }
-
+         let next_index = self
+             .ep_store
+             .read(cx)
 ```
 
 ## Cursor Position
 
 ```crates/edit_prediction_ui/src/rate_prediction_modal.rs
-        let current_completion = self
-            .active_prediction
-            .as_ref()
-            .map(|completion| completion.prediction.clone());
-        self.select_completion(current_completion, false, window, cx);
-        self.select_next_edit(&Default::default(), window, cx);
-        self.confirm(&Default::default(), window, cx);
-
+    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {
         epr
         // ^[CURSOR_POSITION]
-        cx.notify();
-    }
-
-    pub fn thumbs_down_active(
-        &mut self,
-        _: &ThumbsDownActivePrediction,
-        window: &mut Window,
+        let next_index = self
+            .ep_store
+            .read(cx)
+            .shown_predictions()
+            .skip(self.selected_index)
+            .enumerate()
+            .skip(1) // Skip straight to the next item
 ```
 
 ## Expected Patch
@@ -45,12 +39,16 @@ revision = "780a87dd98f26816876d12e2728933b17faca78d"
 ```diff
 --- a/crates/edit_prediction_ui/src/rate_prediction_modal.rs
 +++ b/crates/edit_prediction_ui/src/rate_prediction_modal.rs
-@@ -201,16 +201,16 @@
-         self.confirm(&Default::default(), window, cx);
-
+@@ -144,14 +144,14 @@
+     fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {
 -        epr
 +        eprintln!("");
 #                   ^[CURSOR_POSITION]
-         cx.notify();
-     }
+         let next_index = self
+             .ep_store
+             .read(cx)
+             .shown_predictions()
+             .skip(self.selected_index)
+             .enumerate()
+             .skip(1) // Skip straight to the next item
 ```

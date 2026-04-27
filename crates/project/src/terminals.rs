@@ -2,12 +2,12 @@ use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 
+use async_channel::bounded;
 use futures::{FutureExt, future::Shared};
 use itertools::Itertools as _;
 use language::LanguageName;
 use remote::RemoteClient;
 use settings::{Settings, SettingsLocation};
-use smol::channel::bounded;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -17,7 +17,9 @@ use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder, insert_zed_terminal_env,
     terminal_settings::TerminalSettings,
 };
-use util::{command::new_std_command, get_default_system_shell, maybe, rel_path::RelPath};
+use util::{
+    command::new_std_command, get_default_system_shell, get_system_shell, maybe, rel_path::RelPath,
+};
 
 use crate::{Project, ProjectPath};
 
@@ -103,7 +105,7 @@ impl Project {
                 .read(cx)
                 .shell()
                 .unwrap_or_else(get_default_system_shell),
-            None => settings.shell.program(),
+            None => get_system_shell(),
         };
         let path_style = self.path_style(cx);
         let shell_kind = ShellKind::new(&shell, path_style.is_windows());
@@ -363,12 +365,16 @@ impl Project {
                 .unwrap_or_else(get_default_system_shell),
             None => settings.shell.program(),
         };
+        let env_shell = match &remote_client {
+            Some(_) => shell.clone(),
+            None => get_system_shell(),
+        };
 
         let path_style = self.path_style(cx);
 
         // Prepare a task for resolving the environment
         let env_task =
-            self.resolve_directory_environment(&shell, path.clone(), remote_client.clone(), cx);
+            self.resolve_directory_environment(&env_shell, path.clone(), remote_client.clone(), cx);
 
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
@@ -526,7 +532,7 @@ impl Project {
             .as_ref()
             .and_then(|remote_client| remote_client.read(cx).shell())
             .map(Shell::Program)
-            .unwrap_or_else(|| settings.shell.clone());
+            .unwrap_or(Shell::System);
         let is_windows = self.path_style(cx).is_windows();
         let builder = ShellBuilder::new(&shell, is_windows).non_interactive();
         let (command, args) = builder.build(Some(command), &Vec::new());
