@@ -167,6 +167,7 @@ use crate::{
 };
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
+pub const MAX_RECENT_SELECTIONS: usize = 20;
 
 static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
     env::var("ZED_WINDOW_SIZE")
@@ -1405,6 +1406,7 @@ pub struct Workspace {
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
     active_worktree_creation: ActiveWorktreeCreation,
     deferred_save_items: Vec<Box<dyn WeakItemHandle>>,
+    persisted_recent_navigation_history: Vec<PathBuf>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1851,6 +1853,7 @@ impl Workspace {
             open_in_dev_container: false,
             _dev_container_task: None,
             deferred_save_items: Vec::new(),
+            persisted_recent_navigation_history: Vec::new(),
         }
     }
 
@@ -2689,7 +2692,7 @@ impl Workspace {
             }
         }
 
-        history
+        let mut recent_history = history
             .into_iter()
             .sorted_by_key(|(_, (_, order))| *order)
             .map(|(project_path, (fs_path, _))| (project_path, fs_path))
@@ -2706,6 +2709,23 @@ impl Workspace {
 
                 latest_project_path_opened.is_none_or(|path| path == history_path)
             })
+            .collect::<Vec<_>>();
+
+        let mut seen_paths = recent_history
+            .iter()
+            .map(|(project_path, _)| project_path.clone())
+            .collect::<HashSet<_>>();
+        let project = self.project.read(cx);
+        for abs_path in &self.persisted_recent_navigation_history {
+            let Some(project_path) = project.project_path_for_absolute_path(abs_path, cx) else {
+                continue;
+            };
+            if seen_paths.insert(project_path.clone()) {
+                recent_history.push((project_path, Some(abs_path.clone())));
+            }
+        }
+
+        recent_history.into_iter()
     }
 
     pub fn recent_navigation_history(
@@ -6903,6 +6923,11 @@ impl Workspace {
                 let docks = build_serialized_docks(self, window, cx);
                 let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
                 let identity_paths_hint = self.project_group_key(cx).path_list().clone();
+                let recent_navigation_history = self
+                    .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
+                    .into_iter()
+                    .filter_map(|(_, absolute_path)| absolute_path)
+                    .collect();
 
                 let serialized_workspace = SerializedWorkspace {
                     id: database_id,
@@ -6919,6 +6944,7 @@ impl Workspace {
                     breakpoints,
                     window_id: Some(window.window_handle().window_id().as_u64()),
                     user_toolchains,
+                    recent_navigation_history,
                 };
 
                 let db = WorkspaceDb::global(cx);
@@ -7047,6 +7073,7 @@ impl Workspace {
         cx: &mut Context<Workspace>,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
         cx.spawn_in(window, async move |workspace, cx| {
+            let recent_navigation_history = serialized_workspace.recent_navigation_history.clone();
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
 
             let mut center_group = None;
@@ -7091,6 +7118,8 @@ impl Workspace {
 
             // Remove old panes from workspace panes list
             workspace.update_in(cx, |workspace, window, cx| {
+                workspace.persisted_recent_navigation_history = recent_navigation_history;
+
                 if let Some((center_group, active_pane)) = center_group {
                     workspace.remove_panes(workspace.center.root.clone(), window, cx);
 
@@ -15959,5 +15988,64 @@ mod tests {
         });
         let path = workspace.read_with(cx, |workspace, cx| workspace.most_recent_active_path(cx));
         assert_eq!(path, None);
+    }
+
+    #[gpui::test]
+    async fn test_recent_navigation_history_includes_persisted_paths(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "a.rs": "",
+                "b.rs": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        // Open a.rs in the session so it appears in in-session nav history.
+        let item_a = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new_in_worktree(
+                1,
+                "a.rs",
+                worktree_id,
+                cx,
+            )])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_a), None, true, window, cx);
+        });
+
+        // Persisted history: b.rs (new), a.rs (duplicate), /outside/z.rs (outside project).
+        workspace.update(cx, |workspace, _| {
+            workspace.persisted_recent_navigation_history = vec![
+                PathBuf::from(path!("/project/b.rs")),
+                PathBuf::from(path!("/project/a.rs")),
+                PathBuf::from(path!("/outside/z.rs")),
+            ];
+        });
+
+        let history = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .recent_navigation_history_iter(cx)
+                .map(|(project_path, _)| <RelPath as AsRef<Path>>::as_ref(&project_path.path).to_path_buf())
+                .collect::<Vec<_>>()
+        });
+
+        // a.rs comes first (in-session), b.rs second (from persisted), /outside/z.rs absent.
+        assert_eq!(
+            history,
+            vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")]
+        );
     }
 }
