@@ -1,11 +1,7 @@
 use std::sync::Arc;
 
-use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
-    decide_permission_from_settings,
-};
-use agent_client_protocol as acp;
-use agent_settings::AgentSettings;
+use crate::{AgentTool, ToolCallEventStream, ToolInput};
+use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use cloud_llm_client::WebSearchResponse;
 use futures::FutureExt as _;
@@ -15,7 +11,6 @@ use language_model::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
 use ui::prelude::*;
 use util::markdown::MarkdownInlineCode;
 use web_search::WebSearchRegistry;
@@ -53,7 +48,7 @@ impl AgentTool for WebSearchTool {
     type Input = WebSearchToolInput;
     type Output = WebSearchToolOutput;
 
-    const NAME: &'static str = "web_search";
+    const NAME: &'static str = "search_web";
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Fetch
@@ -86,42 +81,27 @@ impl AgentTool for WebSearchTool {
                     error: format!("Failed to receive tool input: {e}"),
                 })?;
 
-            let (authorize, search_task) = cx.update(|cx| {
-                let decision = decide_permission_from_settings(
-                    Self::NAME,
-                    std::slice::from_ref(&input.query),
-                    AgentSettings::get_global(cx),
-                );
+            let authorize = cx.update(|cx| {
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.query.clone()]);
+                event_stream.authorize(
+                    format!("Search the web for {}", MarkdownInlineCode(&input.query)),
+                    context,
+                    cx,
+                )
+            });
+            authorize
+                .await
+                .map_err(|e| WebSearchToolOutput::Error { error: e.to_string() })?;
 
-                let authorize = match decision {
-                    ToolPermissionDecision::Allow => None,
-                    ToolPermissionDecision::Deny(reason) => {
-                        return Err(WebSearchToolOutput::Error { error: reason });
-                    }
-                    ToolPermissionDecision::Confirm => {
-                        let context =
-                            crate::ToolPermissionContext::new(Self::NAME, vec![input.query.clone()]);
-                        Some(event_stream.authorize(
-                            format!("Search the web for {}", MarkdownInlineCode(&input.query)),
-                            context,
-                            cx,
-                        ))
-                    }
-                };
-
+            let search_task = cx.update(|cx| {
                 let Some(provider) = WebSearchRegistry::read_global(cx).active_provider() else {
                     return Err(WebSearchToolOutput::Error {
                         error: "Web search is not available.".to_string(),
                     });
                 };
-
-                let search_task = provider.search(input.query, cx);
-                Ok((authorize, search_task))
+                Ok(provider.search(input.query, cx))
             })?;
-
-            if let Some(authorize) = authorize {
-                authorize.await.map_err(|e| WebSearchToolOutput::Error { error: e.to_string() })?;
-            }
 
             let response = futures::select! {
                 result = search_task.fuse() => {

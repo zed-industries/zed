@@ -27,6 +27,7 @@ test-support = [
 
 [dependencies]
 any_vec.workspace = true
+agent_settings.workspace = true
 anyhow.workspace = true
 async-recursion.workspace = true
 client.workspace = true
@@ -35,7 +36,7 @@ clock.workspace = true
 collections.workspace = true
 component.workspace = true
 db.workspace = true
-feature_flags.workspace = true
+futures-lite.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
@@ -62,10 +63,10 @@ strum.workspace = true
 task.workspace = true
 telemetry.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
-vim_mode_setting.workspace = true
 zed_actions.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -82,5 +83,7 @@ session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
+proptest.workspace = true
+proptest-derive.workspace = true
 tempfile.workspace = true
 zlog.workspace = true

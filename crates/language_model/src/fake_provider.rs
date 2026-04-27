@@ -5,11 +5,10 @@ use crate::{
     LanguageModelRequest, LanguageModelToolChoice,
 };
 use anyhow::anyhow;
-use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream, stream::StreamExt};
 use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
 use http_client::Result;
 use parking_lot::Mutex;
-use smol::stream::StreamExt;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering::SeqCst},
@@ -125,6 +124,7 @@ pub struct FakeLanguageModel {
     >,
     forbid_requests: AtomicBool,
     supports_thinking: AtomicBool,
+    supports_streaming_tools: AtomicBool,
 }
 
 impl Default for FakeLanguageModel {
@@ -137,6 +137,7 @@ impl Default for FakeLanguageModel {
             current_completion_txs: Mutex::new(Vec::new()),
             forbid_requests: AtomicBool::new(false),
             supports_thinking: AtomicBool::new(false),
+            supports_streaming_tools: AtomicBool::new(false),
         }
     }
 }
@@ -167,6 +168,10 @@ impl FakeLanguageModel {
 
     pub fn set_supports_thinking(&self, supports: bool) {
         self.supports_thinking.store(supports, SeqCst);
+    }
+
+    pub fn set_supports_streaming_tools(&self, supports: bool) {
+        self.supports_streaming_tools.store(supports, SeqCst);
     }
 
     pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
@@ -282,16 +287,16 @@ impl LanguageModel for FakeLanguageModel {
         self.supports_thinking.load(SeqCst)
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        self.supports_streaming_tools.load(SeqCst)
+    }
+
     fn telemetry_id(&self) -> String {
         "fake".to_string()
     }
 
     fn max_token_count(&self) -> u64 {
         1000000
-    }
-
-    fn count_tokens(&self, _: LanguageModelRequest, _: &App) -> BoxFuture<'static, Result<u64>> {
-        futures::future::ready(Ok(0)).boxed()
     }
 
     fn stream_completion(

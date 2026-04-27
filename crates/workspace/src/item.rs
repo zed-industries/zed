@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::Result;
 use client::{Client, proto};
-use futures::{StreamExt, channel::mpsc};
+use futures::channel::mpsc;
 use gpui::{
     Action, AnyElement, AnyEntity, AnyView, App, AppContext, Context, Entity, EntityId,
     EventEmitter, FocusHandle, Focusable, Font, Pixels, Point, Render, SharedString, Task,
@@ -39,6 +39,7 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 #[derive(Clone, Copy, Debug)]
 pub struct SaveOptions {
     pub format: bool,
+    pub force_format: bool,
     pub autosave: bool,
 }
 
@@ -46,6 +47,7 @@ impl Default for SaveOptions {
     fn default() -> Self {
         Self {
             format: true,
+            force_format: false,
             autosave: false,
         }
     }
@@ -777,8 +779,8 @@ impl<T: Item> ItemHandle for Entity<T> {
                 send_follower_updates = Some(cx.spawn_in(window, {
                     let pending_update = pending_update.clone();
                     async move |workspace, cx| {
-                        while let Some(mut leader_id) = pending_update_rx.next().await {
-                            while let Ok(Some(id)) = pending_update_rx.try_next() {
+                        while let Ok(mut leader_id) = pending_update_rx.recv().await {
+                            while let Ok(id) = pending_update_rx.try_recv() {
                                 leader_id = id;
                             }
 
@@ -951,24 +953,23 @@ impl<T: Item> ItemHandle for Entity<T> {
                             return;
                         }
 
-                        let vim_mode = vim_mode_setting::VimModeSetting::is_enabled(cx);
-                        let helix_mode = vim_mode_setting::HelixModeSetting::is_enabled(cx);
+                        // Add the item to a deferred save list. The actual save will happen when
+                        // focus lands on a pane or panel (via handle_pane_focused or
+                        // handle_panel_focused), or when the window deactivates.
+                        // This avoids saving when opening modals and skips saving if focus
+                        // returns to the same item.
+                        workspace.deferred_save_items.push(item.downgrade_item());
 
-                        if vim_mode || helix_mode {
-                            // We use the command palette for executing commands in Vim and Helix modes (e.g., `:w`), so
-                            // in those cases we don't want to trigger auto-save if the focus has just been transferred
-                            // to the command palette.
-                            //
-                            // This isn't totally perfect, as you could still switch files indirectly via the command
-                            // palette (such as by opening up the tab switcher from it and then switching tabs that
-                            // way).
-                            if workspace.is_active_modal_command_palette(cx) {
-                                return;
+                        // Defer the flush to ensure all focus events are processed first.
+                        // This is needed because on_focus_out fires before handle_pane_focused
+                        // when switching items.
+                        cx.defer_in(window, |workspace, window, cx| {
+                            // Don't flush if a modal is active - the user might return
+                            // to the original item when the modal is dismissed.
+                            if !workspace.has_active_modal(window, cx) {
+                                workspace.flush_deferred_saves(window, cx);
                             }
-                        }
-
-                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                            .detach_and_log_err(cx);
+                        });
                     }
                 },
             )
@@ -1470,9 +1471,18 @@ pub mod test {
 
     impl TestProjectItem {
         pub fn new(id: u64, path: &str, cx: &mut App) -> Entity<Self> {
+            Self::new_in_worktree(id, path, WorktreeId::from_usize(0), cx)
+        }
+
+        pub fn new_in_worktree(
+            id: u64,
+            path: &str,
+            worktree_id: WorktreeId,
+            cx: &mut App,
+        ) -> Entity<Self> {
             let entry_id = Some(ProjectEntryId::from_proto(id));
             let project_path = Some(ProjectPath {
-                worktree_id: WorktreeId::from_usize(0),
+                worktree_id,
                 path: rel_path(path).into(),
             });
             cx.new(|_| Self {
@@ -1583,7 +1593,7 @@ pub mod test {
 
         fn push_to_nav_history(&mut self, cx: &mut Context<Self>) {
             if let Some(history) = &mut self.nav_history {
-                history.push(Some(Box::new(self.state.clone())), cx);
+                history.push(Some(Box::new(self.state.clone())), None, cx);
             }
         }
     }

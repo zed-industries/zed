@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
+use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
@@ -27,7 +28,7 @@ use ui::{
 use ui_input::InputField;
 
 use crate::AllLanguageModelSettings;
-use crate::provider::util::parse_tool_arguments;
+use language_model::util::parse_tool_arguments;
 
 const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
 const LMSTUDIO_CATALOG_URL: &str = "https://lmstudio.ai/models";
@@ -52,6 +53,7 @@ pub struct LmStudioLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<lmstudio::Model>,
     fetch_model_task: Option<Task<Result<()>>>,
@@ -64,10 +66,15 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = LmStudioLanguageModelProvider::api_url(cx).into();
-        let task = self
-            .api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx);
+        let task = self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        );
         self.restart_fetch_models_task(cx);
         task
     }
@@ -114,10 +121,14 @@ impl State {
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = LmStudioLanguageModelProvider::api_url(cx).into();
-        let _task = self
-            .api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx);
+        let _task = self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        );
 
         if self.is_authenticated() {
             return Task::ready(Ok(()));
@@ -152,16 +163,29 @@ impl State {
 }
 
 impl LmStudioLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let this = Self {
             http_client: http_client.clone(),
             state: cx.new(|cx| {
                 let subscription = cx.observe_global::<SettingsStore>({
                     let mut settings = AllLanguageModelSettings::get_global(cx).lmstudio.clone();
                     move |this: &mut State, cx| {
-                        let new_settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
-                        if &settings != new_settings {
-                            settings = new_settings.clone();
+                        let new_settings =
+                            AllLanguageModelSettings::get_global(cx).lmstudio.clone();
+                        if settings != new_settings {
+                            let credentials_provider = this.credentials_provider.clone();
+                            let api_url = Self::api_url(cx).into();
+                            this.api_key_state.handle_url_change(
+                                api_url,
+                                |this| &mut this.api_key_state,
+                                credentials_provider,
+                                cx,
+                            );
+                            settings = new_settings;
                             this.restart_fetch_models_task(cx);
                             cx.notify();
                         }
@@ -173,6 +197,7 @@ impl LmStudioLanguageModelProvider {
                         Self::api_url(cx).into(),
                         (*API_KEY_ENV_VAR).clone(),
                     ),
+                    credentials_provider,
                     http_client,
                     available_models: Default::default(),
                     fetch_model_task: None,
@@ -478,22 +503,6 @@ impl LanguageModel for LmStudioLanguageModel {
 
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        _cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        // Endpoint for this is coming soon. In the meantime, hacky estimation
-        let token_count = request
-            .messages
-            .iter()
-            .map(|msg| msg.string_contents().split_whitespace().count())
-            .sum::<usize>();
-
-        let estimated_tokens = (token_count as f64 * 0.75) as u64;
-        async move { Ok(estimated_tokens) }.boxed()
     }
 
     fn stream_completion(

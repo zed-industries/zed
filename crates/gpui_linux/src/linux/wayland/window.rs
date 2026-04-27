@@ -116,6 +116,7 @@ pub struct WaylandWindowState {
     handle: AnyWindowHandle,
     active: bool,
     hovered: bool,
+    pub(crate) force_render_after_recovery: bool,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -344,6 +345,7 @@ impl WaylandWindowState {
                     height: DevicePixels(f32::from(options.bounds.size.height) as i32),
                 },
                 transparent: true,
+                preferred_present_mode: None,
             };
             WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
         };
@@ -389,6 +391,7 @@ impl WaylandWindowState {
             handle,
             active: false,
             hovered: false,
+            force_render_after_recovery: false,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -570,11 +573,16 @@ impl WaylandWindowStatePtr {
         let mut state = self.state.borrow_mut();
         state.surface.frame(&state.globals.qh, state.surface.id());
         state.resize_throttle = false;
+        let force_render = state.force_render_after_recovery;
+        state.force_render_after_recovery = false;
         drop(state);
 
         let mut cb = self.callbacks.borrow_mut();
         if let Some(fun) = cb.request_frame.as_mut() {
-            fun(Default::default());
+            fun(RequestFrameOptions {
+                force_render,
+                ..Default::default()
+            });
         }
     }
 
@@ -766,7 +774,12 @@ impl WaylandWindowStatePtr {
                 }
             }
             xdg_toplevel::Event::WmCapabilities { capabilities } => {
-                let mut window_controls = WindowControls::default();
+                let mut window_controls = WindowControls {
+                    maximize: false,
+                    minimize: false,
+                    fullscreen: false,
+                    window_menu: false,
+                };
 
                 let states = extract_states::<xdg_toplevel::WmCapabilities>(&capabilities);
 
@@ -1372,10 +1385,15 @@ impl PlatformWindow for WaylandWindow {
 
             // The current scene references atlas textures that were cleared during recovery.
             // Skip this frame and let the next frame rebuild the scene with fresh textures.
+            state.force_render_after_recovery = true;
             return;
         }
 
         state.renderer.draw(scene);
+
+        if state.renderer.needs_redraw() {
+            state.force_render_after_recovery = true;
+        }
     }
 
     fn completed_frame(&self) {
@@ -1469,6 +1487,18 @@ impl PlatformWindow for WaylandWindow {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.borrow().renderer.gpu_specs().into()
+    }
+
+    fn play_system_bell(&self) {
+        let state = self.borrow();
+        let surface = if state.surface_state.toplevel().is_some() {
+            Some(&state.surface)
+        } else {
+            None
+        };
+        if let Some(bell) = state.globals.system_bell.as_ref() {
+            bell.ring(surface);
+        }
     }
 }
 

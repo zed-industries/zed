@@ -5,7 +5,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
-  ZED_EXTENSION_CLI_SHA: 03d8e9aee95ea6117d75a48bcac2e19241f6e667
+  ZED_EXTENSION_CLI_SHA: 1fa7f1a3ec28ea1eae6db2e937d7a538fb10c0c7
 on:
   workflow_call:
     inputs:
@@ -34,7 +34,7 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: 0
@@ -74,17 +74,17 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
-      name: extension_bump::generate_token
-      uses: actions/create-github-app-token@v2
+      name: steps::generate_token
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.app-id }}
         private-key: ${{ secrets.app-secret }}
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -137,14 +137,15 @@ jobs:
         OLD_VERSION: ${{ needs.check_version_changed.outputs.current_version }}
         BUMP_TYPE: ${{ inputs.bump-type }}
         WORKING_DIR: ${{ inputs.working-directory }}
-    - name: extension_bump::create_pull_request
-      uses: peter-evans/create-pull-request@v7
+    - name: steps::create_pull_request
+      uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
         title: ${{ steps.bump-version.outputs.title }}
         body: ${{ steps.bump-version.outputs.body }}
         commit-message: ${{ steps.bump-version.outputs.title }}
         branch: ${{ steps.bump-version.outputs.branch_name }}
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         base: main
         delete-branch: true
         token: ${{ steps.generate-token.outputs.token }}
@@ -162,13 +163,13 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
-      name: extension_bump::generate_token
-      uses: actions/create-github-app-token@v2
+      name: steps::generate_token
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.app-id }}
         private-key: ${{ secrets.app-secret }}
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - id: determine-tag
@@ -187,7 +188,7 @@ jobs:
         CURRENT_VERSION: ${{ needs.check_version_changed.outputs.current_version }}
         WORKING_DIR: ${{ inputs.working-directory }}
     - name: extension_bump::create_version_tag
-      uses: actions/github-script@v7
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         script: |-
           github.rest.git.createRef({
@@ -212,15 +213,15 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - id: generate-token
-      name: extension_bump::generate_token
-      uses: actions/create-github-app-token@v2
+      name: steps::generate_token
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.app-id }}
         private-key: ${{ secrets.app-secret }}
         owner: zed-industries
         repositories: extensions
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - id: get-extension-id
@@ -239,7 +240,7 @@ jobs:
       env:
         COMMITTER_TOKEN: ${{ steps.generate-token.outputs.token }}
     - name: extension_bump::enable_automerge_if_staff
-      uses: actions/github-script@v7
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         github-token: ${{ steps.generate-token.outputs.token }}
         script: |

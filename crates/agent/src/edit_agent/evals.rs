@@ -4,7 +4,7 @@ use crate::{
     ListDirectoryTool, ListDirectoryToolInput, ReadFileTool, ReadFileToolInput,
 };
 use Role::*;
-use client::{Client, UserStore};
+use client::{Client, RefreshLlmTokenListener, UserStore};
 use eval_utils::{EvalOutput, EvalOutputProcessor, OutcomeKind};
 use fs::FakeFs;
 use futures::{FutureExt, future::LocalBoxFuture};
@@ -1423,7 +1423,8 @@ impl EditAgentTest {
             let client = Client::production(cx);
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
             settings::init(cx);
-            language_model::init(user_store.clone(), client.clone(), cx);
+            language_model::init(cx);
+            RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
             language_models::init(user_store, client.clone(), cx);
         });
 
@@ -1669,7 +1670,7 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
             eprintln!("Attempt #{attempt}: Retry after {retry_after:?} + jitter of {jitter:?}");
             // This code does not use the gpui::executor
             #[allow(clippy::disallowed_methods)]
-            smol::Timer::after(retry_after + jitter).await;
+            async_io::Timer::after(retry_after + jitter).await;
         } else {
             return response;
         }

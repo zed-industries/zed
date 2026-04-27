@@ -1,40 +1,41 @@
 use crate::DEFAULT_THREAD_TITLE;
 use crate::SendImmediately;
-use crate::ThreadHistory;
 use crate::{
     ChatWithFollow,
     completion_provider::{
         PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextAction,
         PromptContextType, SlashCommandCompletion,
     },
-    mention_set::{
-        Mention, MentionImage, MentionSet, insert_crease_for_mention, paste_images_as_context,
-    },
+    mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
 };
 use acp_thread::MentionUri;
 use agent::ThreadStore;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
-    actions::Paste, code_context_menus::CodeContextMenu, scroll::Autoscroll,
+    actions::{Copy, Paste},
+    code_context_menus::CodeContextMenu,
+    scroll::Autoscroll,
 };
 use futures::{FutureExt as _, future::join_all};
 use gpui::{
-    AppContext, ClipboardEntry, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageFormat,
-    KeyContext, SharedString, Subscription, Task, TextStyle, WeakEntity,
+    AppContext, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, ImageFormat, KeyContext, SharedString, Subscription, Task, TextStyle, WeakEntity,
 };
 use language::{Buffer, language_settings::InlayHintKind};
 use parking_lot::RwLock;
 use project::AgentId;
-use project::{CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, Worktree};
+use project::{
+    CompletionIntent, InlayHint, InlayHintLabel, InlayId, Project, ProjectPath, Worktree,
+};
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings;
 use std::{fmt::Write, ops::Range, rc::Rc, sync::Arc};
-use theme::ThemeSettings;
-use ui::{ContextMenu, Disclosure, ElevationIndex, prelude::*};
+use theme_settings::ThemeSettings;
+use ui::{ContextMenu, prelude::*};
 use util::paths::PathStyle;
 use util::{ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace};
@@ -161,12 +162,239 @@ impl EventEmitter<MessageEditorEvent> for MessageEditor {}
 
 const COMMAND_HINT_INLAY_ID: InlayId = InlayId::Hint(0);
 
+enum MentionInsertPosition {
+    AtCursor,
+    EndOfBuffer,
+}
+
+fn insert_mention_for_project_path(
+    project_path: &ProjectPath,
+    position: MentionInsertPosition,
+    editor: &Entity<Editor>,
+    mention_set: &Entity<MentionSet>,
+    project: &Entity<Project>,
+    workspace: &Entity<Workspace>,
+    supports_images: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<Task<()>> {
+    let (file_name, mention_uri) = {
+        let project = project.read(cx);
+        let path_style = project.path_style(cx);
+        let entry = project.entry_for_path(project_path, cx)?;
+        let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
+        let abs_path = worktree.read(cx).absolutize(&project_path.path);
+        let (file_name, _) = crate::completion_provider::extract_file_name_and_directory(
+            &project_path.path,
+            worktree.read(cx).root_name(),
+            path_style,
+        );
+        let mention_uri = if entry.is_dir() {
+            MentionUri::Directory { abs_path }
+        } else {
+            MentionUri::File { abs_path }
+        };
+        (file_name, mention_uri)
+    };
+
+    let mention_text = mention_uri.as_link().to_string();
+    let content_len = mention_text.len();
+
+    let text_anchor = match position {
+        MentionInsertPosition::AtCursor => editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx);
+            let snapshot = buffer.snapshot(cx);
+            let buffer_snapshot = snapshot.as_singleton()?;
+            let text_anchor = snapshot
+                .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)?
+                .0
+                .bias_left(&buffer_snapshot);
+
+            editor.insert(&mention_text, window, cx);
+            editor.insert(" ", window, cx);
+
+            Some(text_anchor)
+        }),
+        MentionInsertPosition::EndOfBuffer => {
+            let multi_buffer = editor.read(cx).buffer().clone();
+            let buffer = multi_buffer.read(cx).as_singleton()?;
+            let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
+            let new_text = format!("{mention_text} ");
+            editor.update(cx, |editor, cx| {
+                editor.edit(
+                    [(
+                        multi_buffer::Anchor::Max..multi_buffer::Anchor::Max,
+                        new_text,
+                    )],
+                    cx,
+                );
+            });
+            Some(anchor)
+        }
+    }?;
+
+    Some(mention_set.update(cx, |mention_set, cx| {
+        mention_set.confirm_mention_completion(
+            file_name,
+            text_anchor,
+            content_len,
+            mention_uri,
+            supports_images,
+            editor.clone(),
+            workspace,
+            window,
+            cx,
+        )
+    }))
+}
+
+enum ResolvedPastedContextItem {
+    Image(gpui::Image, gpui::SharedString),
+    ProjectPath(ProjectPath),
+}
+
+async fn resolve_pasted_context_items(
+    project: Entity<Project>,
+    project_is_local: bool,
+    supports_images: bool,
+    entries: Vec<ClipboardEntry>,
+    cx: &mut gpui::AsyncWindowContext,
+) -> (Vec<ResolvedPastedContextItem>, Vec<Entity<Worktree>>) {
+    let mut items = Vec::new();
+    let mut added_worktrees = Vec::new();
+    let default_image_name: SharedString = "Image".into();
+
+    for entry in entries {
+        match entry {
+            ClipboardEntry::String(_) => {}
+            ClipboardEntry::Image(image) => {
+                if supports_images {
+                    items.push(ResolvedPastedContextItem::Image(
+                        image,
+                        default_image_name.clone(),
+                    ));
+                }
+            }
+            ClipboardEntry::ExternalPaths(paths) => {
+                for path in paths.paths().iter() {
+                    if let Some((image, name)) = cx
+                        .background_spawn({
+                            let path = path.clone();
+                            let default_image_name = default_image_name.clone();
+                            async move {
+                                crate::mention_set::load_external_image_from_path(
+                                    &path,
+                                    &default_image_name,
+                                )
+                            }
+                        })
+                        .await
+                    {
+                        if supports_images {
+                            items.push(ResolvedPastedContextItem::Image(image, name));
+                        }
+                        continue;
+                    }
+
+                    if !project_is_local {
+                        continue;
+                    }
+
+                    let path = path.clone();
+                    let Ok(resolve_task) = cx.update({
+                        let project = project.clone();
+                        move |_, cx| Workspace::project_path_for_path(project, &path, false, cx)
+                    }) else {
+                        continue;
+                    };
+
+                    if let Some((worktree, project_path)) = resolve_task.await.log_err() {
+                        added_worktrees.push(worktree);
+                        items.push(ResolvedPastedContextItem::ProjectPath(project_path));
+                    }
+                }
+            }
+        }
+    }
+
+    (items, added_worktrees)
+}
+
+fn insert_project_path_as_context(
+    project_path: ProjectPath,
+    editor: Entity<Editor>,
+    mention_set: Entity<MentionSet>,
+    workspace: WeakEntity<Workspace>,
+    supports_images: bool,
+    cx: &mut gpui::AsyncWindowContext,
+) -> Option<Task<()>> {
+    let workspace = workspace.upgrade()?;
+
+    cx.update(move |window, cx| {
+        let project = workspace.read(cx).project().clone();
+        insert_mention_for_project_path(
+            &project_path,
+            MentionInsertPosition::AtCursor,
+            &editor,
+            &mention_set,
+            &project,
+            &workspace,
+            supports_images,
+            window,
+            cx,
+        )
+    })
+    .ok()
+    .flatten()
+}
+
+async fn insert_resolved_pasted_context_items(
+    items: Vec<ResolvedPastedContextItem>,
+    added_worktrees: Vec<Entity<Worktree>>,
+    editor: Entity<Editor>,
+    mention_set: Entity<MentionSet>,
+    workspace: WeakEntity<Workspace>,
+    supports_images: bool,
+    cx: &mut gpui::AsyncWindowContext,
+) {
+    let mut path_mention_tasks = Vec::new();
+
+    for item in items {
+        match item {
+            ResolvedPastedContextItem::Image(image, name) => {
+                crate::mention_set::insert_images_as_context(
+                    vec![(image, name)],
+                    editor.clone(),
+                    mention_set.clone(),
+                    workspace.clone(),
+                    cx,
+                )
+                .await;
+            }
+            ResolvedPastedContextItem::ProjectPath(project_path) => {
+                if let Some(task) = insert_project_path_as_context(
+                    project_path,
+                    editor.clone(),
+                    mention_set.clone(),
+                    workspace.clone(),
+                    supports_images,
+                    cx,
+                ) {
+                    path_mention_tasks.push(task);
+                }
+            }
+        }
+    }
+
+    join_all(path_mention_tasks).await;
+    drop(added_worktrees);
+}
+
 impl MessageEditor {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: Option<WeakEntity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         session_capabilities: SharedSessionCapabilities,
         agent_id: AgentId,
@@ -194,6 +422,7 @@ impl MessageEditor {
             editor.set_show_indent_guides(false, cx);
             editor.set_show_completions_on_input(Some(true));
             editor.set_soft_wrap();
+            editor.disable_mouse_wheel_zoom();
             editor.set_use_modal_editing(true);
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
@@ -229,7 +458,6 @@ impl MessageEditor {
             },
             editor.downgrade(),
             mention_set.clone(),
-            history,
             prompt_store.clone(),
             workspace.clone(),
         ));
@@ -373,7 +601,7 @@ impl MessageEditor {
             COMMAND_HINT_INLAY_ID,
             hint_pos,
             &InlayHint {
-                position: hint_pos.text_anchor,
+                position: snapshot.anchor_to_buffer_anchor(hint_pos)?.0,
                 label: InlayHintLabel::String(hint),
                 kind: Some(InlayHintKind::Parameter),
                 padding_left: false,
@@ -410,12 +638,11 @@ impl MessageEditor {
 
         let start = self.editor.update(cx, |editor, cx| {
             editor.set_text(content, window, cx);
-            editor
-                .buffer()
-                .read(cx)
-                .snapshot(cx)
-                .anchor_before(Point::zero())
-                .text_anchor
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            snapshot
+                .anchor_to_buffer_anchor(snapshot.anchor_before(Point::zero()))
+                .unwrap()
+                .0
         });
 
         let supports_images = self.session_capabilities.read().supports_images();
@@ -585,7 +812,9 @@ impl MessageEditor {
                                 )
                                 .uri(match uri {
                                     MentionUri::File { .. } => Some(uri.to_uri().to_string()),
-                                    MentionUri::PastedImage => None,
+                                    MentionUri::PastedImage { .. } => {
+                                        Some(uri.to_uri().to_string())
+                                    }
                                     other => {
                                         debug_panic!(
                                             "unexpected mention uri for image: {:?}",
@@ -769,13 +998,10 @@ impl MessageEditor {
 
         if should_insert_creases && let Some(selections) = editor_clipboard_selections {
             cx.stop_propagation();
-            let insertion_target = self
-                .editor
-                .read(cx)
-                .selections
-                .newest_anchor()
-                .start
-                .text_anchor;
+            let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
+            let (insertion_target, _) = snapshot
+                .anchor_to_buffer_anchor(self.editor.read(cx).selections.newest_anchor().start)
+                .unwrap();
 
             let project = workspace.read(cx).project().clone();
             for selection in selections {
@@ -791,21 +1017,19 @@ impl MessageEditor {
                     };
 
                     let mention_text = mention_uri.as_link().to_string();
-                    let (excerpt_id, text_anchor, content_len) =
-                        self.editor.update(cx, |editor, cx| {
-                            let buffer = editor.buffer().read(cx);
-                            let snapshot = buffer.snapshot(cx);
-                            let (excerpt_id, _, buffer_snapshot) = snapshot.as_singleton().unwrap();
-                            let text_anchor = insertion_target.bias_left(&buffer_snapshot);
+                    let (text_anchor, content_len) = self.editor.update(cx, |editor, cx| {
+                        let buffer = editor.buffer().read(cx);
+                        let snapshot = buffer.snapshot(cx);
+                        let buffer_snapshot = snapshot.as_singleton().unwrap();
+                        let text_anchor = insertion_target.bias_left(&buffer_snapshot);
 
-                            editor.insert(&mention_text, window, cx);
-                            editor.insert(" ", window, cx);
+                        editor.insert(&mention_text, window, cx);
+                        editor.insert(" ", window, cx);
 
-                            (excerpt_id, text_anchor, mention_text.len())
-                        });
+                        (text_anchor, mention_text.len())
+                    });
 
                     let Some((crease_id, tx)) = insert_crease_for_mention(
-                        excerpt_id,
                         text_anchor,
                         content_len,
                         crease_text.into(),
@@ -859,9 +1083,8 @@ impl MessageEditor {
             }
             return;
         }
-        // Handle text paste with potential markdown mention links.
-        // This must be checked BEFORE paste_images_as_context because that function
-        // returns a task even when there are no images in the clipboard.
+        // Handle text paste with potential markdown mention links before
+        // clipboard context entries so markdown text still pastes as text.
         if let Some(clipboard_text) = cx.read_from_clipboard().and_then(|item| {
             item.entries().iter().find_map(|entry| match entry {
                 ClipboardEntry::String(text) => Some(text.text().to_string()),
@@ -916,8 +1139,7 @@ impl MessageEditor {
 
                     for (anchor, content_len, mention_uri) in all_mentions {
                         let Some((crease_id, tx)) = insert_crease_for_mention(
-                            anchor.excerpt_id,
-                            anchor.text_anchor,
+                            snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
                             content_len,
                             mention_uri.name().into(),
                             mention_uri.icon_path(cx),
@@ -958,30 +1180,7 @@ impl MessageEditor {
             }
         }
 
-        let has_non_text_content = cx
-            .read_from_clipboard()
-            .map(|item| {
-                item.entries().iter().any(|entry| {
-                    matches!(
-                        entry,
-                        ClipboardEntry::Image(_) | ClipboardEntry::ExternalPaths(_)
-                    )
-                })
-            })
-            .unwrap_or(false);
-
-        if self.session_capabilities.read().supports_images()
-            && has_non_text_content
-            && let Some(task) = paste_images_as_context(
-                self.editor.clone(),
-                self.mention_set.clone(),
-                self.workspace.clone(),
-                window,
-                cx,
-            )
-        {
-            cx.stop_propagation();
-            task.detach();
+        if self.handle_pasted_context(window, cx) {
             return;
         }
 
@@ -989,11 +1188,76 @@ impl MessageEditor {
         cx.propagate();
     }
 
+    fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(text) = self.serialized_copy_text(cx) else {
+            cx.propagate();
+            return;
+        };
+
+        cx.stop_propagation();
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
     fn paste_raw(&mut self, _: &PasteRaw, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.editor.clone();
         window.defer(cx, move |window, cx| {
             editor.update(cx, |editor, cx| editor.paste(&Paste, window, cx));
         });
+    }
+
+    fn handle_pasted_context(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(clipboard) = cx.read_from_clipboard() else {
+            return false;
+        };
+
+        if matches!(
+            clipboard.entries().first(),
+            Some(ClipboardEntry::String(_)) | None
+        ) {
+            return false;
+        }
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return false;
+        };
+        let project = workspace.read(cx).project().clone();
+        let project_is_local = project.read(cx).is_local();
+        let supports_images = self.session_capabilities.read().supports_images();
+        if !project_is_local && !supports_images {
+            return false;
+        }
+        let editor = self.editor.clone();
+        let mention_set = self.mention_set.clone();
+        let workspace = self.workspace.clone();
+        let entries = clipboard.into_entries().collect::<Vec<_>>();
+
+        cx.stop_propagation();
+
+        window
+            .spawn(cx, async move |mut cx| {
+                let (items, added_worktrees) = resolve_pasted_context_items(
+                    project,
+                    project_is_local,
+                    supports_images,
+                    entries,
+                    &mut cx,
+                )
+                .await;
+                insert_resolved_pasted_context_items(
+                    items,
+                    added_worktrees,
+                    editor,
+                    mention_set,
+                    workspace,
+                    supports_images,
+                    &mut cx,
+                )
+                .await;
+                Ok::<(), anyhow::Error>(())
+            })
+            .detach_and_log_err(cx);
+
+        true
     }
 
     pub fn insert_dragged_files(
@@ -1007,138 +1271,28 @@ impl MessageEditor {
             return;
         };
         let project = workspace.read(cx).project().clone();
-        let path_style = project.read(cx).path_style(cx);
-        let buffer = self.editor.read(cx).buffer().clone();
-        let Some(buffer) = buffer.read(cx).as_singleton() else {
-            return;
-        };
+        let supports_images = self.session_capabilities.read().supports_images();
         let mut tasks = Vec::new();
         for path in paths {
-            let Some(entry) = project.read(cx).entry_for_path(&path, cx) else {
-                continue;
-            };
-            let Some(worktree) = project.read(cx).worktree_for_id(path.worktree_id, cx) else {
-                continue;
-            };
-            let abs_path = worktree.read(cx).absolutize(&path.path);
-            let (file_name, _) = crate::completion_provider::extract_file_name_and_directory(
-                &path.path,
-                worktree.read(cx).root_name(),
-                path_style,
-            );
-
-            let uri = if entry.is_dir() {
-                MentionUri::Directory { abs_path }
-            } else {
-                MentionUri::File { abs_path }
-            };
-
-            let new_text = format!("{} ", uri.as_link());
-            let content_len = new_text.len() - 1;
-
-            let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
-
-            self.editor.update(cx, |message_editor, cx| {
-                message_editor.edit(
-                    [(
-                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
-                        new_text,
-                    )],
-                    cx,
-                );
-            });
-            let supports_images = self.session_capabilities.read().supports_images();
-            tasks.push(self.mention_set.update(cx, |mention_set, cx| {
-                mention_set.confirm_mention_completion(
-                    file_name,
-                    anchor,
-                    content_len,
-                    uri,
-                    supports_images,
-                    self.editor.clone(),
-                    &workspace,
-                    window,
-                    cx,
-                )
-            }));
+            if let Some(task) = insert_mention_for_project_path(
+                &path,
+                MentionInsertPosition::EndOfBuffer,
+                &self.editor,
+                &self.mention_set,
+                &project,
+                &workspace,
+                supports_images,
+                window,
+                cx,
+            ) {
+                tasks.push(task);
+            }
         }
         cx.spawn(async move |_, _| {
             join_all(tasks).await;
             drop(added_worktrees);
         })
         .detach();
-    }
-
-    /// Inserts code snippets as creases into the editor.
-    /// Each tuple contains (code_text, crease_title).
-    pub fn insert_code_creases(
-        &mut self,
-        creases: Vec<(String, String)>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.insert("\n", window, cx);
-        });
-        for (text, crease_title) in creases {
-            self.insert_crease_impl(text, crease_title, IconName::TextSnippet, true, window, cx);
-        }
-    }
-
-    pub fn insert_terminal_crease(
-        &mut self,
-        text: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let line_count = text.lines().count() as u32;
-        let mention_uri = MentionUri::TerminalSelection { line_count };
-        let mention_text = mention_uri.as_link().to_string();
-
-        let (excerpt_id, text_anchor, content_len) = self.editor.update(cx, |editor, cx| {
-            let buffer = editor.buffer().read(cx);
-            let snapshot = buffer.snapshot(cx);
-            let (excerpt_id, _, buffer_snapshot) = snapshot.as_singleton().unwrap();
-            let text_anchor = editor
-                .selections
-                .newest_anchor()
-                .start
-                .text_anchor
-                .bias_left(&buffer_snapshot);
-
-            editor.insert(&mention_text, window, cx);
-            editor.insert(" ", window, cx);
-
-            (excerpt_id, text_anchor, mention_text.len())
-        });
-
-        let Some((crease_id, tx)) = insert_crease_for_mention(
-            excerpt_id,
-            text_anchor,
-            content_len,
-            mention_uri.name().into(),
-            mention_uri.icon_path(cx),
-            mention_uri.tooltip_text(),
-            Some(mention_uri.clone()),
-            Some(self.workspace.clone()),
-            None,
-            self.editor.clone(),
-            window,
-            cx,
-        ) else {
-            return;
-        };
-        drop(tx);
-
-        let mention_task = Task::ready(Ok(Mention::Text {
-            content: text,
-            tracked_buffers: vec![],
-        }))
-        .shared();
-
-        self.mention_set.update(cx, |mention_set, _| {
-            mention_set.insert_mention(crease_id, mention_uri, mention_task);
-        });
     }
 
     pub fn insert_branch_diff_crease(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1172,25 +1326,23 @@ impl MessageEditor {
                     };
                     let mention_text = mention_uri.as_link().to_string();
 
-                    let (excerpt_id, text_anchor, content_len) = editor.update(cx, |editor, cx| {
+                    let (text_anchor, content_len) = editor.update(cx, |editor, cx| {
                         let buffer = editor.buffer().read(cx);
                         let snapshot = buffer.snapshot(cx);
-                        let (excerpt_id, _, buffer_snapshot) = snapshot.as_singleton().unwrap();
-                        let text_anchor = editor
-                            .selections
-                            .newest_anchor()
-                            .start
-                            .text_anchor
+                        let buffer_snapshot = snapshot.as_singleton().unwrap();
+                        let text_anchor = snapshot
+                            .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)
+                            .unwrap()
+                            .0
                             .bias_left(&buffer_snapshot);
 
                         editor.insert(&mention_text, window, cx);
                         editor.insert(" ", window, cx);
 
-                        (excerpt_id, text_anchor, mention_text.len())
+                        (text_anchor, mention_text.len())
                     });
 
                     let Some((crease_id, tx)) = insert_crease_for_mention(
-                        excerpt_id,
                         text_anchor,
                         content_len,
                         mention_uri.name().into(),
@@ -1221,70 +1373,6 @@ impl MessageEditor {
                 })
             })
             .detach_and_log_err(cx);
-    }
-
-    fn insert_crease_impl(
-        &mut self,
-        text: String,
-        title: String,
-        icon: IconName,
-        add_trailing_newline: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        use editor::display_map::{Crease, FoldPlaceholder};
-        use multi_buffer::MultiBufferRow;
-        use rope::Point;
-
-        self.editor.update(cx, |editor, cx| {
-            let point = editor
-                .selections
-                .newest::<Point>(&editor.display_snapshot(cx))
-                .head();
-            let start_row = MultiBufferRow(point.row);
-
-            editor.insert(&text, window, cx);
-
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let anchor_before = snapshot.anchor_after(point);
-            let anchor_after = editor
-                .selections
-                .newest_anchor()
-                .head()
-                .bias_left(&snapshot);
-
-            if add_trailing_newline {
-                editor.insert("\n", window, cx);
-            }
-
-            let fold_placeholder = FoldPlaceholder {
-                render: Arc::new({
-                    let title = title.clone();
-                    move |_fold_id, _fold_range, _cx| {
-                        Button::new("crease", title.clone())
-                            .layer(ElevationIndex::ElevatedSurface)
-                            .start_icon(Icon::new(icon))
-                            .into_any_element()
-                    }
-                }),
-                merge_adjacent: false,
-                ..Default::default()
-            };
-
-            let crease = Crease::inline(
-                anchor_before..anchor_after,
-                fold_placeholder,
-                |row, is_folded, fold, _window, _cx| {
-                    Disclosure::new(("crease-toggle", row.0 as u64), !is_folded)
-                        .toggle_state(is_folded)
-                        .on_click(move |_e, window, cx| fold(!is_folded, window, cx))
-                        .into_any_element()
-                },
-                |_, _, _, _| gpui::Empty.into_any(),
-            );
-            editor.insert_creases(vec![crease], cx);
-            editor.fold_at(start_row, window, cx);
-        });
     }
 
     pub fn insert_selections(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1346,45 +1434,20 @@ impl MessageEditor {
                     _ => return Ok::<(), anyhow::Error>(()),
                 };
 
-                let supported_formats = [
-                    ("png", gpui::ImageFormat::Png),
-                    ("jpg", gpui::ImageFormat::Jpeg),
-                    ("jpeg", gpui::ImageFormat::Jpeg),
-                    ("webp", gpui::ImageFormat::Webp),
-                    ("gif", gpui::ImageFormat::Gif),
-                    ("bmp", gpui::ImageFormat::Bmp),
-                    ("tiff", gpui::ImageFormat::Tiff),
-                    ("tif", gpui::ImageFormat::Tiff),
-                    ("ico", gpui::ImageFormat::Ico),
-                ];
-
-                let mut images = Vec::new();
-                for path in paths {
-                    let extension = path
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        .map(|s| s.to_lowercase());
-
-                    let Some(format) = extension.and_then(|ext| {
-                        supported_formats
-                            .iter()
-                            .find(|(e, _)| *e == ext)
-                            .map(|(_, f)| *f)
-                    }) else {
-                        continue;
-                    };
-
-                    let Ok(content) = async_fs::read(&path).await else {
-                        continue;
-                    };
-
-                    let name: gpui::SharedString = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .map(|s| gpui::SharedString::from(s.to_owned()))
-                        .unwrap_or_else(|| "Image".into());
-                    images.push((gpui::Image::from_bytes(format, content), name));
-                }
+                let default_image_name: SharedString = "Image".into();
+                let images = cx
+                    .background_spawn(async move {
+                        paths
+                            .into_iter()
+                            .filter_map(|path| {
+                                crate::mention_set::load_external_image_from_path(
+                                    &path,
+                                    &default_image_name,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .await;
 
                 crate::mention_set::insert_images_as_context(
                     images,
@@ -1507,7 +1570,9 @@ impl MessageEditor {
                     let mention_uri = if let Some(uri) = uri {
                         MentionUri::parse(&uri, path_style)
                     } else {
-                        Ok(MentionUri::PastedImage)
+                        Ok(MentionUri::PastedImage {
+                            name: "Image".to_string(),
+                        })
                     };
                     let Some(mention_uri) = mention_uri.log_err() else {
                         continue;
@@ -1558,8 +1623,7 @@ impl MessageEditor {
             let adjusted_start = insertion_start + range.start;
             let anchor = snapshot.anchor_before(MultiBufferOffset(adjusted_start));
             let Some((crease_id, tx)) = insert_crease_for_mention(
-                anchor.excerpt_id,
-                anchor.text_anchor,
+                snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
                 range.end - range.start,
                 mention_uri.name().into(),
                 mention_uri.icon_path(cx),
@@ -1633,6 +1697,76 @@ impl MessageEditor {
             editor.set_text(text, window, cx);
         });
     }
+
+    fn serialized_copy_text(&self, cx: &mut App) -> Option<String> {
+        let display_snapshot = self
+            .editor
+            .update(cx, |editor, cx| editor.display_snapshot(cx));
+        let editor = self.editor.read(cx);
+        if !editor.has_non_empty_selection(&display_snapshot) {
+            return None;
+        }
+
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let mention_set = self.mention_set.read(cx);
+        let mention_ranges = display_snapshot
+            .crease_snapshot
+            .crease_items_with_offsets(&snapshot)
+            .into_iter()
+            .filter_map(|(crease_id, range)| {
+                mention_set.mention_uri_for_crease(&crease_id).map(|uri| {
+                    (
+                        range.start.to_offset(&snapshot),
+                        range.end.to_offset(&snapshot),
+                        uri,
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut text = String::new();
+        let mut has_mentions = false;
+        let mut is_first = true;
+
+        for selection in editor
+            .selections
+            .all::<MultiBufferOffset>(&display_snapshot)
+        {
+            if is_first {
+                is_first = false;
+            } else {
+                text.push('\n');
+            }
+
+            let mut overlapping_mentions = mention_ranges
+                .iter()
+                .filter(|(start, end, _)| *start < selection.end && selection.start < *end)
+                .peekable();
+
+            if overlapping_mentions.peek().is_none() {
+                text.extend(snapshot.text_for_range(selection.start..selection.end));
+                continue;
+            }
+
+            has_mentions = true;
+
+            let mut cursor = selection.start;
+            for (start, end, uri) in overlapping_mentions {
+                if cursor < *start {
+                    text.extend(snapshot.text_for_range(cursor..*start));
+                }
+
+                write!(text, "{}", uri.as_link()).unwrap();
+                cursor = *end;
+            }
+
+            if cursor < selection.end {
+                text.extend(snapshot.text_for_range(cursor..selection.end));
+            }
+        }
+
+        has_mentions.then_some(text)
+    }
 }
 
 impl Focusable for MessageEditor {
@@ -1649,6 +1783,7 @@ impl Render for MessageEditor {
             .on_action(cx.listener(Self::send_immediately))
             .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(Self::cancel))
+            .capture_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::paste_raw))
             .capture_action(cx.listener(Self::paste))
             .flex_1()
@@ -1771,27 +1906,28 @@ fn find_matching_bracket(text: &str, open: char, close: char) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use std::{ops::Range, path::Path, sync::Arc};
+    use std::{ops::Range, path::Path, path::PathBuf, sync::Arc};
 
     use acp_thread::MentionUri;
     use agent::{ThreadStore, outline};
-    use agent_client_protocol as acp;
+    use agent_client_protocol::schema as acp;
+    use base64::Engine as _;
     use editor::{
         AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
         actions::Paste,
     };
 
     use fs::FakeFs;
-    use futures::StreamExt as _;
+    use futures::{FutureExt as _, StreamExt as _};
     use gpui::{
-        AppContext, ClipboardItem, Entity, EventEmitter, FocusHandle, Focusable, TestAppContext,
-        VisualTestContext,
+        AppContext, ClipboardEntry, ClipboardItem, Entity, EventEmitter, ExternalPaths,
+        FocusHandle, Focusable, Task, TestAppContext, VisualTestContext,
     };
     use language_model::LanguageModelRegistry;
     use lsp::{CompletionContext, CompletionTriggerKind};
     use parking_lot::RwLock;
     use project::{CompletionIntent, Project, ProjectPath};
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
@@ -1801,6 +1937,7 @@ mod tests {
     use crate::completion_provider::PromptContextType;
     use crate::{
         conversation_view::tests::init_test,
+        mention_set::insert_crease_for_mention,
         message_editor::{Mention, MessageEditor, SessionCapabilities, parse_mention_links},
     };
 
@@ -1917,7 +2054,6 @@ mod tests {
                     project.downgrade(),
                     thread_store.clone(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -1934,23 +2070,13 @@ mod tests {
 
         cx.run_until_parked();
 
-        let excerpt_id = editor.update(cx, |editor, cx| {
-            editor
-                .buffer()
-                .read(cx)
-                .excerpt_ids()
-                .into_iter()
-                .next()
-                .unwrap()
-        });
         let completions = editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Hello @file ", window, cx);
             let buffer = editor.buffer().read(cx).as_singleton().unwrap();
             let completion_provider = editor.completion_provider().unwrap();
             completion_provider.completions(
-                excerpt_id,
                 &buffer,
-                text::Anchor::MAX,
+                text::Anchor::max_for_buffer(buffer.read(cx).remote_id()),
                 CompletionContext {
                     trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
                     trigger_character: Some("@".into()),
@@ -1971,7 +2097,7 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let range = snapshot
-                .anchor_range_in_excerpt(excerpt_id, completion.replace_range)
+                .buffer_anchor_range_to_anchor_range(completion.replace_range)
                 .unwrap();
             editor.edit([(range, completion.new_text)], cx);
             (completion.confirm.unwrap())(CompletionIntent::Complete, window, cx);
@@ -2028,7 +2154,6 @@ mod tests {
                     workspace_handle.clone(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     None,
                     session_capabilities.clone(),
                     "Claude Agent".into(),
@@ -2195,7 +2320,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     None,
                     session_capabilities.clone(),
                     "Test Agent".into(),
@@ -2422,7 +2546,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     None,
                     session_capabilities.clone(),
                     "Test Agent".into(),
@@ -2916,7 +3039,6 @@ mod tests {
                     project.downgrade(),
                     thread_store.clone(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3018,7 +3140,6 @@ mod tests {
                     project.downgrade(),
                     thread_store.clone(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3088,7 +3209,6 @@ mod tests {
                     project.downgrade(),
                     thread_store.clone(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3141,7 +3261,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     None,
                     Default::default(),
                     "Test Agent".into(),
@@ -3200,7 +3319,6 @@ mod tests {
                     project.downgrade(),
                     thread_store.clone(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3258,7 +3376,6 @@ mod tests {
                     workspace.downgrade(),
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     None,
                     Default::default(),
                     "Test Agent".into(),
@@ -3321,7 +3438,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     thread_store.clone(),
-                    None,
                     None,
                     Default::default(),
                     "Test Agent".into(),
@@ -3483,7 +3599,6 @@ mod tests {
                     project.downgrade(),
                     thread_store.clone(),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3598,7 +3713,6 @@ mod tests {
                     project.downgrade(),
                     Some(thread_store.clone()),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3678,7 +3792,6 @@ mod tests {
                     project.downgrade(),
                     Some(thread_store),
                     None,
-                    None,
                     Default::default(),
                     "Test Agent".into(),
                     "Test",
@@ -3740,6 +3853,318 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_copy_with_selection_mentions_serializes_links(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (source_message_editor, _source_editor, mut cx) = setup_paste_test_message_editor(
+            json!({"file.rs": "line 1\nline 2\nline 3\nline 4\n"}),
+            cx,
+        )
+        .await;
+
+        let workspace = source_message_editor.read_with(&cx, |message_editor, _| {
+            message_editor.workspace.upgrade().expect("workspace")
+        });
+        let project = workspace.read_with(&cx, |workspace, _| workspace.project().clone());
+
+        let source_text = "selection needs work\nselection looks fine";
+        let first_range = 0..9;
+        let second_start = "selection needs work\n".len();
+        let second_range = second_start..(second_start + "selection".len());
+        let first_uri = MentionUri::Selection {
+            abs_path: Some(path!("/project/file.rs").into()),
+            line_range: 0..=1,
+        };
+        let second_uri = MentionUri::Selection {
+            abs_path: Some(path!("/project/file.rs").into()),
+            line_range: 2..=3,
+        };
+
+        source_message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.set_text(source_text, window, cx);
+
+            let snapshot = message_editor
+                .editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .snapshot(cx);
+            for (range, uri, content) in [
+                (
+                    first_range.clone(),
+                    first_uri.clone(),
+                    "line 1\nline 2\n".to_string(),
+                ),
+                (
+                    second_range.clone(),
+                    second_uri.clone(),
+                    "line 3\nline 4\n".to_string(),
+                ),
+            ] {
+                let Some((crease_id, tx)) = insert_crease_for_mention(
+                    snapshot
+                        .anchor_to_buffer_anchor(
+                            snapshot.anchor_before(MultiBufferOffset(range.start)),
+                        )
+                        .expect("selection mention anchor should map to a buffer")
+                        .0,
+                    range.len(),
+                    uri.name().into(),
+                    uri.icon_path(cx),
+                    uri.tooltip_text(),
+                    Some(uri.clone()),
+                    Some(message_editor.workspace.clone()),
+                    None,
+                    message_editor.editor.clone(),
+                    window,
+                    cx,
+                ) else {
+                    panic!("expected mention crease insertion");
+                };
+                drop(tx);
+
+                message_editor.mention_set.update(cx, |mention_set, _cx| {
+                    mention_set.insert_mention(
+                        crease_id,
+                        uri,
+                        Task::ready(Ok(Mention::Text {
+                            content,
+                            tracked_buffers: Vec::new(),
+                        }))
+                        .shared(),
+                    );
+                });
+            }
+
+            let buffer_len = snapshot.len();
+            message_editor.editor.update(cx, |editor, cx| {
+                editor.change_selections(Default::default(), window, cx, |selections| {
+                    selections.select_ranges([MultiBufferOffset(0)..buffer_len]);
+                });
+            });
+        });
+
+        let copied_text = source_message_editor.update(&mut cx, |message_editor, cx| {
+            message_editor
+                .serialized_copy_text(cx)
+                .expect("selection mentions should serialize")
+        });
+        let expected_text = format!(
+            "{} needs work\n{} looks fine",
+            first_uri.as_link(),
+            second_uri.as_link()
+        );
+        assert_eq!(copied_text, expected_text);
+
+        let target_message_editor = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let thread_store = cx.new(|cx| ThreadStore::new(cx));
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.downgrade(),
+                    Some(thread_store),
+                    None,
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
+            message_editor
+        });
+
+        cx.write_to_clipboard(ClipboardItem::new_string(copied_text));
+        target_message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+
+        let target_text = target_message_editor.read_with(&cx, |message_editor, cx| {
+            message_editor.editor.read(cx).text(cx)
+        });
+        assert_eq!(target_text, expected_text);
+
+        let contents = mention_contents(&target_message_editor, &mut cx).await;
+        assert_eq!(contents.len(), 2);
+        assert!(contents.iter().any(|(uri, _)| uri == &first_uri));
+        assert!(contents.iter().any(|(uri, _)| uri == &second_uri));
+    }
+
+    struct SelectionMentionFixture {
+        message_editor: Entity<MessageEditor>,
+        first_uri: MentionUri,
+        first_range: Range<usize>,
+        second_range: Range<usize>,
+    }
+
+    async fn setup_selection_mention_fixture(
+        cx: &mut TestAppContext,
+    ) -> (SelectionMentionFixture, VisualTestContext) {
+        let (message_editor, _source_editor, mut cx) = setup_paste_test_message_editor(
+            json!({"file.rs": "line 1\nline 2\nline 3\nline 4\n"}),
+            cx,
+        )
+        .await;
+
+        let source_text = "selection needs work\nselection looks fine";
+        let first_range = 0..9;
+        let second_start = "selection needs work\n".len();
+        let second_range = second_start..(second_start + "selection".len());
+        let first_uri = MentionUri::Selection {
+            abs_path: Some(path!("/project/file.rs").into()),
+            line_range: 0..=1,
+        };
+        let second_uri = MentionUri::Selection {
+            abs_path: Some(path!("/project/file.rs").into()),
+            line_range: 2..=3,
+        };
+
+        message_editor.update_in(&mut cx, |message_editor, window, cx| {
+            message_editor.set_text(source_text, window, cx);
+
+            let snapshot = message_editor
+                .editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .snapshot(cx);
+            for (range, uri, content) in [
+                (
+                    first_range.clone(),
+                    first_uri.clone(),
+                    "line 1\nline 2\n".to_string(),
+                ),
+                (
+                    second_range.clone(),
+                    second_uri.clone(),
+                    "line 3\nline 4\n".to_string(),
+                ),
+            ] {
+                let Some((crease_id, tx)) = insert_crease_for_mention(
+                    snapshot
+                        .anchor_to_buffer_anchor(
+                            snapshot.anchor_before(MultiBufferOffset(range.start)),
+                        )
+                        .expect("selection mention anchor should map to a buffer")
+                        .0,
+                    range.len(),
+                    uri.name().into(),
+                    uri.icon_path(cx),
+                    uri.tooltip_text(),
+                    Some(uri.clone()),
+                    Some(message_editor.workspace.clone()),
+                    None,
+                    message_editor.editor.clone(),
+                    window,
+                    cx,
+                ) else {
+                    panic!("expected mention crease insertion");
+                };
+                drop(tx);
+
+                message_editor.mention_set.update(cx, |mention_set, _cx| {
+                    mention_set.insert_mention(
+                        crease_id,
+                        uri,
+                        Task::ready(Ok(Mention::Text {
+                            content,
+                            tracked_buffers: Vec::new(),
+                        }))
+                        .shared(),
+                    );
+                });
+            }
+        });
+
+        (
+            SelectionMentionFixture {
+                message_editor,
+                first_uri,
+                first_range,
+                second_range,
+            },
+            cx,
+        )
+    }
+
+    #[gpui::test]
+    async fn test_serialized_copy_text_selection_covers_only_mention(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (fixture, mut cx) = setup_selection_mention_fixture(cx).await;
+
+        fixture
+            .message_editor
+            .update_in(&mut cx, |message_editor, window, cx| {
+                let range = fixture.first_range.clone();
+                message_editor.editor.update(cx, |editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([
+                            MultiBufferOffset(range.start)..MultiBufferOffset(range.end)
+                        ]);
+                    });
+                });
+            });
+
+        let copied = fixture
+            .message_editor
+            .update(&mut cx, |message_editor, cx| {
+                message_editor.serialized_copy_text(cx)
+            });
+
+        assert_eq!(copied, Some(fixture.first_uri.as_link().to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_serialized_copy_text_returns_none_when_mentions_outside_selection(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (fixture, mut cx) = setup_selection_mention_fixture(cx).await;
+
+        let between_start = fixture.first_range.end;
+        let between_end = fixture.second_range.start - 1;
+
+        fixture
+            .message_editor
+            .update_in(&mut cx, |message_editor, window, cx| {
+                message_editor.editor.update(cx, |editor, cx| {
+                    editor.change_selections(Default::default(), window, cx, |selections| {
+                        selections.select_ranges([
+                            MultiBufferOffset(between_start)..MultiBufferOffset(between_end)
+                        ]);
+                    });
+                });
+            });
+
+        let copied = fixture
+            .message_editor
+            .update(&mut cx, |message_editor, cx| {
+                message_editor.serialized_copy_text(cx)
+            });
+
+        assert_eq!(copied, None);
+    }
+
+    #[gpui::test]
     async fn test_paste_mention_link_with_completion_trigger_does_not_panic(
         cx: &mut TestAppContext,
     ) {
@@ -3776,7 +4201,6 @@ mod tests {
                     workspace_handle,
                     project.downgrade(),
                     Some(thread_store),
-                    None,
                     None,
                     Default::default(),
                     "Test Agent".into(),
@@ -3819,6 +4243,293 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_paste_external_file_path_inserts_file_mention(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
+        paste_external_paths(
+            &message_editor,
+            vec![PathBuf::from(path!("/project/file.txt"))],
+            &mut cx,
+        );
+
+        let expected_uri = MentionUri::File {
+            abs_path: path!("/project/file.txt").into(),
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), format!("[@file.txt]({expected_uri}) "));
+        });
+
+        let contents = mention_contents(&message_editor, &mut cx).await;
+
+        let [(uri, Mention::Text { content, .. })] = contents.as_slice() else {
+            panic!("Unexpected mentions");
+        };
+        assert_eq!(content, "content");
+        assert_eq!(
+            uri,
+            &MentionUri::File {
+                abs_path: path!("/project/file.txt").into(),
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_paste_external_directory_path_inserts_directory_mention(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) = setup_paste_test_message_editor(
+            json!({
+                "src": {
+                    "main.rs": "fn main() {}\n",
+                }
+            }),
+            cx,
+        )
+        .await;
+        paste_external_paths(
+            &message_editor,
+            vec![PathBuf::from(path!("/project/src"))],
+            &mut cx,
+        );
+
+        let expected_uri = MentionUri::Directory {
+            abs_path: path!("/project/src").into(),
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(editor.text(cx), format!("[@src]({expected_uri}) "));
+        });
+
+        let contents = mention_contents(&message_editor, &mut cx).await;
+
+        let [(uri, Mention::Link)] = contents.as_slice() else {
+            panic!("Unexpected mentions");
+        };
+        assert_eq!(
+            uri,
+            &MentionUri::Directory {
+                abs_path: path!("/project/src").into(),
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_paste_external_file_path_inserts_at_cursor(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.set_text("Hello world", window, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(6)..MultiBufferOffset(6)]);
+            });
+        });
+
+        paste_external_paths(
+            &message_editor,
+            vec![PathBuf::from(path!("/project/file.txt"))],
+            &mut cx,
+        );
+
+        let expected_uri = MentionUri::File {
+            abs_path: path!("/project/file.txt").into(),
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                format!("Hello [@file.txt]({expected_uri}) world")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_paste_mixed_external_image_without_extension_and_file_path(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (message_editor, editor, mut cx) =
+            setup_paste_test_message_editor(json!({"file.txt": "content"}), cx).await;
+
+        message_editor.update(&mut cx, |message_editor, _cx| {
+            message_editor
+                .session_capabilities
+                .write()
+                .set_prompt_capabilities(acp::PromptCapabilities::new().image(true));
+        });
+
+        let temporary_image_path = write_test_png_file(None);
+        paste_external_paths(
+            &message_editor,
+            vec![
+                temporary_image_path.clone(),
+                PathBuf::from(path!("/project/file.txt")),
+            ],
+            &mut cx,
+        );
+
+        let image_name = temporary_image_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Image")
+            .to_string();
+        std::fs::remove_file(&temporary_image_path).expect("remove temp png");
+
+        let expected_file_uri = MentionUri::File {
+            abs_path: path!("/project/file.txt").into(),
+        }
+        .to_uri()
+        .to_string();
+        let expected_image_uri = MentionUri::PastedImage {
+            name: image_name.clone(),
+        }
+        .to_uri()
+        .to_string();
+
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                format!("[@{image_name}]({expected_image_uri}) [@file.txt]({expected_file_uri}) ")
+            );
+        });
+
+        let contents = mention_contents(&message_editor, &mut cx).await;
+
+        assert_eq!(contents.len(), 2);
+        assert!(contents.iter().any(|(uri, mention)| {
+            matches!(uri, MentionUri::PastedImage { .. }) && matches!(mention, Mention::Image(_))
+        }));
+        assert!(contents.iter().any(|(uri, mention)| {
+            *uri == MentionUri::File {
+                abs_path: path!("/project/file.txt").into(),
+            } && matches!(
+                mention,
+                Mention::Text {
+                    content,
+                    tracked_buffers: _,
+                } if content == "content"
+            )
+        }));
+    }
+
+    async fn setup_paste_test_message_editor(
+        project_tree: Value,
+        cx: &mut TestAppContext,
+    ) -> (Entity<MessageEditor>, Entity<Editor>, VisualTestContext) {
+        let app_state = cx.update(AppState::test);
+
+        cx.update(|cx| {
+            editor::init(cx);
+            workspace::init(app_state.clone(), cx);
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), project_tree)
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        let mut cx = VisualTestContext::from_window(window.into(), cx);
+
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+
+        let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.downgrade(),
+                    Some(thread_store),
+                    None,
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        max_lines: None,
+                        min_lines: 1,
+                    },
+                    window,
+                    cx,
+                )
+            });
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| MessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
+            let editor = message_editor.read(cx).editor().clone();
+            (message_editor, editor)
+        });
+
+        (message_editor, editor, cx)
+    }
+
+    fn paste_external_paths(
+        message_editor: &Entity<MessageEditor>,
+        paths: Vec<PathBuf>,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.write_to_clipboard(ClipboardItem {
+            entries: vec![ClipboardEntry::ExternalPaths(ExternalPaths(paths.into()))],
+        });
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            message_editor.paste(&Paste, window, cx);
+        });
+        cx.run_until_parked();
+    }
+
+    async fn mention_contents(
+        message_editor: &Entity<MessageEditor>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<(MentionUri, Mention)> {
+        message_editor
+            .update(cx, |message_editor, cx| {
+                message_editor
+                    .mention_set()
+                    .update(cx, |mention_set, cx| mention_set.contents(false, cx))
+            })
+            .await
+            .unwrap()
+            .into_values()
+            .collect::<Vec<_>>()
+    }
+
+    fn write_test_png_file(extension: Option<&str>) -> PathBuf {
+        let bytes = base64::prelude::BASE64_STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+            .expect("decode png");
+        let file_name = match extension {
+            Some(extension) => format!("zed-agent-ui-test-{}.{}", uuid::Uuid::new_v4(), extension),
+            None => format!("zed-agent-ui-test-{}", uuid::Uuid::new_v4()),
+        };
+        let path = std::env::temp_dir().join(file_name);
+        std::fs::write(&path, bytes).expect("write temp png");
+        path
+    }
+
     // Helper that creates a minimal MessageEditor inside a window, returning both
     // the entity and the underlying VisualTestContext so callers can drive updates.
     async fn setup_message_editor(
@@ -3837,7 +4548,6 @@ mod tests {
                 MessageEditor::new(
                     workspace.downgrade(),
                     project.downgrade(),
-                    None,
                     None,
                     None,
                     Default::default(),
@@ -3987,7 +4697,6 @@ mod tests {
                 MessageEditor::new(
                     workspace.downgrade(),
                     project.downgrade(),
-                    None,
                     None,
                     None,
                     Default::default(),

@@ -21,6 +21,7 @@ editor.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
+fuzzy_nucleo.workspace = true
 gpui.workspace = true
 menu.workspace = true
 open_path_prompt.workspace = true
@@ -30,6 +31,7 @@ settings.workspace = true
 serde.workspace = true
 theme.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
@@ -47,3 +49,4 @@ theme = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
 remote_connection = { workspace = true, features = ["test-support"] }
+theme_settings = { workspace = true, features = ["test-support"] }

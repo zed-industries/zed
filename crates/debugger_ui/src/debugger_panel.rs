@@ -15,9 +15,9 @@ use dap::adapters::DebugAdapterName;
 use dap::{DapRegistry, StartDebuggingRequestArguments};
 use dap::{client::SessionId, debugger_settings::DebuggerSettings};
 use editor::{Editor, MultiBufferOffset, ToPoint};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use gpui::{
-    Action, App, AsyncWindowContext, ClipboardItem, Context, Corner, DismissEvent, Entity,
+    Action, Anchor, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity,
     EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point,
     Subscription, Task, WeakEntity, anchored, deferred,
 };
@@ -50,12 +50,13 @@ pub struct DebuggerHistoryFeatureFlag;
 
 impl FeatureFlag for DebuggerHistoryFeatureFlag {
     const NAME: &'static str = "debugger-history";
+    type Value = PresenceFlag;
 }
+register_feature_flag!(DebuggerHistoryFeatureFlag);
 
 const DEBUG_PANEL_KEY: &str = "DebugPanel";
 
 pub struct DebugPanel {
-    size: Pixels,
     active_session: Option<Entity<DebugSession>>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
@@ -93,7 +94,6 @@ impl DebugPanel {
             );
 
             Self {
-                size: px(300.),
                 sessions_with_children: Default::default(),
                 active_session: None,
                 focus_handle,
@@ -1434,7 +1434,7 @@ impl DebugPanel {
                     ))
                 }
             })
-            .anchor(Corner::TopRight)
+            .anchor(Anchor::TopRight)
     }
 }
 
@@ -1572,12 +1572,8 @@ impl Panel for DebugPanel {
         });
     }
 
-    fn size(&self, _window: &Window, _: &App) -> Pixels {
-        self.size
-    }
-
-    fn set_size(&mut self, size: Option<Pixels>, _window: &mut Window, _cx: &mut Context<Self>) {
-        self.size = size.unwrap_or(px(300.));
+    fn default_size(&self, _window: &Window, _: &App) -> Pixels {
+        px(300.)
     }
 
     fn remote_id() -> Option<proto::PanelId> {
@@ -1607,7 +1603,7 @@ impl Panel for DebugPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        9
+        7
     }
 
     fn set_active(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {}
@@ -1637,13 +1633,6 @@ impl Render for DebugPanel {
         }
 
         v_flex()
-            .when(!self.is_zoomed, |this| {
-                this.when_else(
-                    self.position(window, cx) == DockPosition::Bottom,
-                    |this| this.max_h(self.size),
-                    |this| this.max_w(self.size),
-                )
-            })
             .size_full()
             .key_context("DebugPanel")
             .child(h_flex().children(self.top_controls_strip(window, cx)))
@@ -1803,7 +1792,7 @@ impl Render for DebugPanel {
                     deferred(
                         anchored()
                             .position(*position)
-                            .anchor(gpui::Corner::TopLeft)
+                            .anchor(gpui::Anchor::TopLeft)
                             .child(menu.clone()),
                     )
                     .with_priority(1)

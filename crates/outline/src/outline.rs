@@ -14,7 +14,8 @@ use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ActiveTheme;
+use theme_settings::ThemeSettings;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
@@ -78,29 +79,37 @@ fn outline_for_editor(
     cx: &mut App,
 ) -> Option<Task<Vec<OutlineItem<Anchor>>>> {
     let multibuffer = editor.read(cx).buffer().read(cx).snapshot(cx);
-    let (excerpt_id, _, buffer_snapshot) = multibuffer.as_singleton()?;
+    let buffer_snapshot = multibuffer.as_singleton()?;
     let buffer_id = buffer_snapshot.remote_id();
     let task = editor.update(cx, |editor, cx| editor.buffer_outline_items(buffer_id, cx));
 
     Some(cx.background_executor().spawn(async move {
         task.await
             .into_iter()
-            .map(|item| OutlineItem {
-                depth: item.depth,
-                range: Anchor::range_in_buffer(excerpt_id, item.range),
-                source_range_for_text: Anchor::range_in_buffer(
-                    excerpt_id,
-                    item.source_range_for_text,
-                ),
-                text: item.text,
-                highlight_ranges: item.highlight_ranges,
-                name_ranges: item.name_ranges,
-                body_range: item
-                    .body_range
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r)),
-                annotation_range: item
-                    .annotation_range
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r)),
+            .filter_map(|item| {
+                Some(OutlineItem {
+                    depth: item.depth,
+                    range: multibuffer.anchor_in_buffer(item.range.start)?
+                        ..multibuffer.anchor_in_buffer(item.range.end)?,
+                    source_range_for_text: multibuffer
+                        .anchor_in_buffer(item.source_range_for_text.start)?
+                        ..multibuffer.anchor_in_buffer(item.source_range_for_text.end)?,
+                    text: item.text,
+                    highlight_ranges: item.highlight_ranges,
+                    name_ranges: item.name_ranges,
+                    body_range: item.body_range.and_then(|r| {
+                        Some(
+                            multibuffer.anchor_in_buffer(r.start)?
+                                ..multibuffer.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                    annotation_range: item.annotation_range.and_then(|r| {
+                        Some(
+                            multibuffer.anchor_in_buffer(r.start)?
+                                ..multibuffer.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                })
             })
             .collect()
     }))
@@ -445,13 +454,13 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use futures::stream::StreamExt as _;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use language::FakeLspAdapter;
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
-    use smol::stream::StreamExt as _;
     use util::{path, rel_path::rel_path};
     use workspace::{AppState, MultiWorkspace, Workspace};
 

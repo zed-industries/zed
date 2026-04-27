@@ -26,6 +26,7 @@ use alacritty_terminal::{
     },
 };
 use anyhow::{Context as _, Result, bail};
+use futures_lite::future::yield_now;
 use log::trace;
 
 use futures::{
@@ -39,12 +40,12 @@ use mappings::mouse::{
     scroll_report,
 };
 
+use async_channel::{Receiver, Sender};
 use collections::{HashMap, VecDeque};
 use futures::StreamExt;
 use pty_info::{ProcessIdGetter, PtyProcessInfo};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, SpawnInTerminal};
 use terminal_hyperlinks::RegexSearches;
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
@@ -417,6 +418,7 @@ impl TerminalBuilder {
                 window_id,
             },
             child_exited: None,
+            keyboard_input_sent: false,
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
             path_style,
@@ -650,6 +652,7 @@ impl TerminalBuilder {
                     window_id,
                 },
                 child_exited: None,
+                keyboard_input_sent: false,
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
@@ -734,7 +737,7 @@ impl TerminalBuilder {
                     }
 
                     if events.is_empty() && !wakeup {
-                        smol::future::yield_now().await;
+                        yield_now().await;
                         break 'outer;
                     }
 
@@ -747,7 +750,7 @@ impl TerminalBuilder {
                             this.process_event(event, cx);
                         }
                     })?;
-                    smol::future::yield_now().await;
+                    yield_now().await;
                 }
             }
             anyhow::Ok(())
@@ -876,6 +879,7 @@ pub struct Terminal {
     template: CopyTemplate,
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
+    keyboard_input_sent: bool,
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
@@ -1462,6 +1466,7 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
+        self.keyboard_input_sent = true;
         let input = input.into();
         #[cfg(any(test, feature = "test-support"))]
         self.input_log.push(input.to_vec());
@@ -1945,7 +1950,7 @@ impl Terminal {
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
                         let text = item.text().unwrap_or_default();
-                        self.input(text.into_bytes());
+                        self.paste(&text);
                     }
                 }
                 _ => {}
@@ -2245,7 +2250,17 @@ impl Terminal {
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
+                // For interactive shells (no task), we need to differentiate:
+                // 1. User-initiated exits (typed "exit", Ctrl+D, etc.) - always close,
+                //    even if the shell exits with a non-zero code (e.g. after `false`).
+                // 2. Shell spawn failures (bad $SHELL) - don't close, so the user sees
+                //    the error. Spawn failures never receive keyboard input.
+                let should_close = if self.keyboard_input_sent {
+                    true
+                } else {
+                    self.child_exited.is_none_or(|e| e.code() == Some(0))
+                };
+                if should_close {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2410,6 +2425,7 @@ impl Drop for Terminal {
             std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly)
         {
             pty_tx.0.send(Msg::Shutdown).ok();
+            info.terminate_child_process();
 
             let timer = self.background_executor.timer(Duration::from_millis(100));
             self.background_executor
@@ -2550,22 +2566,22 @@ mod tests {
         index::{Column, Line, Point as AlacPoint},
         term::cell::Cell,
     };
+    use async_channel::Receiver;
     use collections::HashMap;
     use gpui::{
         Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
         Point, TestAppContext, bounds, point, size,
     };
     use parking_lot::Mutex;
-    use rand::{Rng, distr, rngs::ThreadRng};
-    use smol::channel::Receiver;
+    use rand::{Rng, distr, rngs::StdRng};
     use task::{Shell, ShellBuilder};
 
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "windows"))]
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
     }
 
@@ -2576,7 +2592,7 @@ mod tests {
         command: &str,
         args: &[&str],
     ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (completion_tx, completion_rx) = async_channel::unbounded();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let (program, args) =
             ShellBuilder::new(&Shell::System, false).build(Some(command.to_owned()), &args);
@@ -2729,7 +2745,7 @@ mod tests {
 
         cx.executor().allow_parking();
 
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (completion_tx, completion_rx) = async_channel::unbounded();
         let builder = cx
             .update(|cx| {
                 TerminalBuilder::new(
@@ -2755,7 +2771,7 @@ mod tests {
         // Build an empty command, which will result in a tty shell spawned.
         let terminal = cx.new(|cx| builder.subscribe(cx));
 
-        let (event_tx, event_rx) = smol::channel::unbounded::<Event>();
+        let (event_tx, event_rx) = async_channel::unbounded::<Event>();
         cx.update(|cx| {
             cx.subscribe(&terminal, move |_, e, _| {
                 event_tx.send_blocking(e.clone()).unwrap();
@@ -2795,11 +2811,73 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test(iterations = 10)]
+    async fn test_terminal_closes_after_nonzero_exit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.executor().allow_parking();
+
+        let builder = cx
+            .update(|cx| {
+                TerminalBuilder::new(
+                    None,
+                    None,
+                    task::Shell::System,
+                    HashMap::default(),
+                    CursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    None,
+                    cx,
+                    Vec::new(),
+                    PathStyle::local(),
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+
+        let (event_tx, event_rx) = async_channel::unbounded::<Event>();
+        cx.update(|cx| {
+            cx.subscribe(&terminal, move |_, e, _| {
+                event_tx.send_blocking(e.clone()).unwrap();
+            })
+        })
+        .detach();
+
+        let first_event = event_rx.recv().await.expect("No wakeup event received");
+
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"false\r".to_vec());
+        });
+        cx.executor().timer(Duration::from_millis(500)).await;
+        terminal.update(cx, |terminal, _| {
+            terminal.input(b"exit\r".to_vec());
+        });
+
+        let mut all_events = vec![first_event];
+        while let Ok(new_event) = event_rx.recv().await {
+            all_events.push(new_event.clone());
+            if new_event == Event::CloseTerminal {
+                break;
+            }
+        }
+        assert!(
+            all_events.contains(&Event::CloseTerminal),
+            "Shell exiting after `false && exit` should close terminal, but got events: {all_events:?}",
+        );
+    }
+
     #[gpui::test(iterations = 10)]
     async fn test_terminal_no_exit_on_spawn_failure(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (completion_tx, completion_rx) = async_channel::unbounded();
         let (program, args) = ShellBuilder::new(&Shell::System, false)
             .build(Some("asdasdasdasd".to_owned()), &["@@@@@".to_owned()]);
         let builder = cx
@@ -2877,9 +2955,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_mouse_to_cell_test() {
-        let mut rng = rand::rng();
+    #[gpui::test]
+    fn test_mouse_to_cell_test(mut rng: StdRng) {
         const ITERATIONS: usize = 10;
         const PRECISION: usize = 1000;
 
@@ -2927,10 +3004,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_mouse_to_cell_clamp() {
-        let mut rng = rand::rng();
-
+    #[gpui::test]
+    fn test_mouse_to_cell_clamp(mut rng: StdRng) {
         let size = crate::TerminalBounds {
             cell_width: Pixels::from(10.),
             line_height: Pixels::from(10.),
@@ -2961,12 +3036,12 @@ mod tests {
         );
     }
 
-    fn get_cells(size: TerminalBounds, rng: &mut ThreadRng) -> Vec<Vec<char>> {
+    fn get_cells(size: TerminalBounds, rng: &mut StdRng) -> Vec<Vec<char>> {
         let mut cells = Vec::new();
 
-        for _ in 0..((size.height() / size.line_height()) as usize) {
+        for _ in 0..size.num_lines() {
             let mut row_vec = Vec::new();
-            for _ in 0..((size.width() / size.cell_width()) as usize) {
+            for _ in 0..size.num_columns() {
                 let cell_char = rng.sample(distr::Alphanumeric) as char;
                 row_vec.push(cell_char)
             }

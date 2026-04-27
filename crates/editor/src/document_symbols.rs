@@ -5,7 +5,7 @@ use futures::FutureExt;
 use futures::future::join_all;
 use gpui::{App, Context, HighlightStyle, Task};
 use itertools::Itertools as _;
-use language::language_settings::language_settings;
+use language::language_settings::LanguageSettings;
 use language::{Buffer, OutlineItem};
 use multi_buffer::{
     Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
@@ -62,10 +62,10 @@ impl Editor {
         multi_buffer_snapshot: &MultiBufferSnapshot,
         cx: &Context<Self>,
     ) -> bool {
-        let Some(excerpt) = multi_buffer_snapshot.excerpt_containing(cursor..cursor) else {
+        let Some((anchor, _)) = multi_buffer_snapshot.anchor_to_buffer_anchor(cursor) else {
             return false;
         };
-        let Some(buffer) = self.buffer.read(cx).buffer(excerpt.buffer_id()) else {
+        let Some(buffer) = self.buffer.read(cx).buffer(anchor.buffer_id) else {
             return false;
         };
         lsp_symbols_enabled(buffer.read(cx), cx)
@@ -77,19 +77,12 @@ impl Editor {
         &self,
         cursor: Anchor,
         multi_buffer_snapshot: &MultiBufferSnapshot,
-        cx: &Context<Self>,
+        _cx: &Context<Self>,
     ) -> Option<(BufferId, Vec<OutlineItem<Anchor>>)> {
-        let excerpt = multi_buffer_snapshot.excerpt_containing(cursor..cursor)?;
-        let excerpt_id = excerpt.id();
-        let buffer_id = excerpt.buffer_id();
-        if Some(buffer_id) != cursor.text_anchor.buffer_id {
-            return None;
-        }
-        let buffer = self.buffer.read(cx).buffer(buffer_id)?;
-        let buffer_snapshot = buffer.read(cx).snapshot();
-        let cursor_text_anchor = cursor.text_anchor;
-
-        let all_items = self.lsp_document_symbols.get(&buffer_id)?;
+        let (cursor_text_anchor, buffer) = multi_buffer_snapshot.anchor_to_buffer_anchor(cursor)?;
+        let all_items = self
+            .lsp_document_symbols
+            .get(&cursor_text_anchor.buffer_id)?;
         if all_items.is_empty() {
             return None;
         }
@@ -97,34 +90,36 @@ impl Editor {
         let mut symbols = all_items
             .iter()
             .filter(|item| {
-                item.range
-                    .start
-                    .cmp(&cursor_text_anchor, &buffer_snapshot)
-                    .is_le()
-                    && item
-                        .range
-                        .end
-                        .cmp(&cursor_text_anchor, &buffer_snapshot)
-                        .is_ge()
+                item.range.start.cmp(&cursor_text_anchor, buffer).is_le()
+                    && item.range.end.cmp(&cursor_text_anchor, buffer).is_ge()
             })
-            .map(|item| OutlineItem {
-                depth: item.depth,
-                range: Anchor::range_in_buffer(excerpt_id, item.range.clone()),
-                source_range_for_text: Anchor::range_in_buffer(
-                    excerpt_id,
-                    item.source_range_for_text.clone(),
-                ),
-                text: item.text.clone(),
-                highlight_ranges: item.highlight_ranges.clone(),
-                name_ranges: item.name_ranges.clone(),
-                body_range: item
-                    .body_range
-                    .as_ref()
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r.clone())),
-                annotation_range: item
-                    .annotation_range
-                    .as_ref()
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r.clone())),
+            .filter_map(|item| {
+                let range_start = multi_buffer_snapshot.anchor_in_buffer(item.range.start)?;
+                let range_end = multi_buffer_snapshot.anchor_in_buffer(item.range.end)?;
+                let source_range_for_text_start =
+                    multi_buffer_snapshot.anchor_in_buffer(item.source_range_for_text.start)?;
+                let source_range_for_text_end =
+                    multi_buffer_snapshot.anchor_in_buffer(item.source_range_for_text.end)?;
+                Some(OutlineItem {
+                    depth: item.depth,
+                    range: range_start..range_end,
+                    source_range_for_text: source_range_for_text_start..source_range_for_text_end,
+                    text: item.text.clone(),
+                    highlight_ranges: item.highlight_ranges.clone(),
+                    name_ranges: item.name_ranges.clone(),
+                    body_range: item.body_range.as_ref().and_then(|r| {
+                        Some(
+                            multi_buffer_snapshot.anchor_in_buffer(r.start)?
+                                ..multi_buffer_snapshot.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                    annotation_range: item.annotation_range.as_ref().and_then(|r| {
+                        Some(
+                            multi_buffer_snapshot.anchor_in_buffer(r.start)?
+                                ..multi_buffer_snapshot.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                })
             })
             .collect::<Vec<_>>();
 
@@ -135,7 +130,7 @@ impl Editor {
             retain
         });
 
-        Some((buffer_id, symbols))
+        Some((buffer.remote_id(), symbols))
     }
 
     /// Fetches document symbols from the LSP for buffers that have the setting
@@ -155,9 +150,10 @@ impl Editor {
         };
 
         let buffers_to_query = self
-            .visible_excerpts(true, cx)
+            .visible_buffers(cx)
             .into_iter()
-            .filter_map(|(_, (buffer, _, _))| {
+            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
+            .filter_map(|buffer| {
                 let id = buffer.read(cx).remote_id();
                 if for_buffer.is_none_or(|target| target == id)
                     && lsp_symbols_enabled(buffer.read(cx), cx)
@@ -239,7 +235,7 @@ impl Editor {
 }
 
 fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
-    language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+    LanguageSettings::for_buffer(buffer, cx)
         .document_symbols
         .lsp_enabled()
 }
@@ -335,7 +331,7 @@ mod tests {
 
     use futures::StreamExt as _;
     use gpui::TestAppContext;
-    use settings::DocumentSymbols;
+    use settings::{DocumentSymbols, SettingsStore};
     use util::path;
     use zed_actions::editor::{MoveDown, MoveUp};
 
@@ -878,5 +874,135 @@ mod tests {
             0,
             "Should not have made any LSP document symbol requests when setting is off"
         );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_highlights_update_on_theme_change(cx: &mut TestAppContext) {
+        use collections::IndexMap;
+        use gpui::{Hsla, Rgba, UpdateGlobal as _};
+        use theme_settings::{HighlightStyleContent, ThemeStyleContent};
+        use ui::ActiveTheme as _;
+
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+        // Set the initial theme with a red keyword color and sync it to the
+        // language registry so tree-sitter highlight maps are up to date.
+        let red_color: Hsla = Rgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }
+        .into();
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
+                        syntax: IndexMap::from_iter([(
+                            "keyword".to_string(),
+                            HighlightStyleContent {
+                                color: Some("#ff0000".to_string()),
+                                background_color: None,
+                                font_style: None,
+                                font_weight: None,
+                            },
+                        )]),
+                        ..ThemeStyleContent::default()
+                    });
+                });
+            });
+        });
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        cx.set_state("fn maˇin() {}");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let breadcrumbs = editor
+                .breadcrumbs_inner(cx)
+                .expect("Should have breadcrumbs");
+            let symbol_segment = breadcrumbs
+                .iter()
+                .find(|b| b.text.as_ref() == "fn main")
+                .expect("Should have 'fn main' breadcrumb");
+            let keyword_highlight = symbol_segment
+                .highlights
+                .iter()
+                .find(|(range, _)| &symbol_segment.text[range.clone()] == "fn")
+                .expect("Should have a highlight for the 'fn' keyword");
+            assert_eq!(
+                keyword_highlight.1.color,
+                Some(red_color),
+                "The 'fn' keyword should have red color"
+            );
+        });
+
+        // Change the theme to use a blue keyword color. This simulates a user
+        // switching themes. The language registry set_theme call mirrors what
+        // the application does in main.rs on theme change.
+        let blue_color: Hsla = Rgba {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+            a: 1.0,
+        }
+        .into();
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
+                        syntax: IndexMap::from_iter([(
+                            "keyword".to_string(),
+                            HighlightStyleContent {
+                                color: Some("#0000ff".to_string()),
+                                background_color: None,
+                                font_style: None,
+                                font_weight: None,
+                            },
+                        )]),
+                        ..ThemeStyleContent::default()
+                    });
+                });
+            });
+        });
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let breadcrumbs = editor
+                .breadcrumbs_inner(cx)
+                .expect("Should have breadcrumbs after theme change");
+            let symbol_segment = breadcrumbs
+                .iter()
+                .find(|b| b.text.as_ref() == "fn main")
+                .expect("Should have 'fn main' breadcrumb after theme change");
+            let keyword_highlight = symbol_segment
+                .highlights
+                .iter()
+                .find(|(range, _)| &symbol_segment.text[range.clone()] == "fn")
+                .expect("Should have a highlight for the 'fn' keyword after theme change");
+            assert_eq!(
+                keyword_highlight.1.color,
+                Some(blue_color),
+                "The 'fn' keyword should have blue color after theme change"
+            );
+        });
     }
 }

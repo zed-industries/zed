@@ -16,7 +16,7 @@ use serde::Deserialize;
 use std::{
     cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
 };
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Color, Divider, DocumentationAside, DocumentationSide, Label, ListItem, ListItemSpacing,
     ScrollAxes, Scrollbars, WithScrollbar, prelude::*, utils::WithRemSize, v_flex,
@@ -119,6 +119,9 @@ pub trait PickerDelegate: Sized + 'static {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> bool {
+        true
+    }
+    fn select_on_hover(&self) -> bool {
         true
     }
 
@@ -788,12 +791,14 @@ impl<D: PickerDelegate> Picker<D> {
                     this.handle_click(ix, event.modifiers.platform, window, cx)
                 }),
             )
-            .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
-                if *hovered {
-                    this.set_selected_index(ix, None, false, window, cx);
-                    cx.notify();
-                }
-            }))
+            .when(self.delegate.select_on_hover(), |this| {
+                this.on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
+                    if *hovered {
+                        this.set_selected_index(ix, None, false, window, cx);
+                        cx.notify();
+                    }
+                }))
+            })
             .children(self.delegate.render_match(
                 ix,
                 ix == self.delegate.selected_index(),
@@ -833,7 +838,7 @@ impl<D: PickerDelegate> Picker<D> {
                 el.with_width_from_item(Some(widest_item))
             })
             .flex_grow()
-            .py_1()
+            .py(DynamicSpacing::Base04.rems(cx))
             .track_scroll(&scroll_handle)
             .into_any_element(),
             ElementContainer::List(state) => list(
@@ -844,7 +849,7 @@ impl<D: PickerDelegate> Picker<D> {
             )
             .with_sizing_behavior(sizing_behavior)
             .flex_grow()
-            .py_2()
+            .py(DynamicSpacing::Base04.rems(cx))
             .into_any_element(),
         }
     }
@@ -955,7 +960,7 @@ mod tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
         });
     }
@@ -1118,13 +1123,16 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(self.delegate.match_count() == 0, |el| {
                 el.when_some(self.delegate.no_matches_text(window, cx), |el, text| {
                     el.child(
-                        v_flex().flex_grow().py_2().child(
-                            ListItem::new("empty_state")
-                                .inset(true)
-                                .spacing(ListItemSpacing::Sparse)
-                                .disabled(true)
-                                .child(Label::new(text).color(Color::Muted)),
-                        ),
+                        v_flex()
+                            .flex_grow()
+                            .py(DynamicSpacing::Base04.rems(cx))
+                            .child(
+                                ListItem::new("empty_state")
+                                    .inset(true)
+                                    .spacing(ListItemSpacing::Sparse)
+                                    .disabled(true)
+                                    .child(Label::new(text).color(Color::Muted)),
+                            ),
                     )
                 })
             })
