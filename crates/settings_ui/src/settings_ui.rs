@@ -4,7 +4,10 @@ pub mod pages;
 
 use anyhow::{Context as _, Result};
 use editor::{Editor, EditorEvent};
-use futures::{StreamExt, channel::mpsc};
+use futures::{
+    StreamExt,
+    channel::{mpsc, oneshot},
+};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Action, App, AsyncApp, ClipboardItem, DEFAULT_ADDITIONAL_WINDOW_SIZE, Div, Entity, FocusHandle,
@@ -227,7 +230,7 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
             } else {
                 None
             };
-            update_settings_file_or_notify(
+            update_settings_file(
                 current_file.clone(),
                 None,
                 window,
@@ -3918,79 +3921,6 @@ fn open_user_settings_in_workspace(
     .detach();
 }
 
-fn notify_settings_write_error(
-    settings_window: &Entity<SettingsWindow>,
-    message: String,
-    cx: &mut App,
-) {
-    let _ = settings_window.update(cx, |this, cx| {
-        this.settings_write_error = Some(message);
-        cx.notify();
-    });
-}
-
-fn notify_settings_write_error_async(
-    settings_window: &WeakEntity<SettingsWindow>,
-    message: String,
-    cx: &mut AsyncApp,
-) {
-    let _ = settings_window.update(cx, |this: &mut SettingsWindow, cx| {
-        this.settings_write_error = Some(message);
-        cx.notify();
-    });
-}
-
-fn notify_settings_write_error_from_window(window: &mut Window, message: String, cx: &mut App) {
-    if let Some(settings_window) = window.root::<SettingsWindow>().flatten() {
-        notify_settings_write_error(&settings_window, message, cx);
-    } else {
-        log::error!("Failed to update settings: {message}");
-    }
-}
-
-fn update_settings_file_inner(
-    file: SettingsUiFile,
-    file_name: Option<&'static str>,
-    window: &mut Window,
-    cx: &mut App,
-    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
-) -> Result<()> {
-    telemetry::event!("Settings Change", setting = file_name, type = file.setting_type());
-
-    match file {
-        SettingsUiFile::Project((worktree_id, rel_path)) => {
-            let rel_path = rel_path.join(paths::local_settings_file_relative_path());
-            let Some(settings_window) = window.root::<SettingsWindow>().flatten() else {
-                anyhow::bail!("No settings window found");
-            };
-
-            update_project_setting_file(worktree_id, rel_path, update, settings_window, cx)
-        }
-        SettingsUiFile::User => {
-            let settings_window = window.root::<SettingsWindow>().flatten();
-            let completion = SettingsStore::global(cx)
-                .update_settings_file_with_completion(<dyn fs::Fs>::global(cx), update);
-            if let Some(settings_window) = settings_window {
-                let settings_window = settings_window.downgrade();
-                cx.spawn(async move |cx| {
-                    let message = match completion.await {
-                        Ok(Ok(())) => None,
-                        Ok(Err(err)) => Some(format!("{err:#}")),
-                        Err(err) => Some(format!("Settings write task was canceled: {err}")),
-                    };
-
-                    if let Some(message) = message {
-                        notify_settings_write_error_async(&settings_window, message, cx);
-                    }
-                })
-                .detach();
-            }
-            Ok(())
-        }
-        SettingsUiFile::Server(_) => unimplemented!(),
-    }
-}
-
 pub(crate) fn update_settings_file(
     file: SettingsUiFile,
     file_name: Option<&'static str>,
@@ -3998,19 +3928,43 @@ pub(crate) fn update_settings_file(
     cx: &mut App,
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) {
-    if let Err(err) = update_settings_file_inner(file, file_name, window, cx, update) {
-        notify_settings_write_error_from_window(window, format!("{err:#}"), cx);
-    }
-}
+    telemetry::event!("Settings Change", setting = file_name, type = file.setting_type());
 
-pub(crate) fn update_settings_file_or_notify(
-    file: SettingsUiFile,
-    file_name: Option<&'static str>,
-    window: &mut Window,
-    cx: &mut App,
-    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
-) {
-    update_settings_file(file, file_name, window, cx, update);
+    let settings_window = window.root::<SettingsWindow>().flatten();
+    let update_result = match file {
+        SettingsUiFile::Project((worktree_id, rel_path)) => {
+            let rel_path = rel_path.join(paths::local_settings_file_relative_path());
+            if let Some(settings_window) = settings_window.clone() {
+                update_project_setting_file(worktree_id, rel_path, update, settings_window, cx)
+            } else {
+                Task::ready(Err(anyhow::anyhow!("No settings window found")))
+            }
+        }
+        SettingsUiFile::User => {
+            let completion = SettingsStore::global(cx)
+                .update_settings_file_with_completion(<dyn fs::Fs>::global(cx), update);
+            cx.spawn(async move |_cx| {
+                completion
+                    .await
+                    .context("Settings write task was canceled")?
+            })
+        }
+        SettingsUiFile::Server(_) => unimplemented!(),
+    };
+
+    cx.spawn(async move |cx| {
+        if let Err(err) = update_result.await {
+            if let Some(settings_window) = settings_window {
+                settings_window.update(cx, |this, cx| {
+                    this.settings_write_error = Some(format!("{err:#}"));
+                    cx.notify();
+                });
+            } else {
+                log::error!("Failed to update settings: {err:#}");
+            }
+        }
+    })
+    .detach();
 }
 
 struct ProjectSettingsUpdateEntry {
@@ -4023,7 +3977,7 @@ struct ProjectSettingsUpdateEntry {
 }
 
 struct ProjectSettingsUpdateQueue {
-    tx: mpsc::UnboundedSender<ProjectSettingsUpdateEntry>,
+    tx: mpsc::UnboundedSender<(ProjectSettingsUpdateEntry, oneshot::Sender<Result<()>>)>,
     _task: Task<()>,
 }
 
@@ -4031,25 +3985,38 @@ impl Global for ProjectSettingsUpdateQueue {}
 
 impl ProjectSettingsUpdateQueue {
     fn new(cx: &mut App) -> Self {
-        let (tx, mut rx) = mpsc::unbounded::<ProjectSettingsUpdateEntry>();
+        let (tx, mut rx) =
+            mpsc::unbounded::<(ProjectSettingsUpdateEntry, oneshot::Sender<Result<()>>)>();
         let task = cx.spawn(async move |mut cx| {
-            while let Some(entry) = rx.next().await {
-                let settings_window = entry.settings_window.clone();
-                if let Err(err) = Self::process_entry(entry, &mut cx).await {
+            while let Some((entry, completion_tx)) = rx.next().await {
+                let result = Self::process_entry(entry, &mut cx).await;
+                if let Err(err) = &result {
                     log::error!("Failed to update project settings: {err:?}");
-                    notify_settings_write_error_async(&settings_window, format!("{err:#}"), cx);
+                }
+                if let Err(err) = completion_tx.send(result) {
+                    log::error!("Failed to send project settings update result: {err:?}");
                 }
             }
         });
         Self { tx, _task: task }
     }
 
-    fn enqueue(cx: &mut App, entry: ProjectSettingsUpdateEntry) {
-        cx.update_global::<Self, _>(|queue, _cx| {
-            if let Err(err) = queue.tx.unbounded_send(entry) {
-                log::error!("Failed to enqueue project settings update: {err}");
-            }
-        });
+    fn enqueue(cx: &mut App, entry: ProjectSettingsUpdateEntry) -> Task<Result<()>> {
+        let (completion_tx, completion_rx) = oneshot::channel();
+        if let Err(err) = cx.update_global::<Self, _>(|queue, _cx| {
+            queue
+                .tx
+                .unbounded_send((entry, completion_tx))
+                .map_err(|err| anyhow::anyhow!("Failed to enqueue project settings update: {err}"))
+        }) {
+            return Task::ready(Err(err));
+        }
+
+        cx.spawn(async move |_cx| {
+            completion_rx
+                .await
+                .context("Project settings update task was canceled")?
+        })
     }
 
     async fn process_entry(entry: ProjectSettingsUpdateEntry, cx: &mut AsyncApp) -> Result<()> {
@@ -4139,7 +4106,7 @@ fn update_project_setting_file(
     update: impl 'static + FnOnce(&mut SettingsContent, &App),
     settings_window: Entity<SettingsWindow>,
     cx: &mut App,
-) -> Result<()> {
+) -> Task<Result<()>> {
     let Some((worktree, project)) =
         all_projects(settings_window.read(cx).original_window.as_ref(), cx).find_map(|project| {
             project
@@ -4148,7 +4115,10 @@ fn update_project_setting_file(
                 .zip(Some(project))
         })
     else {
-        anyhow::bail!("Could not find project with worktree id: {}", worktree_id);
+        return Task::ready(Err(anyhow::anyhow!(
+            "Could not find project with worktree id: {}",
+            worktree_id
+        )));
     };
 
     let entry = ProjectSettingsUpdateEntry {
@@ -4160,9 +4130,7 @@ fn update_project_setting_file(
         update: Box::new(update),
     };
 
-    ProjectSettingsUpdateQueue::enqueue(cx, entry);
-
-    Ok(())
+    ProjectSettingsUpdateQueue::enqueue(cx, entry)
 }
 
 fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
@@ -4187,7 +4155,7 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
         )
         .on_confirm({
             move |new_text, window, cx| {
-                update_settings_file_or_notify(
+                update_settings_file(
                     file.clone(),
                     field.json_path,
                     window,
@@ -4223,7 +4191,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 telemetry::event!("Settings Change", setting = field.json_path, type = file.setting_type());
 
                 let state = *state == ui::ToggleState::Selected;
-                update_settings_file_or_notify(file.clone(), field.json_path, window, cx, move |settings, app| {
+                update_settings_file(file.clone(), field.json_path, window, cx, move |settings, app| {
                     (field.write)(settings, Some(state.into()), app);
                 });
             }
@@ -4252,7 +4220,7 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
         .on_change({
             move |value, window, cx| {
                 let value = *value;
-                update_settings_file_or_notify(
+                update_settings_file(
                     file.clone(),
                     field.json_path,
                     window,
@@ -4291,7 +4259,7 @@ where
             if value == current_value {
                 return;
             }
-            update_settings_file_or_notify(
+            update_settings_file(
                 file.clone(),
                 field.json_path,
                 window,
@@ -4345,7 +4313,7 @@ fn render_font_picker(
                 font_picker(
                     current_value,
                     move |font_name, window, cx| {
-                        update_settings_file_or_notify(
+                        update_settings_file(
                             file.clone(),
                             field.json_path,
                             window,
@@ -4394,7 +4362,7 @@ fn render_theme_picker(
                 theme_picker(
                     current_value,
                     move |theme_name, window, cx| {
-                        update_settings_file_or_notify(
+                        update_settings_file(
                             file.clone(),
                             field.json_path,
                             window,
@@ -4447,7 +4415,7 @@ fn render_icon_theme_picker(
                 icon_theme_picker(
                     current_value,
                     move |theme_name, window, cx| {
-                        update_settings_file_or_notify(
+                        update_settings_file(
                             file.clone(),
                             field.json_path,
                             window,
@@ -5273,8 +5241,9 @@ mod project_settings_update_tests {
             }),
         };
 
-        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        let update_task = cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
         cx.executor().run_until_parked();
+        update_task.await.expect("settings update should succeed");
 
         let buffer_store = setup
             .project
@@ -5307,8 +5276,9 @@ mod project_settings_update_tests {
             }),
         };
 
-        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        let update_task = cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
         cx.executor().run_until_parked();
+        update_task.await.expect("settings update should succeed");
 
         let buffer_store = setup
             .project
@@ -5332,6 +5302,7 @@ mod project_settings_update_tests {
 
         let update_order = Arc::new(std::sync::Mutex::new(Vec::new()));
 
+        let mut update_tasks = Vec::new();
         for i in 1..=3 {
             let update_order = update_order.clone();
             let entry = ProjectSettingsUpdateEntry {
@@ -5346,10 +5317,13 @@ mod project_settings_update_tests {
                         Some(NonZeroU32::new(i).unwrap());
                 }),
             };
-            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+            update_tasks.push(cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry)));
         }
 
         cx.executor().run_until_parked();
+        for update_task in update_tasks {
+            update_task.await.expect("settings update should succeed");
+        }
 
         let order = update_order.lock().unwrap().clone();
         assert_eq!(order, vec![1, 2, 3], "Updates should be processed in order");
@@ -5376,7 +5350,7 @@ mod project_settings_update_tests {
 
         let successful_updates = Arc::new(AtomicUsize::new(0));
 
-        {
+        let first_update_task = {
             let successful_updates = successful_updates.clone();
             let entry = ProjectSettingsUpdateEntry {
                 worktree_id: setup.worktree_id,
@@ -5390,10 +5364,10 @@ mod project_settings_update_tests {
                         Some(NonZeroU32::new(2).unwrap());
                 }),
             };
-            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
-        }
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry))
+        };
 
-        {
+        let failed_update_task = {
             let entry = ProjectSettingsUpdateEntry {
                 worktree_id: setup.worktree_id,
                 rel_path: setup.rel_path.clone(),
@@ -5405,10 +5379,10 @@ mod project_settings_update_tests {
                         Some(NonZeroU32::new(99).unwrap());
                 }),
             };
-            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
-        }
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry))
+        };
 
-        {
+        let third_update_task = {
             let successful_updates = successful_updates.clone();
             let entry = ProjectSettingsUpdateEntry {
                 worktree_id: setup.worktree_id,
@@ -5422,10 +5396,19 @@ mod project_settings_update_tests {
                         Some(NonZeroU32::new(4).unwrap());
                 }),
             };
-            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
-        }
+            cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry))
+        };
 
         cx.executor().run_until_parked();
+        first_update_task
+            .await
+            .expect("first settings update should succeed");
+        failed_update_task
+            .await
+            .expect_err("second settings update should fail");
+        third_update_task
+            .await
+            .expect("third settings update should succeed");
 
         assert_eq!(
             successful_updates.load(Ordering::SeqCst),
@@ -5465,8 +5448,11 @@ mod project_settings_update_tests {
             }),
         };
 
-        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        let update_task = cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
         cx.executor().run_until_parked();
+        update_task
+            .await
+            .expect_err("settings update should fail when worktree is dropped");
 
         let file_content = setup
             .fs
@@ -5536,8 +5522,9 @@ mod project_settings_update_tests {
             }),
         };
 
-        cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
+        let update_task = cx.update(|cx| ProjectSettingsUpdateQueue::enqueue(cx, entry));
         cx.executor().run_until_parked();
+        update_task.await.expect("settings update should succeed");
 
         let text = buffer.read_with(cx, |buffer, _| buffer.text());
         assert!(

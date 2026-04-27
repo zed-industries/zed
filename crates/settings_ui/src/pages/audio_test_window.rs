@@ -22,7 +22,7 @@ use util::ResultExt;
 use workspace::client_side_decorations;
 
 use super::audio_input_output_setup::render_audio_device_dropdown;
-use crate::{SettingsUiFile, update_settings_file_or_notify};
+use crate::{SettingsUiFile, update_settings_file};
 
 pub struct AudioTestWindow {
     title_bar: Option<Entity<PlatformTitleBar>>,
@@ -160,7 +160,7 @@ impl Render for AudioTestWindow {
                         .log_err();
                     let value: Option<AudioInputDeviceName> =
                         device_id.map(|id| AudioInputDeviceName(Some(id.to_string())));
-                    update_settings_file_or_notify(
+                    update_settings_file(
                         SettingsUiFile::User,
                         Some("audio.experimental.input_audio_device"),
                         window,
@@ -188,7 +188,7 @@ impl Render for AudioTestWindow {
                     .log_err();
                 let value: Option<AudioOutputDeviceName> =
                     device_id.map(|id| AudioOutputDeviceName(Some(id.to_string())));
-                update_settings_file_or_notify(
+                update_settings_file(
                     SettingsUiFile::User,
                     Some("audio.experimental.output_audio_device"),
                     window,

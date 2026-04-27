@@ -8,7 +8,7 @@ use ui::{ListItem, ListItemSpacing, PopoverMenu, prelude::*};
 
 use crate::{
     SettingField, SettingsFieldMetadata, SettingsUiFile, render_picker_trigger_button,
-    update_settings_file_or_notify,
+    update_settings_file,
 };
 
 type OllamaModelPicker = Picker<OllamaModelPickerDelegate>;
@@ -179,7 +179,7 @@ pub fn render_ollama_model_picker(
                 let delegate = OllamaModelPickerDelegate::new(
                     current_value,
                     move |model_name, window, cx| {
-                        update_settings_file_or_notify(
+                        update_settings_file(
                             file.clone(),
                             field.json_path,
                             window,
