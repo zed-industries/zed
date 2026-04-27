@@ -944,6 +944,7 @@ mod tests {
             },
             editable_range,
             context_range,
+            false,
         );
 
         assert!(prompt.contains(TeacherPrompt::EDITABLE_REGION_START));
