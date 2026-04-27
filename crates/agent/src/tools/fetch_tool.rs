@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::{borrow::Cow, cell::RefCell};
 
 use agent_client_protocol::schema as acp;
-use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, bail};
 use futures::{AsyncReadExt as _, FutureExt as _};
 use gpui::{App, AppContext as _, Task};
@@ -11,14 +10,10 @@ use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
 use ui::SharedString;
 use util::markdown::{MarkdownEscaped, MarkdownInlineCode};
 
-use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
-    decide_permission_from_settings,
-};
+use crate::{AgentTool, ToolCallEventStream, ToolInput};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum ContentType {
@@ -153,37 +148,22 @@ impl AgentTool for FetchTool {
                 .await
                 .map_err(|e| format!("Failed to receive tool input: {e}"))?;
 
-            let decision = cx.update(|cx| {
-                decide_permission_from_settings(
-                    Self::NAME,
-                    std::slice::from_ref(&input.url),
-                    AgentSettings::get_global(cx),
+            let authorize = cx.update(|cx| {
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.url.clone()]);
+
+                event_stream.authorize(
+                    format!("Fetch {}", MarkdownInlineCode(&input.url)),
+                    context,
+                    cx,
                 )
             });
-
-            let authorize = match decision {
-                ToolPermissionDecision::Allow => None,
-                ToolPermissionDecision::Deny(reason) => {
-                    return Err(reason);
-                }
-                ToolPermissionDecision::Confirm => Some(cx.update(|cx| {
-                    let context =
-                        crate::ToolPermissionContext::new(Self::NAME, vec![input.url.clone()]);
-                    event_stream.authorize(
-                        format!("Fetch {}", MarkdownInlineCode(&input.url)),
-                        context,
-                        cx,
-                    )
-                })),
-            };
 
             let fetch_task = cx.background_spawn({
                 let http_client = http_client.clone();
                 let url = input.url.clone();
                 async move {
-                    if let Some(authorize) = authorize {
-                        authorize.await?;
-                    }
+                    authorize.await?;
                     Self::build_message(http_client, &url).await
                 }
             });
