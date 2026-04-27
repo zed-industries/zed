@@ -5,7 +5,7 @@ use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
-use language_model::{LanguageModelImage, LanguageModelToolResultContent};
+use language_model::LanguageModelToolResultContent;
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
 use util::ResultExt;
