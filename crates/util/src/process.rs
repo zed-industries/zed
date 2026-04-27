@@ -2,9 +2,22 @@ use anyhow::{Context as _, Result};
 use std::process::Stdio;
 
 /// A wrapper around `smol::process::Child` that ensures all subprocesses
-/// are killed when the process is terminated by using process groups.
+/// (including descendants that escape the original process group via
+/// `setsid` on Unix or `CREATE_BREAKAWAY_FROM_JOB` on Windows) are killed
+/// when the wrapper's `kill` is called.
+#[cfg(not(windows))]
 pub struct Child {
     process: smol::process::Child,
+}
+
+#[cfg(windows)]
+pub struct Child {
+    process: smol::process::Child,
+    /// Owns the job object the spawned process is assigned to.
+    /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` means the kernel terminates every
+    /// process in the job when this handle is closed, which is the safety net
+    /// for app-quit cleanup.
+    _job: std::os::windows::io::OwnedHandle,
 }
 
 impl std::ops::Deref for Child {
@@ -52,8 +65,37 @@ impl Child {
         stdout: Stdio,
         stderr: Stdio,
     ) -> Result<Self> {
-        // TODO(windows): create a job object and add the child process handle to it,
-        // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
+        };
+        use windows::core::PCWSTR;
+
+        // SAFETY: CreateJobObjectW with null attrs/name creates an unnamed job
+        // with default security; returns Err on failure.
+        let job_handle = unsafe { CreateJobObjectW(None, PCWSTR::null()) }
+            .context("CreateJobObjectW failed")?;
+        // SAFETY: CreateJobObjectW transfers ownership of the handle. Wrapping
+        // it in OwnedHandle means the kernel cleans up the job (and, with
+        // KILL_ON_JOB_CLOSE, every process in it) when this struct is dropped.
+        let job: OwnedHandle = unsafe { OwnedHandle::from_raw_handle(job_handle.0 as _) };
+
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // SAFETY: pointer to local info, valid for the duration of the call.
+        unsafe {
+            SetInformationJobObject(
+                HANDLE(job.as_raw_handle() as _),
+                JobObjectExtendedLimitInformation,
+                &info as *const _ as *const _,
+                std::mem::size_of_val(&info) as u32,
+            )
+        }
+        .context("SetInformationJobObject failed")?;
+
         let mut command = smol::process::Command::from(command);
         let process = command
             .stdin(stdin)
@@ -67,7 +109,25 @@ impl Child {
                 )
             })?;
 
-        Ok(Self { process })
+        // Race window: if the spawned process forks descendants between
+        // `spawn` returning and `AssignProcessToJobObject` running, those
+        // descendants escape the job. Closing it race-free would require
+        // CREATE_SUSPENDED, which std::process::Command doesn't expose.
+        // Debug adapters don't fork during the first instructions of startup,
+        // so this is acceptable in practice.
+        // SAFETY: process and job handles are both owned and valid here.
+        unsafe {
+            AssignProcessToJobObject(
+                HANDLE(job.as_raw_handle() as _),
+                HANDLE(process.as_raw_handle() as _),
+            )
+        }
+        .context("AssignProcessToJobObject failed")?;
+
+        Ok(Self {
+            process,
+            _job: job,
+        })
     }
 
     pub fn into_inner(self) -> smol::process::Child {
@@ -77,8 +137,9 @@ impl Child {
     #[cfg(not(windows))]
     pub fn kill(&mut self) -> Result<()> {
         let pid = self.process.id();
-        #[cfg(target_os = "linux")]
         kill_descendant_tree(pid);
+        // SAFETY: killpg with SIGKILL on the original process group.
+        // Returns ESRCH if the group is empty, which we ignore.
         unsafe {
             libc::killpg(pid as i32, libc::SIGKILL);
         }
@@ -87,36 +148,23 @@ impl Child {
 
     #[cfg(windows)]
     pub fn kill(&mut self) -> Result<()> {
-        // TODO(windows): terminate the job object in kill
-        self.process.kill()?;
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::JobObjects::TerminateJobObject;
+
+        // SAFETY: job handle is owned by self and valid for this call.
+        // TerminateJobObject atomically kills every process in the job.
+        unsafe { TerminateJobObject(HANDLE(self._job.as_raw_handle() as _), 1) }
+            .context("TerminateJobObject failed")?;
         Ok(())
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(not(windows))]
 fn kill_descendant_tree(root_pid: u32) {
     use std::collections::HashMap;
 
-    let mut parent_of: HashMap<u32, u32> = HashMap::new();
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(pid_str) = name.to_str() else { continue };
-        let Ok(pid) = pid_str.parse::<u32>() else { continue };
-        let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
-            continue;
-        };
-        for line in status.lines() {
-            if let Some(rest) = line.strip_prefix("PPid:")
-                && let Ok(ppid) = rest.trim().parse::<u32>()
-            {
-                parent_of.insert(pid, ppid);
-                break;
-            }
-        }
-    }
+    let parent_of = list_parent_pids();
 
     let mut children_of: HashMap<u32, Vec<u32>> = HashMap::new();
     for (&pid, &ppid) in &parent_of {
@@ -141,6 +189,63 @@ fn kill_descendant_tree(root_pid: u32) {
             libc::kill(pid as i32, libc::SIGKILL);
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn list_parent_pids() -> std::collections::HashMap<u32, u32> {
+    use std::collections::HashMap;
+    let mut parent_of: HashMap<u32, u32> = HashMap::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return parent_of;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid_str) = name.to_str() else { continue };
+        let Ok(pid) = pid_str.parse::<u32>() else { continue };
+        let Ok(status) = std::fs::read_to_string(format!("/proc/{pid}/status")) else {
+            continue;
+        };
+        for line in status.lines() {
+            if let Some(rest) = line.strip_prefix("PPid:")
+                && let Ok(ppid) = rest.trim().parse::<u32>()
+            {
+                parent_of.insert(pid, ppid);
+                break;
+            }
+        }
+    }
+    parent_of
+}
+
+// libc on macOS doesn't expose `kinfo_proc`, and a hand-rolled struct layout is
+// fragile. `ps` is universally present on macOS, runs once per kill, and the
+// extra fork is irrelevant at app-quit. If ps becomes a problem, replace this
+// with a `sysctl(KERN_PROC_ALL)` binding.
+#[cfg(target_os = "macos")]
+fn list_parent_pids() -> std::collections::HashMap<u32, u32> {
+    use std::collections::HashMap;
+    let mut parent_of: HashMap<u32, u32> = HashMap::new();
+    let Ok(output) = std::process::Command::new("/bin/ps")
+        .args(["-A", "-o", "pid=,ppid="])
+        .output()
+    else {
+        return parent_of;
+    };
+    if !output.status.success() {
+        return parent_of;
+    }
+    let Ok(text) = std::str::from_utf8(&output.stdout) else {
+        return parent_of;
+    };
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(pid_str) = parts.next() else { continue };
+        let Some(ppid_str) = parts.next() else { continue };
+        let Ok(pid) = pid_str.parse::<u32>() else { continue };
+        let Ok(ppid) = ppid_str.parse::<u32>() else { continue };
+        parent_of.insert(pid, ppid);
+    }
+    parent_of
 }
 
 #[cfg(all(test, target_os = "linux"))]
