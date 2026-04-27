@@ -247,7 +247,8 @@ pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> Option
         | ZetaFormat::V0316SeedMultiRegions
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0331SeedCoderModelPy
-        | ZetaFormat::V0318SeedMultiRegions => 4096,
+        | ZetaFormat::V0318SeedMultiRegions
+        | ZetaFormat::V0420Diagnostics => 4096,
         ZetaFormat::V0327SingleFile => 16384,
     };
 
@@ -715,7 +716,8 @@ pub fn format_prompt_with_budget_for_format(
         | ZetaFormat::V0306SeedMultiRegions
         | ZetaFormat::V0316SeedMultiRegions
         | ZetaFormat::V0318SeedMultiRegions
-        | ZetaFormat::V0317SeedMultiRegions => {
+        | ZetaFormat::V0317SeedMultiRegions
+        | ZetaFormat::V0420Diagnostics => {
             let mut cursor_section = String::new();
             write_cursor_excerpt_section_for_format(
                 format,
@@ -725,6 +727,10 @@ pub fn format_prompt_with_budget_for_format(
                 &editable_range,
                 cursor_offset,
             );
+
+            if format == ZetaFormat::V0420Diagnostics {
+                cursor_section.push_str(&format_active_buffer_diagnostics(input));
+            }
 
             let budget_with_margin = apply_prompt_budget_margin(max_tokens);
             seed_coder::assemble_fim_prompt(
@@ -799,6 +805,26 @@ pub fn format_prompt_with_budget_for_format(
         return None;
     }
     return Some(prompt);
+}
+
+fn format_active_buffer_diagnostics(input: &ZetaPromptInput) -> String {
+    let mut output = format!("{}diagnostics\n", seed_coder::FILE_MARKER);
+
+    if input.active_buffer_diagnostics.is_empty() {
+        output.push_str("No Diagnostics\n");
+        return output;
+    }
+
+    for diagnostic in &input.active_buffer_diagnostics {
+        writeln!(
+            output,
+            "*{}*:\n```\n{}\n```",
+            diagnostic.message, diagnostic.snippet
+        )
+        .ok();
+    }
+
+    output
 }
 
 pub fn filter_redundant_excerpts(
@@ -923,7 +949,7 @@ pub fn encode_patch_as_output_for_format(
                 Ok(None)
             }
         }
-        ZetaFormat::V0318SeedMultiRegions => {
+        ZetaFormat::V0318SeedMultiRegions | ZetaFormat::V0420Diagnostics => {
             let empty_patch = patch.lines().count() <= 3;
             if empty_patch {
                 let marker_offsets =
@@ -1010,7 +1036,7 @@ pub fn format_expected_output(
                 multi_region::V0316_END_MARKER,
             )
         }
-        ZetaFormat::V0318SeedMultiRegions | ZetaFormat::V0327SingleFile => {
+        ZetaFormat::V0318SeedMultiRegions | ZetaFormat::V0420Diagnostics => {
             let (new_editable, first_hunk_offset) =
                 udiff::apply_diff_to_string_with_hunk_offset(patch, &old_editable)?;
             let cursor_in_new = cursor_in_new_text(cursor_offset, first_hunk_offset, &new_editable);
@@ -1020,6 +1046,18 @@ pub fn format_expected_output(
                 cursor_in_new,
                 CURSOR_MARKER,
                 multi_region::V0318_END_MARKER,
+            )
+        }
+        ZetaFormat::V0327SingleFile => {
+            let (new_editable, first_hunk_offset) =
+                udiff::apply_diff_to_string_with_hunk_offset(patch, &old_editable)?;
+            let cursor_in_new = cursor_in_new_text(cursor_offset, first_hunk_offset, &new_editable);
+            multi_region::encode_from_old_and_new_v0318(
+                &old_editable,
+                &new_editable,
+                cursor_in_new,
+                CURSOR_MARKER,
+                multi_region::V0327_END_MARKER,
             )
         }
         ZetaFormat::V0317SeedMultiRegions => {
@@ -1171,7 +1209,7 @@ pub fn parse_zeta2_model_output(
             editable_range_in_context,
             multi_region::apply_marker_span_v0316(old_editable_region, output)?,
         ),
-        ZetaFormat::V0318SeedMultiRegions => (
+        ZetaFormat::V0318SeedMultiRegions | ZetaFormat::V0420Diagnostics => (
             editable_range_in_context,
             multi_region::apply_marker_span_v0318(old_editable_region, output)?,
         ),
@@ -5163,6 +5201,47 @@ mod tests {
                 <<<<<<< CURRENT
                 edi<|user_cursor|>table
                 =======
+                <[fim-middle]>"#}
+        );
+    }
+
+    #[test]
+    fn test_v0420_formats_diagnostics_after_cursor_file() {
+        let mut input = make_input(
+            "prefix\neditable\nsuffix",
+            7..15,
+            10,
+            vec![],
+            vec![make_related_file("related.rs", "fn helper() {}\n")],
+        );
+        input.active_buffer_diagnostics = vec![ActiveBufferDiagnostic {
+            severity: Some(1),
+            message: "missing semicolon".to_string(),
+            snippet: "let value = 1".to_string(),
+            snippet_buffer_row_range: 1..2,
+            diagnostic_range_in_snippet: 12..13,
+        }];
+
+        let prompt =
+            format_prompt_with_budget_for_format(&input, ZetaFormat::V0420Diagnostics, 10000)
+                .expect("v0420 prompt formatting should succeed");
+
+        assert_eq!(
+            prompt,
+            indoc! {r#"
+                <[fim-suffix]>
+                suffix
+                <[fim-prefix]><filename>related.rs
+                fn helper() {}
+
+                <filename>test.rs
+                prefix
+                <|marker_1|>edi<|user_cursor|>table<|marker_2|>
+                <filename>diagnostics
+                *missing semicolon*:
+                ```
+                let value = 1
+                ```
                 <[fim-middle]>"#}
         );
     }
