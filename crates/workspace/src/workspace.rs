@@ -17,7 +17,6 @@ mod persistence;
 pub mod searchable;
 mod security_modal;
 pub mod shared_screen;
-use db::smol::future::yield_now;
 pub use shared_screen::SharedScreen;
 pub mod focus_follows_mouse;
 mod status_bar;
@@ -3389,7 +3388,7 @@ impl Workspace {
                                 .unwrap_or(false);
 
                             if focus_changed {
-                                yield_now().await;
+                                futures_lite::future::yield_now().await;
                             }
                         }
 
@@ -11522,7 +11521,7 @@ mod tests {
 
         // The requested items are closed.
         pane.update(cx, |pane, cx| {
-            assert_eq!(item4.read(cx).save_count, 0);
+            assert_eq!(item4.read(cx).save_count, 1);
             assert_eq!(item4.read(cx).save_as_count, 1);
             assert_eq!(item4.read(cx).reload_count, 0);
             assert_eq!(pane.items_len(), 1);

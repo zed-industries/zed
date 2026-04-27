@@ -186,11 +186,6 @@ impl MentionSet {
         self.mentions.drain()
     }
 
-    #[cfg(test)]
-    pub fn has_thread_store(&self) -> bool {
-        self.thread_store.is_some()
-    }
-
     pub fn confirm_mention_completion(
         &mut self,
         crease_text: SharedString,
@@ -216,10 +211,7 @@ impl MentionSet {
         );
 
         let crease = if let MentionUri::File { abs_path } = &mention_uri
-            && let Some(extension) = abs_path.extension()
-            && let Some(extension) = extension.to_str()
-            && Img::extensions().contains(&extension)
-            && !extension.contains("svg")
+            && is_raster_image_path(abs_path)
         {
             let Some(project_path) = project
                 .read(cx)
@@ -348,12 +340,8 @@ impl MentionSet {
         else {
             return Task::ready(Err(anyhow!("project path not found")));
         };
-        let extension = abs_path
-            .extension()
-            .and_then(OsStr::to_str)
-            .unwrap_or_default();
 
-        if Img::extensions().contains(&extension) && !extension.contains("svg") {
+        if is_raster_image_path(&abs_path) {
             if !supports_images {
                 return Task::ready(Err(anyhow!("This model does not support images yet")));
             }
@@ -728,6 +716,25 @@ mod tests {
             other => panic!("Expected selection mention to resolve as text, got {other:?}"),
         }
     }
+
+    #[test]
+    fn test_is_raster_image_path_is_case_insensitive() {
+        // Regression test for #54308: drag-and-dropping a file whose extension
+        // is uppercase (e.g. `.PNG`) used to be treated as a non-image file.
+        assert!(is_raster_image_path(Path::new("/tmp/image.png")));
+        assert!(is_raster_image_path(Path::new("/tmp/image.PNG")));
+        assert!(is_raster_image_path(Path::new("/tmp/image.Png")));
+        assert!(is_raster_image_path(Path::new("/tmp/photo.JPEG")));
+        assert!(is_raster_image_path(Path::new("/tmp/animation.GIF")));
+
+        // SVG is handled via a different code path and must not be reported here.
+        assert!(!is_raster_image_path(Path::new("/tmp/icon.svg")));
+        assert!(!is_raster_image_path(Path::new("/tmp/icon.SVG")));
+
+        // Non-image extensions and paths with no extension.
+        assert!(!is_raster_image_path(Path::new("/tmp/notes.txt")));
+        assert!(!is_raster_image_path(Path::new("/tmp/README")));
+    }
 }
 
 /// Inserts a list of images into the editor as context mentions.
@@ -849,6 +856,20 @@ fn image_format_from_external_content(format: image::ImageFormat) -> Option<Imag
             None
         }
     }
+}
+
+// Case-insensitive so that e.g. `foo.PNG` is recognized the same as `foo.png`.
+// SVG is excluded because it is handled separately.
+fn is_raster_image_path(path: &Path) -> bool {
+    let Some(extension) = path.extension().and_then(OsStr::to_str) else {
+        return false;
+    };
+    if extension.eq_ignore_ascii_case("svg") {
+        return false;
+    }
+    Img::extensions()
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(extension))
 }
 
 pub(crate) fn load_external_image_from_path(

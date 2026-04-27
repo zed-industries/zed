@@ -104,21 +104,21 @@ pub fn into_open_ai(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            vec![MessagePart::Text {
+                    let content: Vec<MessagePart> = tool_result
+                        .content
+                        .iter()
+                        .map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => MessagePart::Text {
                                 text: text.to_string(),
-                            }]
-                        }
-                        LanguageModelToolResultContent::Image(image) => {
-                            vec![MessagePart::Image {
+                            },
+                            LanguageModelToolResultContent::Image(image) => MessagePart::Image {
                                 image_url: ImageUrl {
                                     url: image.to_base64_url(),
                                     detail: None,
                                 },
-                            }]
-                        }
-                    };
+                            },
+                        })
+                        .collect();
 
                     messages.push(crate::RequestMessage::Tool {
                         content: content.into(),
@@ -270,21 +270,34 @@ fn append_message_to_response_items(
             }
             MessageContent::ToolResult(tool_result) => {
                 flush_response_parts(&message.role, index, &mut content_parts, input_items);
+                let output = match tool_result.content.as_slice() {
+                    [LanguageModelToolResultContent::Text(text)] => {
+                        ResponseFunctionCallOutputContent::Text(text.to_string())
+                    }
+                    _ => {
+                        let parts = tool_result
+                            .content
+                            .into_iter()
+                            .map(|part| match part {
+                                LanguageModelToolResultContent::Text(text) => {
+                                    ResponseInputContent::Text {
+                                        text: text.to_string(),
+                                    }
+                                }
+                                LanguageModelToolResultContent::Image(image) => {
+                                    ResponseInputContent::Image {
+                                        image_url: image.to_base64_url(),
+                                    }
+                                }
+                            })
+                            .collect();
+                        ResponseFunctionCallOutputContent::List(parts)
+                    }
+                };
                 input_items.push(ResponseInputItem::FunctionCallOutput(
                     ResponseFunctionCallOutputItem {
                         call_id: tool_result.tool_use_id.to_string(),
-                        output: match tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => {
-                                ResponseFunctionCallOutputContent::Text(text.to_string())
-                            }
-                            LanguageModelToolResultContent::Image(image) => {
-                                ResponseFunctionCallOutputContent::List(vec![
-                                    ResponseInputContent::Image {
-                                        image_url: image.to_base64_url(),
-                                    },
-                                ])
-                            }
-                        },
+                        output,
                     },
                 ));
             }
@@ -933,7 +946,7 @@ mod tests {
             tool_use_id: tool_call_id,
             tool_name: Arc::from("get_weather"),
             is_error: false,
-            content: LanguageModelToolResultContent::Text(Arc::from("Sunny")),
+            content: vec![LanguageModelToolResultContent::Text(Arc::from("Sunny"))],
             output: Some(json!({ "forecast": "Sunny" })),
         };
         let user_image = LanguageModelImage {
@@ -1634,7 +1647,7 @@ mod tests {
             tool_use_id: tool_use_id,
             tool_name: Arc::from("search"),
             is_error: false,
-            content: LanguageModelToolResultContent::Text(Arc::from("result")),
+            content: vec![LanguageModelToolResultContent::Text(Arc::from("result"))],
             output: None,
         };
         let request = LanguageModelRequest {

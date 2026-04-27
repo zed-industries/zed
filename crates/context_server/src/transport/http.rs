@@ -5,7 +5,6 @@ use futures::{Stream, StreamExt};
 use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
-use smol::channel;
 use std::{pin::Pin, sync::Arc};
 
 use crate::oauth::{self, OAuthTokenProvider, WwwAuthenticate};
@@ -43,10 +42,10 @@ pub struct HttpTransport {
     endpoint: String,
     session_id: Arc<SyncMutex<Option<String>>>,
     executor: BackgroundExecutor,
-    response_tx: channel::Sender<String>,
-    response_rx: channel::Receiver<String>,
-    error_tx: channel::Sender<String>,
-    error_rx: channel::Receiver<String>,
+    response_tx: async_channel::Sender<String>,
+    response_rx: async_channel::Receiver<String>,
+    error_tx: async_channel::Sender<String>,
+    error_rx: async_channel::Receiver<String>,
     /// Static headers to include in every request (e.g. from server config).
     headers: HashMap<String, String>,
     /// When set, the transport attaches `Authorization: Bearer` headers and
@@ -71,8 +70,8 @@ impl HttpTransport {
         executor: BackgroundExecutor,
         token_provider: Option<Arc<dyn OAuthTokenProvider>>,
     ) -> Self {
-        let (response_tx, response_rx) = channel::unbounded();
-        let (error_tx, error_rx) = channel::unbounded();
+        let (response_tx, response_rx) = async_channel::unbounded();
+        let (error_tx, error_rx) = async_channel::unbounded();
 
         Self {
             http_client,
@@ -241,62 +240,63 @@ impl HttpTransport {
         let error_tx = self.error_tx.clone();
 
         // Spawn a task to handle the SSE stream
-        smol::spawn(async move {
-            let reader = futures::io::BufReader::new(response.body_mut());
-            let mut lines = futures::AsyncBufReadExt::lines(reader);
+        self.executor
+            .spawn(async move {
+                let reader = futures::io::BufReader::new(response.body_mut());
+                let mut lines = futures::AsyncBufReadExt::lines(reader);
 
-            let mut data_buffer = Vec::new();
-            let mut in_message = false;
+                let mut data_buffer = Vec::new();
+                let mut in_message = false;
 
-            while let Some(line_result) = lines.next().await {
-                match line_result {
-                    Ok(line) => {
-                        if line.is_empty() {
-                            // Empty line signals end of event
-                            if !data_buffer.is_empty() {
-                                let message = data_buffer.join("\n");
+                while let Some(line_result) = lines.next().await {
+                    match line_result {
+                        Ok(line) => {
+                            if line.is_empty() {
+                                // Empty line signals end of event
+                                if !data_buffer.is_empty() {
+                                    let message = data_buffer.join("\n");
 
-                                // Filter out ping messages and empty data
-                                if !message.trim().is_empty() && message != "ping" {
-                                    if let Err(e) = response_tx.send(message).await {
-                                        log::error!("Failed to send SSE message: {}", e);
-                                        break;
+                                    // Filter out ping messages and empty data
+                                    if !message.trim().is_empty() && message != "ping" {
+                                        if let Err(e) = response_tx.send(message).await {
+                                            log::error!("Failed to send SSE message: {}", e);
+                                            break;
+                                        }
                                     }
+                                    data_buffer.clear();
                                 }
-                                data_buffer.clear();
-                            }
-                            in_message = false;
-                        } else if let Some(data) = line.strip_prefix("data: ") {
-                            // Handle data lines
-                            let data = data.trim();
-                            if !data.is_empty() {
-                                // Check if this is a ping message
-                                if data == "ping" {
-                                    log::trace!("Received SSE ping");
-                                    continue;
+                                in_message = false;
+                            } else if let Some(data) = line.strip_prefix("data: ") {
+                                // Handle data lines
+                                let data = data.trim();
+                                if !data.is_empty() {
+                                    // Check if this is a ping message
+                                    if data == "ping" {
+                                        log::trace!("Received SSE ping");
+                                        continue;
+                                    }
+                                    data_buffer.push(data.to_string());
+                                    in_message = true;
                                 }
-                                data_buffer.push(data.to_string());
-                                in_message = true;
+                            } else if line.starts_with("event:")
+                                || line.starts_with("id:")
+                                || line.starts_with("retry:")
+                            {
+                                // Ignore other SSE fields
+                                continue;
+                            } else if in_message {
+                                // Continuation of data
+                                data_buffer.push(line);
                             }
-                        } else if line.starts_with("event:")
-                            || line.starts_with("id:")
-                            || line.starts_with("retry:")
-                        {
-                            // Ignore other SSE fields
-                            continue;
-                        } else if in_message {
-                            // Continuation of data
-                            data_buffer.push(line);
+                        }
+                        Err(e) => {
+                            let _ = error_tx.send(format!("SSE stream error: {}", e)).await;
+                            break;
                         }
                     }
-                    Err(e) => {
-                        let _ = error_tx.send(format!("SSE stream error: {}", e)).await;
-                        break;
-                    }
                 }
-            }
-        })
-        .detach();
+            })
+            .detach();
 
         Ok(())
     }

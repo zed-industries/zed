@@ -31,6 +31,7 @@ Zed supports these providers with your own API keys:
 - [Ollama](#ollama)
 - [OpenAI](#openai)
 - [OpenAI API Compatible](#openai-api-compatible)
+- [OpenCode](#opencode)
 - [OpenRouter](#openrouter)
 - [Vercel AI Gateway](#vercel-ai-gateway)
 - [Vercel](#vercel-v0)
@@ -241,7 +242,7 @@ Zed will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#deepseek-custom-models}
 
-The Zed agent comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner).
+The Zed agent comes pre-configured to use DeepSeek V4 Flash and DeepSeek V4 Pro.
 If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
@@ -251,15 +252,16 @@ If you wish to use alternate models or customize the API endpoint, you can do so
       "api_url": "https://api.deepseek.com",
       "available_models": [
         {
-          "name": "deepseek-chat",
-          "display_name": "DeepSeek Chat",
-          "max_tokens": 64000
+          "name": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "max_tokens": 1000000,
+          "max_output_tokens": 384000
         },
         {
-          "name": "deepseek-reasoner",
-          "display_name": "DeepSeek Reasoner",
-          "max_tokens": 64000,
-          "max_output_tokens": 4096
+          "name": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "max_tokens": 1000000,
+          "max_output_tokens": 384000
         }
       ]
     }
@@ -281,7 +283,7 @@ Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environ
 
 > **Note**: If you don't see specific models in the dropdown, you may need to enable them in your [GitHub Copilot settings](https://github.com/settings/copilot/features).
 
-To use Copilot Enterprise with Zed (for both agent and completions), you must configure your enterprise endpoint as described in [Configuring GitHub Copilot Enterprise](./edit-prediction.md#github-copilot-enterprise).
+To use Copilot Enterprise with Zed (for both agent and completions), you must configure your enterprise endpoint as described in [Configuring GitHub Copilot Enterprise](./edit-prediction.md#using-github-copilot-enterprise).
 
 ### Google AI {#google-ai}
 
@@ -613,6 +615,74 @@ If a provider exposes models that only work with the Responses API, set `chat_co
 
 Note that LLM API keys aren't stored in your settings file.
 So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the example above, it would be `TOGETHER_AI_API_KEY=<your api key>`.
+
+### OpenCode {#opencode}
+
+OpenCode offers multiple ways to access AI models:
+
+- [OpenCode Zen](https://opencode.ai/zen/): a pay-as-you-go subscription with access to a large number of tested and verified models
+- [OpenCode Zen Free](https://opencode.ai/docs/zen/#pricing): free access to a limited set of models, with data and feedback collected to improve the models
+- [OpenCode Go](https://opencode.ai/go): a low-cost monthly subscription with access to a validated set of open coding models
+
+1. Visit [OpenCode Console](https://opencode.ai/auth) and create an account
+2. Free models are available without payment. To use Zen or Go models, make sure you have enough credits or an active subscription
+3. Generate an API key from the "API Keys" section in the OpenCode Console
+4. Open the settings view (`agent: open settings`) and go to the OpenCode section
+5. Enter your OpenCode API key
+
+The OpenCode API key will be saved in your keychain.
+
+Zed will also use the `OPENCODE_API_KEY` environment variable if it's defined.
+
+By default, models from all subscription types are shown. Optionally, you can hide subscriptions that are not relevant to you by clicking the toggles or by adding the following to your settings:
+
+```json [settings]
+{
+  "language_models": {
+    "opencode": {
+      "show_zen_models": true,
+      "show_go_models": false,
+      "show_free_models": false
+    }
+  }
+}
+```
+
+#### Custom Models {#opencode-custom-models}
+
+The Zed agent comes pre-configured with OpenCode models. If you wish to use newer models or models with custom endpoints, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
+
+```json [settings]
+{
+  "language_models": {
+    "opencode": {
+      "available_models": [
+        {
+          "name": "my-custom-model",
+          "display_name": "My Custom Model",
+          "max_tokens": 123456,
+          "max_output_tokens": 98765,
+          "protocol": "openai_chat",
+          "subscription": "go",
+          "custom_model_api_url": "https://example.com/zen"
+        }
+      ]
+    }
+  }
+}
+```
+
+The available configuration options for custom models are:
+
+- `name` (required): model id used by OpenCode, for example `glm-9000`
+- `display_name` (optional): human-readable model name shown in the UI, for example `Custom GLM 9000`
+- `max_tokens` (required): maximum model context window size, for example `1000000`
+- `max_output_tokens` (optional): maximum tokens the model can generate, for example `64000`
+- `protocol` (required): model API protocol, one of `"anthropic"`, `"openai_responses"`, `"openai_chat"`, or `"google"`
+- `subscription` (optional): `"zen"`, `"go"`, or `"free"` (defaults to `"zen"`)
+- `custom_model_api_url` (optional): custom API base URL to use instead of the default OpenCode API
+
+Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### OpenRouter {#openrouter}
 

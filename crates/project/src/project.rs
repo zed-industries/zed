@@ -5224,7 +5224,7 @@ impl Project {
         envelope: TypedEnvelope<proto::LanguageServerPromptRequest>,
         mut cx: AsyncApp,
     ) -> Result<proto::LanguageServerPromptResponse> {
-        let (tx, rx) = smol::channel::bounded(1);
+        let (tx, rx) = async_channel::bounded(1);
         let actions: Vec<_> = envelope
             .payload
             .actions
@@ -6034,6 +6034,10 @@ impl Project {
         self.git_store
             .read(cx)
             .git_init(path, fallback_branch_name, cx)
+    }
+
+    pub fn git_config(&self, path: Arc<Path>, args: Vec<String>, cx: &App) -> Task<Result<String>> {
+        self.git_store.read(cx).git_config(path, args, cx)
     }
 
     pub fn buffer_store(&self) -> &Entity<BufferStore> {

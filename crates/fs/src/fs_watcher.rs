@@ -19,7 +19,7 @@ pub enum WatcherMode {
 }
 
 pub struct FsWatcher {
-    tx: smol::channel::Sender<()>,
+    tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
     registrations: Mutex<BTreeMap<Arc<std::path::Path>, WatcherRegistrationId>>,
     mode: WatcherMode,
@@ -27,7 +27,7 @@ pub struct FsWatcher {
 
 impl FsWatcher {
     pub fn new(
-        tx: smol::channel::Sender<()>,
+        tx: async_channel::Sender<()>,
         pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
         mode: WatcherMode,
     ) -> Self {

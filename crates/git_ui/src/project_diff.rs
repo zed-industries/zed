@@ -13,6 +13,7 @@ use editor::{
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
+use futures_lite::future::yield_now;
 use git::repository::DiffType;
 
 use git::{
@@ -33,7 +34,6 @@ use project::{
     },
 };
 use settings::{Settings, SettingsStore};
-use smol::future::yield_now;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use theme::ActiveTheme;

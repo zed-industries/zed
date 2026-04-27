@@ -76,8 +76,6 @@ fn group_lenses_by_row(
 }
 
 fn render_code_lens_line(
-    buffer_id: BufferId,
-    line_number: usize,
     lens: CodeLensLine,
     editor: WeakEntity<Editor>,
 ) -> impl Fn(&mut crate::display_map::BlockContext) -> gpui::AnyElement {
@@ -103,11 +101,10 @@ fn render_code_lens_line(
             let action = item.action.clone();
             let editor_handle = editor.clone();
             let position = lens.position;
-            let id = SharedString::from(format!("{buffer_id}:{line_number}:{i}"));
 
             children.push(
                 div()
-                    .id(ElementId::Name(id))
+                    .id(ElementId::from(i))
                     .font(font.clone())
                     .text_size(font_size)
                     .text_color(cx.app.theme().colors().text_muted)
@@ -164,6 +161,7 @@ fn render_code_lens_line(
         }
 
         div()
+            .id(cx.block_id)
             .pl(cx.margins.gutter.full_width() + cx.em_width * (lens.indent_column as f32 + 0.5))
             .h_full()
             .flex()
@@ -405,16 +403,13 @@ impl Editor {
                         }
                         let blocks = lens_lines
                             .into_iter()
-                            .enumerate()
-                            .map(|(line_number, lens_line)| {
+                            .map(|lens_line| {
                                 let position = lens_line.position;
                                 BlockProperties {
                                     placement: BlockPlacement::Above(position),
                                     height: Some(1),
                                     style: BlockStyle::Flex,
                                     render: Arc::new(render_code_lens_line(
-                                        buffer_id,
-                                        line_number,
                                         lens_line,
                                         editor_handle.clone(),
                                     )),
@@ -546,19 +541,13 @@ impl Editor {
                 .collect();
 
             let blocks = group_lenses_by_row(lenses, &multi_buffer_snapshot)
-                .enumerate()
-                .map(|(line_number, lens_line)| {
+                .map(|lens_line| {
                     let position = lens_line.position;
                     BlockProperties {
                         placement: BlockPlacement::Above(position),
                         height: Some(1),
                         style: BlockStyle::Flex,
-                        render: Arc::new(render_code_lens_line(
-                            buffer_id,
-                            line_number,
-                            lens_line,
-                            editor_handle.clone(),
-                        )),
+                        render: Arc::new(render_code_lens_line(lens_line, editor_handle.clone())),
                         priority: 0,
                     }
                 })

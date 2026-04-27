@@ -573,8 +573,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(active_file_name, window, cx);
-            status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_left_item(merge_conflict_indicator, window, cx);
+            status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_ui, window, cx);
             status_bar.add_right_item(active_buffer_encoding, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
@@ -2074,16 +2074,16 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
 
 pub fn load_default_keymap(cx: &mut App) {
     let base_keymap = *BaseKeymap::get_global(cx);
-    if base_keymap == BaseKeymap::None {
-        return;
-    }
+    if base_keymap != BaseKeymap::None {
+        cx.bind_keys(
+            KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
+        );
 
-    cx.bind_keys(
-        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
-    );
-
-    if let Some(asset_path) = base_keymap.asset_path() {
-        cx.bind_keys(KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap());
+        if let Some(asset_path) = base_keymap.asset_path() {
+            cx.bind_keys(
+                KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap(),
+            );
+        }
     }
 
     if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
