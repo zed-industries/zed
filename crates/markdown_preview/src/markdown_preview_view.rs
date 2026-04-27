@@ -50,6 +50,7 @@ pub struct MarkdownPreviewView {
     image_cache: Entity<RetainAllImageCache>,
     base_directory: Option<PathBuf>,
     pending_update_task: Option<Task<Result<()>>>,
+    pending_anchor_top: Option<Pixels>,
     mode: MarkdownPreviewMode,
 }
 
@@ -244,6 +245,7 @@ impl MarkdownPreviewView {
                 image_cache: RetainAllImageCache::new(cx),
                 base_directory: None,
                 pending_update_task: None,
+                pending_anchor_top: None,
                 mode,
             };
 
@@ -1181,6 +1183,51 @@ impl SearchableItem for MarkdownPreviewView {
                 .rposition(|m| m.start <= current_source_index)
                 .or(Some(matches.len().saturating_sub(1))),
         }
+    }
+
+    fn search_bar_visibility_changed(
+        &mut self,
+        _visible: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let old_bounds = self.scroll_handle.bounds();
+        if old_bounds.size.height.is_zero() {
+            return;
+        }
+        self.pending_anchor_top = Some(old_bounds.top());
+        let entity = cx.entity().downgrade();
+        // `on_next_frame` runs callbacks *before* the upcoming draw
+        // (`window.rs:1364-1372` vs `1382-1390`), so the first one still sees the pre-toggle
+        // bounds. Chain a second so the read happens after the toolbar-grown frame has been
+        // painted, mirroring the editor's `expect_bounds_change` deferral.
+        window.on_next_frame(move |window, _cx| {
+            window.on_next_frame(move |_window, cx| {
+                entity
+                    .update(cx, |this, cx| {
+                        let Some(old_top) = this.pending_anchor_top.take() else {
+                            return;
+                        };
+                        let new_bounds = this.scroll_handle.bounds();
+                        if new_bounds.size.height.is_zero() {
+                            return;
+                        }
+                        let offset = this.scroll_handle.offset();
+                        if offset.y.is_zero() {
+                            return;
+                        }
+                        // `offset.y` is non-positive; subtracting `delta` scrolls further down by
+                        // the amount the preview's top moved, anchoring content at the same
+                        // screen y. Mirrors editor::scroll::autoscroll.rs:138.
+                        let delta = new_bounds.top() - old_top;
+                        let new_y = (offset.y - delta)
+                            .clamp(-this.scroll_handle.max_offset().y, Pixels::ZERO);
+                        this.scroll_handle.set_offset(point(offset.x, new_y));
+                        cx.notify();
+                    })
+                    .ok();
+            });
+        });
     }
 }
 
