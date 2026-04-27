@@ -81,7 +81,7 @@ where
 {
     let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
     let track_color = config.track_color;
-    let border_color = config.border_color;
+    let has_border = config.border;
 
     let state = window.use_keyed_state(element_id, cx, |_, cx| {
         let parent_id = cx.entity_id();
@@ -90,7 +90,7 @@ where
 
     state.update(cx, |state, cx| {
         state.0.update(cx, |state, _cx| {
-            state.update_colors(track_color, border_color)
+            state.update_colors(track_color, has_border)
         })
     });
     state
@@ -373,7 +373,7 @@ pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     visibility: Point<ReservedSpace>,
     style: Option<ScrollbarStyle>,
     track_color: Option<Hsla>,
-    border_color: Option<Hsla>,
+    border: bool,
 }
 
 impl Scrollbars {
@@ -400,7 +400,7 @@ impl Scrollbars {
             visibility: show_along.apply_to(Default::default(), ReservedSpace::Thumb),
             style: None,
             track_color: None,
-            border_color: None,
+            border: false,
         }
     }
 }
@@ -440,7 +440,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             visibility,
             get_visibility,
             track_color,
-            border_color,
+            border,
             style,
             ..
         } = self;
@@ -451,7 +451,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
             tracked_entity: tracked_entity_id,
             visibility,
             track_color,
-            border_color,
+            border,
             get_visibility,
             style,
         }
@@ -473,15 +473,10 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
         self
     }
 
-    pub fn with_stable_track_along(
-        mut self,
-        along: ScrollAxes,
-        background_color: Hsla,
-        track_border_color: Option<Hsla>,
-    ) -> Self {
+    pub fn with_stable_track_along(mut self, along: ScrollAxes, background_color: Hsla) -> Self {
         self.visibility = along.apply_to(self.visibility, ReservedSpace::StableTrack);
         self.track_color = Some(background_color);
-        self.border_color = track_border_color;
+        self.border = true;
         self
     }
 }
@@ -604,13 +599,7 @@ enum ParentHoverEvent {
 #[derive(Clone)]
 struct TrackColors {
     background: Hsla,
-    border: Option<Hsla>,
-}
-
-impl TrackColors {
-    fn has_border(&self) -> bool {
-        self.border.is_some()
-    }
+    has_border: bool,
 }
 
 pub fn on_new_scrollbars<T: gpui::Global>(cx: &mut App) {
@@ -660,7 +649,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             visibility: config.visibility,
             track_color: config.track_color.map(|color| TrackColors {
                 background: color,
-                border: config.border_color,
+                has_border: config.border,
             }),
             show_behavior,
             get_visibility: config.get_visibility,
@@ -832,10 +821,10 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         }
     }
 
-    fn update_colors(&mut self, track_color: Option<Hsla>, border_color: Option<Hsla>) {
+    fn update_colors(&mut self, track_color: Option<Hsla>, has_border: bool) {
         self.track_color = track_color.map(|color| TrackColors {
             background: color,
-            border: border_color,
+            has_border,
         });
     }
 
@@ -1190,8 +1179,8 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                     }),
                                 );
 
-                                let has_border = track_color
-                                    .is_some_and(|track_colors| track_colors.has_border());
+                                let has_border =
+                                    track_color.is_some_and(|track_colors| track_colors.has_border);
 
                                 // Rounded style needs a bit of padding, whereas for editor scrollbars,
                                 // we want the full length of the track
@@ -1286,7 +1275,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                             let has_border = state
                                 .track_color
                                 .as_ref()
-                                .is_some_and(|track_colors| track_colors.has_border());
+                                .is_some_and(|track_colors| track_colors.has_border);
                             state.show_state.set_delta(new_delta, has_border)
                         });
 
@@ -1374,7 +1363,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     }
 
                     if let Some((track_bounds, colors)) = track_config {
-                        let has_border = colors.border.is_some();
+                        let has_border = colors.has_border;
 
                         let mut track_color = colors.background;
                         if let Some(fade) = autohide_fade
@@ -1396,12 +1385,18 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                             })
                             .unwrap_or_default();
 
+                        let border_color = if has_border {
+                            cx.theme().colors().border_variant
+                        } else {
+                            Hsla::transparent_black()
+                        };
+
                         window.paint_quad(quad(
                             *track_bounds,
                             Corners::default(),
                             track_color,
                             border_edges,
-                            colors.border.unwrap_or_else(Hsla::transparent_black),
+                            border_color,
                             BorderStyle::Solid,
                         ));
                     }

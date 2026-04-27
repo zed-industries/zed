@@ -1286,7 +1286,6 @@ impl Render for TerminalView {
                                 .with_stable_track_along(
                                     ScrollAxes::Vertical,
                                     colors.editor_background,
-                                    Some(colors.border),
                                 )
                                 .tracked_scroll_handle(&self.scroll_handle),
                             window,
