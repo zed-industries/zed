@@ -448,7 +448,7 @@ fn appearance_page() -> SettingsPage {
                                     .as_ref()?
                                     .discriminant() as usize])
                         },
-                        write: |settings_content, value, _app: &App| {
+                        write: |settings_content, value, app: &App| {
                             let Some(value) = value else {
                                 settings_content.theme.theme = None;
                                 return;
@@ -622,7 +622,7 @@ fn appearance_page() -> SettingsPage {
                                     .as_ref()?
                                     .discriminant() as usize])
                         },
-                        write: |settings_content, value, _| {
+                        write: |settings_content, value, app| {
                             let Some(value) = value else {
                                 settings_content.theme.icon_theme = None;
                                 return;
@@ -639,7 +639,7 @@ fn appearance_page() -> SettingsPage {
                                                 theme_settings::ThemeAppearanceMode::Light => light.clone(),
                                                 theme_settings::ThemeAppearanceMode::Dark => dark.clone(),
                                                 theme_settings::ThemeAppearanceMode::System => {
-                                                    if SystemAppearance::global(_app).is_light() {
+                                                    if SystemAppearance::global(app).is_light() {
                                                         light.clone()
                                                     } else {
                                                         dark.clone()
