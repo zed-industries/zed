@@ -68,7 +68,7 @@ impl Vim {
                 });
                 let Some(kind) = motion_kind else { return };
                 vim.copy_ranges(editor, kind, false, ranges_to_copy, window, cx);
-                editor.insert("", window, cx);
+                editor.delete_selections_with_linked_edits(window, cx);
 
                 // Fixup cursor position after the deletion
                 editor.set_clip_at_line_ends(true, cx);
@@ -169,7 +169,7 @@ impl Vim {
                     });
                 });
                 vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
-                editor.insert("", window, cx);
+                editor.delete_selections_with_linked_edits(window, cx);
 
                 // Fixup cursor position after the deletion
                 editor.set_clip_at_line_ends(true, cx);

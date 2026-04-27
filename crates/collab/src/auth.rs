@@ -1,26 +1,13 @@
-use crate::{
-    AppState, Error, Result,
-    db::{AccessTokenId, Database, UserId},
-    rpc::Principal,
-};
+use crate::{AppState, Error, db::UserId, rpc::Principal};
 use anyhow::Context as _;
 use axum::{
     http::{self, Request, StatusCode},
     middleware::Next,
     response::IntoResponse,
 };
-use base64::prelude::*;
-use prometheus::{Histogram, exponential_buckets, register_histogram};
+use cloud_api_types::GetAuthenticatedUserResponse;
 pub use rpc::auth::random_token;
-use scrypt::{
-    Scrypt,
-    password_hash::{PasswordHash, PasswordVerifier},
-};
-use serde::{Deserialize, Serialize};
-use sha2::Digest;
-use std::sync::OnceLock;
-use std::{sync::Arc, time::Instant};
-use subtle::ConstantTimeEq;
+use std::sync::Arc;
 
 /// Validates the authorization header and adds an Extension<Principal> to the request.
 /// Authorization: <user-id> <token>
@@ -64,11 +51,23 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
         )
     })?;
 
-    let validate_result = verify_access_token(access_token, user_id, &state.db).await;
+    let http_client = state.http_client.clone().expect("no HTTP client");
 
-    if let Ok(validate_result) = validate_result
-        && validate_result.is_valid
-    {
+    let response = http_client
+        .get(format!("{}/client/users/me", state.config.zed_cloud_url()))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("{user_id} {access_token}"))
+        .send()
+        .await
+        .context("failed to validate access token")?;
+    if let Ok(response) = response.error_for_status() {
+        let response_body: GetAuthenticatedUserResponse = response
+            .json()
+            .await
+            .context("failed to parse response body")?;
+
+        let user_id = UserId(response_body.user.id);
+
         let user = state
             .db
             .get_user_by_id(user_id)
@@ -83,69 +82,4 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
         StatusCode::UNAUTHORIZED,
         "invalid credentials".to_string(),
     ))
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct AccessTokenJson {
-    pub version: usize,
-    pub id: AccessTokenId,
-    pub token: String,
-}
-
-/// Hashing prevents anyone with access to the database being able to login.
-/// As the token is randomly generated, we don't need to worry about scrypt-style
-/// protection.
-pub fn hash_access_token(token: &str) -> String {
-    let digest = sha2::Sha256::digest(token);
-    format!("$sha256${}", BASE64_URL_SAFE.encode(digest))
-}
-
-pub struct VerifyAccessTokenResult {
-    pub is_valid: bool,
-}
-
-/// Checks that the given access token is valid for the given user.
-pub async fn verify_access_token(
-    token: &str,
-    user_id: UserId,
-    db: &Arc<Database>,
-) -> Result<VerifyAccessTokenResult> {
-    static METRIC_ACCESS_TOKEN_HASHING_TIME: OnceLock<Histogram> = OnceLock::new();
-    let metric_access_token_hashing_time = METRIC_ACCESS_TOKEN_HASHING_TIME.get_or_init(|| {
-        register_histogram!(
-            "access_token_hashing_time",
-            "time spent hashing access tokens",
-            exponential_buckets(10.0, 2.0, 10).unwrap(),
-        )
-        .unwrap()
-    });
-
-    let token: AccessTokenJson = serde_json::from_str(token)?;
-
-    let db_token = db.get_access_token(token.id).await?;
-    if db_token.user_id != user_id {
-        return Err(anyhow::anyhow!("no such access token"))?;
-    }
-    let t0 = Instant::now();
-
-    let is_valid = if db_token.hash.starts_with("$scrypt$") {
-        let db_hash = PasswordHash::new(&db_token.hash).map_err(anyhow::Error::new)?;
-        Scrypt
-            .verify_password(token.token.as_bytes(), &db_hash)
-            .is_ok()
-    } else {
-        let token_hash = hash_access_token(&token.token);
-        db_token.hash.as_bytes().ct_eq(token_hash.as_ref()).into()
-    };
-
-    let duration = t0.elapsed();
-    log::info!("hashed access token in {:?}", duration);
-    metric_access_token_hashing_time.observe(duration.as_millis() as f64);
-
-    if is_valid && db_token.hash.starts_with("$scrypt$") {
-        let new_hash = hash_access_token(&token.token);
-        db.update_access_token_hash(db_token.id, &new_hash).await?;
-    }
-
-    Ok(VerifyAccessTokenResult { is_valid })
 }

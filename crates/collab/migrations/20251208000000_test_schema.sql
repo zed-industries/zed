@@ -1,21 +1,7 @@
+-- This file is auto-generated. Do not modify it by hand.
+-- To regenerate, run `cargo xtask db dump-schema app --collab` from the Cloud repository.
+
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
-
-CREATE TABLE public.access_tokens (
-    id integer NOT NULL,
-    user_id integer,
-    hash character varying(128),
-    impersonated_user_id integer
-);
-
-CREATE SEQUENCE public.access_tokens_id_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-ALTER SEQUENCE public.access_tokens_id_seq OWNED BY public.access_tokens.id;
 
 CREATE TABLE public.breakpoints (
     id integer NOT NULL,
@@ -321,7 +307,8 @@ CREATE TABLE public.project_repositories (
     head_commit_details character varying,
     merge_message character varying,
     remote_upstream_url character varying,
-    remote_origin_url character varying
+    remote_origin_url character varying,
+    linked_worktrees text
 );
 
 CREATE TABLE public.project_repository_statuses (
@@ -333,7 +320,9 @@ CREATE TABLE public.project_repository_statuses (
     first_status integer,
     second_status integer,
     scan_id bigint NOT NULL,
-    is_deleted boolean NOT NULL
+    is_deleted boolean NOT NULL,
+    lines_added integer,
+    lines_deleted integer
 );
 
 CREATE TABLE public.projects (
@@ -343,7 +332,8 @@ CREATE TABLE public.projects (
     room_id integer,
     host_connection_id integer,
     host_connection_server_id integer,
-    windows_paths boolean DEFAULT false
+    windows_paths boolean DEFAULT false,
+    features text NOT NULL DEFAULT ''
 );
 
 CREATE SEQUENCE public.projects_id_seq
@@ -494,10 +484,9 @@ CREATE TABLE public.worktrees (
     visible boolean NOT NULL,
     scan_id bigint NOT NULL,
     is_complete boolean DEFAULT false NOT NULL,
-    completed_scan_id bigint
+    completed_scan_id bigint,
+    root_repo_common_dir character varying
 );
-
-ALTER TABLE ONLY public.access_tokens ALTER COLUMN id SET DEFAULT nextval('public.access_tokens_id_seq'::regclass);
 
 ALTER TABLE ONLY public.breakpoints ALTER COLUMN id SET DEFAULT nextval('public.breakpoints_id_seq'::regclass);
 
@@ -532,9 +521,6 @@ ALTER TABLE ONLY public.rooms ALTER COLUMN id SET DEFAULT nextval('public.rooms_
 ALTER TABLE ONLY public.servers ALTER COLUMN id SET DEFAULT nextval('public.servers_id_seq'::regclass);
 
 ALTER TABLE ONLY public.users ALTER COLUMN id SET DEFAULT nextval('public.users_id_seq'::regclass);
-
-ALTER TABLE ONLY public.access_tokens
-    ADD CONSTRAINT access_tokens_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.breakpoints
     ADD CONSTRAINT breakpoints_pkey PRIMARY KEY (id);
@@ -627,8 +613,6 @@ ALTER TABLE ONLY public.worktrees
     ADD CONSTRAINT worktrees_pkey PRIMARY KEY (project_id, id);
 
 CREATE INDEX idx_shared_threads_user_id ON public.shared_threads USING btree (user_id);
-
-CREATE INDEX index_access_tokens_user_id ON public.access_tokens USING btree (user_id);
 
 CREATE INDEX index_breakpoints_on_project_id ON public.breakpoints USING btree (project_id);
 
@@ -728,12 +712,11 @@ CREATE INDEX trigram_index_extensions_name ON public.extensions USING gin (name 
 
 CREATE INDEX trigram_index_users_on_github_login ON public.users USING gin (github_login public.gin_trgm_ops);
 
+CREATE INDEX trigram_index_users_on_name ON public.users USING gin (name public.gin_trgm_ops);
+
 CREATE UNIQUE INDEX uix_channels_parent_path_name ON public.channels USING btree (parent_path, name) WHERE ((parent_path IS NOT NULL) AND (parent_path <> ''::text));
 
 CREATE UNIQUE INDEX uix_users_on_github_user_id ON public.users USING btree (github_user_id);
-
-ALTER TABLE ONLY public.access_tokens
-    ADD CONSTRAINT access_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.breakpoints
     ADD CONSTRAINT breakpoints_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
@@ -778,7 +761,7 @@ ALTER TABLE ONLY public.contacts
     ADD CONSTRAINT contacts_user_id_b_fkey FOREIGN KEY (user_id_b) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.contributors
-    ADD CONSTRAINT contributors_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT contributors_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.extension_versions
     ADD CONSTRAINT extension_versions_extension_id_fkey FOREIGN KEY (extension_id) REFERENCES public.extensions(id);

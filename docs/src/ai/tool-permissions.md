@@ -54,7 +54,7 @@ The `tool_permissions` setting lets you customize tool permissions by specifying
 | `restore_file_from_disk` | The file paths               |
 | `save_file`              | The file paths               |
 | `fetch`                  | The URL                      |
-| `web_search`             | The search query             |
+| `search_web`             | The search query             |
 
 For MCP tools, use the format `mcp:<server>:<tool_name>`.
 For example, a tool called `create_issue` on a server called `github` would be `mcp:github:create_issue`.
@@ -92,8 +92,20 @@ For example, a tool called `create_issue` on a server called `github` would be `
 
 ```json [settings]
 {
-  "pattern": "your-regex-here",
-  "case_sensitive": false
+  "agent": {
+    "tool_permissions": {
+      "tools": {
+        "edit_file": {
+          "always_allow": [
+            {
+              "pattern": "your-regex-here",
+              "case_sensitive": false
+            }
+          ]
+        }
+      }
+    }
+  }
 }
 ```
 

@@ -3,23 +3,26 @@ pub mod terminal_element;
 pub mod terminal_panel;
 mod terminal_path_like_target;
 pub mod terminal_scrollbar;
-mod terminal_slash_command;
 
-use assistant_slash_command::SlashCommandRegistry;
-use editor::{Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
-use gpui::{
-    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Point,
-    Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred,
-    div,
+use editor::{
+    Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager,
+    ui_scrollbar_settings_from_raw,
 };
+use gpui::{
+    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
+    FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
+    Pixels, Point, Render, ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions,
+    anchored, deferred, div,
+};
+use itertools::Itertools;
 use menu;
-use persistence::TERMINAL_DB;
-use project::{Project, search::SearchQuery};
+use persistence::TerminalDb;
+use project::{Project, ProjectEntryId, search::SearchQuery};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{Settings, SettingsStore, TerminalBlink, WorkingDirectory};
+use settings::{Settings, SettingsStore, TerminalBell, TerminalBlink, WorkingDirectory};
 use std::{
+    any::Any,
     cmp,
     ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
@@ -42,18 +45,17 @@ use terminal_element::TerminalElement;
 use terminal_panel::TerminalPanel;
 use terminal_path_like_target::{hover_path_like_target, open_path_like_target};
 use terminal_scrollbar::TerminalScrollHandle;
-use terminal_slash_command::TerminalSlashCommand;
 use ui::{
     ContextMenu, Divider, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
     prelude::*,
-    scrollbars::{self, GlobalSetting, ScrollbarVisibility},
+    scrollbars::{self, ScrollbarVisibility},
 };
 use util::ResultExt;
 use workspace::{
-    CloseActiveItem, NewCenterTerminal, NewTerminal, ToolbarItemLocation, Workspace, WorkspaceId,
-    delete_unloaded_items,
+    CloseActiveItem, DraggedSelection, DraggedTab, NewCenterTerminal, NewTerminal, Pane,
+    ToolbarItemLocation, Workspace, WorkspaceId, delete_unloaded_items,
     item::{
-        BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
+        HighlightedText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
     register_serializable_item,
     searchable::{
@@ -96,7 +98,6 @@ actions!(
 pub struct RenameTerminal;
 
 pub fn init(cx: &mut App) {
-    assistant_slash_command::init(cx);
     terminal_panel::init(cx);
 
     register_serializable_item::<TerminalView>(cx);
@@ -105,7 +106,6 @@ pub fn init(cx: &mut App) {
         workspace.register_action(TerminalView::deploy);
     })
     .detach();
-    SlashCommandRegistry::global(cx).register_command(TerminalSlashCommand, true);
 }
 
 pub struct BlockProperties {
@@ -489,6 +489,7 @@ impl TerminalView {
     pub fn deploy_context_menu(
         &mut self,
         position: Point<Pixels>,
+        has_selection: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -497,16 +498,13 @@ impl TerminalView {
             .upgrade()
             .and_then(|workspace| workspace.read(cx).panel::<TerminalPanel>(cx))
             .is_some_and(|terminal_panel| terminal_panel.read(cx).assistant_enabled());
-        let has_selection = self
-            .terminal
-            .read(cx)
-            .last_content
-            .selection_text
-            .as_ref()
-            .is_some_and(|text| !text.is_empty());
         let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
             menu.context(self.focus_handle.clone())
                 .action("New Terminal", Box::new(NewTerminal::default()))
+                .action(
+                    "New Center Terminal",
+                    Box::new(NewCenterTerminal::default()),
+                )
                 .separator()
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
@@ -752,7 +750,14 @@ impl TerminalView {
     }
 
     pub fn should_show_cursor(&self, focused: bool, cx: &mut Context<Self>) -> bool {
-        // Always show cursor when not focused or in special modes
+        // Hide cursor when in embedded mode and not focused (read-only output like Agent panel)
+        if let TerminalMode::Embedded { .. } = &self.mode {
+            if !focused {
+                return false;
+            }
+        }
+
+        // For Standalone mode: always show cursor when not focused or in special modes
         if !focused
             || self
                 .terminal
@@ -811,17 +816,16 @@ impl TerminalView {
             return;
         };
 
-        if clipboard.entries().iter().any(|entry| match entry {
-            ClipboardEntry::Image(image) => !image.bytes.is_empty(),
-            _ => false,
-        }) {
-            self.forward_ctrl_v(cx);
-            return;
-        }
-
-        if let Some(text) = clipboard.text() {
-            self.terminal
-                .update(cx, |terminal, _cx| terminal.paste(&text));
+        match clipboard.entries().first() {
+            Some(ClipboardEntry::Image(image)) if !image.bytes.is_empty() => {
+                self.forward_ctrl_v(cx);
+            }
+            _ => {
+                if let Some(text) = clipboard.text() {
+                    self.terminal
+                        .update(cx, |terminal, _cx| terminal.paste(&text));
+                }
+            }
         }
     }
 
@@ -833,8 +837,18 @@ impl TerminalView {
         });
     }
 
+    fn add_paths_to_terminal(&self, paths: &[PathBuf], window: &mut Window, cx: &mut App) {
+        let mut text = paths.iter().map(|path| format!(" {path:?}")).join("");
+        text.push(' ');
+        window.focus(&self.focus_handle(cx), cx);
+        self.terminal.update(cx, |terminal, _| {
+            terminal.paste(&text);
+        });
+    }
+
     fn send_text(&mut self, text: &SendText, _: &mut Window, cx: &mut Context<Self>) {
         self.clear_bell(cx);
+        self.blink_manager.update(cx, BlinkManager::pause_blinking);
         self.terminal.update(cx, |term, _| {
             term.input(text.0.to_string().into_bytes());
         });
@@ -843,6 +857,7 @@ impl TerminalView {
     fn send_keystroke(&mut self, text: &SendKeystroke, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
             self.clear_bell(cx);
+            self.blink_manager.update(cx, BlinkManager::pause_blinking);
             self.process_keystroke(&keystroke, cx);
         }
     }
@@ -999,6 +1014,9 @@ fn subscribe_for_terminal_events(
 
                 Event::Bell => {
                     terminal_view.has_bell = true;
+                    if let TerminalBell::System = TerminalSettings::get_global(cx).bell {
+                        window.play_system_bell();
+                    }
                     cx.emit(Event::Wakeup);
                 }
 
@@ -1104,20 +1122,15 @@ fn regex_search_for_query(query: &SearchQuery) -> Option<RegexSearch> {
     }
 }
 
+#[derive(Default)]
 struct TerminalScrollbarSettingsWrapper;
-
-impl GlobalSetting for TerminalScrollbarSettingsWrapper {
-    fn get_value(_cx: &App) -> &Self {
-        &Self
-    }
-}
 
 impl ScrollbarVisibility for TerminalScrollbarSettingsWrapper {
     fn visibility(&self, cx: &App) -> scrollbars::ShowScrollbar {
         TerminalSettings::get_global(cx)
             .scrollbar
             .show
-            .map(Into::into)
+            .map(ui_scrollbar_settings_from_raw)
             .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
     }
 }
@@ -1230,12 +1243,21 @@ impl Render for TerminalView {
                 MouseButton::Right,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
                     if !this.terminal.read(cx).mouse_mode(event.modifiers.shift) {
-                        if this.terminal.read(cx).last_content.selection.is_none() {
+                        let had_selection = this.terminal.read(cx).last_content.selection.is_some();
+                        if !had_selection {
                             this.terminal.update(cx, |terminal, _| {
                                 terminal.select_word_at_event_position(event);
                             });
-                        };
-                        this.deploy_context_menu(event.position, window, cx);
+                        }
+                        let has_selection = !had_selection
+                            || this
+                                .terminal
+                                .read(cx)
+                                .last_content
+                                .selection_text
+                                .as_ref()
+                                .is_some_and(|text| !text.is_empty());
+                        this.deploy_context_menu(event.position, has_selection, window, cx);
                         cx.notify();
                     }
                 }),
@@ -1274,7 +1296,7 @@ impl Render for TerminalView {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::Corner::TopLeft)
+                        .anchor(gpui::Anchor::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)
@@ -1340,9 +1362,18 @@ impl Item for TerminalView {
             None => (IconName::Terminal, Color::Muted, None),
         };
 
+        let self_handle = self.self_handle.clone();
         h_flex()
             .gap_1()
             .group("term-tab-icon")
+            .when(!params.selected, |this| {
+                this.track_focus(&self.focus_handle)
+            })
+            .on_action(move |action: &RenameTerminal, window, cx| {
+                self_handle
+                    .update(cx, |this, cx| this.rename_terminal(action, window, cx))
+                    .ok();
+            })
             .child(
                 h_flex()
                     .group("term-tab-icon")
@@ -1410,6 +1441,154 @@ impl Item for TerminalView {
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
         None
+    }
+
+    fn handle_drop(
+        &self,
+        active_pane: &Pane,
+        dropped: &dyn Any,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let Some(project) = self.project.upgrade() else {
+            return false;
+        };
+
+        if let Some(paths) = dropped.downcast_ref::<ExternalPaths>() {
+            let is_local = project.read(cx).is_local();
+            if is_local {
+                self.add_paths_to_terminal(paths.paths(), window, cx);
+                return true;
+            }
+
+            return false;
+        } else if let Some(tab) = dropped.downcast_ref::<DraggedTab>() {
+            let Some(self_handle) = self.self_handle.upgrade() else {
+                return false;
+            };
+
+            let Some(workspace) = self.workspace.upgrade() else {
+                return false;
+            };
+
+            let Some(this_pane) = workspace.read(cx).pane_for(&self_handle) else {
+                return false;
+            };
+
+            let item = if tab.pane == this_pane {
+                active_pane.item_for_index(tab.ix)
+            } else {
+                tab.pane.read(cx).item_for_index(tab.ix)
+            };
+
+            let Some(item) = item else {
+                return false;
+            };
+
+            if item.downcast::<TerminalView>().is_some() {
+                let Some(split_direction) = active_pane.drag_split_direction() else {
+                    return false;
+                };
+
+                let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+                    return false;
+                };
+
+                if !terminal_panel.read(cx).center.panes().contains(&&this_pane) {
+                    return false;
+                }
+
+                let source = tab.pane.clone();
+                let item_id_to_move = item.item_id();
+                let is_zoomed = {
+                    let terminal_panel = terminal_panel.read(cx);
+                    if terminal_panel.active_pane == this_pane {
+                        active_pane.is_zoomed()
+                    } else {
+                        terminal_panel.active_pane.read(cx).is_zoomed()
+                    }
+                };
+
+                let workspace = workspace.downgrade();
+                let terminal_panel = terminal_panel.downgrade();
+                // Defer the split operation to avoid re-entrancy panic.
+                // The pane may be the one currently being updated, so we cannot
+                // call mark_positions (via split) synchronously.
+                window
+                    .spawn(cx, async move |cx| {
+                        cx.update(|window, cx| {
+                            let Ok(new_pane) = terminal_panel.update(cx, |terminal_panel, cx| {
+                                let new_pane = terminal_panel::new_terminal_pane(
+                                    workspace, project, is_zoomed, window, cx,
+                                );
+                                terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
+                                terminal_panel.center.split(
+                                    &this_pane,
+                                    &new_pane,
+                                    split_direction,
+                                    cx,
+                                );
+                                anyhow::Ok(new_pane)
+                            }) else {
+                                return;
+                            };
+
+                            let Some(new_pane) = new_pane.log_err() else {
+                                return;
+                            };
+
+                            workspace::move_item(
+                                &source,
+                                &new_pane,
+                                item_id_to_move,
+                                new_pane.read(cx).active_item_index(),
+                                true,
+                                window,
+                                cx,
+                            );
+                        })
+                        .ok();
+                    })
+                    .detach();
+
+                return true;
+            } else {
+                if let Some(project_path) = item.project_path(cx)
+                    && let Some(path) = project.read(cx).absolute_path(&project_path, cx)
+                {
+                    self.add_paths_to_terminal(&[path], window, cx);
+                    return true;
+                }
+            }
+
+            return false;
+        } else if let Some(selection) = dropped.downcast_ref::<DraggedSelection>() {
+            let project = project.read(cx);
+            let paths = selection
+                .items()
+                .map(|selected_entry| selected_entry.entry_id)
+                .filter_map(|entry_id| project.path_for_entry(entry_id, cx))
+                .filter_map(|project_path| project.absolute_path(&project_path, cx))
+                .collect::<Vec<_>>();
+
+            if !paths.is_empty() {
+                self.add_paths_to_terminal(&paths, window, cx);
+            }
+
+            return true;
+        } else if let Some(&entry_id) = dropped.downcast_ref::<ProjectEntryId>() {
+            let project = project.read(cx);
+            if let Some(path) = project
+                .path_for_entry(entry_id, cx)
+                .and_then(|project_path| project.absolute_path(&project_path, cx))
+            {
+                self.add_paths_to_terminal(&[path], window, cx);
+            }
+
+            return true;
+        }
+
+        false
     }
 
     fn tab_extra_context_menu_actions(
@@ -1496,12 +1675,14 @@ impl Item for TerminalView {
         }
     }
 
-    fn breadcrumbs(&self, cx: &App) -> Option<Vec<BreadcrumbText>> {
-        Some(vec![BreadcrumbText {
-            text: self.terminal().read(cx).breadcrumb_text.clone(),
-            highlights: None,
-            font: None,
-        }])
+    fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<Font>)> {
+        Some((
+            vec![HighlightedText {
+                text: self.terminal().read(cx).breadcrumb_text.clone().into(),
+                highlights: vec![],
+            }],
+            None,
+        ))
     }
 
     fn added_to_workspace(
@@ -1515,11 +1696,11 @@ impl Item for TerminalView {
                 log::debug!(
                     "Updating workspace id for the terminal, old: {old_id:?}, new: {new_id:?}",
                 );
-                cx.background_spawn(TERMINAL_DB.update_workspace_id(
-                    new_id,
-                    old_id,
-                    cx.entity_id().as_u64(),
-                ))
+                let db = TerminalDb::global(cx);
+                let entity_id = cx.entity_id().as_u64();
+                cx.background_spawn(async move {
+                    db.update_workspace_id(new_id, old_id, entity_id).await
+                })
                 .detach();
             }
             self.workspace_id = workspace.database_id();
@@ -1542,7 +1723,8 @@ impl SerializableItem for TerminalView {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<()>> {
-        delete_unloaded_items(alive_items, workspace_id, "terminals", &TERMINAL_DB, cx)
+        let db = TerminalDb::global(cx);
+        delete_unloaded_items(alive_items, workspace_id, "terminals", &db, cx)
     }
 
     fn serialize(
@@ -1567,14 +1749,13 @@ impl SerializableItem for TerminalView {
         let custom_title = self.custom_title.clone();
         self.needs_serialize = false;
 
+        let db = TerminalDb::global(cx);
         Some(cx.background_spawn(async move {
             if let Some(cwd) = cwd {
-                TERMINAL_DB
-                    .save_working_directory(item_id, workspace_id, cwd)
+                db.save_working_directory(item_id, workspace_id, cwd)
                     .await?;
             }
-            TERMINAL_DB
-                .save_custom_title(item_id, workspace_id, custom_title)
+            db.save_custom_title(item_id, workspace_id, custom_title)
                 .await?;
             Ok(())
         }))
@@ -1595,7 +1776,8 @@ impl SerializableItem for TerminalView {
         window.spawn(cx, async move |cx| {
             let (cwd, custom_title) = cx
                 .update(|_window, cx| {
-                    let from_db = TERMINAL_DB
+                    let db = TerminalDb::global(cx);
+                    let from_db = db
                         .get_working_directory(item_id, workspace_id)
                         .log_err()
                         .flatten();
@@ -1609,7 +1791,7 @@ impl SerializableItem for TerminalView {
                             .upgrade()
                             .and_then(|workspace| default_working_directory(workspace.read(cx), cx))
                     };
-                    let custom_title = TERMINAL_DB
+                    let custom_title = db
                         .get_custom_title(item_id, workspace_id)
                         .log_err()
                         .flatten()
@@ -1652,6 +1834,7 @@ impl SearchableItem for TerminalView {
             regex: true,
             replacement: false,
             selection: false,
+            select_all: false,
             find_in_results: false,
         }
     }
@@ -1675,7 +1858,12 @@ impl SearchableItem for TerminalView {
     }
 
     /// Returns the selection content to pre-load into this search
-    fn query_suggestion(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> String {
+    fn query_suggestion(
+        &mut self,
+        _ignore_settings: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> String {
         self.terminal()
             .read(cx)
             .last_content
@@ -1795,7 +1983,12 @@ impl SearchableItem for TerminalView {
 
 /// Gets the working directory for the given workspace, respecting the user's settings.
 /// Falls back to home directory when no project directory is available.
+///
+/// For remote projects, local-only resolution (home dir fallback, shell expansion,
+/// local `is_dir` checks) is skipped -- returning `None` lets the remote shell
+/// open in the remote user's home directory by default.
 pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+    let is_remote = workspace.project().read(cx).is_remote();
     let directory = match &TerminalSettings::get_global(cx).working_directory {
         WorkingDirectory::CurrentFileDirectory => workspace
             .project()
@@ -1805,12 +1998,18 @@ pub(crate) fn default_working_directory(workspace: &Workspace, cx: &App) -> Opti
         WorkingDirectory::CurrentProjectDirectory => current_project_directory(workspace, cx),
         WorkingDirectory::FirstProjectDirectory => first_project_directory(workspace, cx),
         WorkingDirectory::AlwaysHome => None,
-        WorkingDirectory::Always { directory } => shellexpand::full(directory)
+        WorkingDirectory::Always { directory } if !is_remote => shellexpand::full(directory)
             .ok()
             .map(|dir| Path::new(&dir.to_string()).to_path_buf())
             .filter(|dir| dir.is_dir()),
+        WorkingDirectory::Always { .. } => None,
     };
-    directory.or_else(dirs::home_dir)
+
+    if is_remote {
+        directory
+    } else {
+        directory.or_else(dirs::home_dir)
+    }
 }
 
 fn current_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
@@ -1840,10 +2039,47 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use project::{Entry, Project, ProjectPath, Worktree};
-    use std::path::Path;
+    use remote::RemoteClient;
+    use std::path::{Path, PathBuf};
     use util::paths::PathStyle;
     use util::rel_path::RelPath;
-    use workspace::{AppState, MultiWorkspace};
+    use workspace::item::test::{TestItem, TestProjectItem};
+    use workspace::{AppState, MultiWorkspace, SelectedEntry};
+
+    fn expected_drop_text(paths: &[PathBuf]) -> String {
+        let mut text = String::new();
+        for path in paths {
+            text.push(' ');
+            text.push_str(&format!("{path:?}"));
+        }
+        text.push(' ');
+        text
+    }
+
+    fn assert_drop_writes_to_terminal(
+        pane: &Entity<Pane>,
+        terminal_view_index: usize,
+        terminal: &Entity<Terminal>,
+        dropped: &dyn Any,
+        expected_text: &str,
+        window: &mut Window,
+        cx: &mut Context<MultiWorkspace>,
+    ) {
+        let _ = terminal.update(cx, |terminal, _| terminal.take_input_log());
+
+        let handled = pane.update(cx, |pane, cx| {
+            pane.item_for_index(terminal_view_index)
+                .unwrap()
+                .handle_drop(pane, dropped, window, cx)
+        });
+        assert!(handled, "handle_drop should return true for {:?}", dropped);
+
+        let mut input_log = terminal.update(cx, |terminal, _| terminal.take_input_log());
+        assert_eq!(input_log.len(), 1, "expected exactly one write to terminal");
+        let written =
+            String::from_utf8(input_log.remove(0)).expect("terminal write should be valid UTF-8");
+        assert_eq!(written, expected_text);
+    }
 
     // Working directory calculation tests
 
@@ -1863,6 +2099,22 @@ mod tests {
             assert_eq!(res, dirs::home_dir());
             let res = first_project_directory(workspace, cx);
             assert_eq!(res, None);
+        });
+    }
+
+    #[gpui::test]
+    async fn remote_no_worktree_uses_remote_shell_default_cwd(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let (_project, workspace) = init_remote_test(cx, server_cx).await;
+
+        cx.read(|cx| {
+            let workspace = workspace.read(cx);
+
+            assert!(workspace.project().read(cx).is_remote());
+            assert!(workspace.worktrees(cx).next().is_none());
+            assert_eq!(default_working_directory(workspace, cx), None);
         });
     }
 
@@ -1972,24 +2224,7 @@ mod tests {
         let (project, _workspace) = init_test(cx).await;
 
         let (wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
-        let entry = cx
-            .update(|cx| {
-                wt.update(cx, |wt, cx| {
-                    wt.create_entry(
-                        RelPath::new(Path::new("src/main.rs"), PathStyle::local())
-                            .unwrap()
-                            .as_ref()
-                            .into(),
-                        false,
-                        None,
-                        cx,
-                    )
-                })
-            })
-            .await
-            .unwrap()
-            .into_included()
-            .unwrap();
+        let entry = create_file_in_worktree(wt.clone(), "src/main.rs", cx).await;
         insert_active_entry_for(wt, entry, project.clone(), cx);
 
         cx.update(|cx| {
@@ -2014,9 +2249,21 @@ mod tests {
 
     /// Creates a worktree with 1 file: /root.txt
     pub async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<Workspace>) {
+        let (project, workspace, _) = init_test_with_window(cx).await;
+        (project, workspace)
+    }
+
+    /// Creates a worktree with 1 file /root.txt and returns the project, workspace, and window handle.
+    async fn init_test_with_window(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<Project>,
+        Entity<Workspace>,
+        gpui::WindowHandle<MultiWorkspace>,
+    ) {
         let params = cx.update(AppState::test);
         cx.update(|cx| {
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
         });
 
         let project = Project::test(params.fs.clone(), [], cx).await;
@@ -2026,7 +2273,90 @@ mod tests {
             .read_with(cx, |mw, _| mw.workspace().clone())
             .unwrap();
 
+        (project, workspace, window_handle)
+    }
+
+    async fn init_remote_test(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) -> (Entity<Project>, Entity<Workspace>) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        let params = cx.update(AppState::test);
+        let (opts, server_session, connect_guard) = RemoteClient::fake_server(cx, server_cx);
+        let ping_handler = server_cx.new(|_| ());
+        server_session.add_request_handler::<rpc::proto::Ping, _, _, _>(
+            ping_handler.downgrade(),
+            |_entity, _envelope, _cx| async { Ok(rpc::proto::Ack {}) },
+        );
+        drop(connect_guard);
+
+        let remote_client = RemoteClient::connect_mock(opts, cx).await;
+        let project = cx.update(|cx| {
+            Project::remote(
+                remote_client,
+                params.client.clone(),
+                params.node_runtime.clone(),
+                params.user_store.clone(),
+                params.languages.clone(),
+                params.fs.clone(),
+                false,
+                cx,
+            )
+        });
+
+        let window_handle = cx.add_window({
+            let params = params.clone();
+            let project_for_workspace = project.clone();
+            move |window, cx| {
+                window.activate_window();
+                let workspace = cx.new(|cx| {
+                    Workspace::new(
+                        None,
+                        project_for_workspace.clone(),
+                        params.clone(),
+                        window,
+                        cx,
+                    )
+                });
+                MultiWorkspace::new(workspace, window, cx)
+            }
+        });
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
         (project, workspace)
+    }
+
+    /// Creates a file in the given worktree and returns its entry.
+    async fn create_file_in_worktree(
+        worktree: Entity<Worktree>,
+        relative_path: impl AsRef<Path>,
+        cx: &mut TestAppContext,
+    ) -> Entry {
+        cx.update(|cx| {
+            worktree.update(cx, |worktree, cx| {
+                worktree.create_entry(
+                    RelPath::new(relative_path.as_ref(), PathStyle::local())
+                        .unwrap()
+                        .as_ref()
+                        .into(),
+                    false,
+                    None,
+                    cx,
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .into_included()
+        .unwrap()
     }
 
     /// Creates a worktree with 1 folder: /root{suffix}/
@@ -2087,6 +2417,183 @@ mod tests {
             };
             project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
         });
+    }
+
+    // Terminal drag/drop test
+
+    #[gpui::test]
+    async fn test_handle_drop_writes_paths_for_all_drop_types(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+
+        let (worktree, _) = create_folder_wt(project.clone(), "/root/", cx).await;
+        let first_entry = create_file_in_worktree(worktree.clone(), "first.txt", cx).await;
+        let second_entry = create_file_in_worktree(worktree.clone(), "second.txt", cx).await;
+
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+        let first_path = project
+            .read_with(cx, |project, cx| {
+                project.absolute_path(
+                    &ProjectPath {
+                        worktree_id,
+                        path: first_entry.path.clone(),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+        let second_path = project
+            .read_with(cx, |project, cx| {
+                project.absolute_path(
+                    &ProjectPath {
+                        worktree_id,
+                        path: second_entry.path.clone(),
+                    },
+                    cx,
+                )
+            })
+            .unwrap();
+
+        let (active_pane, terminal, terminal_view, tab_item) = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let active_pane = workspace.read(cx).active_pane().clone();
+
+                let terminal = cx.new(|cx| {
+                    terminal::TerminalBuilder::new_display_only(
+                        CursorShape::default(),
+                        terminal::terminal_settings::AlternateScroll::On,
+                        None,
+                        0,
+                        cx.background_executor(),
+                        PathStyle::local(),
+                    )
+                    .unwrap()
+                    .subscribe(cx)
+                });
+                let terminal_view = cx.new(|cx| {
+                    TerminalView::new(
+                        terminal.clone(),
+                        workspace.downgrade(),
+                        None,
+                        project.downgrade(),
+                        window,
+                        cx,
+                    )
+                });
+
+                active_pane.update(cx, |pane, cx| {
+                    pane.add_item(
+                        Box::new(terminal_view.clone()),
+                        true,
+                        false,
+                        None,
+                        window,
+                        cx,
+                    );
+                });
+
+                let tab_project_item = cx.new(|_| TestProjectItem {
+                    entry_id: Some(second_entry.id),
+                    project_path: Some(ProjectPath {
+                        worktree_id,
+                        path: second_entry.path.clone(),
+                    }),
+                    is_dirty: false,
+                });
+                let tab_item =
+                    cx.new(|cx| TestItem::new(cx).with_project_items(&[tab_project_item]));
+                active_pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(tab_item.clone()), true, false, None, window, cx);
+                });
+
+                (active_pane, terminal, terminal_view, tab_item)
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let terminal_view_index =
+                    active_pane.read(cx).index_for_item(&terminal_view).unwrap();
+                let dragged_tab_index = active_pane.read(cx).index_for_item(&tab_item).unwrap();
+
+                assert!(
+                    workspace.read(cx).pane_for(&terminal_view).is_some(),
+                    "terminal view not registered with workspace after run_until_parked"
+                );
+
+                // Dragging an external file should write its path to the terminal
+                let external_paths = ExternalPaths(vec![first_path.clone()].into());
+                assert_drop_writes_to_terminal(
+                    &active_pane,
+                    terminal_view_index,
+                    &terminal,
+                    &external_paths,
+                    &expected_drop_text(std::slice::from_ref(&first_path)),
+                    window,
+                    cx,
+                );
+
+                // Dragging a tab should write the path of the tab's item to the terminal
+                let dragged_tab = DraggedTab {
+                    pane: active_pane.clone(),
+                    item: Box::new(tab_item.clone()),
+                    ix: dragged_tab_index,
+                    detail: 0,
+                    is_active: false,
+                };
+                assert_drop_writes_to_terminal(
+                    &active_pane,
+                    terminal_view_index,
+                    &terminal,
+                    &dragged_tab,
+                    &expected_drop_text(std::slice::from_ref(&second_path)),
+                    window,
+                    cx,
+                );
+
+                // Dragging multiple selections should write both paths to the terminal
+                let dragged_selection = DraggedSelection {
+                    active_selection: SelectedEntry {
+                        worktree_id,
+                        entry_id: first_entry.id,
+                    },
+                    marked_selections: Arc::from([
+                        SelectedEntry {
+                            worktree_id,
+                            entry_id: first_entry.id,
+                        },
+                        SelectedEntry {
+                            worktree_id,
+                            entry_id: second_entry.id,
+                        },
+                    ]),
+                };
+                assert_drop_writes_to_terminal(
+                    &active_pane,
+                    terminal_view_index,
+                    &terminal,
+                    &dragged_selection,
+                    &expected_drop_text(&[first_path.clone(), second_path.clone()]),
+                    window,
+                    cx,
+                );
+
+                // Dropping a project entry should write the entry's path to the terminal
+                let dropped_entry_id = first_entry.id;
+                assert_drop_writes_to_terminal(
+                    &active_pane,
+                    terminal_view_index,
+                    &terminal,
+                    &dropped_entry_id,
+                    &expected_drop_text(&[first_path]),
+                    window,
+                    cx,
+                );
+            })
+            .unwrap();
     }
 
     // Terminal rename tests

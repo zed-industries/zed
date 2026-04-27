@@ -14,7 +14,7 @@ Lua support is available through the [Lua extension](https://github.com/zed-exte
 
 To configure LuaLS you can create a `.luarc.json` file in the root of your project.
 
-```json [settings]
+```json
 {
   "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
   "runtime.version": "Lua 5.4",
@@ -60,7 +60,7 @@ cd .. && git clone https://github.com/notpeter/playdate-luacats
 
 Then in your `.luarc.json`:
 
-```json [settings]
+```json
 {
   "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
   "runtime.version": "Lua 5.4",
@@ -96,6 +96,7 @@ To enable [Inlay Hints](../configuring-languages.md#inlay-hints) for LuaLS in Ze
 1. Configure inlay hints in Settings ({#kb zed::OpenSettings}) under Languages > Lua, or add to your settings file:
 
 ```json [settings]
+{
   "languages": {
     "Lua": {
       "inlay_hints": {
@@ -106,6 +107,7 @@ To enable [Inlay Hints](../configuring-languages.md#inlay-hints) for LuaLS in Ze
       }
     }
   }
+}
 ```
 
 2. Add `"hint.enable": true` to your `.luarc.json`.
@@ -116,7 +118,7 @@ To enable [Inlay Hints](../configuring-languages.md#inlay-hints) for LuaLS in Ze
 
 To enable auto-formatting with your LuaLS (provided by [CppCXY/EmmyLuaCodeStyle](https://github.com/CppCXY/EmmyLuaCodeStyle)) make sure you have `"format.enable": true,` in your .luarc.json:
 
-```json [settings]
+```json
 {
   "$schema": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json",
   "format.enable": true

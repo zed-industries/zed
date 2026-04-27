@@ -19,15 +19,6 @@ CREATE INDEX "index_users_on_email_address" ON "users" ("email_address");
 
 CREATE UNIQUE INDEX "index_users_on_github_user_id" ON "users" ("github_user_id");
 
-CREATE TABLE "access_tokens" (
-    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "user_id" INTEGER REFERENCES users (id) ON DELETE CASCADE,
-    "impersonated_user_id" INTEGER REFERENCES users (id),
-    "hash" VARCHAR(128)
-);
-
-CREATE INDEX "index_access_tokens_user_id" ON "access_tokens" ("user_id");
-
 CREATE TABLE "contacts" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "user_id_a" INTEGER REFERENCES users (id) NOT NULL,
@@ -57,7 +48,8 @@ CREATE TABLE "projects" (
     "host_connection_id" INTEGER,
     "host_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
     "unregistered" BOOLEAN NOT NULL DEFAULT FALSE,
-    "windows_paths" BOOLEAN NOT NULL DEFAULT FALSE
+    "windows_paths" BOOLEAN NOT NULL DEFAULT FALSE,
+    "features" TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX "index_projects_on_host_connection_server_id" ON "projects" ("host_connection_server_id");
@@ -73,6 +65,7 @@ CREATE TABLE "worktrees" (
     "scan_id" INTEGER NOT NULL,
     "is_complete" BOOL NOT NULL DEFAULT FALSE,
     "completed_scan_id" INTEGER NOT NULL,
+    "root_repo_common_dir" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 
@@ -118,6 +111,7 @@ CREATE TABLE "project_repositories" (
     "head_commit_details" VARCHAR,
     "remote_upstream_url" VARCHAR,
     "remote_origin_url" VARCHAR,
+    "linked_worktrees" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 
@@ -131,6 +125,8 @@ CREATE TABLE "project_repository_statuses" (
     "status_kind" INT4 NOT NULL,
     "first_status" INT4 NULL,
     "second_status" INT4 NULL,
+    "lines_added" INT4 NULL,
+    "lines_deleted" INT4 NULL,
     "scan_id" INT8 NOT NULL,
     "is_deleted" BOOL NOT NULL,
     PRIMARY KEY (project_id, repository_id, repo_path)

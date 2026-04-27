@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+set -eu
+
+usage() {
+  echo "Usage: $0 <branch>"
+  echo ""
+  echo "Re-tags the HEAD of a release branch by force-updating the tag."
+  echo "This is useful when commits were added to a release branch after"
+  echo "tagging but before the release was published."
+  echo ""
+  echo "Arguments:"
+  echo "  branch    Release branch name (e.g. v0.180.x)"
+  exit 1
+}
+
+branch="${1:-}"
+
+if [[ -z "$branch" ]]; then
+  usage
+fi
+
+which gh > /dev/null 2>&1 || {
+  echo "error: GitHub CLI (gh) is required but not installed." >&2
+  echo "Install it with: brew install gh" >&2
+  exit 1
+}
+
+echo "Triggering retag_release workflow:"
+echo "  branch: $branch"
+echo ""
+
+gh workflow run retag_release.yml \
+  -f branch="$branch"
+
+echo ""
+echo "Workflow triggered. Monitor progress at:"
+echo "  https://github.com/zed-industries/zed/actions/workflows/retag_release.yml"

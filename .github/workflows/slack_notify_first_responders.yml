@@ -17,8 +17,9 @@ jobs:
         id: check-label
         env:
           LABEL_NAME: ${{ github.event.label.name }}
+          FIRST_RESPONDER_LABELS: ${{ env.FIRST_RESPONDER_LABELS }}
         run: |
-          if echo '${{ env.FIRST_RESPONDER_LABELS }}' | jq -e --arg label "$LABEL_NAME" 'index($label) != null' > /dev/null; then
+          if echo "$FIRST_RESPONDER_LABELS" | jq -e --arg label "$LABEL_NAME" 'index($label) != null' > /dev/null; then
             echo "should_notify=true" >> "$GITHUB_OUTPUT"
             echo "Label '$LABEL_NAME' requires first responder notification"
           else

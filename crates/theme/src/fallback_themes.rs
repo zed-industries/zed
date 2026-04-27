@@ -25,7 +25,8 @@ pub fn zed_default_themes() -> ThemeFamily {
 // If a theme customizes a foreground version of a status color, but does not
 // customize the background color, then use a partly-transparent version of the
 // foreground color for the background color.
-pub(crate) fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
+/// Applies default status color backgrounds from their foreground counterparts.
+pub fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
     for (fg_color, bg_color) in [
         (&status.deleted, &mut status.deleted_background),
         (&status.created, &mut status.created_background),
@@ -42,7 +43,8 @@ pub(crate) fn apply_status_color_defaults(status: &mut StatusColorsRefinement) {
     }
 }
 
-pub(crate) fn apply_theme_color_defaults(
+/// Applies default theme color values derived from player colors.
+pub fn apply_theme_color_defaults(
     theme_colors: &mut ThemeColorsRefinement,
     player_colors: &PlayerColors,
 ) {
@@ -109,7 +111,9 @@ pub(crate) fn zed_default_dark() -> Theme {
         styles: ThemeStyles {
             window_background_appearance: WindowBackgroundAppearance::Opaque,
             system: SystemColors::default(),
-            accents: AccentColors(vec![blue, orange, purple, teal, red, green, yellow]),
+            accents: AccentColors(Arc::from(vec![
+                blue, orange, purple, teal, red, green, yellow,
+            ])),
             colors: ThemeColors {
                 border: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 border_variant: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
@@ -255,6 +259,8 @@ pub(crate) fn zed_default_dark() -> Theme {
                 vim_visual_background: SystemColors::default().transparent,
                 vim_visual_line_background: SystemColors::default().transparent,
                 vim_visual_block_background: SystemColors::default().transparent,
+                vim_yank_background: hsla(207.8 / 360., 81. / 100., 66. / 100., 0.2),
+                vim_helix_jump_label_foreground: red,
                 vim_helix_normal_background: SystemColors::default().transparent,
                 vim_helix_select_background: SystemColors::default().transparent,
                 vim_normal_foreground: SystemColors::default().transparent,
@@ -311,70 +317,70 @@ pub(crate) fn zed_default_dark() -> Theme {
                 warning_border: yellow,
             },
             player,
-            syntax: Arc::new(SyntaxTheme {
-                highlights: vec![
-                    ("attribute".into(), purple.into()),
-                    ("boolean".into(), orange.into()),
-                    ("comment".into(), gray.into()),
-                    ("comment.doc".into(), gray.into()),
-                    ("constant".into(), yellow.into()),
-                    ("constructor".into(), blue.into()),
-                    ("embedded".into(), HighlightStyle::default()),
-                    (
-                        "emphasis".into(),
-                        HighlightStyle {
-                            font_style: Some(FontStyle::Italic),
-                            ..HighlightStyle::default()
-                        },
-                    ),
-                    (
-                        "emphasis.strong".into(),
-                        HighlightStyle {
-                            font_weight: Some(FontWeight::BOLD),
-                            ..HighlightStyle::default()
-                        },
-                    ),
-                    ("enum".into(), teal.into()),
-                    ("function".into(), blue.into()),
-                    ("function.method".into(), blue.into()),
-                    ("function.definition".into(), blue.into()),
-                    ("hint".into(), blue.into()),
-                    ("keyword".into(), purple.into()),
-                    ("label".into(), HighlightStyle::default()),
-                    ("link_text".into(), blue.into()),
-                    (
-                        "link_uri".into(),
-                        HighlightStyle {
-                            color: Some(teal),
-                            font_style: Some(FontStyle::Italic),
-                            ..HighlightStyle::default()
-                        },
-                    ),
-                    ("number".into(), orange.into()),
-                    ("operator".into(), HighlightStyle::default()),
-                    ("predictive".into(), HighlightStyle::default()),
-                    ("preproc".into(), HighlightStyle::default()),
-                    ("primary".into(), HighlightStyle::default()),
-                    ("property".into(), red.into()),
-                    ("punctuation".into(), HighlightStyle::default()),
-                    ("punctuation.bracket".into(), HighlightStyle::default()),
-                    ("punctuation.delimiter".into(), HighlightStyle::default()),
-                    ("punctuation.list_marker".into(), HighlightStyle::default()),
-                    ("punctuation.special".into(), HighlightStyle::default()),
-                    ("string".into(), green.into()),
-                    ("string.escape".into(), HighlightStyle::default()),
-                    ("string.regex".into(), red.into()),
-                    ("string.special".into(), HighlightStyle::default()),
-                    ("string.special.symbol".into(), HighlightStyle::default()),
-                    ("tag".into(), HighlightStyle::default()),
-                    ("text.literal".into(), HighlightStyle::default()),
-                    ("title".into(), HighlightStyle::default()),
-                    ("type".into(), teal.into()),
-                    ("variable".into(), HighlightStyle::default()),
-                    ("variable.special".into(), red.into()),
-                    ("variant".into(), HighlightStyle::default()),
-                ],
-            }),
+            syntax: Arc::new(SyntaxTheme::new(vec![
+                ("attribute".into(), purple.into()),
+                ("boolean".into(), orange.into()),
+                ("comment".into(), gray.into()),
+                ("comment.doc".into(), gray.into()),
+                ("constant".into(), yellow.into()),
+                ("constructor".into(), blue.into()),
+                ("embedded".into(), HighlightStyle::default()),
+                (
+                    "emphasis".into(),
+                    HighlightStyle {
+                        font_style: Some(FontStyle::Italic),
+                        ..HighlightStyle::default()
+                    },
+                ),
+                (
+                    "emphasis.strong".into(),
+                    HighlightStyle {
+                        font_weight: Some(FontWeight::BOLD),
+                        ..HighlightStyle::default()
+                    },
+                ),
+                ("enum".into(), teal.into()),
+                ("function".into(), blue.into()),
+                ("function.method".into(), blue.into()),
+                ("function.definition".into(), blue.into()),
+                ("hint".into(), blue.into()),
+                ("keyword".into(), purple.into()),
+                ("label".into(), HighlightStyle::default()),
+                ("link_text".into(), blue.into()),
+                (
+                    "link_uri".into(),
+                    HighlightStyle {
+                        color: Some(teal),
+                        font_style: Some(FontStyle::Italic),
+                        ..HighlightStyle::default()
+                    },
+                ),
+                ("number".into(), orange.into()),
+                ("operator".into(), HighlightStyle::default()),
+                ("predictive".into(), HighlightStyle::default()),
+                ("preproc".into(), purple.into()),
+                ("primary".into(), HighlightStyle::default()),
+                ("property".into(), red.into()),
+                ("punctuation".into(), HighlightStyle::default()),
+                ("punctuation.bracket".into(), HighlightStyle::default()),
+                ("punctuation.delimiter".into(), HighlightStyle::default()),
+                ("punctuation.list_marker".into(), HighlightStyle::default()),
+                ("punctuation.special".into(), HighlightStyle::default()),
+                ("string".into(), green.into()),
+                ("string.escape".into(), HighlightStyle::default()),
+                ("string.regex".into(), red.into()),
+                ("string.special".into(), HighlightStyle::default()),
+                ("string.special.symbol".into(), HighlightStyle::default()),
+                ("tag".into(), HighlightStyle::default()),
+                ("text.literal".into(), HighlightStyle::default()),
+                ("title".into(), HighlightStyle::default()),
+                ("type".into(), teal.into()),
+                ("variable".into(), HighlightStyle::default()),
+                ("variable.special".into(), red.into()),
+                ("variant".into(), HighlightStyle::default()),
+                ("diff.plus".into(), green.into()),
+                ("diff.minus".into(), red.into()),
+            ])),
         },
     }
 }

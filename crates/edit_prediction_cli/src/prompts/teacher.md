@@ -238,65 +238,6 @@ The user just fixed a bug in the `add` function, changing subtraction to additio
 NO_EDITS
 `````
 
-## Example 6
-
-The user accepted a prediction for a function, then started renaming it. The original arguments were auto-generated (marked with `// User accepted prediction:`), so they CAN be updated to match the new function name. This is NOT reverting user input—it's improving auto-generated scaffolding.
-
-### User Edit History
-
-`````
---- a/math_utils.py
-+++ b/math_utils.py
-@@ -3,3 +3,5 @@
- def calculate_rectangle_area(width, height):
-     return width * height
-
-+de
-
-// User accepted prediction:
---- a/math_utils.py
-+++ b/math_utils.py
-@@ -3,5 +3,7 @@
- def calculate_rectangle_area(width, height):
-     return width * height
-
--de
-+def calculate_rectangle_perimeter(width, height):
-+
-
---- a/math_utils.py
-+++ b/math_utils.py
-@@ -5,5 +5,5 @@
-     return width * height
-
--def calculate_rectangle_perimeter(width, height):
-+def calculate_sq_perimeter(width, height):
-
-`````
-
-### Current File
-
-`````math_utils.py
-def calculate_rectangle_area(width, height):
-    return width * height
-
-<|editable_region_start|>
-def calculate_sq<|user_cursor|>_perimeter(width, height):
-
-<|editable_region_end|>
-`````
-
-### Output
-
-The user accepted a prediction for `calculate_rectangle_perimeter(width, height)`, then started renaming `rectangle` to `square`. Since squares have equal sides, the arguments should change from `(width, height)` to `(side)`. The arguments were auto-generated (from an accepted prediction), so modifying them is appropriate.
-
-`````
-<|editable_region_start|>
-def calculate_square_perimeter(side):
-    <|user_cursor|>
-<|editable_region_end|>
-`````
-
 ## Example 5
 
 The user just deleted code, leaving behind what looks incomplete. You must NOT "complete" it by restoring deleted content—that would undo their edit. Output NO_EDITS. **This is the correct response even though the code appears broken.**

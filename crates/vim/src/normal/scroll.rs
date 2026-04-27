@@ -88,82 +88,74 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 impl Vim {
     fn scroll(
         &mut self,
-        move_cursor: bool,
+        preserve_cursor_position: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
         by: fn(c: Option<f32>) -> ScrollAmount,
     ) {
         let amount = by(Vim::take_count(cx).map(|c| c as f32));
-        let mode = self.mode;
         Vim::take_forced_motion(cx);
         self.exit_temporary_normal(window, cx);
-        self.update_editor(cx, |_, editor, cx| {
-            scroll_editor(editor, mode, move_cursor, amount, window, cx)
-        });
-    }
-}
-
-fn scroll_editor(
-    editor: &mut Editor,
-    mode: Mode,
-    preserve_cursor_position: bool,
-    amount: ScrollAmount,
-    window: &mut Window,
-    cx: &mut Context<Editor>,
-) {
-    let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
-    let display_snapshot = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
-    let old_top = editor
-        .scroll_manager
-        .scroll_top_display_point(&display_snapshot, cx);
-
-    if editor.scroll_hover(amount, window, cx) {
-        return;
+        self.scroll_editor(preserve_cursor_position, amount, window, cx);
     }
 
-    let full_page_up = amount.is_full_page() && amount.direction().is_upwards();
-    let amount = match (amount.is_full_page(), editor.visible_line_count()) {
-        (true, Some(visible_line_count)) => {
-            if amount.direction().is_upwards() {
-                ScrollAmount::Line((amount.lines(visible_line_count) + 1.0) as f32)
-            } else {
-                ScrollAmount::Line((amount.lines(visible_line_count) - 1.0) as f32)
+    fn scroll_editor(
+        &mut self,
+        preserve_cursor_position: bool,
+        amount: ScrollAmount,
+        window: &mut Window,
+        cx: &mut Context<Vim>,
+    ) {
+        self.update_editor(cx, |vim, editor, cx| {
+            let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
+            let display_snapshot = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let old_top = editor
+                .scroll_manager
+                .scroll_top_display_point(&display_snapshot, cx);
+
+            if editor.scroll_hover(amount, window, cx) {
+                return;
             }
-        }
-        _ => amount,
-    };
 
-    editor.scroll_screen(&amount, window, cx);
-    if !should_move_cursor {
-        return;
-    }
+            let full_page_up = amount.is_full_page() && amount.direction().is_upwards();
+            let amount = match (amount.is_full_page(), editor.visible_line_count()) {
+                (true, Some(visible_line_count)) => {
+                    if amount.direction().is_upwards() {
+                        ScrollAmount::Line((amount.lines(visible_line_count) + 1.0) as f32)
+                    } else {
+                        ScrollAmount::Line((amount.lines(visible_line_count) - 1.0) as f32)
+                    }
+                }
+                _ => amount,
+            };
 
-    let Some(visible_line_count) = editor.visible_line_count() else {
-        return;
-    };
+            editor.scroll_screen(&amount, window, cx);
+            if !should_move_cursor {
+                return;
+            }
 
-    let Some(visible_column_count) = editor.visible_column_count() else {
-        return;
-    };
+            let Some(visible_line_count) = editor.visible_line_count() else {
+                return;
+            };
 
-    let display_snapshot = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
-    let top = editor
-        .scroll_manager
-        .scroll_top_display_point(&display_snapshot, cx);
-    let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
+            let Some(visible_column_count) = editor.visible_column_count() else {
+                return;
+            };
 
-    editor.change_selections(
-        SelectionEffects::no_scroll().nav_history(false),
-        window,
-        cx,
-        |s| {
-            s.move_with(&mut |map, selection| {
+            let display_snapshot = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let top = editor
+                .scroll_manager
+                .scroll_top_display_point(&display_snapshot, cx);
+            let vertical_scroll_margin = EditorSettings::get_global(cx).vertical_scroll_margin;
+
+            let mut move_cursor = |map: &editor::display_map::DisplaySnapshot,
+                                   mut head: DisplayPoint,
+                                   goal: SelectionGoal| {
                 // TODO: Improve the logic and function calls below to be dependent on
                 // the `amount`. If the amount is vertical, we don't care about
                 // columns, while if it's horizontal, we don't care about rows,
                 // so we don't need to calculate both and deal with logic for
                 // both.
-                let mut head = selection.head();
                 let max_point = map.max_point();
                 let starting_column = head.column();
 
@@ -171,17 +163,18 @@ fn scroll_editor(
                     (vertical_scroll_margin as u32).min(visible_line_count as u32 / 2);
 
                 if preserve_cursor_position {
-                    let new_row = if old_top.row() == top.row() {
-                        DisplayRow(
-                            head.row()
-                                .0
-                                .saturating_add_signed(amount.lines(visible_line_count) as i32),
-                        )
-                    } else {
-                        DisplayRow(top.row().0.saturating_add_signed(
-                            selection.head().row().0 as i32 - old_top.row().0 as i32,
-                        ))
-                    };
+                    let new_row =
+                        if old_top.row() == top.row() {
+                            DisplayRow(
+                                head.row()
+                                    .0
+                                    .saturating_add_signed(amount.lines(visible_line_count) as i32),
+                            )
+                        } else {
+                            DisplayRow(top.row().0.saturating_add_signed(
+                                head.row().0 as i32 - old_top.row().0 as i32,
+                            ))
+                        };
                     head = map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left)
                 }
 
@@ -259,17 +252,36 @@ fn scroll_editor(
                 let new_head = map.clip_point(DisplayPoint::new(new_row, new_column), Bias::Left);
                 let goal = match amount {
                     ScrollAmount::Column(_) | ScrollAmount::PageWidth(_) => SelectionGoal::None,
-                    _ => selection.goal,
+                    _ => goal,
                 };
 
-                if selection.is_empty() || !mode.is_visual() {
-                    selection.collapse_to(new_head, goal)
-                } else {
-                    selection.set_head(new_head, goal)
-                };
-            })
-        },
-    );
+                Some((new_head, goal))
+            };
+
+            if vim.mode == Mode::VisualBlock {
+                vim.visual_block_motion(true, editor, window, cx, &mut move_cursor);
+            } else {
+                editor.change_selections(
+                    SelectionEffects::no_scroll().nav_history(false),
+                    window,
+                    cx,
+                    |s| {
+                        s.move_with(&mut |map, selection| {
+                            if let Some((new_head, goal)) =
+                                move_cursor(map, selection.head(), selection.goal)
+                            {
+                                if selection.is_empty() || !vim.mode.is_visual() {
+                                    selection.collapse_to(new_head, goal)
+                                } else {
+                                    selection.set_head(new_head, goal)
+                                }
+                            }
+                        })
+                    },
+                );
+            }
+        });
+    }
 }
 
 #[cfg(test)]
