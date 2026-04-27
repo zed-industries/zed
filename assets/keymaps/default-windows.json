@@ -1226,6 +1226,7 @@
       "ctrl-delete": ["terminal::SendText", "\u001bd"],
       "ctrl-n": "workspace::NewTerminal",
       // Overrides for conflicting keybindings
+      "alt-f4": "workspace::CloseWindow",
       "ctrl-b": ["terminal::SendKeystroke", "ctrl-b"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
       "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
