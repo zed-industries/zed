@@ -32,6 +32,7 @@ pub struct ExtensionHostProxy {
     context_server_proxy: RwLock<Option<Arc<dyn ExtensionContextServerProxy>>>,
     debug_adapter_provider_proxy: RwLock<Option<Arc<dyn ExtensionDebugAdapterProviderProxy>>>,
     language_model_provider_proxy: RwLock<Option<Arc<dyn ExtensionLanguageModelProviderProxy>>>,
+    worktree_event_proxy: RwLock<Option<Arc<dyn ExtensionWorktreeEventProxy>>>,
 }
 
 impl ExtensionHostProxy {
@@ -57,6 +58,7 @@ impl ExtensionHostProxy {
             context_server_proxy: RwLock::default(),
             debug_adapter_provider_proxy: RwLock::default(),
             language_model_provider_proxy: RwLock::default(),
+            worktree_event_proxy: RwLock::default(),
         }
     }
 
@@ -88,6 +90,10 @@ impl ExtensionHostProxy {
         self.debug_adapter_provider_proxy
             .write()
             .replace(Arc::new(proxy));
+    }
+
+    pub fn register_worktree_event_proxy(&self, proxy: impl ExtensionWorktreeEventProxy) {
+        self.worktree_event_proxy.write().replace(Arc::new(proxy));
     }
 
     pub fn register_language_model_provider_proxy(
@@ -464,5 +470,18 @@ impl ExtensionLanguageModelProviderProxy for ExtensionHostProxy {
         };
 
         proxy.unregister_language_model_provider(provider_id, cx)
+    }
+}
+
+pub trait ExtensionWorktreeEventProxy: Send + Sync + 'static {
+    fn notify_worktree_added(&self, worktree_id: u64, worktree_root_path: String, cx: &mut App);
+}
+
+impl ExtensionWorktreeEventProxy for ExtensionHostProxy {
+    fn notify_worktree_added(&self, worktree_id: u64, worktree_root_path: String, cx: &mut App) {
+        let Some(proxy) = self.worktree_event_proxy.read().clone() else {
+            return;
+        };
+        proxy.notify_worktree_added(worktree_id, worktree_root_path, cx);
     }
 }

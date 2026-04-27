@@ -9,15 +9,17 @@ mod extension_store_test;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
+use async_trait::async_trait;
 use client::{Client, proto, telemetry::Telemetry};
 use cloud_api_types::{ExtensionMetadata, ExtensionProvides, GetExtensionsResponse};
 use collections::{BTreeMap, BTreeSet, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
-    ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
+    Extension, ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
     ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
     ExtensionLanguageServerProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
+    ExtensionWorktreeEventProxy, WorktreeDelegate,
 };
 use fs::{Fs, RemoveOptions};
 use futures::future::join_all;
@@ -125,6 +127,8 @@ pub struct ExtensionStore {
     pub tasks: Vec<Task<()>>,
     pub remote_clients: Vec<WeakEntity<RemoteClient>>,
     pub ssh_registered_tx: UnboundedSender<()>,
+    extensions_loaded: bool,
+    pending_worktree_notifications: Vec<(u64, String)>,
 }
 
 #[derive(Clone, Copy)]
@@ -263,7 +267,7 @@ impl ExtensionStore {
                 fs.clone(),
                 http_client.clone(),
                 node_runtime,
-                extension_host_proxy,
+                extension_host_proxy.clone(),
                 work_dir,
                 cx,
             ),
@@ -276,7 +280,15 @@ impl ExtensionStore {
 
             remote_clients: Default::default(),
             ssh_registered_tx: connection_registered_tx,
+            extensions_loaded: false,
+            pending_worktree_notifications: Vec::new(),
         };
+
+        {
+            let proxy = extension_host_proxy.clone();
+            let weak_store = cx.entity().downgrade();
+            proxy.register_worktree_event_proxy(WorktreeEventProxy { store: weak_store });
+        }
 
         // The extensions store maintains an index file, which contains a complete
         // list of the installed extensions and the resources that they provide.
@@ -1459,6 +1471,7 @@ impl ExtensionStore {
 
                 this.wasm_extensions.extend(wasm_extensions);
                 this.proxy.set_extensions_loaded();
+                this.replay_pending_worktree_notifications(cx);
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);
 
@@ -1886,4 +1899,104 @@ fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
         }
     }
     result
+}
+
+impl ExtensionStore {
+    pub fn notify_worktree_added(
+        &mut self,
+        worktree_id: u64,
+        worktree_root_path: String,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.extensions_loaded {
+            self.pending_worktree_notifications
+                .push((worktree_id, worktree_root_path));
+            return;
+        }
+        self.dispatch_worktree_added(worktree_id, worktree_root_path, cx);
+    }
+
+    fn dispatch_worktree_added(
+        &self,
+        worktree_id: u64,
+        worktree_root_path: String,
+        cx: &mut Context<Self>,
+    ) {
+        let delegate = Arc::new(LocalWorktreeDelegate {
+            id: worktree_id,
+            root_path: worktree_root_path,
+        });
+        for (manifest, extension) in &self.wasm_extensions {
+            let extension = extension.clone();
+            let delegate = delegate.clone();
+            let extension_id = manifest.id.clone();
+            cx.spawn(async move |_, _| {
+                if let Err(err) = extension.on_worktree_added(delegate).await {
+                    log::warn!(
+                        "extension {extension_id} on_worktree_added callback failed: {err:#}"
+                    );
+                }
+            })
+            .detach();
+        }
+    }
+
+    pub fn replay_pending_worktree_notifications(&mut self, cx: &mut Context<Self>) {
+        self.extensions_loaded = true;
+        let pending = std::mem::take(&mut self.pending_worktree_notifications);
+        for (id, root_path) in pending {
+            self.dispatch_worktree_added(id, root_path, cx);
+        }
+    }
+}
+
+struct LocalWorktreeDelegate {
+    id: u64,
+    root_path: String,
+}
+
+#[async_trait]
+impl WorktreeDelegate for LocalWorktreeDelegate {
+    fn id(&self) -> u64 {
+        self.id
+    }
+
+    fn root_path(&self) -> String {
+        self.root_path.clone()
+    }
+
+    async fn read_text_file(&self, path: &util::rel_path::RelPath) -> Result<String> {
+        let full_path = std::path::Path::new(&self.root_path).join(path);
+        String::from_utf8(
+            tokio::fs::read(&full_path)
+                .await
+                .with_context(|| format!("failed to read file: {}", full_path.display()))?,
+        )
+        .context("file is not valid UTF-8")
+    }
+
+    async fn which(&self, binary_name: String) -> Option<String> {
+        which::which(&binary_name)
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
+    }
+
+    async fn shell_env(&self) -> Vec<(String, String)> {
+        std::env::vars().collect()
+    }
+}
+
+struct WorktreeEventProxy {
+    store: WeakEntity<ExtensionStore>,
+}
+
+impl ExtensionWorktreeEventProxy for WorktreeEventProxy {
+    fn notify_worktree_added(&self, worktree_id: u64, worktree_root_path: String, cx: &mut App) {
+        let Some(store) = self.store.upgrade() else {
+            return;
+        };
+        let _ = store.update(cx, |store, cx| {
+            store.notify_worktree_added(worktree_id, worktree_root_path, cx);
+        });
+    }
 }

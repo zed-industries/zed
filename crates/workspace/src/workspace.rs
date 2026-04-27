@@ -49,6 +49,7 @@ use client::{
 };
 use collections::{HashMap, HashSet, hash_map};
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
+use extension::{ExtensionHostProxy, ExtensionWorktreeEventProxy};
 use fs::Fs;
 use futures::{
     Future, FutureExt, StreamExt,
@@ -1495,14 +1496,17 @@ impl Workspace {
 
                 &project::Event::WorktreeAdded(id) => {
                     this.update_window_title(window, cx);
-                    if this
-                        .project()
-                        .read(cx)
-                        .worktree_for_id(id, cx)
-                        .is_some_and(|wt| wt.read(cx).is_visible())
-                    {
-                        this.serialize_workspace(window, cx);
-                        this.update_history(cx);
+                    if let Some(wt) = this.project().read(cx).worktree_for_id(id, cx) {
+                        let root_path = wt.read(cx).abs_path().to_string_lossy().to_string();
+                        ExtensionHostProxy::global(cx).notify_worktree_added(
+                            id.to_proto(),
+                            root_path,
+                            cx,
+                        );
+                        if wt.read(cx).is_visible() {
+                            this.serialize_workspace(window, cx);
+                            this.update_history(cx);
+                        }
                     }
                 }
                 project::Event::WorktreeUpdatedEntries(..) => {
@@ -1764,6 +1768,26 @@ impl Workspace {
             this.update_window_title(window, cx);
             this.show_initial_notifications(cx);
         });
+
+        // Replay existing worktrees so extensions receive on_worktree_added for
+        // worktrees that were added before the subscription was set up.
+        {
+            let proxy = ExtensionHostProxy::global(cx);
+            let existing_worktrees: Vec<(u64, String)> = project
+                .read(cx)
+                .worktrees(cx)
+                .map(|worktree| {
+                    let wt = worktree.read(cx);
+                    (
+                        wt.id().to_proto(),
+                        wt.abs_path().to_string_lossy().to_string(),
+                    )
+                })
+                .collect();
+            for (id, root_path) in existing_worktrees {
+                proxy.notify_worktree_added(id, root_path, cx);
+            }
+        }
 
         let mut center = PaneGroup::new(center_pane.clone());
         center.set_is_center(true);

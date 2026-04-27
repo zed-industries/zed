@@ -527,6 +527,20 @@ impl extension::Extension for WasmExtension {
         })
         .await?
     }
+
+    async fn on_worktree_added(&self, worktree: Arc<dyn WorktreeDelegate>) -> Result<()> {
+        self.call(|extension, store| {
+            async move {
+                let resource = store.data_mut().table.push(worktree)?;
+                extension
+                    .call_on_worktree_added(store, resource)
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))
+            }
+            .boxed()
+        })
+        .await?
+    }
 }
 
 pub struct WasmState {
