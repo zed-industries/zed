@@ -359,6 +359,26 @@ impl AgentConfiguration {
                         |this| {
                             this.child(
                                 Button::new(
+                                    SharedString::from(format!("edit-models-{provider_id}")),
+                                    "Edit Models",
+                                )
+                                .full_width()
+                                .style(ButtonStyle::Outlined)
+                                .start_icon(
+                                    Icon::new(IconName::Pencil)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener({
+                                    let provider = provider.clone();
+                                    move |this, _event, window, cx| {
+                                        this.edit_provider_models(provider.clone(), window, cx);
+                                    }
+                                })),
+                            )
+                            .child(
+                                Button::new(
                                     SharedString::from(format!("delete-provider-{provider_id}")),
                                     "Remove Provider",
                                 )
@@ -380,6 +400,38 @@ impl AgentConfiguration {
                         },
                     ),
             )
+    }
+
+    fn edit_provider_models(
+        &mut self,
+        provider: Arc<dyn LanguageModelProvider>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let provider_id = provider.id();
+        let Some(settings) = AllLanguageModelSettings::get_global(cx)
+            .openai_compatible
+            .get(provider_id.0.as_ref())
+            .cloned()
+        else {
+            return;
+        };
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                AddLlmProviderModal::toggle_model_edit(
+                    LlmCompatibleProvider::OpenAi,
+                    Arc::from(provider_id.0.as_ref()),
+                    settings::OpenAiCompatibleSettingsContent {
+                        api_url: settings.api_url,
+                        available_models: settings.available_models,
+                    },
+                    workspace,
+                    window,
+                    cx,
+                );
+            })
+            .log_err();
     }
 
     fn delete_provider(
