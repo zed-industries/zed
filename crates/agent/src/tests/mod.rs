@@ -1658,11 +1658,14 @@ async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
         .send(context_server::types::CallToolResponse {
             content: vec![
                 context_server::types::ToolResponseContent::Text {
-                    text: "Screenshot attached".into(),
+                    text: "Some text".into(),
                 },
                 context_server::types::ToolResponseContent::Image {
                     data: "aGVsbG8=".into(),
                     mime_type: "image/png".into(),
+                },
+                context_server::types::ToolResponseContent::Text {
+                    text: "Some more text".into(),
                 },
             ],
             is_error: None,
@@ -1689,141 +1692,12 @@ async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
     assert_eq!(tool_result.content.len(), 2);
     assert_eq!(
         tool_result.content[0],
-        language_model::LanguageModelToolResultContent::Text(Arc::from("Screenshot attached"))
+        language_model::LanguageModelToolResultContent::Text(Arc::from("Some text"))
     );
-    match &tool_result.content[1] {
-        language_model::LanguageModelToolResultContent::Image(image) => {
-            assert_eq!(image.source.as_ref(), "aGVsbG8=");
-        }
-        other => panic!("expected Image as second part, got: {:?}", other),
-    }
-    fake_model.end_last_completion_stream();
-    events.collect::<Vec<_>>().await;
-}
-
-#[gpui::test]
-async fn test_mcp_tool_multi_content_response_without_image_support(cx: &mut TestAppContext) {
-    let ThreadTest {
-        model,
-        thread,
-        context_server_store,
-        fs,
-        ..
-    } = setup(cx, TestModel::Fake).await;
-    let fake_model = model.as_fake();
-    // Intentionally leave `supports_images` at its default of false.
-
-    fs.insert_file(
-        paths::settings_file(),
-        json!({
-            "agent": {
-                "tool_permissions": { "default": "allow" },
-                "profiles": {
-                    "test": {
-                        "name": "Test Profile",
-                        "enable_all_context_servers": true,
-                        "tools": {}
-                    },
-                }
-            }
-        })
-        .to_string()
-        .into_bytes(),
-    )
-    .await;
-    cx.run_until_parked();
-    thread.update(cx, |thread, cx| {
-        thread.set_profile(AgentProfileId("test".into()), cx)
-    });
-
-    let mut mcp_tool_calls = setup_context_server(
-        "screenshot_server",
-        vec![context_server::types::Tool {
-            name: "screenshot".into(),
-            description: None,
-            input_schema: json!({"type": "object", "properties": {}}),
-            output_schema: None,
-            annotations: None,
-        }],
-        &context_server_store,
-        cx,
-    );
-
-    let events = thread.update(cx, |thread, cx| {
-        thread
-            .send(UserMessageId::new(), ["Take a screenshot"], cx)
-            .unwrap()
-    });
-    cx.run_until_parked();
-
-    let completion = fake_model.pending_completions().pop().unwrap();
-    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
-        LanguageModelToolUse {
-            id: "tool_1".into(),
-            name: "screenshot".into(),
-            raw_input: json!({}).to_string(),
-            input: json!({}),
-            is_input_complete: true,
-            thought_signature: None,
-        },
-    ));
-    fake_model.end_last_completion_stream();
-    cx.run_until_parked();
-    let _ = completion;
-
-    let (tool_call_params, tool_call_response) = mcp_tool_calls.next().await.unwrap();
-    assert_eq!(tool_call_params.name, "screenshot");
-    tool_call_response
-        .send(context_server::types::CallToolResponse {
-            content: vec![
-                context_server::types::ToolResponseContent::Text {
-                    text: "Screenshot attached".into(),
-                },
-                context_server::types::ToolResponseContent::Image {
-                    data: "aGVsbG8=".into(),
-                    mime_type: "image/png".into(),
-                },
-            ],
-            is_error: None,
-            meta: None,
-            structured_content: None,
-        })
-        .unwrap();
-    cx.run_until_parked();
-
-    // On a non-vision model, the image part should be replaced with a
-    // placeholder but the accompanying text should still be preserved rather
-    // than having the whole tool result replaced with an error.
-    let completion = fake_model.pending_completions().pop().unwrap();
-    let tool_result = completion
-        .messages
-        .last()
-        .unwrap()
-        .content
-        .iter()
-        .find_map(|c| match c {
-            MessageContent::ToolResult(r) => Some(r.clone()),
-            _ => None,
-        })
-        .expect("expected a tool result");
-    assert!(!tool_result.is_error);
-    assert_eq!(tool_result.content.len(), 2);
     assert_eq!(
-        tool_result.content[0],
-        language_model::LanguageModelToolResultContent::Text(Arc::from("Screenshot attached"))
+        tool_result.content[1],
+        language_model::LanguageModelToolResultContent::Text(Arc::from("Some more text"))
     );
-    match &tool_result.content[1] {
-        language_model::LanguageModelToolResultContent::Text(text) => {
-            assert!(
-                text.contains("doesn't support images"),
-                "expected image placeholder text, got: {text}"
-            );
-        }
-        other => panic!(
-            "expected a Text placeholder as second part, got: {:?}",
-            other
-        ),
-    }
     fake_model.end_last_completion_stream();
     events.collect::<Vec<_>>().await;
 }
