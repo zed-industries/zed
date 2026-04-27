@@ -3,7 +3,7 @@ use mdbook::BookItem;
 use mdbook::book::{Book, Chapter};
 use mdbook::preprocess::CmdPreprocessor;
 use regex::Regex;
-use settings::{KeymapFile, SettingsStore};
+use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read};
@@ -22,7 +22,44 @@ static KEYMAP_WINDOWS: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-windows.json").expect("Failed to load Windows keymap")
 });
 
+static KEYMAP_JETBRAINS_MACOS: LazyLock<KeymapFile> = LazyLock::new(|| {
+    load_keymap("keymaps/macos/jetbrains.json").expect("Failed to load JetBrains macOS keymap")
+});
+
+static KEYMAP_JETBRAINS_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
+    load_keymap("keymaps/linux/jetbrains.json").expect("Failed to load JetBrains Linux keymap")
+});
+
 static ALL_ACTIONS: LazyLock<ActionManifest> = LazyLock::new(load_all_actions);
+
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+enum Os {
+    MacOs,
+    Linux,
+    Windows,
+}
+
+#[derive(Clone, Copy)]
+enum KeymapOverlay {
+    JetBrains,
+}
+
+impl KeymapOverlay {
+    fn parse(name: &str) -> Option<Self> {
+        match name {
+            "jetbrains" => Some(Self::JetBrains),
+            _ => None,
+        }
+    }
+
+    fn keymap(self, os: Os) -> &'static KeymapFile {
+        match (self, os) {
+            (Self::JetBrains, Os::MacOs) => &KEYMAP_JETBRAINS_MACOS,
+            (Self::JetBrains, Os::Linux | Os::Windows) => &KEYMAP_JETBRAINS_LINUX,
+        }
+    }
+}
 
 const FRONT_MATTER_COMMENT: &str = "<!-- ZED_META {} -->";
 
@@ -63,6 +100,9 @@ enum PreprocessorError {
         line: usize,
         snippet: String,
         error: String,
+    },
+    UnknownKeymapOverlay {
+        overlay_name: String,
     },
 }
 
@@ -123,6 +163,13 @@ impl std::fmt::Display for PreprocessorError {
                     line,
                     error,
                     snippet
+                )
+            }
+            PreprocessorError::UnknownKeymapOverlay { overlay_name } => {
+                write!(
+                    f,
+                    "Unknown keymap overlay: '{}'. Supported overlays: jetbrains",
+                    overlay_name
                 )
             }
         }
@@ -205,20 +252,39 @@ fn format_binding(binding: String) -> String {
 }
 
 fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
-    let regex = Regex::new(r"\{#kb (.*?)\}").unwrap();
+    let regex = Regex::new(r"\{#kb(?::(\w+))?\s+(.*?)\}").unwrap();
 
     for_each_chapter_mut(book, |chapter| {
         chapter.content = regex
             .replace_all(&chapter.content, |caps: &regex::Captures| {
-                let action = caps[1].trim();
+                let overlay_name = caps.get(1).map(|m| m.as_str());
+                let action = caps[2].trim();
+
                 if is_missing_action(action) {
                     errors.insert(PreprocessorError::new_for_not_found_action(
                         action.to_string(),
                     ));
                     return String::new();
                 }
-                let macos_binding = find_binding("macos", action).unwrap_or_default();
-                let linux_binding = find_binding("linux", action).unwrap_or_default();
+
+                let overlay = if let Some(name) = overlay_name {
+                    let Some(overlay) = KeymapOverlay::parse(name) else {
+                        errors.insert(PreprocessorError::UnknownKeymapOverlay {
+                            overlay_name: name.to_string(),
+                        });
+                        return String::new();
+                    };
+                    Some(overlay)
+                } else {
+                    None
+                };
+
+                let macos_binding =
+                    find_binding_with_overlay(Os::MacOs, action, overlay)
+                        .unwrap_or_default();
+                let linux_binding =
+                    find_binding_with_overlay(Os::Linux, action, overlay)
+                        .unwrap_or_default();
 
                 if macos_binding.is_empty() && linux_binding.is_empty() {
                     return "<div>No default binding</div>".to_string();
@@ -227,7 +293,7 @@ fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Prepr
                 let formatted_macos_binding = format_binding(macos_binding);
                 let formatted_linux_binding = format_binding(linux_binding);
 
-                format!("<kbd class=\"keybinding\">{formatted_macos_binding}|{formatted_linux_binding}</kbd>")
+                format!("<kbd class=\"keybinding\">{formatted_macos_binding}&#124;{formatted_linux_binding}</kbd>")
             })
             .into_owned()
     });
@@ -270,28 +336,62 @@ fn is_missing_action(name: &str) -> bool {
     actions_available() && find_action_by_name(name).is_none()
 }
 
-fn find_binding(os: &str, action: &str) -> Option<String> {
-    let keymap = match os {
-        "macos" => &KEYMAP_MACOS,
-        "linux" | "freebsd" => &KEYMAP_LINUX,
-        "windows" => &KEYMAP_WINDOWS,
-        _ => unreachable!("Not a valid OS: {}", os),
+// Find the last binding (in keymap order) for the given action.
+// Exact action matches are preferred over parameterized variants.
+fn find_binding_in_keymap(keymap: &KeymapFile, action: &str) -> Option<String> {
+    let find = |predicate: &dyn Fn(&str) -> bool| {
+        keymap.sections().rev().find_map(|section| {
+            section.bindings().rev().find_map(|(keystroke, a)| {
+                if predicate(&a.to_string()) {
+                    Some(keystroke.to_string())
+                } else {
+                    None
+                }
+            })
+        })
     };
 
-    // Find the binding in reverse order, as the last binding takes precedence.
-    keymap.sections().rev().find_map(|section| {
-        section.bindings().rev().find_map(|(keystroke, a)| {
-            if name_for_action(a.to_string()) == action {
-                Some(keystroke.to_string())
-            } else {
-                None
-            }
-        })
-    })
+    // Look for exact match
+    if let Some(binding) = find(&|a| a == action) {
+        return Some(binding);
+    }
+
+    // Look for parameterized match
+    find(&|a| name_for_action(a.to_string()) == action)
+}
+
+fn find_binding(os: Os, action: &str) -> Option<String> {
+    let keymap = match os {
+        Os::MacOs => &KEYMAP_MACOS,
+        Os::Linux => &KEYMAP_LINUX,
+        Os::Windows => &KEYMAP_WINDOWS,
+    };
+    find_binding_in_keymap(keymap, action)
+}
+
+fn find_binding_with_overlay(
+    os: Os,
+    action: &str,
+    overlay: Option<KeymapOverlay>,
+) -> Option<String> {
+    overlay
+        .and_then(|overlay| find_binding_in_keymap(overlay.keymap(os), action))
+        .or_else(|| find_binding(os, action))
 }
 
 fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
-    let settings_schema = SettingsStore::json_schema(&Default::default());
+    let params = SettingsJsonSchemaParams {
+        language_names: &[],
+        font_names: &[],
+        theme_names: &[],
+        icon_theme_names: &[],
+        lsp_adapter_names: &[],
+        action_names: &[],
+        action_documentation: &HashMap::default(),
+        deprecations: &HashMap::default(),
+        deprecation_messages: &HashMap::default(),
+    };
+    let settings_schema = SettingsStore::json_schema(&params);
     let settings_validator = jsonschema::validator_for(&settings_schema)
         .expect("failed to compile settings JSON schema");
 
@@ -465,9 +565,9 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
 /// This will return the action name unmodified.
 ///
 /// ```
-/// let action_as_str = "assistant::Assist";
+/// let action_as_str = "workspace::Save";
 /// let action_name = name_for_action(action_as_str);
-/// assert_eq!(action_name, "assistant::Assist");
+/// assert_eq!(action_name, "workspace::Save");
 /// ```
 ///
 /// This will return the action name with any trailing options removed.
@@ -578,6 +678,7 @@ fn handle_postprocessing() -> Result<()> {
         .expect("Default title not a string")
         .to_string();
     let amplitude_key = std::env::var("DOCS_AMPLITUDE_API_KEY").unwrap_or_default();
+    let consent_io_instance = std::env::var("DOCS_CONSENT_IO_INSTANCE").unwrap_or_default();
 
     output.insert("html".to_string(), zed_html);
     mdbook::Renderer::render(&mdbook::renderer::HtmlHandlebars::new(), &ctx)?;
@@ -647,6 +748,7 @@ fn handle_postprocessing() -> Result<()> {
         zlog::trace!(logger => "Updating {:?}", pretty_path(&file, &root_dir));
         let contents = contents.replace("#description#", meta_description);
         let contents = contents.replace("#amplitude_key#", &amplitude_key);
+        let contents = contents.replace("#consent_io_instance#", &consent_io_instance);
         let contents = title_regex()
             .replace(&contents, |_: &regex::Captures| {
                 format!("<title>{}</title>", meta_title)
@@ -780,4 +882,69 @@ fn keymap_schema_for_actions(
         &deprecations,
         &deprecation_messages,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_find_binding_prefers_exact_match_over_parameterized() {
+        let keymap: KeymapFile = serde_json::from_value(json!([
+            {
+                "bindings": {
+                    "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
+                    "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }]
+                }
+            }
+        ]))
+        .unwrap();
+
+        let binding = find_binding_in_keymap(&keymap, "agents_sidebar::ToggleThreadSwitcher");
+        assert_eq!(binding.as_deref(), Some("ctrl-tab"));
+    }
+
+    #[test]
+    fn test_find_binding_falls_back_to_parameterized_match() {
+        let keymap: KeymapFile = serde_json::from_value(json!([
+            {
+                "bindings": {
+                    "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }]
+                }
+            }
+        ]))
+        .unwrap();
+
+        let binding = find_binding_in_keymap(&keymap, "agents_sidebar::ToggleThreadSwitcher");
+        assert_eq!(binding.as_deref(), Some("ctrl-shift-tab"));
+    }
+
+    #[test]
+    fn test_find_binding_prefers_exact_match_regardless_of_order() {
+        let keymap: KeymapFile = serde_json::from_value(json!([
+            {
+                "bindings": {
+                    "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
+                    "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher"
+                }
+            }
+        ]))
+        .unwrap();
+
+        let binding = find_binding_in_keymap(&keymap, "agents_sidebar::ToggleThreadSwitcher");
+        assert_eq!(binding.as_deref(), Some("ctrl-tab"));
+    }
+
+    #[test]
+    fn test_find_binding_later_section_overrides_earlier() {
+        let keymap: KeymapFile = serde_json::from_value(json!([
+            { "bindings": { "ctrl-a": "some::Action" } },
+            { "bindings": { "ctrl-b": "some::Action" } }
+        ]))
+        .unwrap();
+
+        let binding = find_binding_in_keymap(&keymap, "some::Action");
+        assert_eq!(binding.as_deref(), Some("ctrl-b"));
+    }
 }

@@ -1,4 +1,4 @@
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, bail};
 use file_icons::FileIcons;
 use prompt_store::{PromptId, UserPromptId};
@@ -19,7 +19,9 @@ pub enum MentionUri {
     File {
         abs_path: PathBuf,
     },
-    PastedImage,
+    PastedImage {
+        name: String,
+    },
     Directory {
         abs_path: PathBuf,
     },
@@ -30,10 +32,6 @@ pub enum MentionUri {
     },
     Thread {
         id: acp::SessionId,
-        name: String,
-    },
-    TextThread {
-        path: PathBuf,
         name: String,
     },
     Rule {
@@ -59,6 +57,9 @@ pub enum MentionUri {
     },
     GitDiff {
         base_ref: String,
+    },
+    MergeConflict {
+        file_path: String,
     },
 }
 
@@ -95,13 +96,18 @@ impl MentionUri {
         let path = url.path();
         match url.scheme() {
             "file" => {
-                let normalized = if path_style.is_windows() {
+                let trimmed = if path_style.is_windows() {
                     path.trim_start_matches("/")
                 } else {
                     path
                 };
-                let decoded = decode(normalized).unwrap_or(Cow::Borrowed(normalized));
-                let path = decoded.as_ref();
+                let decoded = decode(trimmed).unwrap_or(Cow::Borrowed(trimmed));
+                let normalized: Cow<str> = if path_style.is_windows() {
+                    Cow::Owned(decoded.replace('/', "\\"))
+                } else {
+                    decoded
+                };
+                let path = normalized.as_ref();
 
                 if let Some(fragment) = url.fragment() {
                     let line_range = parse_line_range(fragment).log_err().unwrap_or(1..=1);
@@ -134,12 +140,6 @@ impl MentionUri {
                         id: acp::SessionId::new(thread_id),
                         name,
                     })
-                } else if let Some(path) = path.strip_prefix("/agent/text-thread/") {
-                    let name = single_query_param(&url, "name")?.context("Missing thread name")?;
-                    Ok(Self::TextThread {
-                        path: path.into(),
-                        name,
-                    })
                 } else if let Some(rule_id) = path.strip_prefix("/agent/rule/") {
                     let name = single_query_param(&url, "name")?.context("Missing rule name")?;
                     let rule_id = UserPromptId(rule_id.parse()?);
@@ -162,7 +162,9 @@ impl MentionUri {
                         include_warnings,
                     })
                 } else if path.starts_with("/agent/pasted-image") {
-                    Ok(Self::PastedImage)
+                    let name =
+                        single_query_param(&url, "name")?.unwrap_or_else(|| "Image".to_string());
+                    Ok(Self::PastedImage { name })
                 } else if path.starts_with("/agent/untitled-buffer") {
                     let fragment = url
                         .fragment()
@@ -215,6 +217,9 @@ impl MentionUri {
                     let base_ref =
                         single_query_param(&url, "base")?.unwrap_or_else(|| "main".to_string());
                     Ok(Self::GitDiff { base_ref })
+                } else if path.starts_with("/agent/merge-conflict") {
+                    let file_path = single_query_param(&url, "path")?.unwrap_or_default();
+                    Ok(Self::MergeConflict { file_path })
                 } else {
                     bail!("invalid zed url: {:?}", input);
                 }
@@ -231,10 +236,9 @@ impl MentionUri {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned(),
-            MentionUri::PastedImage => "Image".to_string(),
+            MentionUri::PastedImage { name } => name.clone(),
             MentionUri::Symbol { name, .. } => name.clone(),
             MentionUri::Thread { name, .. } => name.clone(),
-            MentionUri::TextThread { name, .. } => name.clone(),
             MentionUri::Rule { name, .. } => name.clone(),
             MentionUri::Diagnostics { .. } => "Diagnostics".to_string(),
             MentionUri::TerminalSelection { line_count } => {
@@ -245,6 +249,13 @@ impl MentionUri {
                 }
             }
             MentionUri::GitDiff { base_ref } => format!("Branch Diff ({})", base_ref),
+            MentionUri::MergeConflict { file_path } => {
+                let name = Path::new(file_path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                format!("Merge Conflict ({name})")
+            }
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
@@ -254,23 +265,58 @@ impl MentionUri {
         }
     }
 
+    pub fn tooltip_text(&self) -> Option<SharedString> {
+        match self {
+            MentionUri::File { abs_path } | MentionUri::Directory { abs_path } => {
+                Some(abs_path.to_string_lossy().into_owned().into())
+            }
+            MentionUri::Symbol {
+                abs_path,
+                line_range,
+                ..
+            } => Some(
+                format!(
+                    "{}:{}-{}",
+                    abs_path.display(),
+                    line_range.start(),
+                    line_range.end()
+                )
+                .into(),
+            ),
+            MentionUri::Selection {
+                abs_path: Some(path),
+                line_range,
+                ..
+            } => Some(
+                format!(
+                    "{}:{}-{}",
+                    path.display(),
+                    line_range.start(),
+                    line_range.end()
+                )
+                .into(),
+            ),
+            _ => None,
+        }
+    }
+
     pub fn icon_path(&self, cx: &mut App) -> SharedString {
         match self {
             MentionUri::File { abs_path } => {
                 FileIcons::get_icon(abs_path, cx).unwrap_or_else(|| IconName::File.path().into())
             }
-            MentionUri::PastedImage => IconName::Image.path().into(),
+            MentionUri::PastedImage { .. } => IconName::Image.path().into(),
             MentionUri::Directory { abs_path } => FileIcons::get_folder_icon(false, abs_path, cx)
                 .unwrap_or_else(|| IconName::Folder.path().into()),
             MentionUri::Symbol { .. } => IconName::Code.path().into(),
             MentionUri::Thread { .. } => IconName::Thread.path().into(),
-            MentionUri::TextThread { .. } => IconName::Thread.path().into(),
             MentionUri::Rule { .. } => IconName::Reader.path().into(),
             MentionUri::Diagnostics { .. } => IconName::Warning.path().into(),
             MentionUri::TerminalSelection { .. } => IconName::Terminal.path().into(),
             MentionUri::Selection { .. } => IconName::Reader.path().into(),
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
             MentionUri::GitDiff { .. } => IconName::GitBranch.path().into(),
+            MentionUri::MergeConflict { .. } => IconName::GitMergeConflict.path().into(),
         }
     }
 
@@ -285,10 +331,18 @@ impl MentionUri {
                 url.set_path(&abs_path.to_string_lossy());
                 url
             }
-            MentionUri::PastedImage => Url::parse("zed:///agent/pasted-image").unwrap(),
+            MentionUri::PastedImage { name } => {
+                let mut url = Url::parse("zed:///agent/pasted-image").unwrap();
+                url.query_pairs_mut().append_pair("name", name);
+                url
+            }
             MentionUri::Directory { abs_path } => {
                 let mut url = Url::parse("file:///").unwrap();
-                url.set_path(&abs_path.to_string_lossy());
+                let mut path = abs_path.to_string_lossy().into_owned();
+                if !path.ends_with('/') && !path.ends_with('\\') {
+                    path.push('/');
+                }
+                url.set_path(&path);
                 url
             }
             MentionUri::Symbol {
@@ -332,15 +386,6 @@ impl MentionUri {
                 url.query_pairs_mut().append_pair("name", name);
                 url
             }
-            MentionUri::TextThread { path, name } => {
-                let mut url = Url::parse("zed:///").unwrap();
-                url.set_path(&format!(
-                    "/agent/text-thread/{}",
-                    path.to_string_lossy().trim_start_matches('/')
-                ));
-                url.query_pairs_mut().append_pair("name", name);
-                url
-            }
             MentionUri::Rule { name, id } => {
                 let mut url = Url::parse("zed:///").unwrap();
                 url.set_path(&format!("/agent/rule/{id}"));
@@ -372,6 +417,11 @@ impl MentionUri {
             MentionUri::GitDiff { base_ref } => {
                 let mut url = Url::parse("zed:///agent/git-diff").unwrap();
                 url.query_pairs_mut().append_pair("base", base_ref);
+                url
+            }
+            MentionUri::MergeConflict { file_path } => {
+                let mut url = Url::parse("zed:///agent/merge-conflict").unwrap();
+                url.query_pairs_mut().append_pair("path", file_path);
                 url
             }
         }
@@ -449,12 +499,70 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_file_uris_use_native_separators_on_windows() {
+        let parsed = MentionUri::parse("file:///C:/path/to/file.rs", PathStyle::Windows).unwrap();
+        match parsed {
+            MentionUri::File { abs_path } => {
+                assert_eq!(abs_path, PathBuf::from("C:\\path\\to\\file.rs"));
+            }
+            other => panic!("Expected File variant, got {other:?}"),
+        }
+
+        let parsed = MentionUri::parse("file:///C:/path/to/dir/", PathStyle::Windows).unwrap();
+        match parsed {
+            MentionUri::Directory { abs_path } => {
+                assert_eq!(abs_path, PathBuf::from("C:\\path\\to\\dir\\"));
+            }
+            other => panic!("Expected Directory variant, got {other:?}"),
+        }
+
+        let parsed = MentionUri::parse(
+            "file:///C:/path/to/file.rs?symbol=MySymbol#L10:20",
+            PathStyle::Windows,
+        )
+        .unwrap();
+        match parsed {
+            MentionUri::Symbol { abs_path, .. } => {
+                assert_eq!(abs_path, PathBuf::from("C:\\path\\to\\file.rs"));
+            }
+            other => panic!("Expected Symbol variant, got {other:?}"),
+        }
+
+        let parsed =
+            MentionUri::parse("file:///C:/path/to/file.rs#L5:15", PathStyle::Windows).unwrap();
+        match parsed {
+            MentionUri::Selection {
+                abs_path: Some(abs_path),
+                ..
+            } => {
+                assert_eq!(abs_path, PathBuf::from("C:\\path\\to\\file.rs"));
+            }
+            other => panic!("Expected Selection variant, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_to_directory_uri_without_slash() {
         let uri = MentionUri::Directory {
             abs_path: PathBuf::from(path!("/path/to/dir/")),
         };
         let expected = uri!("file:///path/to/dir/");
         assert_eq!(uri.to_uri().to_string(), expected);
+    }
+
+    #[test]
+    fn test_directory_uri_round_trip_without_trailing_slash() {
+        let uri = MentionUri::Directory {
+            abs_path: PathBuf::from(path!("/path/to/dir")),
+        };
+        let serialized = uri.to_uri().to_string();
+        assert!(serialized.ends_with('/'), "directory URI must end with /");
+        let parsed = MentionUri::parse(&serialized, PathStyle::local()).unwrap();
+        assert!(
+            matches!(parsed, MentionUri::Directory { .. }),
+            "expected Directory variant, got {:?}",
+            parsed
+        );
     }
 
     #[test]

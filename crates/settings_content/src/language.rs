@@ -81,17 +81,15 @@ pub enum EditPredictionProvider {
     None,
     #[default]
     Copilot,
-    Supermaven,
     Zed,
     Codestral,
     Ollama,
     OpenAiCompatibleApi,
-    Sweep,
     Mercury,
     Experimental(&'static str),
 }
 
-pub const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
+const EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME: &str = "zeta2";
 
 impl<'de> Deserialize<'de> for EditPredictionProvider {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -103,12 +101,10 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
         pub enum Content {
             None,
             Copilot,
-            Supermaven,
             Zed,
             Codestral,
             Ollama,
             OpenAiCompatibleApi,
-            Sweep,
             Mercury,
             Experimental(String),
         }
@@ -116,19 +112,15 @@ impl<'de> Deserialize<'de> for EditPredictionProvider {
         Ok(match Content::deserialize(deserializer)? {
             Content::None => EditPredictionProvider::None,
             Content::Copilot => EditPredictionProvider::Copilot,
-            Content::Supermaven => EditPredictionProvider::Supermaven,
             Content::Zed => EditPredictionProvider::Zed,
             Content::Codestral => EditPredictionProvider::Codestral,
             Content::Ollama => EditPredictionProvider::Ollama,
             Content::OpenAiCompatibleApi => EditPredictionProvider::OpenAiCompatibleApi,
-            Content::Sweep => EditPredictionProvider::Sweep,
             Content::Mercury => EditPredictionProvider::Mercury,
             Content::Experimental(name)
                 if name == EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME =>
             {
-                EditPredictionProvider::Experimental(
-                    EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-                )
+                EditPredictionProvider::Zed
             }
             Content::Experimental(name) => {
                 return Err(D::Error::custom(format!(
@@ -146,11 +138,9 @@ impl EditPredictionProvider {
             EditPredictionProvider::Zed => true,
             EditPredictionProvider::None
             | EditPredictionProvider::Copilot
-            | EditPredictionProvider::Supermaven
             | EditPredictionProvider::Codestral
             | EditPredictionProvider::Ollama
             | EditPredictionProvider::OpenAiCompatibleApi
-            | EditPredictionProvider::Sweep
             | EditPredictionProvider::Mercury
             | EditPredictionProvider::Experimental(_) => false,
         }
@@ -160,14 +150,9 @@ impl EditPredictionProvider {
         match self {
             EditPredictionProvider::Zed => Some("Zed AI"),
             EditPredictionProvider::Copilot => Some("GitHub Copilot"),
-            EditPredictionProvider::Supermaven => Some("Supermaven"),
             EditPredictionProvider::Codestral => Some("Codestral"),
-            EditPredictionProvider::Sweep => Some("Sweep"),
             EditPredictionProvider::Mercury => Some("Mercury"),
-            EditPredictionProvider::Experimental(
-                EXPERIMENTAL_ZETA2_EDIT_PREDICTION_PROVIDER_NAME,
-            ) => Some("Zeta2"),
-            EditPredictionProvider::None | EditPredictionProvider::Experimental(_) => None,
+            EditPredictionProvider::Experimental(_) | EditPredictionProvider::None => None,
             EditPredictionProvider::Ollama => Some("Ollama"),
             EditPredictionProvider::OpenAiCompatibleApi => Some("OpenAI-Compatible API"),
         }
@@ -191,17 +176,20 @@ pub struct EditPredictionSettingsContent {
     pub copilot: Option<CopilotSettingsContent>,
     /// Settings specific to Codestral.
     pub codestral: Option<CodestralSettingsContent>,
-    /// Settings specific to Sweep.
-    pub sweep: Option<SweepSettingsContent>,
     /// Settings specific to Ollama.
     pub ollama: Option<OllamaEditPredictionSettingsContent>,
     /// Settings specific to using custom OpenAI-compatible servers for edit prediction.
     pub open_ai_compatible_api: Option<CustomEditPredictionProviderSettingsContent>,
-    /// Whether edit predictions are enabled in the assistant prompt editor.
-    /// This has no effect if globally disabled.
-    pub enabled_in_text_threads: Option<bool>,
     /// The directory where manually captured edit prediction examples are stored.
     pub examples_dir: Option<Arc<Path>>,
+    /// Controls whether Zed may collect training data when using Zed's Edit Predictions.
+    /// Data is only ever captured for files in projects that are detected as open source.
+    ///
+    /// - `"default"`: use the preference previously set via the status-bar toggle,
+    ///   or false if no preference has been stored.
+    /// - `"yes"`: allow data collection for files in open-source projects.
+    /// - `"no"`: never allow data collection.
+    pub allow_data_collection: Option<EditPredictionDataCollectionChoice>,
 }
 
 #[with_fallible_options]
@@ -219,8 +207,7 @@ pub struct CustomEditPredictionProviderSettingsContent {
     ///
     /// Default: ""
     pub model: Option<String>,
-    /// Maximum tokens to generate for FIM models.
-    /// This setting does not apply to sweep models.
+    /// Maximum tokens to generate.
     ///
     /// Default: 256
     pub max_output_tokens: Option<u32>,
@@ -245,6 +232,7 @@ pub enum EditPredictionPromptFormat {
     #[default]
     Infer,
     Zeta,
+    Zeta2,
     CodeLlama,
     StarCoder,
     DeepseekCoder,
@@ -292,18 +280,6 @@ pub struct CodestralSettingsContent {
     pub api_url: Option<String>,
 }
 
-#[with_fallible_options]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
-pub struct SweepSettingsContent {
-    /// When enabled, Sweep will not store edit prediction inputs or outputs.
-    /// When disabled, Sweep may collect data including buffer contents,
-    /// diagnostics, file paths, repository names, and generated predictions
-    /// to improve the service.
-    ///
-    /// Default: false
-    pub privacy_mode: Option<bool>,
-}
-
 /// Ollama model name for edit predictions.
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
@@ -336,7 +312,6 @@ pub struct OllamaEditPredictionSettingsContent {
     /// Default: none
     pub model: Option<OllamaModelName>,
     /// Maximum tokens to generate for FIM models.
-    /// This setting does not apply to sweep models.
     ///
     /// Default: 256
     pub max_output_tokens: Option<u32>,
@@ -349,6 +324,33 @@ pub struct OllamaEditPredictionSettingsContent {
     ///
     /// Default: ""
     pub prompt_format: Option<EditPredictionPromptFormat>,
+}
+
+/// Controls whether Zed collects training data when using Zed's Edit Predictions.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum EditPredictionDataCollectionChoice {
+    /// Use the preference previously set via the status-bar toggle, or false
+    /// if no preference has been stored.
+    #[default]
+    Default,
+    /// Allow Zed to collect training data from open-source projects.
+    Yes,
+    /// Never allow training data collection.
+    No,
 }
 
 /// The mode in which edit predictions should be displayed.
@@ -393,6 +395,32 @@ pub enum EditPredictionsMode {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+pub enum AutoIndentMode {
+    /// Adjusts indentation based on syntax context when typing.
+    /// Uses tree-sitter to analyze code structure and indent accordingly.
+    SyntaxAware,
+    /// Preserve the indentation of the current line when creating new lines,
+    /// but don't adjust based on syntax context.
+    PreserveIndent,
+    /// No automatic indentation. New lines start at column 0.
+    None,
+}
+
+/// Controls the soft-wrapping behavior in the editor.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     /// Prefer a single line generally, unless an overly long line is encountered.
     None,
@@ -401,9 +429,8 @@ pub enum SoftWrap {
     PreferLine,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
-    /// Soft wrap lines at the preferred line length.
-    PreferredLineLength,
     /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
+    #[serde(alias = "preferred_line_length")]
     Bounded,
 }
 
@@ -457,6 +484,23 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub ensure_final_newline_on_save: Option<bool>,
+    /// How line endings should be handled for new files and during format and
+    /// save operations.
+    ///
+    /// - `detect`: Detect existing line endings and otherwise use the platform
+    ///   default (`lf` on Unix, `crlf` on Windows).
+    /// - `prefer_lf`: Prefer LF for new files and files with no existing line
+    ///   ending.
+    /// - `prefer_crlf`: Prefer CRLF for new files and files with no existing
+    ///   line ending.
+    /// - `enforce_lf`: Enforce LF during format and save.
+    /// - `enforce_crlf`: Enforce CRLF during format and save.
+    ///
+    /// The EditorConfig `end_of_line` property overrides this setting and
+    /// behaves like `enforce_lf` or `enforce_crlf`.
+    ///
+    /// Default: detect
+    pub line_ending: Option<LineEndingSetting>,
     /// How to perform a buffer format.
     ///
     /// Default: auto
@@ -580,10 +624,14 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub linked_edits: Option<bool>,
-    /// Whether indentation should be adjusted based on the context whilst typing.
+    /// Controls automatic indentation behavior when typing.
     ///
-    /// Default: true
-    pub auto_indent: Option<bool>,
+    /// - "syntax_aware": Adjusts indentation based on syntax context (default)
+    /// - "preserve_indent": Preserves current line's indentation on new lines
+    /// - "none": No automatic indentation
+    ///
+    /// Default: syntax_aware
+    pub auto_indent: Option<AutoIndentMode>,
     /// Whether indentation of pasted content should be adjusted based on the context.
     ///
     /// Default: true
@@ -903,6 +951,42 @@ pub enum FormatOnSave {
     Off,
 }
 
+/// Controls how line endings are normalized when a buffer is saved.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum LineEndingSetting {
+    /// Preserve the existing line endings of the file. New files use the
+    /// platform default line ending.
+    #[strum(serialize = "Detect")]
+    Detect,
+    /// Use LF for new files and files with no existing line-ending
+    /// convention, while preserving existing LF or CRLF files.
+    #[strum(serialize = "Prefer LF")]
+    PreferLf,
+    /// Use CRLF for new files and files with no existing line-ending
+    /// convention, while preserving existing LF or CRLF files.
+    #[strum(serialize = "Prefer CRLF")]
+    PreferCrlf,
+    /// Normalize line endings to LF (`\n`) during format and save.
+    #[strum(serialize = "Enforce LF")]
+    EnforceLf,
+    /// Normalize line endings to CRLF (`\r\n`) during format and save.
+    #[strum(serialize = "Enforce CRLF")]
+    EnforceCrlf,
+}
+
 /// Controls which formatters should be used when formatting code.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(untagged)]
@@ -934,6 +1018,8 @@ pub enum Formatter {
     /// or falling back to formatting via language server.
     #[default]
     Auto,
+    /// Do not format code.
+    None,
     /// Format code using Zed's Prettier integration.
     Prettier,
     /// Format code using an external command.
@@ -1126,6 +1212,12 @@ mod test {
         assert_eq!(
             settings.formatter,
             Some(FormatterList::Single(Formatter::Auto))
+        );
+        let raw_none = "{\"formatter\": \"none\"}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw_none).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(FormatterList::Single(Formatter::None))
         );
         let raw = "{\"formatter\": \"language_server\"}";
         let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();

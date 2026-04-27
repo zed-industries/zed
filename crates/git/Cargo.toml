@@ -32,6 +32,7 @@ rope.workspace = true
 schemars.workspace = true
 serde.workspace = true
 smallvec.workspace = true
+async-channel.workspace = true
 smol.workspace = true
 sum_tree.workspace = true
 text.workspace = true
@@ -48,7 +49,6 @@ ztracing.workspace = true
 pretty_assertions.workspace = true
 serde_json.workspace = true
 text = { workspace = true, features = ["test-support"] }
-unindent.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 rand.workspace = true

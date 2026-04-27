@@ -3,19 +3,18 @@ use super::save_file_tool::SaveFileTool;
 use super::tool_permissions::authorize_file_edit;
 use crate::{
     AgentTool, Templates, Thread, ToolCallEventStream, ToolInput,
-    edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat},
+    edit_agent::{EditAgent, EditAgentOutputEvent, EditFormat},
 };
 use acp_thread::Diff;
-use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result};
-use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use indoc::formatdoc;
 use language::language_settings::{self, FormatOnSave};
 use language::{LanguageRegistry, ToPoint};
-use language_model::LanguageModelToolResultContent;
+use language_model::{CompletionIntent, LanguageModelToolResultContent};
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
@@ -104,8 +103,6 @@ pub enum EditFileToolOutput {
         old_text: Arc<String>,
         #[serde(default)]
         diff: String,
-        #[serde(alias = "raw_output")]
-        edit_agent_output: EditAgentOutput,
     },
     Error {
         error: String,
@@ -253,7 +250,7 @@ impl AgentTool for EditFileTool {
                     error: "thread was dropped".to_string(),
                 })?;
 
-            let (project_path, abs_path, allow_thinking, authorize) =
+            let (project_path, abs_path, allow_thinking, update_agent_location, authorize) =
                 cx.update(|cx| {
                     let project_path = resolve_path(&input, project.clone(), cx).map_err(|err| {
                         EditFileToolOutput::Error {
@@ -263,7 +260,7 @@ impl AgentTool for EditFileTool {
                     let abs_path = project.read(cx).absolute_path(&project_path, cx);
                     if let Some(abs_path) = abs_path.clone() {
                         event_stream.update_fields(
-                            ToolCallUpdateFields::new()
+                            acp::ToolCallUpdateFields::new()
                                 .locations(vec![acp::ToolCallLocation::new(abs_path)]),
                         );
                     }
@@ -271,8 +268,11 @@ impl AgentTool for EditFileTool {
                         .thread
                         .read_with(cx, |thread, _cx| thread.thinking_enabled())
                         .unwrap_or(true);
+
+                    let update_agent_location = self.thread.read_with(cx, |thread, _cx| !thread.is_subagent()).unwrap_or_default();
+
                     let authorize = self.authorize(&input, &event_stream, cx);
-                    Ok::<_, EditFileToolOutput>((project_path, abs_path, allow_thinking, authorize))
+                    Ok::<_, EditFileToolOutput>((project_path, abs_path, allow_thinking, update_agent_location, authorize))
                 })?;
 
             let result: anyhow::Result<EditFileToolOutput> = async {
@@ -293,6 +293,7 @@ impl AgentTool for EditFileTool {
                     self.templates.clone(),
                     edit_format,
                     allow_thinking,
+                    update_agent_location,
                 );
 
                 let buffer = project
@@ -303,13 +304,13 @@ impl AgentTool for EditFileTool {
 
                 // Check if the file has been modified since the agent last read it
                 if let Some(abs_path) = abs_path.as_ref() {
-                    let (last_read_mtime, current_mtime, is_dirty, has_save_tool, has_restore_tool) = self.thread.update(cx, |thread, cx| {
-                        let last_read = thread.file_read_times.get(abs_path).copied();
+                    let last_read_mtime = action_log.read_with(cx, |log, _| log.file_read_time(abs_path));
+                    let (current_mtime, is_dirty, has_save_tool, has_restore_tool) = self.thread.read_with(cx, |thread, cx| {
                         let current = buffer.read(cx).file().and_then(|file| file.disk_state().mtime());
                         let dirty = buffer.read(cx).is_dirty();
                         let has_save = thread.has_tool(SaveFileTool::NAME);
                         let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
-                        (last_read, current, dirty, has_save, has_restore)
+                        (current, dirty, has_save, has_restore)
                     })?;
 
                     // Check for unsaved changes first - these indicate modifications we don't know about
@@ -408,7 +409,7 @@ impl AgentTool for EditFileTool {
                                     range.start.to_point(&buffer.snapshot()).row
                                 }));
                                 if let Some(abs_path) = abs_path.clone() {
-                                    event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path).line(line)]));
+                                    event_stream.update_fields(acp::ToolCallUpdateFields::new().locations(vec![acp::ToolCallLocation::new(abs_path).line(line)]));
                                 }
                                 emitted_location = true;
                             }
@@ -417,29 +418,14 @@ impl AgentTool for EditFileTool {
                         EditAgentOutputEvent::AmbiguousEditRange(ranges) => ambiguous_ranges = ranges,
                         EditAgentOutputEvent::ResolvingEditRange(range) => {
                             diff.update(cx, |card, cx| card.reveal_range(range.clone(), cx));
-                            // if !emitted_location {
-                            //     let line = buffer.update(cx, |buffer, _cx| {
-                            //         range.start.to_point(&buffer.snapshot()).row
-                            //     }).ok();
-                            //     if let Some(abs_path) = abs_path.clone() {
-                            //         event_stream.update_fields(ToolCallUpdateFields {
-                            //             locations: Some(vec![ToolCallLocation { path: abs_path, line }]),
-                            //             ..Default::default()
-                            //         });
-                            //     }
-                            // }
                         }
                     }
                 }
 
-                let edit_agent_output = output.await?;
+                output.await?;
 
                 let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
-                    let settings = language_settings::language_settings(
-                        buffer.language().map(|l| l.name()),
-                        buffer.file(),
-                        cx,
-                    );
+                    let settings = language_settings::LanguageSettings::for_buffer(buffer, cx);
                     settings.format_on_save != FormatOnSave::Off
                 });
 
@@ -467,17 +453,6 @@ impl AgentTool for EditFileTool {
                 action_log.update(cx, |log, cx| {
                     log.buffer_edited(buffer.clone(), cx);
                 });
-
-                // Update the recorded read time after a successful edit so consecutive edits work
-                if let Some(abs_path) = abs_path.as_ref() {
-                    if let Some(new_mtime) = buffer.read_with(cx, |buffer, _| {
-                        buffer.file().and_then(|file| file.disk_state().mtime())
-                    }) {
-                        self.thread.update(cx, |thread, _| {
-                            thread.file_read_times.insert(abs_path.to_path_buf(), new_mtime);
-                        })?;
-                    }
-                }
 
                 let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
                 let (new_text, unified_diff) = cx
@@ -524,7 +499,6 @@ impl AgentTool for EditFileTool {
                     new_text,
                     old_text,
                     diff: unified_diff,
-                    edit_agent_output,
                 })
             }.await;
             result
@@ -1214,7 +1188,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert!(stream_rx.try_next().is_err());
+        assert!(stream_rx.try_recv().is_err());
 
         // Test 4: Path with .zed in the middle should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1277,7 +1251,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert!(stream_rx.try_next().is_err());
+        assert!(stream_rx.try_recv().is_err());
 
         // 5.3: Normal in-project path with allow — no confirmation needed
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1294,7 +1268,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert!(stream_rx.try_next().is_err());
+        assert!(stream_rx.try_recv().is_err());
 
         // 5.4: With Confirm default, non-project paths still prompt
         cx.update(|cx| {
@@ -1384,7 +1358,10 @@ mod tests {
 
         event
             .response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
         authorize_task.await.unwrap();
     }
@@ -1609,8 +1586,8 @@ mod tests {
         assert!(result.is_err(), "Tool should fail when policy denies");
         assert!(
             !matches!(
-                stream_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                stream_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Deny policy should not emit symlink authorization prompt",
         );
@@ -1681,7 +1658,7 @@ mod tests {
             } else {
                 auth.await.unwrap();
                 assert!(
-                    stream_rx.try_next().is_err(),
+                    stream_rx.try_recv().is_err(),
                     "Failed for case: {} - path: {} - expected no confirmation but got one",
                     description,
                     path
@@ -1792,7 +1769,7 @@ mod tests {
             } else {
                 auth.await.unwrap();
                 assert!(
-                    stream_rx.try_next().is_err(),
+                    stream_rx.try_recv().is_err(),
                     "Failed for case: {} - path: {} - expected no confirmation but got one",
                     description,
                     path
@@ -1885,7 +1862,7 @@ mod tests {
                 stream_rx.expect_authorization().await;
             } else {
                 assert!(
-                    stream_rx.try_next().is_err(),
+                    stream_rx.try_recv().is_err(),
                     "Failed for case: {} - path: {} - expected no confirmation but got one",
                     description,
                     path
@@ -1986,7 +1963,7 @@ mod tests {
             })
             .await
             .unwrap();
-            assert!(stream_rx.try_next().is_err());
+            assert!(stream_rx.try_recv().is_err());
         }
     }
 
@@ -2211,14 +2188,18 @@ mod tests {
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
         // Initially, file_read_times should be empty
-        let is_empty = thread.read_with(cx, |thread, _| thread.file_read_times.is_empty());
+        let is_empty = action_log.read_with(cx, |action_log, _| {
+            action_log
+                .file_read_time(path!("/root/test.txt").as_ref())
+                .is_none()
+        });
         assert!(is_empty, "file_read_times should start empty");
 
         // Create read tool
         let read_tool = Arc::new(crate::ReadFileTool::new(
-            thread.downgrade(),
             project.clone(),
-            action_log,
+            action_log.clone(),
+            true,
         ));
 
         // Read the file to record the read time
@@ -2237,12 +2218,9 @@ mod tests {
         .unwrap();
 
         // Verify that file_read_times now contains an entry for the file
-        let has_entry = thread.read_with(cx, |thread, _| {
-            thread.file_read_times.len() == 1
-                && thread
-                    .file_read_times
-                    .keys()
-                    .any(|path| path.ends_with("test.txt"))
+        let has_entry = action_log.read_with(cx, |log, _| {
+            log.file_read_time(path!("/root/test.txt").as_ref())
+                .is_some()
         });
         assert!(
             has_entry,
@@ -2264,11 +2242,14 @@ mod tests {
         .await
         .unwrap();
 
-        // Should still have exactly one entry
-        let has_one_entry = thread.read_with(cx, |thread, _| thread.file_read_times.len() == 1);
+        // Should still have an entry after re-reading
+        let has_entry = action_log.read_with(cx, |log, _| {
+            log.file_read_time(path!("/root/test.txt").as_ref())
+                .is_some()
+        });
         assert!(
-            has_one_entry,
-            "file_read_times should still have one entry after re-reading"
+            has_entry,
+            "file_read_times should still have an entry after re-reading"
         );
     }
 
@@ -2308,11 +2289,7 @@ mod tests {
         let languages = project.read_with(cx, |project, _| project.languages().clone());
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
-        let read_tool = Arc::new(crate::ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log,
-        ));
+        let read_tool = Arc::new(crate::ReadFileTool::new(project.clone(), action_log, true));
         let edit_tool = Arc::new(EditFileTool::new(
             project.clone(),
             thread.downgrade(),
@@ -2422,11 +2399,7 @@ mod tests {
         let languages = project.read_with(cx, |project, _| project.languages().clone());
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
-        let read_tool = Arc::new(crate::ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log,
-        ));
+        let read_tool = Arc::new(crate::ReadFileTool::new(project.clone(), action_log, true));
         let edit_tool = Arc::new(EditFileTool::new(
             project.clone(),
             thread.downgrade(),
@@ -2533,11 +2506,7 @@ mod tests {
         let languages = project.read_with(cx, |project, _| project.languages().clone());
         let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
 
-        let read_tool = Arc::new(crate::ReadFileTool::new(
-            thread.downgrade(),
-            project.clone(),
-            action_log,
-        ));
+        let read_tool = Arc::new(crate::ReadFileTool::new(project.clone(), action_log, true));
         let edit_tool = Arc::new(EditFileTool::new(
             project.clone(),
             thread.downgrade(),

@@ -1,37 +1,34 @@
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::ops::Range;
 
-use super::thread_history::ThreadHistory;
 use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::ThreadStore;
-use agent_client_protocol::{self as acp, ToolCallId};
+use agent_client_protocol::schema as acp;
 use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, MinimapVisibility, SizingBehavior};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ScrollHandle, SharedString, TextStyleRefinement, WeakEntity, Window,
+    ScrollHandle, TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
-use project::Project;
+use project::{AgentId, Project};
 use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings as _;
 use terminal_view::TerminalView;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Context, TextSize};
 use workspace::Workspace;
 
-use crate::message_editor::{MessageEditor, MessageEditorEvent};
+use crate::message_editor::{MessageEditor, MessageEditorEvent, SharedSessionCapabilities};
 
 pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    history: WeakEntity<ThreadHistory>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
-    prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
-    available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
-    agent_name: SharedString,
+    session_capabilities: SharedSessionCapabilities,
+    agent_id: AgentId,
 }
 
 impl EntryViewState {
@@ -39,22 +36,18 @@ impl EntryViewState {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: WeakEntity<ThreadHistory>,
         prompt_store: Option<Entity<PromptStore>>,
-        prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
-        available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
-        agent_name: SharedString,
+        session_capabilities: SharedSessionCapabilities,
+        agent_id: AgentId,
     ) -> Self {
         Self {
             workspace,
             project,
             thread_store,
-            history,
             prompt_store,
             entries: Vec::new(),
-            prompt_capabilities,
-            available_commands,
-            agent_name,
+            session_capabilities,
+            agent_id,
         }
     }
 
@@ -75,6 +68,7 @@ impl EntryViewState {
 
         match thread_entry {
             AgentThreadEntry::UserMessage(message) => {
+                let can_rewind = thread.read(cx).supports_truncate(cx);
                 let has_id = message.id.is_some();
                 let is_subagent = thread.read(cx).parent_session_id().is_some();
                 let chunks = message.chunks.clone();
@@ -92,11 +86,9 @@ impl EntryViewState {
                             self.workspace.clone(),
                             self.project.clone(),
                             self.thread_store.clone(),
-                            self.history.clone(),
                             self.prompt_store.clone(),
-                            self.prompt_capabilities.clone(),
-                            self.available_commands.clone(),
-                            self.agent_name.clone(),
+                            self.session_capabilities.clone(),
+                            self.agent_id.clone(),
                             "Edit message － @ to include context",
                             editor::EditorMode::AutoHeight {
                                 min_lines: 1,
@@ -105,7 +97,7 @@ impl EntryViewState {
                             window,
                             cx,
                         );
-                        if !has_id || is_subagent {
+                        if !can_rewind || !has_id || is_subagent {
                             editor.set_read_only(true, cx);
                         }
                         editor.set_message(chunks, window, cx);
@@ -114,7 +106,7 @@ impl EntryViewState {
                     cx.subscribe(&message_editor, move |_, editor, event, cx| {
                         cx.emit(EntryViewEvent {
                             entry_index: index,
-                            view_event: ViewEvent::MessageEditorEvent(editor, *event),
+                            view_event: ViewEvent::MessageEditorEvent(editor, event.clone()),
                         })
                     })
                     .detach();
@@ -126,14 +118,20 @@ impl EntryViewState {
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
 
-                let views = if let Some(Entry::Content(views)) = self.entries.get_mut(index) {
-                    views
+                let views = if let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) {
+                    &mut tool_call.content
                 } else {
-                    self.set_entry(index, Entry::empty());
-                    let Some(Entry::Content(views)) = self.entries.get_mut(index) else {
+                    self.set_entry(
+                        index,
+                        Entry::ToolCall(ToolCallEntry {
+                            content: HashMap::default(),
+                            focus_handle: cx.focus_handle(),
+                        }),
+                    );
+                    let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) else {
                         unreachable!()
                     };
-                    views
+                    &mut tool_call.content
                 };
 
                 let is_tool_call_completed =
@@ -222,7 +220,10 @@ impl EntryViewState {
                 } else {
                     self.set_entry(
                         index,
-                        Entry::AssistantMessage(AssistantMessageEntry::default()),
+                        Entry::AssistantMessage(AssistantMessageEntry {
+                            scroll_handles_by_chunk_index: HashMap::default(),
+                            focus_handle: cx.focus_handle(),
+                        }),
                     );
                     let Some(Entry::AssistantMessage(entry)) = self.entries.get_mut(index) else {
                         unreachable!()
@@ -230,6 +231,11 @@ impl EntryViewState {
                     entry
                 };
                 entry.sync(message);
+            }
+            AgentThreadEntry::CompletedPlan(_) => {
+                if !matches!(self.entries.get(index), Some(Entry::CompletedPlan)) {
+                    self.set_entry(index, Entry::CompletedPlan);
+                }
             }
         };
     }
@@ -249,9 +255,11 @@ impl EntryViewState {
     pub fn agent_ui_font_size_changed(&mut self, cx: &mut App) {
         for entry in self.entries.iter() {
             match entry {
-                Entry::UserMessage { .. } | Entry::AssistantMessage { .. } => {}
-                Entry::Content(response_views) => {
-                    for view in response_views.values() {
+                Entry::UserMessage { .. }
+                | Entry::AssistantMessage { .. }
+                | Entry::CompletedPlan => {}
+                Entry::ToolCall(ToolCallEntry { content, .. }) => {
+                    for view in content.values() {
                         if let Ok(diff_editor) = view.clone().downcast::<Editor>() {
                             diff_editor.update(cx, |diff_editor, cx| {
                                 diff_editor.set_text_style_refinement(
@@ -275,9 +283,9 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
-    NewDiff(ToolCallId),
-    NewTerminal(ToolCallId),
-    TerminalMovedToBackground(ToolCallId),
+    NewDiff(acp::ToolCallId),
+    NewTerminal(acp::ToolCallId),
+    TerminalMovedToBackground(acp::ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
     OpenDiffLocation {
         path: String,
@@ -286,9 +294,10 @@ pub enum ViewEvent {
     },
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct AssistantMessageEntry {
     scroll_handles_by_chunk_index: HashMap<usize, ScrollHandle>,
+    focus_handle: FocusHandle,
 }
 
 impl AssistantMessageEntry {
@@ -306,24 +315,33 @@ impl AssistantMessageEntry {
 }
 
 #[derive(Debug)]
+pub struct ToolCallEntry {
+    content: HashMap<EntityId, AnyEntity>,
+    focus_handle: FocusHandle,
+}
+
+#[derive(Debug)]
 pub enum Entry {
     UserMessage(Entity<MessageEditor>),
     AssistantMessage(AssistantMessageEntry),
-    Content(HashMap<EntityId, AnyEntity>),
+    ToolCall(ToolCallEntry),
+    CompletedPlan,
 }
 
 impl Entry {
     pub fn focus_handle(&self, cx: &App) -> Option<FocusHandle> {
         match self {
             Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
-            Self::AssistantMessage(_) | Self::Content(_) => None,
+            Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
+            Self::ToolCall(tool_call) => Some(tool_call.focus_handle.clone()),
+            Self::CompletedPlan => None,
         }
     }
 
     pub fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match self {
             Self::UserMessage(editor) => Some(editor),
-            Self::AssistantMessage(_) | Self::Content(_) => None,
+            Self::AssistantMessage(_) | Self::ToolCall(_) | Self::CompletedPlan => None,
         }
     }
 
@@ -350,26 +368,39 @@ impl Entry {
     ) -> Option<ScrollHandle> {
         match self {
             Self::AssistantMessage(message) => message.scroll_handle_for_chunk(chunk_ix),
-            Self::UserMessage(_) | Self::Content(_) => None,
+            Self::UserMessage(_) | Self::ToolCall(_) | Self::CompletedPlan => None,
         }
     }
 
     fn content_map(&self) -> Option<&HashMap<EntityId, AnyEntity>> {
         match self {
-            Self::Content(map) => Some(map),
+            Self::ToolCall(ToolCallEntry { content, .. }) => Some(content),
             _ => None,
         }
-    }
-
-    fn empty() -> Self {
-        Self::Content(HashMap::default())
     }
 
     #[cfg(test)]
     pub fn has_content(&self) -> bool {
         match self {
-            Self::Content(map) => !map.is_empty(),
-            Self::UserMessage(_) | Self::AssistantMessage(_) => false,
+            Self::ToolCall(ToolCallEntry { content, .. }) => !content.is_empty(),
+            Self::UserMessage(_) | Self::AssistantMessage(_) | Self::CompletedPlan => false,
+        }
+    }
+}
+
+impl Focusable for ToolCallEntry {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Focusable for Entry {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        match self {
+            Self::UserMessage(editor) => editor.read(cx).focus_handle(cx),
+            Self::AssistantMessage(message) => message.focus_handle.clone(),
+            Self::ToolCall(tool_call) => tool_call.focus_handle.clone(),
+            Self::CompletedPlan => cx.focus_handle(),
         }
     }
 }
@@ -422,6 +453,7 @@ fn create_editor_diff(
         editor.set_show_indent_guides(false, cx);
         editor.set_read_only(true);
         editor.set_delegate_open_excerpts(true);
+        editor.set_show_bookmarks(false, cx);
         editor.set_show_breakpoints(false, cx);
         editor.set_show_code_actions(false, cx);
         editor.set_show_git_diff_gutter(false, cx);
@@ -447,22 +479,25 @@ fn diff_editor_text_style_refinement(cx: &mut App) -> TextStyleRefinement {
 mod tests {
     use std::path::Path;
     use std::rc::Rc;
+    use std::sync::Arc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent_client_protocol as acp;
+    use agent_client_protocol::schema as acp;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
     use gpui::{AppContext as _, TestAppContext};
+    use parking_lot::RwLock;
 
     use crate::entry_view_state::EntryViewState;
+    use crate::message_editor::SessionCapabilities;
     use multi_buffer::MultiBufferRow;
     use pretty_assertions::assert_matches;
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
-    use workspace::MultiWorkspace;
+    use workspace::{MultiWorkspace, PathList};
 
     #[gpui::test]
     async fn test_diff_sync(cx: &mut TestAppContext) {
@@ -489,9 +524,11 @@ mod tests {
         let connection = Rc::new(StubAgentConnection::new());
         let thread = cx
             .update(|_, cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), Path::new(path!("/project")), cx)
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -502,18 +539,14 @@ mod tests {
         });
 
         let thread_store = None;
-        let history =
-            cx.update(|window, cx| cx.new(|cx| crate::ThreadHistory::new(None, window, cx)));
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.downgrade(),
                 project.downgrade(),
                 thread_store,
-                history.downgrade(),
                 None,
-                Default::default(),
-                Default::default(),
+                Arc::new(RwLock::new(SessionCapabilities::default())),
                 "Test Agent".into(),
             )
         });
@@ -576,7 +609,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
     }

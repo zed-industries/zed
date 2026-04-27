@@ -7,7 +7,8 @@ use ui::{App, Context};
 use util::{ResultExt, paths::PathExt};
 
 use crate::{
-    NewWindow, SerializedWorkspaceLocation, WORKSPACE_DB, WorkspaceId, path_list::PathList,
+    NewWindow, SerializedWorkspaceLocation, WorkspaceId, path_list::PathList,
+    persistence::WorkspaceDb,
 };
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
@@ -40,9 +41,10 @@ impl HistoryManager {
     }
 
     fn init(this: Entity<HistoryManager>, fs: Arc<dyn Fs>, cx: &App) {
+        let db = WorkspaceDb::global(cx);
         cx.spawn(async move |cx| {
-            let recent_folders = WORKSPACE_DB
-                .recent_workspaces_on_disk(fs.as_ref())
+            let recent_folders = db
+                .recent_project_workspaces(fs.as_ref())
                 .await
                 .unwrap_or_default()
                 .into_iter()
@@ -102,6 +104,7 @@ impl HistoryManager {
             .map(|entry| entry.path.clone())
             .collect::<Vec<_>>();
         let user_removed = cx.update_jump_list(menus, entries);
+        let db = WorkspaceDb::global(cx);
         cx.spawn(async move |this, cx| {
             let user_removed = user_removed.await;
             if user_removed.is_empty() {
@@ -119,7 +122,7 @@ impl HistoryManager {
                 }
             }) {
                 for id in deleted_ids.iter() {
-                    WORKSPACE_DB.delete_workspace_by_id(*id).await.log_err();
+                    db.delete_workspace_by_id(*id).await.log_err();
                 }
             }
         })

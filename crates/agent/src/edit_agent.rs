@@ -1,6 +1,6 @@
 mod create_file_parser;
 mod edit_parser;
-#[cfg(test)]
+#[cfg(all(test, feature = "unit-eval"))]
 mod evals;
 pub mod reindent;
 pub mod streaming_fuzzy_matcher;
@@ -8,7 +8,6 @@ pub mod streaming_fuzzy_matcher;
 use crate::{Template, Templates};
 use action_log::ActionLog;
 use anyhow::Result;
-use cloud_llm_client::CompletionIntent;
 use create_file_parser::{CreateFileParser, CreateFileParserEvent};
 pub use edit_parser::EditFormat;
 use edit_parser::{EditParser, EditParserEvent, EditParserMetrics};
@@ -21,8 +20,8 @@ use futures::{
 use gpui::{AppContext, AsyncApp, Entity, Task};
 use language::{Anchor, Buffer, BufferSnapshot, LineIndent, Point, TextBufferSnapshot};
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolChoice, MessageContent, Role,
+    CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolChoice, MessageContent, Role,
 };
 use project::{AgentLocation, Project};
 use reindent::{IndentDelta, Reindenter};
@@ -84,6 +83,7 @@ pub struct EditAgent {
     templates: Arc<Templates>,
     edit_format: EditFormat,
     thinking_allowed: bool,
+    update_agent_location: bool,
 }
 
 impl EditAgent {
@@ -94,6 +94,7 @@ impl EditAgent {
         templates: Arc<Templates>,
         edit_format: EditFormat,
         allow_thinking: bool,
+        update_agent_location: bool,
     ) -> Self {
         EditAgent {
             model,
@@ -102,6 +103,7 @@ impl EditAgent {
             templates,
             edit_format,
             thinking_allowed: allow_thinking,
+            update_agent_location,
         }
     }
 
@@ -170,15 +172,17 @@ impl EditAgent {
     ) -> Result<()> {
         let buffer_id = cx.update(|cx| {
             let buffer_id = buffer.read(cx).remote_id();
-            self.project.update(cx, |project, cx| {
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position: language::Anchor::min_for_buffer(buffer_id),
-                    }),
-                    cx,
-                )
-            });
+            if self.update_agent_location {
+                self.project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: language::Anchor::min_for_buffer(buffer_id),
+                        }),
+                        cx,
+                    )
+                });
+            }
             buffer_id
         });
 
@@ -190,15 +194,17 @@ impl EditAgent {
                 .ok()
         };
         let set_agent_location = |cx: &mut _| {
-            self.project.update(cx, |project, cx| {
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position: language::Anchor::max_for_buffer(buffer_id),
-                    }),
-                    cx,
-                )
-            })
+            if self.update_agent_location {
+                self.project.update(cx, |project, cx| {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: language::Anchor::max_for_buffer(buffer_id),
+                        }),
+                        cx,
+                    )
+                })
+            }
         };
         let mut first_chunk = true;
         while let Some(event) = parse_rx.next().await {
@@ -302,15 +308,17 @@ impl EditAgent {
                 if let Some(old_range) = old_range {
                     let old_range = snapshot.anchor_before(old_range.start)
                         ..snapshot.anchor_before(old_range.end);
-                    self.project.update(cx, |project, cx| {
-                        project.set_agent_location(
-                            Some(AgentLocation {
-                                buffer: buffer.downgrade(),
-                                position: old_range.end,
-                            }),
-                            cx,
-                        );
-                    });
+                    if self.update_agent_location {
+                        self.project.update(cx, |project, cx| {
+                            project.set_agent_location(
+                                Some(AgentLocation {
+                                    buffer: buffer.downgrade(),
+                                    position: old_range.end,
+                                }),
+                                cx,
+                            );
+                        });
+                    }
                     output_events
                         .unbounded_send(EditAgentOutputEvent::ResolvingEditRange(old_range))
                         .ok();
@@ -366,13 +374,13 @@ impl EditAgent {
                         buffer.edit(edits.iter().cloned(), None, cx);
                         let max_edit_end = buffer
                             .summaries_for_anchors::<Point, _>(
-                                edits.iter().map(|(range, _)| &range.end),
+                                edits.iter().map(|(range, _)| range.end),
                             )
                             .max()
                             .unwrap();
                         let min_edit_start = buffer
                             .summaries_for_anchors::<Point, _>(
-                                edits.iter().map(|(range, _)| &range.start),
+                                edits.iter().map(|(range, _)| range.start),
                             )
                             .min()
                             .unwrap();
@@ -383,15 +391,17 @@ impl EditAgent {
                     });
                     self.action_log
                         .update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-                    self.project.update(cx, |project, cx| {
-                        project.set_agent_location(
-                            Some(AgentLocation {
-                                buffer: buffer.downgrade(),
-                                position: max_edit_end,
-                            }),
-                            cx,
-                        );
-                    });
+                    if self.update_agent_location {
+                        self.project.update(cx, |project, cx| {
+                            project.set_agent_location(
+                                Some(AgentLocation {
+                                    buffer: buffer.downgrade(),
+                                    position: max_edit_end,
+                                }),
+                                cx,
+                            );
+                        });
+                    }
                     (min_edit_start, max_edit_end)
                 });
                 output_events
@@ -1390,6 +1400,7 @@ mod tests {
             Templates::new(),
             EditFormat::XmlTags,
             thinking_allowed,
+            true,
         )
     }
 
@@ -1508,7 +1519,7 @@ mod tests {
         stream: &mut UnboundedReceiver<EditAgentOutputEvent>,
     ) -> Vec<EditAgentOutputEvent> {
         let mut events = Vec::new();
-        while let Ok(Some(event)) = stream.try_next() {
+        while let Ok(event) = stream.try_recv() {
             events.push(event);
         }
         events

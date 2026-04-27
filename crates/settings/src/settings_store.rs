@@ -13,7 +13,7 @@ use gpui::{
 use paths::{local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, json_schema};
 use serde_json::Value;
-use settings_content::ParseStatus;
+use settings_content::{ActionName, ParseStatus};
 use std::{
     any::{Any, TypeId, type_name},
     fmt::Debug,
@@ -36,8 +36,8 @@ use crate::{
     LanguageToSettingsMap, LspSettings, LspSettingsMap, SemanticTokenRules, ThemeName,
     UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
-        ExtensionsSettingsContent, ProjectSettingsContent, RootUserSettings, SettingsContent,
-        UserSettingsContent, merge_from::MergeFrom,
+        ExtensionsSettingsContent, ProfileBase, ProjectSettingsContent, RootUserSettings,
+        SettingsContent, UserSettingsContent, merge_from::MergeFrom,
     },
 };
 
@@ -155,9 +155,12 @@ pub struct SettingsStore {
 
     merged_settings: Rc<SettingsContent>,
 
+    last_user_settings_content: Option<String>,
+    last_global_settings_content: Option<String>,
     local_settings: BTreeMap<(WorktreeId, Arc<RelPath>), SettingsContent>,
     pub editorconfig_store: Entity<EditorconfigStore>,
 
+    _settings_files_watcher: Option<Task<()>>,
     _setting_file_updates: Task<()>,
     setting_file_updates_tx:
         mpsc::UnboundedSender<Box<dyn FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>>>,
@@ -241,6 +244,11 @@ impl LocalSettingsPath {
 
 impl Global for SettingsStore {}
 
+#[derive(Default)]
+pub struct DefaultSemanticTokenRules(pub SemanticTokenRules);
+
+impl gpui::Global for DefaultSemanticTokenRules {}
+
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct SettingValue<T> {
@@ -264,40 +272,31 @@ pub trait AnySettingValue: 'static + Send + Sync {
 }
 
 /// Parameters that are used when generating some JSON schemas at runtime.
-#[derive(Default)]
 pub struct SettingsJsonSchemaParams<'a> {
     pub language_names: &'a [String],
     pub font_names: &'a [String],
     pub theme_names: &'a [SharedString],
     pub icon_theme_names: &'a [SharedString],
     pub lsp_adapter_names: &'a [String],
+    pub action_names: &'a [&'a str],
+    pub action_documentation: &'a HashMap<&'a str, &'a str>,
+    pub deprecations: &'a HashMap<&'a str, &'a str>,
+    pub deprecation_messages: &'a HashMap<&'a str, &'a str>,
 }
 
 impl SettingsStore {
     pub fn new(cx: &mut App, default_settings: &str) -> Self {
-        Self::new_with_semantic_tokens(cx, default_settings, &crate::default_semantic_token_rules())
-    }
-
-    pub fn new_with_semantic_tokens(
-        cx: &mut App,
-        default_settings: &str,
-        default_semantic_tokens: &str,
-    ) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
-        let mut default_settings: SettingsContent =
-            SettingsContent::parse_json_with_comments(default_settings).unwrap();
-        if let Ok(semantic_token_rules) =
-            crate::parse_json_with_comments::<SemanticTokenRules>(default_semantic_tokens)
-        {
-            let global_lsp = default_settings
-                .global_lsp_settings
-                .get_or_insert_with(Default::default);
-            let existing_rules = global_lsp
-                .semantic_token_rules
-                .get_or_insert_with(Default::default);
-            existing_rules.rules.extend(semantic_token_rules.rules);
+        let default_settings = Self::parse_default_settings(default_settings).unwrap();
+        if !cx.has_global::<DefaultSemanticTokenRules>() {
+            cx.set_global::<DefaultSemanticTokenRules>(
+                crate::parse_json_with_comments::<SemanticTokenRules>(
+                    &crate::default_semantic_token_rules(),
+                )
+                .map(DefaultSemanticTokenRules)
+                .unwrap_or_default(),
+            );
         }
-
         let default_settings: Rc<SettingsContent> = default_settings.into();
         let mut this = Self {
             setting_values: Default::default(),
@@ -309,8 +308,11 @@ impl SettingsStore {
             language_semantic_token_rules: HashMap::default(),
 
             merged_settings: default_settings,
+            last_user_settings_content: None,
+            last_global_settings_content: None,
             local_settings: BTreeMap::default(),
             editorconfig_store: cx.new(|_| EditorconfigStore::default()),
+            _settings_files_watcher: None,
             setting_file_updates_tx,
             _setting_file_updates: cx.spawn(async move |cx| {
                 while let Some(setting_file_update) = setting_file_updates_rx.next().await {
@@ -338,6 +340,59 @@ impl SettingsStore {
         C: BorrowAppContext,
     {
         cx.update_global(f)
+    }
+
+    pub fn watch_settings_files(
+        &mut self,
+        fs: Arc<dyn Fs>,
+        cx: &mut App,
+        settings_changed: impl 'static + Fn(SettingsFile, SettingsParseResult, &mut App),
+    ) {
+        let (mut user_settings_file_rx, user_settings_watcher) = crate::watch_config_file(
+            cx.background_executor(),
+            fs.clone(),
+            paths::settings_file().clone(),
+        );
+        let (mut global_settings_file_rx, global_settings_watcher) = crate::watch_config_file(
+            cx.background_executor(),
+            fs,
+            paths::global_settings_file().clone(),
+        );
+
+        let global_content = cx
+            .foreground_executor()
+            .block_on(global_settings_file_rx.next())
+            .unwrap();
+        let user_content = cx
+            .foreground_executor()
+            .block_on(user_settings_file_rx.next())
+            .unwrap();
+
+        let result = self.set_user_settings(&user_content, cx);
+        settings_changed(SettingsFile::User, result, cx);
+        let result = self.set_global_settings(&global_content, cx);
+        settings_changed(SettingsFile::Global, result, cx);
+
+        self._settings_files_watcher = Some(cx.spawn(async move |cx| {
+            let _user_settings_watcher = user_settings_watcher;
+            let _global_settings_watcher = global_settings_watcher;
+            let mut settings_streams = futures::stream::select(
+                global_settings_file_rx.map(|content| (SettingsFile::Global, content)),
+                user_settings_file_rx.map(|content| (SettingsFile::User, content)),
+            );
+
+            while let Some((settings_file, content)) = settings_streams.next().await {
+                cx.update_global(|store: &mut SettingsStore, cx| {
+                    let result = match settings_file {
+                        SettingsFile::User => store.set_user_settings(&content, cx),
+                        SettingsFile::Global => store.set_global_settings(&content, cx),
+                        _ => return,
+                    };
+                    settings_changed(settings_file, result, cx);
+                    cx.refresh_windows();
+                });
+            }
+        }));
     }
 
     /// Add a new type of setting to the store.
@@ -370,6 +425,10 @@ impl SettingsStore {
         let setting_value = entry.or_insert((registered_setting.settings_value)());
         let value = (registered_setting.from_settings)(&self.merged_settings);
         setting_value.set_global_value(value);
+    }
+
+    pub fn merged_settings(&self) -> &SettingsContent {
+        &self.merged_settings
     }
 
     /// Get the value of a setting.
@@ -496,7 +555,8 @@ impl SettingsStore {
                 async move {
                     let res = async move {
                         let old_text = Self::load_settings(&fs).await?;
-                        let new_text = update(old_text, cx)?;
+                        let new_text = update(old_text, cx.clone())?;
+
                         let settings_path = paths::settings_file().as_path();
                         if fs.is_file(settings_path).await {
                             let resolved_path =
@@ -507,25 +567,28 @@ impl SettingsStore {
                                     )
                                 })?;
 
-                            fs.atomic_write(resolved_path.clone(), new_text)
+                            fs.atomic_write(resolved_path.clone(), new_text.clone())
                                 .await
                                 .with_context(|| {
                                     format!("Failed to write settings to file {:?}", resolved_path)
                                 })?;
                         } else {
-                            fs.atomic_write(settings_path.to_path_buf(), new_text)
+                            fs.atomic_write(settings_path.to_path_buf(), new_text.clone())
                                 .await
                                 .with_context(|| {
                                     format!("Failed to write settings to file {:?}", settings_path)
                                 })?;
                         }
-                        anyhow::Ok(())
+
+                        cx.update_global(|store: &mut SettingsStore, cx| {
+                            store.set_user_settings(&new_text, cx).result().map(|_| ())
+                        })
                     }
                     .await;
 
                     let new_res = match &res {
                         Ok(_) => anyhow::Ok(()),
-                        Err(e) => Err(anyhow::anyhow!("Failed to write settings to file {:?}", e)),
+                        Err(e) => Err(anyhow::anyhow!("{:?}", e)),
                     };
 
                     _ = tx.send(new_res);
@@ -543,11 +606,19 @@ impl SettingsStore {
         fs: Arc<dyn Fs>,
         update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
     ) {
-        _ = self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
-            Ok(cx.read_global(|store: &SettingsStore, cx| {
+        _ = self.update_settings_file_with_completion(fs, update);
+    }
+
+    pub fn update_settings_file_with_completion(
+        &self,
+        fs: Arc<dyn Fs>,
+        update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
+    ) -> oneshot::Receiver<Result<()>> {
+        self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
+            cx.read_global(|store: &SettingsStore, cx| {
                 store.new_text_for_update(old_text, |content| update(content, cx))
-            }))
-        });
+            })
+        })
     }
 
     pub fn import_vscode_settings(
@@ -556,9 +627,9 @@ impl SettingsStore {
         vscode_settings: VsCodeSettings,
     ) -> oneshot::Receiver<Result<()>> {
         self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
-            Ok(cx.read_global(|store: &SettingsStore, _cx| {
+            cx.read_global(|store: &SettingsStore, _cx| {
                 store.get_vscode_edits(old_text, &vscode_settings)
-            }))
+            })
         })
     }
 
@@ -749,16 +820,16 @@ impl SettingsStore {
         &self,
         old_text: String,
         update: impl FnOnce(&mut SettingsContent),
-    ) -> String {
-        let edits = self.edits_for_update(&old_text, update);
+    ) -> Result<String> {
+        let edits = self.edits_for_update(&old_text, update)?;
         let mut new_text = old_text;
         for (range, replacement) in edits.into_iter() {
             new_text.replace_range(range, &replacement);
         }
-        new_text
+        Ok(new_text)
     }
 
-    pub fn get_vscode_edits(&self, old_text: String, vscode: &VsCodeSettings) -> String {
+    pub fn get_vscode_edits(&self, old_text: String, vscode: &VsCodeSettings) -> Result<String> {
         self.new_text_for_update(old_text, |content| {
             content.merge_from(&vscode.settings_content())
         })
@@ -770,10 +841,17 @@ impl SettingsStore {
         &self,
         text: &str,
         update: impl FnOnce(&mut SettingsContent),
-    ) -> Vec<(Range<usize>, String)> {
-        let old_content = UserSettingsContent::parse_json_with_comments(text)
-            .log_err()
-            .unwrap_or_default();
+    ) -> Result<Vec<(Range<usize>, String)>> {
+        let old_content = if text.trim().is_empty() {
+            UserSettingsContent::default()
+        } else {
+            let (old_content, parse_status) = UserSettingsContent::parse_json(text);
+            if let ParseStatus::Failed { error } = &parse_status {
+                log::error!("Failed to parse settings for update: {error}");
+            }
+            old_content
+                .context("Settings file could not be parsed. Fix syntax errors before updating.")?
+        };
         let mut new_content = old_content.clone();
         update(&mut new_content.content);
 
@@ -792,7 +870,18 @@ impl SettingsStore {
             &new_value,
             &mut edits,
         );
-        edits
+        Ok(edits)
+    }
+
+    /// Mutates the default settings in place and recomputes all setting values.
+    pub fn update_default_settings(
+        &mut self,
+        cx: &mut App,
+        update: impl FnOnce(&mut SettingsContent),
+    ) {
+        let default_settings = Rc::make_mut(&mut self.default_settings);
+        update(default_settings);
+        self.recompute_values(None, cx);
     }
 
     /// Sets the default settings via a JSON string.
@@ -803,10 +892,23 @@ impl SettingsStore {
         default_settings_content: &str,
         cx: &mut App,
     ) -> Result<()> {
-        self.default_settings =
-            SettingsContent::parse_json_with_comments(default_settings_content)?.into();
+        self.default_settings = Self::parse_default_settings(default_settings_content)?.into();
         self.recompute_values(None, cx);
         Ok(())
+    }
+
+    /// Parses the default settings JSON and folds any `dev`/`nightly`/`preview`/`stable`
+    /// release-channel overrides and `macos`/`linux`/`windows` platform overrides into
+    /// the returned [`SettingsContent`].
+    ///
+    /// Unlike user settings, default settings are used directly as the base for all
+    /// merges, so overrides must be resolved up front.
+    fn parse_default_settings(default_settings: &str) -> Result<SettingsContent> {
+        let parsed = UserSettingsContent::parse_json_with_comments(default_settings)?;
+        let mut merged = (*parsed.content).clone();
+        merged.merge_from_option(parsed.for_release_channel());
+        merged.merge_from_option(parsed.for_os());
+        Ok(merged)
     }
 
     /// Sets the user settings via a JSON string.
@@ -816,6 +918,14 @@ impl SettingsStore {
         user_settings_content: &str,
         cx: &mut App,
     ) -> SettingsParseResult {
+        if self.last_user_settings_content.as_deref() == Some(user_settings_content) {
+            return SettingsParseResult {
+                parse_status: ParseStatus::Unchanged,
+                migration_status: MigrationStatus::NotNeeded,
+            };
+        }
+        self.last_user_settings_content = Some(user_settings_content.to_string());
+
         let (settings, parse_result) = self.parse_and_migrate_zed_settings::<UserSettingsContent>(
             user_settings_content,
             SettingsFile::User,
@@ -835,6 +945,14 @@ impl SettingsStore {
         global_settings_content: &str,
         cx: &mut App,
     ) -> SettingsParseResult {
+        if self.last_global_settings_content.as_deref() == Some(global_settings_content) {
+            return SettingsParseResult {
+                parse_status: ParseStatus::Unchanged,
+                migration_status: MigrationStatus::NotNeeded,
+            };
+        }
+        self.last_global_settings_content = Some(global_settings_content.to_string());
+
         let (settings, parse_result) = self.parse_and_migrate_zed_settings::<SettingsContent>(
             global_settings_content,
             SettingsFile::Global,
@@ -868,18 +986,30 @@ impl SettingsStore {
     /// Sets language-specific semantic token rules.
     ///
     /// These rules are registered by language modules (e.g. the Rust language module)
-    /// and are stored separately from the global rules. They are only applied to
-    /// buffers of the matching language by the `SemanticTokenStylizer`.
+    /// or by third-party extensions (via `semantic_token_rules.json` in their language
+    /// directories). They are stored separately from the global rules and are only
+    /// applied to buffers of the matching language by the `SemanticTokenStylizer`.
     ///
-    /// These should be registered before any `SemanticTokenStylizer` instances are
-    /// created (typically during `languages::init`), as existing cached stylizers
-    /// are not automatically invalidated.
+    /// This triggers a settings recomputation so that observers (e.g. `LspStore`)
+    /// are notified and can invalidate cached stylizers.
     pub fn set_language_semantic_token_rules(
         &mut self,
         language: SharedString,
         rules: SemanticTokenRules,
+        cx: &mut App,
     ) {
         self.language_semantic_token_rules.insert(language, rules);
+        self.recompute_values(None, cx);
+    }
+
+    /// Removes language-specific semantic token rules for the given language.
+    ///
+    /// This should be called when an extension that registered rules for a language
+    /// is unloaded. Triggers a settings recomputation so that observers (e.g.
+    /// `LspStore`) are notified and can invalidate cached stylizers.
+    pub fn remove_language_semantic_token_rules(&mut self, language: &str, cx: &mut App) {
+        self.language_semantic_token_rules.remove(language);
+        self.recompute_values(None, cx);
     }
 
     /// Returns the language-specific semantic token rules for the given language,
@@ -941,6 +1071,7 @@ impl SettingsStore {
                     );
                 match parse_result.parse_status {
                     ParseStatus::Success => Ok(()),
+                    ParseStatus::Unchanged => Ok(()),
                     ParseStatus::Failed { error } => Err(InvalidSettingsError::LocalSettings {
                         path: directory_path.join(local_settings_file_relative_path()),
                         message: error,
@@ -1143,6 +1274,17 @@ impl SettingsStore {
             });
         }
 
+        if !params.action_names.is_empty() {
+            replace_subschema::<ActionName>(&mut generator, || {
+                ActionName::build_schema(
+                    params.action_names.iter().copied(),
+                    params.action_documentation,
+                    params.deprecations,
+                    params.deprecation_messages,
+                )
+            });
+        }
+
         generator
             .root_schema_for::<UserSettingsContent>()
             .to_value()
@@ -1178,10 +1320,19 @@ impl SettingsStore {
             merged.merge_from_option(self.extension_settings.as_deref());
             merged.merge_from_option(self.global_settings.as_deref());
             if let Some(user_settings) = self.user_settings.as_ref() {
-                merged.merge_from(&user_settings.content);
-                merged.merge_from_option(user_settings.for_release_channel());
-                merged.merge_from_option(user_settings.for_os());
-                merged.merge_from_option(user_settings.for_profile(cx));
+                let active_profile = user_settings.for_profile(cx);
+                let should_merge_user_settings =
+                    active_profile.is_none_or(|profile| profile.base == ProfileBase::User);
+
+                if should_merge_user_settings {
+                    merged.merge_from(&user_settings.content);
+                    merged.merge_from_option(user_settings.for_release_channel());
+                    merged.merge_from_option(user_settings.for_os());
+                }
+
+                if let Some(profile) = active_profile {
+                    merged.merge_from(&profile.settings);
+                }
             }
             merged.merge_from_option(self.server_settings.as_deref());
 
@@ -1327,7 +1478,7 @@ impl SettingsParseResult {
         };
 
         let parse_result = match self.parse_status {
-            ParseStatus::Success => Ok(()),
+            ParseStatus::Success | ParseStatus::Unchanged => Ok(()),
             ParseStatus::Failed { error } => {
                 Err(anyhow::format_err!(error)).context("Failed to parse settings")
             }
@@ -1356,7 +1507,7 @@ impl SettingsParseResult {
     pub fn parse_error(&self) -> Option<String> {
         match &self.parse_status {
             ParseStatus::Failed { error } => Some(error.clone()),
-            ParseStatus::Success => None,
+            ParseStatus::Success | ParseStatus::Unchanged => None,
         }
     }
 }
@@ -1399,9 +1550,7 @@ impl std::fmt::Display for InvalidSettingsError {
             | InvalidSettingsError::DefaultSettings { message }
             | InvalidSettingsError::Tasks { message, .. }
             | InvalidSettingsError::Editorconfig { message, .. }
-            | InvalidSettingsError::Debug { message, .. } => {
-                write!(f, "{message}")
-            }
+            | InvalidSettingsError::Debug { message, .. } => write!(f, "{message}"),
         }
     }
 }
@@ -1478,7 +1627,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU32;
+    use std::{cell::RefCell, num::NonZeroU32};
 
     use crate::{
         ClosePosition, ItemSettingsContent, VsCodeSettingsSource, default_settings,
@@ -1486,6 +1635,7 @@ mod tests {
     };
 
     use super::*;
+    use fs::FakeFs;
     use unindent::Unindent;
     use util::rel_path::rel_path;
 
@@ -1548,6 +1698,117 @@ mod tests {
                 buffer_font_fallbacks: content.buffer_font_fallbacks.unwrap(),
             }
         }
+    }
+
+    #[gpui::test]
+    async fn test_update_settings_file_updates_store_before_watcher(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            paths::settings_file(),
+            r#"{ "tabs": { "close_position": "right" } }"#.as_bytes().to_vec(),
+        )
+        .await;
+        fs.pause_events();
+        cx.run_until_parked();
+
+        let success = SettingsParseResult {
+            parse_status: ParseStatus::Success,
+            migration_status: MigrationStatus::NotNeeded,
+        };
+        let parse_results = Rc::new(RefCell::new(Vec::new()));
+
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx, &default_settings());
+            store.register_setting::<ItemSettings>();
+            store.watch_settings_files(fs.clone(), cx, {
+                let parse_results = parse_results.clone();
+                move |_, result, _| {
+                    parse_results.borrow_mut().push(result);
+                }
+            });
+            cx.set_global(store);
+        });
+
+        // Calling watch_settings_files loads user and global settings.
+        assert_eq!(
+            parse_results.borrow().as_slice(),
+            &[success.clone(), success.clone()]
+        );
+        cx.update(|cx| {
+            assert_eq!(
+                cx.global::<SettingsStore>()
+                    .get::<ItemSettings>(None)
+                    .close_position,
+                ClosePosition::Right
+            );
+        });
+
+        // Updating the settings file returns a channel that resolves once the settings are loaded.
+        let rx = cx.update(|cx| {
+            cx.global::<SettingsStore>()
+                .update_settings_file_with_completion(fs.clone(), move |settings, _| {
+                    settings.tabs.get_or_insert_default().close_position =
+                        Some(ClosePosition::Left);
+                })
+        });
+        assert!(rx.await.unwrap().is_ok());
+        assert_eq!(
+            parse_results.borrow().as_slice(),
+            &[success.clone(), success.clone()]
+        );
+        cx.update(|cx| {
+            assert_eq!(
+                cx.global::<SettingsStore>()
+                    .get::<ItemSettings>(None)
+                    .close_position,
+                ClosePosition::Left
+            );
+        });
+
+        // When the FS event occurs, the settings are recognized as unchanged.
+        fs.flush_events(100);
+        cx.run_until_parked();
+        assert_eq!(
+            parse_results.borrow().as_slice(),
+            &[
+                success.clone(),
+                success.clone(),
+                SettingsParseResult {
+                    parse_status: ParseStatus::Unchanged,
+                    migration_status: MigrationStatus::NotNeeded
+                }
+            ]
+        );
+    }
+
+    #[gpui::test]
+    fn test_default_settings_release_channel_overrides(cx: &mut App) {
+        assert_eq!(
+            *release_channel::RELEASE_CHANNEL,
+            release_channel::ReleaseChannel::Dev,
+            "tests expect the dev release channel",
+        );
+
+        let mut defaults: serde_json::Value =
+            crate::parse_json_with_comments(&default_settings()).unwrap();
+        let root = defaults
+            .as_object_mut()
+            .expect("default settings must be a JSON object");
+        root.insert("dev".into(), serde_json::json!({ "auto_update": false }));
+        root.insert("stable".into(), serde_json::json!({ "auto_update": true }));
+        let defaults_with_overrides = serde_json::to_string(&defaults).unwrap();
+
+        let mut store = SettingsStore::new(cx, &defaults_with_overrides);
+        store.register_setting::<AutoUpdateSetting>();
+
+        assert_eq!(
+            store.get::<AutoUpdateSetting>(None),
+            &AutoUpdateSetting { auto_update: false },
+            "dev override from default settings should apply",
+        );
     }
 
     #[gpui::test]
@@ -1678,7 +1939,7 @@ mod tests {
         cx: &mut App,
     ) {
         store.set_user_settings(&old_json, cx).ok();
-        let edits = store.edits_for_update(&old_json, update);
+        let edits = store.edits_for_update(&old_json, update).unwrap();
         let mut new_json = old_json;
         for (range, replacement) in edits.into_iter() {
             new_json.replace_range(range, &replacement);
@@ -1696,7 +1957,7 @@ mod tests {
             r#"{
                 "languages": {
                     "JSON": {
-                        "auto_indent": true
+                        "auto_indent": "syntax_aware"
                     }
                 }
             }"#
@@ -1706,12 +1967,12 @@ mod tests {
                     .languages_mut()
                     .get_mut("JSON")
                     .unwrap()
-                    .auto_indent = Some(false);
+                    .auto_indent = Some(crate::AutoIndentMode::None);
 
                 settings.languages_mut().insert(
                     "Rust".into(),
                     LanguageSettingsContent {
-                        auto_indent: Some(true),
+                        auto_indent: Some(crate::AutoIndentMode::SyntaxAware),
                         ..Default::default()
                     },
                 );
@@ -1719,10 +1980,10 @@ mod tests {
             r#"{
                 "languages": {
                     "Rust": {
-                        "auto_indent": true
+                        "auto_indent": "syntax_aware"
                     },
                     "JSON": {
-                        "auto_indent": false
+                        "auto_indent": "none"
                     }
                 }
             }"#
@@ -1867,6 +2128,39 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_edits_for_update_preserves_unknown_keys(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+        store.register_setting::<AutoUpdateSetting>();
+
+        let old_json = r#"{
+            "some_unknown_key": "should_be_preserved",
+            "auto_update": false
+        }"#
+        .unindent();
+
+        check_settings_update(
+            &mut store,
+            old_json,
+            |settings| settings.auto_update = Some(true),
+            r#"{
+            "some_unknown_key": "should_be_preserved",
+            "auto_update": true
+        }"#
+            .unindent(),
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    fn test_edits_for_update_returns_error_on_invalid_json(cx: &mut App) {
+        let store = SettingsStore::new(cx, &test_settings());
+
+        let invalid_json = r#"{ this is not valid json at all !!!"#;
+        let result = store.edits_for_update(invalid_json, |_| {});
+        assert!(result.is_err());
+    }
+
+    #[gpui::test]
     fn test_vscode_import(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
         store.register_setting::<DefaultLanguageSettings>();
@@ -1955,6 +2249,30 @@ mod tests {
             cx,
         );
 
+        // explorer sort settings
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "explorer.sortOrder": "mixed",
+              "explorer.sortOrderLexicographicOptions": "lower"
+            }"#
+            .unindent(),
+            r#"{
+              "project_panel": {
+                "sort_mode": "mixed",
+                "sort_order": "lower"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
         // font-family
         check_vscode_import(
             &mut store,
@@ -1975,6 +2293,127 @@ mod tests {
             .unindent(),
             cx,
         );
+
+        // terminal bell settings - newer accessibility setting
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "accessibility.signals.terminalBell": { "sound": "on" } }"#.to_owned(),
+            r#"{
+              "terminal": {
+                "bell": "system"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // terminal bell settings - newer accessibility setting disabled
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "accessibility.signals.terminalBell": { "sound": "off" } }"#.to_owned(),
+            r#"{
+              "terminal": {
+                "bell": "off"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // terminal bell settings - older enableBell setting (true)
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "terminal.integrated.enableBell": true }"#.to_owned(),
+            r#"{
+              "terminal": {
+                "bell": "system"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // terminal bell settings - older enableBell setting (false)
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "terminal.integrated.enableBell": false }"#.to_owned(),
+            r#"{
+              "terminal": {
+                "bell": "off"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // newer accessibility setting takes precedence over older enableBell
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "accessibility.signals.terminalBell": { "sound": "off" },
+              "terminal.integrated.enableBell": true
+            }"#
+            .to_owned(),
+            r#"{
+              "terminal": {
+                "bell": "off"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // hover sticky settings
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "editor.hover.sticky": false,
+              "editor.hover.hidingDelay": 500
+            }"#
+            .to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "hover_popover_hiding_delay": 500,
+              "hover_popover_sticky": false
+            }
+            "#
+            .unindent(),
+            cx,
+        );
     }
 
     #[track_caller]
@@ -1986,10 +2425,12 @@ mod tests {
         cx: &mut App,
     ) {
         store.set_user_settings(&old, cx).ok();
-        let new = store.get_vscode_edits(
-            old,
-            &VsCodeSettings::from_str(&vscode, VsCodeSettingsSource::VsCode).unwrap(),
-        );
+        let new = store
+            .get_vscode_edits(
+                old,
+                &VsCodeSettings::from_str(&vscode, VsCodeSettingsSource::VsCode).unwrap(),
+            )
+            .unwrap();
         pretty_assertions::assert_eq!(new, expected);
     }
 
@@ -1997,14 +2438,16 @@ mod tests {
     fn test_update_git_settings(cx: &mut App) {
         let store = SettingsStore::new(cx, &test_settings());
 
-        let actual = store.new_text_for_update("{}".to_string(), |current| {
-            current
-                .git
-                .get_or_insert_default()
-                .inline_blame
-                .get_or_insert_default()
-                .enabled = Some(true);
-        });
+        let actual = store
+            .new_text_for_update("{}".to_string(), |current| {
+                current
+                    .git
+                    .get_or_insert_default()
+                    .inline_blame
+                    .get_or_insert_default()
+                    .enabled = Some(true);
+            })
+            .unwrap();
         pretty_assertions::assert_str_eq!(
             actual,
             r#"{
@@ -2443,6 +2886,10 @@ mod tests {
                 "rust-analyzer".to_string(),
                 "typescript-language-server".to_string(),
             ],
+            action_names: &[],
+            action_documentation: &HashMap::default(),
+            deprecations: &HashMap::default(),
+            deprecation_messages: &HashMap::default(),
         });
 
         let properties = schema
@@ -2494,6 +2941,10 @@ mod tests {
                 "rust-analyzer".to_string(),
                 "typescript-language-server".to_string(),
             ],
+            action_names: &[],
+            action_documentation: &HashMap::default(),
+            deprecations: &HashMap::default(),
+            deprecation_messages: &HashMap::default(),
         });
 
         let properties = schema
@@ -2542,6 +2993,10 @@ mod tests {
             theme_names: &["One Dark".into()],
             icon_theme_names: &["Zed Icons".into()],
             lsp_adapter_names: &["rust-analyzer".to_string()],
+            action_names: &[],
+            action_documentation: &HashMap::default(),
+            deprecations: &HashMap::default(),
+            deprecation_messages: &HashMap::default(),
         };
 
         let user_schema = SettingsStore::json_schema(&params);

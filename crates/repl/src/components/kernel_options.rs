@@ -27,6 +27,7 @@ fn build_grouped_entries(store: &ReplStore, worktree_id: WorktreeId) -> Vec<Kern
 
     let mut python_envs = Vec::new();
     let mut jupyter_kernels = Vec::new();
+    let mut wsl_kernels = Vec::new();
     let mut remote_kernels = Vec::new();
 
     for spec in store.kernel_specifications_for_worktree(worktree_id) {
@@ -59,10 +60,14 @@ fn build_grouped_entries(store: &ReplStore, worktree_id: WorktreeId) -> Vec<Kern
                     is_recommended,
                 });
             }
-            KernelSpecification::JupyterServer(_)
-            | KernelSpecification::SshRemote(_)
-            | KernelSpecification::WslRemote(_) => {
+            KernelSpecification::JupyterServer(_) | KernelSpecification::SshRemote(_) => {
                 remote_kernels.push(KernelPickerEntry::Kernel {
+                    spec: spec.clone(),
+                    is_recommended,
+                });
+            }
+            KernelSpecification::WslRemote(_) => {
+                wsl_kernels.push(KernelPickerEntry::Kernel {
                     spec: spec.clone(),
                     is_recommended,
                 });
@@ -103,6 +108,12 @@ fn build_grouped_entries(store: &ReplStore, worktree_id: WorktreeId) -> Vec<Kern
     if !jupyter_kernels.is_empty() {
         entries.push(KernelPickerEntry::SectionHeader("Jupyter Kernels".into()));
         entries.extend(jupyter_kernels);
+    }
+
+    // WSL Kernels section
+    if !wsl_kernels.is_empty() {
+        entries.push(KernelPickerEntry::SectionHeader("WSL Kernels".into()));
+        entries.extend(wsl_kernels);
     }
 
     // Remote section
@@ -325,10 +336,10 @@ impl PickerDelegate for KernelPickerDelegate {
 
                 let subtitle = match spec {
                     KernelSpecification::Jupyter(_) => None,
+                    KernelSpecification::WslRemote(_) => Some(spec.path().to_string()),
                     KernelSpecification::PythonEnv(_)
                     | KernelSpecification::JupyterServer(_)
-                    | KernelSpecification::SshRemote(_)
-                    | KernelSpecification::WslRemote(_) => {
+                    | KernelSpecification::SshRemote(_) => {
                         let env_kind = spec.environment_kind_label();
                         let path = spec.path();
                         match env_kind {
@@ -420,10 +431,11 @@ impl PickerDelegate for KernelPickerDelegate {
                 .gap_4()
                 .child(
                     Button::new("kernel-docs", "Kernel Docs")
-                        .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .icon_position(IconPosition::End)
+                        .end_icon(
+                            Icon::new(IconName::ArrowUpRight)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
                         .on_click(move |_, _, cx| cx.open_url(KERNEL_DOCS_URL)),
                 )
                 .into_any(),
@@ -437,7 +449,9 @@ where
     TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
 {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let store = ReplStore::global(cx).read(cx);
+        let store = ReplStore::global(cx);
+        store.update(cx, |store, cx| store.ensure_kernelspecs(cx));
+        let store = store.read(cx);
 
         let all_entries = build_grouped_entries(store, self.worktree_id);
         let selected_kernelspec = store.active_kernelspec(self.worktree_id, None, cx);
@@ -470,7 +484,7 @@ where
         PopoverMenu::new("kernel-switcher")
             .menu(move |_window, _cx| Some(picker_view.clone()))
             .trigger_with_tooltip(self.trigger, self.tooltip)
-            .attach(gpui::Corner::BottomLeft)
+            .attach(gpui::Anchor::BottomLeft)
             .when_some(self.handle, |menu, handle| menu.with_handle(handle))
     }
 }

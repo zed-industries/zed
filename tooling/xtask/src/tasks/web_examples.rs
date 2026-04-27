@@ -71,6 +71,8 @@ pub fn run_web_examples(args: WebExamplesArgs) -> Result<()> {
         "gpui",
         "--keep-going",
     ]);
+    // 🙈
+    cmd.env("RUSTC_BOOTSTRAP", "1");
     for name in &examples {
         cmd.args(["--example", name]);
     }
@@ -109,6 +111,8 @@ pub fn run_web_examples(args: WebExamplesArgs) -> Result<()> {
                 "--out-name",
                 name,
             ])
+            // 🙈
+            .env("RUSTC_BOOTSTRAP", "1")
             .status()
             .context("failed to run wasm-bindgen")?;
         if !status.success() {

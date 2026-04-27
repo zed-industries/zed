@@ -13,7 +13,7 @@ use std::{
 
 use gpui::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueReceiver,
-    PriorityQueueSender, RunnableVariant, THREAD_TIMINGS, TaskTiming, ThreadTaskTimings, profiler,
+    PriorityQueueSender, RunnableVariant, TaskTiming, ThreadTaskTimings, profiler,
 };
 
 struct TimerAfter {
@@ -44,11 +44,6 @@ impl LinuxDispatcher {
                     .name(format!("Worker-{i}"))
                     .spawn(move || {
                         for runnable in receiver.iter() {
-                            // Check if the executor that spawned this task was closed
-                            if runnable.metadata().is_closed() {
-                                continue;
-                            }
-
                             let start = Instant::now();
 
                             let location = runnable.metadata().location;
@@ -94,11 +89,6 @@ impl LinuxDispatcher {
                                     calloop::timer::Timer::from_duration(timer.duration),
                                     move |_, _, _| {
                                         if let Some(runnable) = runnable.take() {
-                                            // Check if the executor that spawned this task was closed
-                                            if runnable.metadata().is_closed() {
-                                                return TimeoutAction::Drop;
-                                            }
-
                                             let start = Instant::now();
                                             let location = runnable.metadata().location;
                                             let mut timing = TaskTiming {
@@ -145,25 +135,7 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn get_current_thread_timings(&self) -> gpui::ThreadTaskTimings {
-        THREAD_TIMINGS.with(|timings| {
-            let timings = timings.lock();
-            let thread_name = timings.thread_name.clone();
-            let total_pushed = timings.total_pushed;
-            let timings = &timings.timings;
-
-            let mut vec = Vec::with_capacity(timings.len());
-
-            let (s1, s2) = timings.as_slices();
-            vec.extend_from_slice(s1);
-            vec.extend_from_slice(s2);
-
-            gpui::ThreadTaskTimings {
-                thread_name,
-                thread_id: std::thread::current().id(),
-                timings: vec,
-                total_pushed,
-            }
-        })
+        gpui::profiler::get_current_thread_task_timings()
     }
 
     fn is_main_thread(&self) -> bool {

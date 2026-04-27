@@ -28,7 +28,9 @@ use util::{
     shell_builder::ShellBuilder,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct WslConnectionOptions {
     pub distro_name: String,
     pub user: Option<String>,
@@ -450,13 +452,10 @@ impl RemoteConnection for WslRemoteConnection {
 
         let mut exec = String::from("exec env ");
 
-        for (k, v) in env.iter() {
-            write!(
-                exec,
-                "{}={} ",
-                k,
-                shell_kind.try_quote(v).context("shell quoting")?
-            )?;
+        for (key, value) in env.iter() {
+            let assignment = format!("{key}={value}");
+            let assignment = shell_kind.try_quote(&assignment).context("shell quoting")?;
+            write!(exec, "{assignment} ")?;
         }
 
         if let Some(program) = program {

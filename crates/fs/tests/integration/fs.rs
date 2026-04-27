@@ -1,10 +1,15 @@
 use std::{
+    collections::BTreeSet,
+    ffi::OsString,
     io::Write,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
+use futures::{FutureExt, StreamExt};
+
 use fs::*;
-use gpui::BackgroundExecutor;
+use gpui::{BackgroundExecutor, TestAppContext};
 use serde_json::json;
 use tempfile::TempDir;
 use util::path;
@@ -434,7 +439,7 @@ async fn test_realfs_atomic_write(executor: BackgroundExecutor) {
     // drop(file);  // We still hold the file handle here
     let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
     assert_eq!(content, "Hello");
-    smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "World".into())).unwrap();
+    gpui::block_on(fs.atomic_write(file_to_be_replaced.clone(), "World".into())).unwrap();
     let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
     assert_eq!(content, "World");
 }
@@ -444,7 +449,7 @@ async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor
     let fs = RealFs::new(None, executor);
     let temp_dir = TempDir::new().unwrap();
     let file_to_be_replaced = temp_dir.path().join("file.txt");
-    smol::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();
+    gpui::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();
     let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
     assert_eq!(content, "Hello");
 }
@@ -524,13 +529,72 @@ async fn test_rename(executor: BackgroundExecutor) {
 }
 
 #[gpui::test]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+async fn test_realfs_parallel_rename_without_overwrite_preserves_losing_source(
+    executor: BackgroundExecutor,
+) {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+    let source_a = root.join("dir_a/shared.txt");
+    let source_b = root.join("dir_b/shared.txt");
+    let target = root.join("shared.txt");
+
+    std::fs::create_dir_all(source_a.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(source_b.parent().unwrap()).unwrap();
+    std::fs::write(&source_a, "from a").unwrap();
+    std::fs::write(&source_b, "from b").unwrap();
+
+    let fs = RealFs::new(None, executor);
+    let (first_result, second_result) = futures::future::join(
+        fs.rename(&source_a, &target, RenameOptions::default()),
+        fs.rename(&source_b, &target, RenameOptions::default()),
+    )
+    .await;
+
+    assert_ne!(first_result.is_ok(), second_result.is_ok());
+    assert!(target.exists());
+    assert_eq!(source_a.exists() as u8 + source_b.exists() as u8, 1);
+}
+
+#[gpui::test]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+async fn test_realfs_rename_ignore_if_exists_leaves_source_and_target_unchanged(
+    executor: BackgroundExecutor,
+) {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+    let source = root.join("source.txt");
+    let target = root.join("target.txt");
+
+    std::fs::write(&source, "from source").unwrap();
+    std::fs::write(&target, "from target").unwrap();
+
+    let fs = RealFs::new(None, executor);
+    let result = fs
+        .rename(
+            &source,
+            &target,
+            RenameOptions {
+                ignore_if_exists: true,
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(result.is_ok());
+
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), "from source");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "from target");
+}
+
+#[gpui::test]
 #[cfg(unix)]
 async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
     let tempdir = TempDir::new().unwrap();
     let path = tempdir.path();
     let fs = RealFs::new(None, executor);
     let symlink_path = path.join("symlink");
-    smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from("file_a.txt"))).unwrap();
+    gpui::block_on(fs.create_symlink(&symlink_path, PathBuf::from("file_a.txt"))).unwrap();
     let metadata = fs
         .metadata(&symlink_path)
         .await
@@ -550,7 +614,7 @@ async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
     let path = tempdir.path();
     let fs = RealFs::new(None, executor);
     let symlink_path = path.join("symlink");
-    smol::block_on(fs.create_symlink(&symlink_path, PathBuf::from("symlink"))).unwrap();
+    gpui::block_on(fs.create_symlink(&symlink_path, PathBuf::from("symlink"))).unwrap();
     let metadata = fs
         .metadata(&symlink_path)
         .await
@@ -561,4 +625,290 @@ async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
     assert!(!metadata.is_fifo);
     assert!(!metadata.is_executable);
     // don't care about len or mtime on symlinks?
+}
+
+#[gpui::test]
+async fn test_fake_fs_trash(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "file_c.txt": "File C",
+                "file_d.txt": "File D"
+            },
+            "file_a.txt": "File A",
+            "file_b.txt": "File B",
+        }),
+    )
+    .await;
+
+    // Trashing a file.
+    let root_path = PathBuf::from(path!("/root"));
+    let path = path!("/root/file_a.txt").as_ref();
+    let trashed_entry = fs
+        .trash(path, Default::default())
+        .await
+        .expect("should be able to trash {path:?}");
+
+    assert_eq!(trashed_entry.name, "file_a.txt");
+    assert_eq!(trashed_entry.original_parent, root_path);
+    assert_eq!(
+        fs.files(),
+        vec![
+            PathBuf::from(path!("/root/file_b.txt")),
+            PathBuf::from(path!("/root/src/file_c.txt")),
+            PathBuf::from(path!("/root/src/file_d.txt"))
+        ]
+    );
+
+    let trash_entries = fs.trash_entries();
+    assert_eq!(trash_entries.len(), 1);
+    assert_eq!(trash_entries[0].name, "file_a.txt");
+    assert_eq!(trash_entries[0].original_parent, root_path);
+
+    // Trashing a directory.
+    let path = path!("/root/src").as_ref();
+    let trashed_entry = fs
+        .trash(
+            path,
+            RemoveOptions {
+                recursive: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("should be able to trash {path:?}");
+
+    assert_eq!(trashed_entry.name, "src");
+    assert_eq!(trashed_entry.original_parent, root_path);
+    assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_b.txt"))]);
+
+    let trash_entries = fs.trash_entries();
+    assert_eq!(trash_entries.len(), 2);
+    assert_eq!(trash_entries[1].name, "src");
+    assert_eq!(trash_entries[1].original_parent, root_path);
+}
+
+#[gpui::test]
+async fn test_fake_fs_restore(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "file_a.txt": "File A",
+                "file_b.txt": "File B",
+            },
+            "file_c.txt": "File C",
+        }),
+    )
+    .await;
+
+    // Providing a non-existent `TrashedEntry` should result in an error.
+    let id = OsString::from("/trash/file_c.txt");
+    let name = OsString::from("file_c.txt");
+    let original_parent = PathBuf::from(path!("/root"));
+    let trashed_entry = TrashedEntry {
+        id,
+        name,
+        original_parent,
+    };
+    let result = fs.restore(trashed_entry).await;
+    assert!(matches!(result, Err(TrashRestoreError::NotFound { .. })));
+
+    // Attempt deleting a file, asserting that the filesystem no longer reports
+    // it as part of its list of files, restore it and verify that the list of
+    // files and trash has been updated accordingly.
+    let path = path!("/root/src/file_a.txt").as_ref();
+    let trashed_entry = fs.trash(path, Default::default()).await.unwrap();
+
+    assert_eq!(fs.trash_entries().len(), 1);
+    assert_eq!(
+        fs.files(),
+        vec![
+            PathBuf::from(path!("/root/file_c.txt")),
+            PathBuf::from(path!("/root/src/file_b.txt"))
+        ]
+    );
+
+    fs.restore(trashed_entry).await.unwrap();
+
+    assert_eq!(fs.trash_entries().len(), 0);
+    assert_eq!(
+        fs.files(),
+        vec![
+            PathBuf::from(path!("/root/file_c.txt")),
+            PathBuf::from(path!("/root/src/file_a.txt")),
+            PathBuf::from(path!("/root/src/file_b.txt"))
+        ]
+    );
+
+    // Deleting and restoring a directory should also remove all of its files
+    // but create a single trashed entry, which should be removed after
+    // restoration.
+    let options = RemoveOptions {
+        recursive: true,
+        ..Default::default()
+    };
+    let path = path!("/root/src/").as_ref();
+    let trashed_entry = fs.trash(path, options).await.unwrap();
+
+    assert_eq!(fs.trash_entries().len(), 1);
+    assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
+
+    fs.restore(trashed_entry).await.unwrap();
+
+    assert_eq!(
+        fs.files(),
+        vec![
+            PathBuf::from(path!("/root/file_c.txt")),
+            PathBuf::from(path!("/root/src/file_a.txt")),
+            PathBuf::from(path!("/root/src/file_b.txt"))
+        ]
+    );
+    assert_eq!(fs.trash_entries().len(), 0);
+
+    // A collision error should be returned in case a file is being restored to
+    // a path where a file already exists.
+    let path = path!("/root/src/file_a.txt").as_ref();
+    let trashed_entry = fs.trash(path, Default::default()).await.unwrap();
+
+    assert_eq!(fs.trash_entries().len(), 1);
+    assert_eq!(
+        fs.files(),
+        vec![
+            PathBuf::from(path!("/root/file_c.txt")),
+            PathBuf::from(path!("/root/src/file_b.txt"))
+        ]
+    );
+
+    fs.write(path, "New File A".as_bytes()).await.unwrap();
+
+    assert_eq!(fs.trash_entries().len(), 1);
+    assert_eq!(
+        fs.files(),
+        vec![
+            PathBuf::from(path!("/root/file_c.txt")),
+            PathBuf::from(path!("/root/src/file_a.txt")),
+            PathBuf::from(path!("/root/src/file_b.txt"))
+        ]
+    );
+
+    let file_contents = fs.files_with_contents(path);
+    assert!(fs.restore(trashed_entry).await.is_err());
+    assert_eq!(
+        file_contents,
+        vec![(PathBuf::from(path), b"New File A".to_vec())]
+    );
+
+    // A collision error should be returned in case a directory is being
+    // restored to a path where a directory already exists.
+    let options = RemoveOptions {
+        recursive: true,
+        ..Default::default()
+    };
+    let path = path!("/root/src/").as_ref();
+    let trashed_entry = fs.trash(path, options).await.unwrap();
+
+    assert_eq!(fs.trash_entries().len(), 2);
+    assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
+
+    fs.create_dir(path).await.unwrap();
+
+    assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
+    assert_eq!(fs.trash_entries().len(), 2);
+
+    let result = fs.restore(trashed_entry).await;
+    assert!(result.is_err());
+
+    assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
+    assert_eq!(fs.trash_entries().len(), 2);
+}
+
+#[gpui::test]
+#[ignore = "stress test; run explicitly when needed"]
+async fn test_realfs_watch_stress_reports_missed_paths(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    const FILE_COUNT: usize = 32000;
+    cx.executor().allow_parking();
+
+    let fs = RealFs::new(None, executor.clone());
+    let temp_dir = TempDir::new().expect("create temp dir");
+    let root = temp_dir.path();
+
+    let mut file_paths = Vec::with_capacity(FILE_COUNT);
+    let mut expected_paths = BTreeSet::new();
+
+    for index in 0..FILE_COUNT {
+        let dir_path = root.join(format!("dir-{index:04}"));
+        let file_path = dir_path.join("file.txt");
+        fs.create_dir(&dir_path).await.expect("create watched dir");
+        fs.write(&file_path, b"before")
+            .await
+            .expect("create initial file");
+        expected_paths.insert(file_path.clone());
+        file_paths.push(file_path);
+    }
+
+    let (mut events, watcher) = fs.watch(root, Duration::from_millis(10)).await;
+    let _watcher = watcher;
+
+    for file_path in &expected_paths {
+        _watcher
+            .add(file_path.parent().expect("file has parent"))
+            .expect("add explicit directory watch");
+    }
+
+    for (index, file_path) in file_paths.iter().enumerate() {
+        let content = format!("after-{index}");
+        fs.write(file_path, content.as_bytes())
+            .await
+            .expect("modify watched file");
+    }
+
+    let mut changed_paths = BTreeSet::new();
+    let mut rescan_count: u32 = 0;
+    let timeout = executor.timer(Duration::from_secs(10)).fuse();
+
+    futures::pin_mut!(timeout);
+
+    let mut ticks = 0;
+    while ticks < 1000 {
+        if let Some(batch) = events.next().fuse().now_or_never().flatten() {
+            for event in batch {
+                if event.kind == Some(PathEventKind::Rescan) {
+                    rescan_count += 1;
+                }
+                if expected_paths.contains(&event.path) {
+                    changed_paths.insert(event.path);
+                }
+            }
+            if changed_paths.len() == expected_paths.len() {
+                break;
+            }
+            ticks = 0;
+        } else {
+            ticks += 1;
+            executor.timer(Duration::from_millis(10)).await;
+        }
+    }
+
+    let missed_paths: BTreeSet<_> = expected_paths.difference(&changed_paths).cloned().collect();
+
+    eprintln!(
+        "realfs watch stress: expected={}, observed={}, missed={}, rescan={}",
+        expected_paths.len(),
+        changed_paths.len(),
+        missed_paths.len(),
+        rescan_count
+    );
+
+    assert!(
+        missed_paths.is_empty() || rescan_count > 0,
+        "missed {} paths without rescan being reported",
+        missed_paths.len()
+    );
 }

@@ -67,25 +67,22 @@ pub fn init(cx: &mut App) {
     .detach();
 
     if let Some(extension_events) = extension::ExtensionEvents::try_global(cx) {
-        cx.subscribe(&extension_events, move |_, evt, cx| {
-            match evt {
-                extension::Event::ExtensionInstalled(_)
-                | extension::Event::ExtensionUninstalled(_)
-                | extension::Event::ConfigureExtensionRequested(_) => return,
-                extension::Event::ExtensionsInstalledChanged => {}
+        cx.subscribe(&extension_events, move |_, evt, cx| match evt {
+            extension::Event::ExtensionsInstalledChanged => {
+                cx.update_global::<SchemaStore, _>(|schema_store, cx| {
+                    schema_store.notify_schema_changed(ChangedSchemas::Settings, cx);
+                });
             }
-            cx.update_global::<SchemaStore, _>(|schema_store, cx| {
-                schema_store.notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}settings"), cx);
-                schema_store
-                    .notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}project_settings"), cx);
-            });
+            extension::Event::ExtensionUninstalled(_)
+            | extension::Event::ExtensionInstalled(_)
+            | extension::Event::ConfigureExtensionRequested(_) => {}
         })
         .detach();
     }
 
     cx.observe_global::<dap::DapRegistry>(move |cx| {
         cx.update_global::<SchemaStore, _>(|schema_store, cx| {
-            schema_store.notify_schema_changed(&format!("{SCHEMA_URI_PREFIX}debug_tasks"), cx);
+            schema_store.notify_schema_changed(ChangedSchemas::DebugTasks, cx);
         });
     })
     .detach();
@@ -98,18 +95,42 @@ pub struct SchemaStore {
 
 impl gpui::Global for SchemaStore {}
 
-impl SchemaStore {
-    fn notify_schema_changed(&mut self, uri: &str, cx: &mut App) {
-        DYNAMIC_SCHEMA_CACHE.write().remove(uri);
+enum ChangedSchemas {
+    Settings,
+    DebugTasks,
+}
 
-        let uri = uri.to_string();
+impl SchemaStore {
+    fn notify_schema_changed(&mut self, changed_schemas: ChangedSchemas, cx: &mut App) {
+        let uris_to_invalidate = match changed_schemas {
+            ChangedSchemas::Settings => {
+                let settings_uri_prefix = &format!("{SCHEMA_URI_PREFIX}settings");
+                let project_settings_uri = &format!("{SCHEMA_URI_PREFIX}project_settings");
+                DYNAMIC_SCHEMA_CACHE
+                    .write()
+                    .extract_if(|uri, _| {
+                        uri == project_settings_uri || uri.starts_with(settings_uri_prefix)
+                    })
+                    .map(|(url, _)| url)
+                    .collect()
+            }
+            ChangedSchemas::DebugTasks => DYNAMIC_SCHEMA_CACHE
+                .write()
+                .remove_entry(&format!("{SCHEMA_URI_PREFIX}debug_tasks"))
+                .map_or_else(Vec::new, |(uri, _)| vec![uri]),
+        };
+
+        if uris_to_invalidate.is_empty() {
+            return;
+        }
+
         self.lsp_stores.retain(|lsp_store| {
             let Some(lsp_store) = lsp_store.upgrade() else {
                 return false;
             };
-            project::lsp_store::json_language_server_ext::notify_schema_changed(
+            project::lsp_store::json_language_server_ext::notify_schemas_changed(
                 lsp_store,
-                uri.clone(),
+                &uris_to_invalidate,
                 cx,
             );
             true
@@ -238,7 +259,8 @@ async fn resolve_dynamic_schema(
                 (adapter_name, LspSchemaKind::Settings)
             } else {
                 anyhow::bail!(
-                    "Invalid LSP schema path: expected '{{adapter}}/initialization_options' or '{{adapter}}/settings', got '{}'",
+                    "Invalid LSP schema path: \
+                    Expected '{{adapter}}/initialization_options' or '{{adapter}}/settings', got '{}'",
                     lsp_path
                 );
             };
@@ -330,13 +352,25 @@ async fn resolve_dynamic_schema(
                 let icon_theme_names = icon_theme_names.as_slice();
                 let theme_names = theme_names.as_slice();
 
-                settings::SettingsStore::json_schema(&settings::SettingsJsonSchemaParams {
-                    language_names,
-                    font_names,
-                    theme_names,
-                    icon_theme_names,
-                    lsp_adapter_names: &lsp_adapter_names,
-                })
+                let action_names = cx.all_action_names();
+                let action_documentation = cx.action_documentation();
+                let deprecations = cx.deprecated_actions_to_preferred_actions();
+                let deprecation_messages = cx.action_deprecation_messages();
+
+                let mut schema =
+                    settings::SettingsStore::json_schema(&settings::SettingsJsonSchemaParams {
+                        language_names,
+                        font_names,
+                        theme_names,
+                        icon_theme_names,
+                        lsp_adapter_names: &lsp_adapter_names,
+                        action_names,
+                        action_documentation,
+                        deprecations,
+                        deprecation_messages,
+                    });
+                inject_feature_flags_schema(&mut schema);
+                schema
             })
         }
         "project_settings" => {
@@ -352,16 +386,23 @@ async fn resolve_dynamic_schema(
                 .map(|name| name.to_string())
                 .collect::<Vec<_>>();
 
-            settings::SettingsStore::project_json_schema(&settings::SettingsJsonSchemaParams {
-                language_names,
-                lsp_adapter_names: &lsp_adapter_names,
-                // These are not allowed in project-specific settings but
-                // they're still fields required by the
-                // `SettingsJsonSchemaParams` struct.
-                font_names: &[],
-                theme_names: &[],
-                icon_theme_names: &[],
-            })
+            let mut schema =
+                settings::SettingsStore::project_json_schema(&settings::SettingsJsonSchemaParams {
+                    language_names,
+                    lsp_adapter_names: &lsp_adapter_names,
+                    // These are not allowed in project-specific settings but
+                    // they're still fields required by the
+                    // `SettingsJsonSchemaParams` struct.
+                    font_names: &[],
+                    theme_names: &[],
+                    icon_theme_names: &[],
+                    action_names: &[],
+                    action_documentation: &HashMap::default(),
+                    deprecations: &HashMap::default(),
+                    deprecation_messages: &HashMap::default(),
+                });
+            inject_feature_flags_schema(&mut schema);
+            schema
         }
         "debug_tasks" => {
             let adapter_schemas = cx.read_global::<dap::DapRegistry, _>(|dap_registry, _| {
@@ -484,11 +525,26 @@ pub fn all_schema_file_associations(
             let file_name = normalized_action_name_to_file_name(normalized_name.clone());
             serde_json::json!({
                 "fileMatch": [file_name],
-                "url": format!("{}action/{normalized_name}", SCHEMA_URI_PREFIX)
+                "url": format!("{SCHEMA_URI_PREFIX}action/{normalized_name}")
             })
         }));
 
     file_associations
+}
+
+/// Swaps the placeholder [`settings::FeatureFlagsMap`] subschema produced by
+/// schemars for an enriched one that lists each known flag's variants. The
+/// placeholder is registered in the `settings_content` crate so the
+/// `settings` crate doesn't need a reverse dependency on `feature_flags`.
+fn inject_feature_flags_schema(schema: &mut serde_json::Value) {
+    use schemars::JsonSchema;
+
+    let Some(defs) = schema.get_mut("$defs").and_then(|d| d.as_object_mut()) else {
+        return;
+    };
+    let schema_name = settings::FeatureFlagsMap::schema_name();
+    let enriched = feature_flags::generate_feature_flags_schema().to_value();
+    defs.insert(schema_name.into_owned(), enriched);
 }
 
 fn generate_jsonc_schema() -> serde_json::Value {

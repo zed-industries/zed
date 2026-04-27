@@ -1,0 +1,115 @@
+# Stale PR Review Reminder
+#
+# Runs daily on weekdays (second run at 8 PM UTC disabled during rollout) and posts a Slack summary of open PRs that
+# have been awaiting review for more than 72 hours. Team-level signal only —
+# no individual shaming.
+#
+# Security note: No untrusted input is interpolated into shell commands.
+# All PR metadata is read via gh API + jq.
+#
+# Required secrets:
+#   SLACK_WEBHOOK_PR_REVIEW_BOT - Incoming webhook URL for the #pr-review-ops channel
+
+name: Stale PR Review Reminder
+
+on:
+  schedule:
+    - cron: "0 14 * * 1-5" # 2 PM UTC weekdays
+    # - cron: "0 20 * * 1-5" # 8 PM UTC weekdays — enable after initial rollout
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check-stale-prs:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      REPO: ${{ github.repository }}
+      # Only surface PRs created on or after this date. Update this if the
+      # review process enforcement date changes.
+      PROCESS_START_DATE: "2026-03-19T00:00:00Z"
+    steps:
+      - name: Find PRs awaiting review longer than 72h
+        id: stale
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          CUTOFF=$(date -u -v-72H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+            || date -u -d '72 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+
+          # Get open, non-draft PRs with pending review requests, created before cutoff
+          # but after the review process start date (to exclude pre-existing backlog)
+          gh api --paginate \
+            "repos/${REPO}/pulls?state=open&sort=updated&direction=asc&per_page=100" \
+            --jq "[
+              .[] |
+              select(.draft == false) |
+              select(.created_at > \"$PROCESS_START_DATE\") |
+              select(.created_at < \"$CUTOFF\") |
+              select((.requested_reviewers | length > 0) or (.requested_teams | length > 0))
+            ]" > /tmp/candidates.json
+
+          # Filter to PRs with zero approving reviews
+          jq -r '.[].number' /tmp/candidates.json | while read -r PR_NUMBER; do
+            APPROVALS=$(gh api \
+              "repos/${REPO}/pulls/${PR_NUMBER}/reviews" \
+              --jq "[.[] | select(.state == \"APPROVED\")] | length" 2>/dev/null || echo "0")
+
+            if [ "$APPROVALS" -eq 0 ]; then
+              jq ".[] | select(.number == ${PR_NUMBER}) | {number, title, author: .user.login, created_at}" \
+                /tmp/candidates.json
+            fi
+          done | jq -s '.' > /tmp/awaiting.json
+
+          COUNT=$(jq 'length' /tmp/awaiting.json)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Notify Slack
+        if: steps.stale.outputs.count != '0'
+        env:
+          SLACK_WEBHOOK_PR_REVIEW_BOT: ${{ secrets.SLACK_WEBHOOK_PR_REVIEW_BOT }}
+          COUNT: ${{ steps.stale.outputs.count }}
+        run: |
+          # Build Block Kit payload from JSON — no shell interpolation of PR titles.
+          # Why jq? PR titles are attacker-controllable input. By reading them
+          # through jq -r from the JSON file and passing the result to jq --arg,
+          # the content stays safely JSON-encoded in the final payload.
+          PRS=$(jq -r '.[] | "• <https://github.com/'"${REPO}"'/pull/\(.number)|#\(.number)> — \(.title) (by \(.author), opened \(.created_at | split("T")[0]))"' /tmp/awaiting.json)
+
+          jq -n \
+            --arg count "$COUNT" \
+            --arg prs "$PRS" \
+            '{
+              text: ($count + " PR(s) awaiting review for >72 hours"),
+              blocks: [
+                {
+                  type: "section",
+                  text: {
+                    type: "mrkdwn",
+                    text: (":hourglass_flowing_sand: *" + $count + " PR(s) Awaiting Review >72 Hours*")
+                  }
+                },
+                {
+                  type: "section",
+                  text: { type: "mrkdwn", text: $prs }
+                },
+                { type: "divider" },
+                {
+                  type: "context",
+                  elements: [{
+                    type: "mrkdwn",
+                    text: "PRs awaiting review are surfaced daily. Reviewers: pick one up or reassign."
+                  }]
+                }
+              ]
+            }' | \
+          curl -s -X POST "$SLACK_WEBHOOK_PR_REVIEW_BOT" \
+            -H 'Content-Type: application/json' \
+            -d @-
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}
