@@ -392,29 +392,14 @@ impl AnyAgentTool for ContextServerTool {
 
             let mut llm_output = Vec::new();
             let mut concatenated_text = String::new();
-            let mut image_count: usize = 0;
             for content in response.content {
                 match content {
                     context_server::types::ToolResponseContent::Text { text } => {
                         concatenated_text.push_str(&text);
                         llm_output.push(LanguageModelToolResultContent::Text(text.into()));
                     }
-                    context_server::types::ToolResponseContent::Image { data, mime_type } => {
-                        // `LanguageModelImage` is currently PNG-only; drop other
-                        // mime types with the existing warning behavior.
-                        if mime_type == "image/png" {
-                            image_count += 1;
-                            llm_output.push(LanguageModelToolResultContent::Image(
-                                LanguageModelImage {
-                                    source: data.into(),
-                                    size: None,
-                                },
-                            ));
-                        } else {
-                            log::warn!(
-                                "Ignoring image content from tool response with unsupported mime type: {mime_type}"
-                            );
-                        }
+                    context_server::types::ToolResponseContent::Image { .. } => {
+                        log::warn!("Ignoring image content from tool response");
                     }
                     context_server::types::ToolResponseContent::Audio { .. } => {
                         log::warn!("Ignoring audio content from tool response");
@@ -424,16 +409,7 @@ impl AnyAgentTool for ContextServerTool {
                     }
                 }
             }
-            // `raw_output` is persisted alongside the thread, so avoid embedding
-            // raw base64 image bytes here (they're already in `llm_output`).
-            let raw_output = if image_count == 0 {
-                serde_json::Value::String(concatenated_text)
-            } else {
-                serde_json::json!({
-                    "text": concatenated_text,
-                    "images": image_count,
-                })
-            };
+            let raw_output = serde_json::Value::String(concatenated_text);
             Ok(AgentToolOutput {
                 raw_output,
                 llm_output,
