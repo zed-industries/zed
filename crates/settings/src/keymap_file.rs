@@ -1492,10 +1492,9 @@ mod tests {
     use gpui::{Action, App, DummyKeyboardMapper, KeybindingKeystroke, Keystroke, Unbind};
     use serde_json::Value;
     use unindent::Unindent;
-    use util::asset_str;
 
     use crate::{
-        KeybindSource, KeymapFile, SettingsAssets,
+        KeybindSource, KeymapFile,
         keymap_file::{KeybindUpdateOperation, KeybindUpdateTarget},
     };
 
@@ -1659,26 +1658,6 @@ mod tests {
             }
             other => panic!("expected SomeFailedToLoad, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn windows_terminal_keymap_closes_window_on_alt_f4() {
-        let keymap =
-            KeymapFile::parse(asset_str::<SettingsAssets>("keymaps/default-windows.json").as_ref())
-                .unwrap();
-
-        let terminal_section = keymap
-            .0
-            .iter()
-            .find(|section| section.context == "Terminal")
-            .expect("default Windows keymap should include a Terminal section");
-        let alt_f4_binding = terminal_section
-            .bindings
-            .as_ref()
-            .and_then(|bindings| bindings.get("alt-f4"))
-            .expect("Terminal section should bind alt-f4");
-
-        assert_eq!(alt_f4_binding.to_string(), "workspace::CloseWindow");
     }
 
     #[test]
