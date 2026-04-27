@@ -4064,11 +4064,10 @@ impl GitPanel {
                     .gap_1()
                     .child(
                         IconButton::new("cancel-generate-commit-message", IconName::Stop)
-                            .shape(ui::IconButtonShape::Square)
                             .icon_color(Color::Error)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Tinted(TintColor::Error))
-                            .tooltip(Tooltip::text("Cancel commit message generation"))
+                            .tooltip(Tooltip::text("Cancel Commit Message Generation"))
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.generate_commit_message_task.take();
                                 cx.notify();
