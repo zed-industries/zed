@@ -3461,19 +3461,19 @@ mod tests {
                 };
                 assert_eq!(
                     *line, expected_line,
-                    "Mismatched line at line {line} at {} {lines:#?}",
+                    "Mismatched line at line {line} at {}",
                     source_location
                 );
                 assert_eq!(
                     *text, expected_text,
-                    "Mismatched text at line {line} at {} {lines:#?}",
+                    "Mismatched text at line {line} at {}",
                     source_location
                 );
             }
 
             assert!(
                 expected_lines.next().is_none(),
-                "Extra expected lines at {} {lines:#?}",
+                "Extra expected lines at {}",
                 source_location
             )
         }
