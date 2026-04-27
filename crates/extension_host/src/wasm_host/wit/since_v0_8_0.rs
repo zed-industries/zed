@@ -24,7 +24,7 @@ use project::project_settings::ProjectSettings;
 use semver::Version;
 use std::{
     env,
-    net::Ipv4Addr,
+    net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, OnceLock},
@@ -117,7 +117,7 @@ impl TryFrom<StartDebuggingRequestArguments> for extension::StartDebuggingReques
 impl From<TcpArguments> for extension::TcpArguments {
     fn from(value: TcpArguments) -> Self {
         Self {
-            host: value.host.into(),
+            host: IpAddr::V4(Ipv4Addr::from_bits(value.host)),
             port: value.port,
             timeout: value.timeout,
         }
@@ -127,7 +127,10 @@ impl From<TcpArguments> for extension::TcpArguments {
 impl From<extension::TcpArgumentsTemplate> for TcpArgumentsTemplate {
     fn from(value: extension::TcpArgumentsTemplate) -> Self {
         Self {
-            host: value.host.map(Ipv4Addr::to_bits),
+            host: value.host.and_then(|addr| match addr {
+                IpAddr::V4(v4) => Some(v4.to_bits()),
+                IpAddr::V6(_) => None,
+            }),
             port: value.port,
             timeout: value.timeout,
         }
@@ -137,7 +140,7 @@ impl From<extension::TcpArgumentsTemplate> for TcpArgumentsTemplate {
 impl From<TcpArgumentsTemplate> for extension::TcpArgumentsTemplate {
     fn from(value: TcpArgumentsTemplate) -> Self {
         Self {
-            host: value.host.map(Ipv4Addr::from_bits),
+            host: value.host.map(|bits| IpAddr::V4(Ipv4Addr::from_bits(bits))),
             port: value.port,
             timeout: value.timeout,
         }
@@ -904,13 +907,21 @@ impl dap::Host for WasmState {
             let (host, port, timeout) =
                 ::dap::configure_tcp_connection(task::TcpArgumentsTemplate {
                     port: template.port,
-                    host: template.host.map(Ipv4Addr::from_bits),
+                    host: template
+                        .host
+                        .map(|bits| IpAddr::V4(Ipv4Addr::from_bits(bits))),
                     timeout: template.timeout,
                 })
                 .await?;
+            let host_bits = match host {
+                IpAddr::V4(v4) => v4.to_bits(),
+                IpAddr::V6(_) => {
+                    anyhow::bail!("IPv6 addresses are not supported in the extension API")
+                }
+            };
             Ok(TcpArguments {
                 port,
-                host: host.to_bits(),
+                host: host_bits,
                 timeout,
             })
         })

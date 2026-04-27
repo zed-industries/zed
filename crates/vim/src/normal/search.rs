@@ -669,7 +669,9 @@ impl Replacement {
     // convert a vim query into something more usable by zed.
     // we don't attempt to fully convert between the two regex syntaxes,
     // but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
-    // and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
+    // convert \0..\9 to $0..$9 in the replacement so that common idioms work,
+    // and escape literal `$` to `$$` in the replacement so vim's literal `$`
+    // is not interpreted as a Rust regex capture-group reference.
     pub(crate) fn parse(mut chars: Peekable<Chars>) -> Option<Replacement> {
         let delimiter = chars
             .next()
@@ -691,6 +693,9 @@ impl Replacement {
             if escaped {
                 escaped = false;
                 if phase == 1 && c.is_ascii_digit() {
+                    buffer.push('$')
+                } else if phase == 1 && c == '$' {
+                    // Second '$' escapes by fallthrough
                     buffer.push('$')
                 // unescape escaped parens
                 } else if phase == 0 && (c == '(' || c == ')') {
@@ -714,6 +719,10 @@ impl Replacement {
                 // escape unescaped parens
                 if phase == 0 && (c == '(' || c == ')') {
                     buffer.push('\\')
+                } else if phase == 1 && c == '$' {
+                    // '$' is not special in the replacement clause,
+                    // so we also escape here.
+                    buffer.push('$')
                 }
                 buffer.push(c)
             }
@@ -756,6 +765,16 @@ mod test {
     use indoc::indoc;
     use search::BufferSearchBar;
     use settings::SettingsStore;
+
+    #[test]
+    fn test_replacement_parse_escaped_dollar() {
+        let parsed = super::Replacement::parse(r"/\$test/\$rest/g".chars().peekable())
+            .expect("parse should succeed");
+
+        assert_eq!(parsed.search, r"\$test");
+        assert_eq!(parsed.replacement, "$$rest");
+        assert!(parsed.flag_g);
+    }
 
     #[gpui::test]
     async fn test_move_to_next(cx: &mut gpui::TestAppContext) {
@@ -1180,6 +1199,27 @@ mod test {
             assert_eq!(search_bar.query(cx), "bb".to_string());
             assert_eq!(search_bar.replacement(cx), "dd".to_string());
         })
+    }
+
+    #[gpui::test]
+    async fn test_replace_literal_dollar(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {
+            "ˇBase=hello
+            echo $Base"
+        })
+        .await;
+
+        cx.simulate_shared_keystrokes(
+            ": % s / \\ $ shift-b a s e / \\ $ shift-b a s e shift-n e w / g",
+        )
+        .await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {
+            "Base=hello
+            ˇecho $BaseNew"
+        });
     }
 
     #[gpui::test]

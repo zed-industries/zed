@@ -465,18 +465,22 @@ pub fn into_open_router(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            vec![open_router::MessagePart::Text {
-                                text: text.to_string(),
-                            }]
-                        }
-                        LanguageModelToolResultContent::Image(image) => {
-                            vec![open_router::MessagePart::Image {
-                                image_url: image.to_base64_url(),
-                            }]
-                        }
-                    };
+                    let content: Vec<open_router::MessagePart> = tool_result
+                        .content
+                        .iter()
+                        .map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => {
+                                open_router::MessagePart::Text {
+                                    text: text.to_string(),
+                                }
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                open_router::MessagePart::Image {
+                                    image_url: image.to_base64_url(),
+                                }
+                            }
+                        })
+                        .collect();
 
                     messages.push(open_router::RequestMessage::Tool {
                         content: content.into(),
