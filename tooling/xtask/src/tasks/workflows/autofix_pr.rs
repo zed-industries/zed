@@ -69,9 +69,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
     }
 
     fn run_cargo_fix() -> Step<Run> {
-        named::bash(
-            "cargo fix --workspace --release --all-targets --all-features --allow-dirty --allow-staged",
-        )
+        named::bash("cargo fix --workspace --allow-dirty --allow-staged")
     }
 
     fn run_cargo_machete_fix() -> Step<Run> {
@@ -79,9 +77,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
     }
 
     fn run_clippy_fix() -> Step<Run> {
-        named::bash(
-            "cargo clippy --workspace --release --all-targets --all-features --fix --allow-dirty --allow-staged",
-        )
+        named::bash("cargo clippy --workspace --fix --allow-dirty --allow-staged")
     }
 
     fn run_prettier_fix() -> Step<Run> {
