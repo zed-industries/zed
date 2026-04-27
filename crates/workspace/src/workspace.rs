@@ -2738,10 +2738,12 @@ impl Workspace {
             .collect()
     }
 
-    pub fn clear_navigation_history(&mut self, _window: &mut Window, cx: &mut Context<Workspace>) {
+    pub fn clear_navigation_history(&mut self, window: &mut Window, cx: &mut Context<Workspace>) {
         for pane in &self.panes {
             pane.update(cx, |pane, cx| pane.nav_history_mut().clear(cx));
         }
+        self.persisted_recent_navigation_history.clear();
+        self.serialize_workspace(window, cx);
     }
 
     fn navigate_history(
@@ -12593,6 +12595,32 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_clear_navigation_history_clears_persisted_recent_paths(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/src"), json!({ "a.txt": "" })).await;
+        let project = Project::test(fs, [path!("/src").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .persisted_recent_navigation_history
+                .push(PathBuf::from(path!("/src/a.txt")));
+            assert_eq!(workspace.recent_navigation_history(None, cx).len(), 1);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.clear_navigation_history(window, cx);
+            assert!(workspace.persisted_recent_navigation_history.is_empty());
+            assert!(workspace.recent_navigation_history(None, cx).is_empty());
+        });
+    }
+
+    #[gpui::test]
     async fn test_activate_last_pane(cx: &mut gpui::TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -16038,14 +16066,13 @@ mod tests {
         let history = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .recent_navigation_history_iter(cx)
-                .map(|(project_path, _)| <RelPath as AsRef<Path>>::as_ref(&project_path.path).to_path_buf())
+                .map(|(project_path, _)| {
+                    <RelPath as AsRef<Path>>::as_ref(&project_path.path).to_path_buf()
+                })
                 .collect::<Vec<_>>()
         });
 
         // a.rs comes first (in-session), b.rs second (from persisted), /outside/z.rs absent.
-        assert_eq!(
-            history,
-            vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")]
-        );
+        assert_eq!(history, vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")]);
     }
 }
