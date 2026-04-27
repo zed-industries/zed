@@ -1,13 +1,18 @@
 use super::*;
 use crate::udiff::apply_diff_to_string;
-use client::{UserStore, test::FakeServer};
+use client::{RefreshLlmTokenListener, UserStore, test::FakeServer};
 use clock::FakeSystemClock;
 use clock::ReplicaId;
-use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
+use cloud_api_types::{
+    CreateLlmTokenResponse, LlmToken, Organization, OrganizationConfiguration,
+    OrganizationEditPredictionConfiguration, OrganizationId,
+};
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, RejectEditPredictionsBody,
     predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
 };
+use db::AppDatabase;
+use settings::EditPredictionDataCollectionChoice;
 
 use futures::{
     AsyncReadExt, FutureExt, StreamExt,
@@ -23,7 +28,7 @@ use language::{
     Anchor, Buffer, Capability, CursorShape, Diagnostic, DiagnosticEntry, DiagnosticSet,
     DiagnosticSeverity, Operation, Point, Selection, SelectionGoal,
 };
-use language_model::RefreshLlmTokenListener;
+
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_matches};
@@ -204,7 +209,7 @@ async fn test_diagnostics_refresh_suppressed_while_following(cx: &mut TestAppCon
 
     let app_state = cx.update(|cx| {
         let app_state = AppState::test(cx);
-        AppState::set_global(Arc::downgrade(&app_state), cx);
+        AppState::set_global(app_state.clone(), cx);
         app_state
     });
 
@@ -214,7 +219,7 @@ async fn test_diagnostics_refresh_suppressed_while_following(cx: &mut TestAppCon
         .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
         .unwrap();
     cx.update(|cx| {
-        AppState::set_global(Arc::downgrade(workspace.read(cx).app_state()), cx);
+        AppState::set_global(workspace.read(cx).app_state().clone(), cx);
     });
     let _ = app_state;
 
@@ -1374,7 +1379,8 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
     });
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
-    let response = model_response(&request, "");
+    let mut response = model_response(&request, "");
+    response.model_version = Some("zeta2:test-empty".to_string());
     let id = response.request_id.clone();
     respond_tx.send(response).unwrap();
 
@@ -1397,7 +1403,7 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
             request_id: id,
             reason: EditPredictionRejectReason::Empty,
             was_shown: false,
-            model_version: None,
+            model_version: Some("zeta2:test-empty".to_string()),
             e2e_latency_ms: Some(0),
         }]
     );
@@ -1436,7 +1442,8 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
         buffer.set_text("Hello!\nHow are you?\nBye", cx);
     });
 
-    let response = model_response(&request, SIMPLE_DIFF);
+    let mut response = model_response(&request, SIMPLE_DIFF);
+    response.model_version = Some("zeta2:test-interpolated-empty".to_string());
     let id = response.request_id.clone();
     respond_tx.send(response).unwrap();
 
@@ -1459,7 +1466,7 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
             request_id: id,
             reason: EditPredictionRejectReason::InterpolatedEmpty,
             was_shown: false,
-            model_version: None,
+            model_version: Some("zeta2:test-interpolated-empty".to_string()),
             e2e_latency_ms: Some(0),
         }]
     );
@@ -1611,7 +1618,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
 
     let (request, respond_tx) = requests.predict.next().await.unwrap();
     // worse than current prediction
-    let second_response = model_response(
+    let mut second_response = model_response(
         &request,
         indoc! { r"
             --- a/root/foo.md
@@ -1623,6 +1630,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
              Bye
         "},
     );
+    second_response.model_version = Some("zeta2:test-current-preferred".to_string());
     let second_id = second_response.request_id.clone();
     respond_tx.send(second_response).unwrap();
 
@@ -1649,7 +1657,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
             request_id: second_id,
             reason: EditPredictionRejectReason::CurrentPreferred,
             was_shown: false,
-            model_version: None,
+            model_version: Some("zeta2:test-current-preferred".to_string()),
             e2e_latency_ms: Some(0),
         }]
     );
@@ -1713,7 +1721,8 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
         );
     });
 
-    let first_response = model_response(&request1, SIMPLE_DIFF);
+    let mut first_response = model_response(&request1, SIMPLE_DIFF);
+    first_response.model_version = Some("zeta2:test-canceled".to_string());
     let first_id = first_response.request_id.clone();
     respond_first.send(first_response).unwrap();
 
@@ -1742,7 +1751,7 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
             request_id: first_id,
             reason: EditPredictionRejectReason::Canceled,
             was_shown: false,
-            model_version: None,
+            model_version: Some("zeta2:test-canceled".to_string()),
             e2e_latency_ms: None,
         }]
     );
@@ -1826,7 +1835,8 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
         );
     });
 
-    let cancelled_response = model_response(&request2, SIMPLE_DIFF);
+    let mut cancelled_response = model_response(&request2, SIMPLE_DIFF);
+    cancelled_response.model_version = Some("zeta2:test-canceled-second".to_string());
     let cancelled_id = cancelled_response.request_id.clone();
     respond_second.send(cancelled_response).unwrap();
 
@@ -1874,7 +1884,7 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
                 request_id: cancelled_id,
                 reason: EditPredictionRejectReason::Canceled,
                 was_shown: false,
-                model_version: None,
+                model_version: Some("zeta2:test-canceled-second".to_string()),
                 e2e_latency_ms: None,
             },
             EditPredictionRejection {
@@ -2386,10 +2396,29 @@ struct RequestChannels {
 fn init_test_with_fake_client(
     cx: &mut TestAppContext,
 ) -> (Entity<EditPredictionStore>, RequestChannels) {
+    init_test_with_fake_client_and_legacy_data_collection(cx, None)
+}
+
+fn init_test_with_fake_client_and_legacy_data_collection(
+    cx: &mut TestAppContext,
+    legacy_data_collection_choice: Option<&str>,
+) -> (Entity<EditPredictionStore>, RequestChannels) {
     cx.update(move |cx| {
+        cx.set_global(AppDatabase::test_new());
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         zlog::init_test();
+
+        if let Some(legacy_data_collection_choice) = legacy_data_collection_choice {
+            KeyValueStore::global(cx)
+                .write_kvp(
+                    ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
+                    legacy_data_collection_choice.to_string(),
+                )
+                .now_or_never()
+                .expect("legacy data collection write should complete immediately")
+                .expect("legacy data collection write should succeed");
+        }
 
         let (predict_req_tx, predict_req_rx) = mpsc::unbounded();
         let (reject_req_tx, reject_req_rx) = mpsc::unbounded();
@@ -2439,7 +2468,8 @@ fn init_test_with_fake_client(
         client.cloud_client().set_credentials(1, "test".into());
 
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        language_model::init(user_store.clone(), client.clone(), cx);
+        language_model::init(cx);
+        RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
         let ep_store = EditPredictionStore::global(&client, &user_store, cx);
 
         (
@@ -2480,7 +2510,6 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             excerpt_start_row: None,
             excerpt_ranges: Default::default(),
             syntax_ranges: None,
-            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
             repo_url: None,
@@ -2706,8 +2735,68 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
     });
 }
 
+#[gpui::test]
+async fn test_v3_prediction_strips_cursor_marker_from_edit_text(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.txt": "hello"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("root/foo.txt"), cx)
+                .unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(0, 5));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    let excerpt_length = request.input.cursor_excerpt.len();
+    respond_tx
+        .send(PredictEditsV3Response {
+            request_id: Uuid::new_v4().to_string(),
+            output: "hello<|user_cursor|> world".to_string(),
+            editable_range: 0..excerpt_length,
+            model_version: None,
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    ep_store.update(cx, |ep_store, cx| {
+        let prediction = ep_store
+            .prediction_at(&buffer, None, &project, cx)
+            .expect("should have prediction");
+        let snapshot = buffer.read(cx).snapshot();
+        let edits: Vec<_> = prediction
+            .edits
+            .iter()
+            .map(|(range, text)| (range.to_offset(&snapshot), text.clone()))
+            .collect();
+
+        assert_eq!(edits, vec![(5..5, " world".into())]);
+    });
+}
+
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
+        cx.set_global(AppDatabase::test_new());
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
     });
@@ -2891,7 +2980,7 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
         cx.update(|cx| client::Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
     let user_store = cx.update(|cx| cx.new(|cx| client::UserStore::new(client.clone(), cx)));
     cx.update(|cx| {
-        language_model::RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
+        RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
     });
 
     let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
@@ -3192,6 +3281,12 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     let snapshot_a = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let empty_edits: Arc<[(Range<Anchor>, Arc<str>)]> = Vec::new().into();
+    let edit_preview_a = buffer
+        .read_with(cx, |buffer, cx| {
+            buffer.preview_edits(empty_edits.clone(), cx)
+        })
+        .await;
 
     // Region A: first 10 lines of the buffer.
     let editable_region_a = 0..snapshot_a.point_to_offset(Point::new(10, 0));
@@ -3203,6 +3298,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             &buffer,
             &snapshot_a,
             editable_region_a.clone(),
+            &edit_preview_a,
             None,
             Duration::from_secs(0),
             cx,
@@ -3258,6 +3354,9 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     let snapshot_b2 = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let edit_preview_b = buffer
+        .read_with(cx, |buffer, cx| buffer.preview_edits(empty_edits, cx))
+        .await;
     let editable_region_b = line_20_offset..snapshot_b2.point_to_offset(Point::new(25, 0));
 
     ep_store.update(cx, |ep_store, cx| {
@@ -3267,6 +3366,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             &buffer,
             &snapshot_b2,
             editable_region_b.clone(),
+            &edit_preview_b,
             None,
             Duration::from_secs(0),
             cx,
@@ -3315,6 +3415,274 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
         );
         assert_eq!(events[1].0, EditPredictionId("prediction-b".into()));
     }
+}
+
+#[gpui::test]
+fn test_buffer_path_with_id_fallback_for_untitled_buffers(cx: &mut TestAppContext) {
+    let buffer_1 = cx.new(|cx| Buffer::local("one", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("two", cx));
+
+    let snapshot_1 = buffer_1.read_with(cx, |buffer, _| buffer.text_snapshot());
+    let snapshot_2 = buffer_2.read_with(cx, |buffer, _| buffer.text_snapshot());
+
+    let path_1 = cx.read(|cx| buffer_path_with_id_fallback(None, &snapshot_1, cx));
+    let path_2 = cx.read(|cx| buffer_path_with_id_fallback(None, &snapshot_2, cx));
+
+    assert_eq!(
+        path_1.as_ref(),
+        Path::new(&format!("untitled-{}", snapshot_1.remote_id()))
+    );
+    assert_eq!(
+        path_2.as_ref(),
+        Path::new(&format!("untitled-{}", snapshot_2.remote_id()))
+    );
+    assert_ne!(path_1.as_ref(), path_2.as_ref());
+}
+
+#[gpui::test]
+async fn test_data_collection_disabled_by_default(cx: &mut TestAppContext) {
+    let (ep_store, _channels) = init_test_with_fake_client(cx);
+
+    cx.update(|cx| {
+        assert!(!ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+}
+
+#[gpui::test]
+async fn test_data_collection_enabled_via_legacy_kv_store(cx: &mut TestAppContext) {
+    let (ep_store, _channels) =
+        init_test_with_fake_client_and_legacy_data_collection(cx, Some("true"));
+
+    cx.update(|cx| {
+        assert!(ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+}
+
+#[gpui::test]
+async fn test_data_collection_default_uses_cached_legacy_value(cx: &mut TestAppContext) {
+    let (ep_store, _channels) =
+        init_test_with_fake_client_and_legacy_data_collection(cx, Some("true"));
+
+    cx.update(|cx| {
+        assert!(ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+
+    cx.update(|cx| KeyValueStore::global(cx))
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .unwrap();
+
+    cx.update(|cx| {
+        assert!(ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+}
+
+#[gpui::test]
+async fn test_data_collection_setting_overrides_kv_store(cx: &mut TestAppContext) {
+    let (ep_store, _channels) =
+        init_test_with_fake_client_and_legacy_data_collection(cx, Some("true"));
+
+    // An explicit false in settings.json wins over the KV store.
+    cx.update_global::<SettingsStore, _>(|settings, cx| {
+        settings.update_user_settings(cx, |content| {
+            content
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_default()
+                .allow_data_collection = Some(EditPredictionDataCollectionChoice::No);
+        });
+    });
+
+    cx.update(|cx| {
+        assert!(!ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+}
+
+#[gpui::test]
+async fn test_data_collection_enabled_via_setting(cx: &mut TestAppContext) {
+    let (ep_store, _channels) = init_test_with_fake_client(cx);
+
+    cx.update_global::<SettingsStore, _>(|settings, cx| {
+        settings.update_user_settings(cx, |content| {
+            content
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_default()
+                .allow_data_collection = Some(EditPredictionDataCollectionChoice::Yes);
+        });
+    });
+
+    cx.update(|cx| {
+        assert!(ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+}
+
+#[gpui::test]
+async fn test_data_collection_always_enabled_for_staff(cx: &mut TestAppContext) {
+    let (ep_store, _channels) = init_test_with_fake_client(cx);
+
+    cx.update(|cx| {
+        cx.set_staff(true);
+        assert!(ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+}
+
+#[gpui::test]
+async fn test_data_collection_disabled_by_organization_configuration(cx: &mut TestAppContext) {
+    let (ep_store, _channels) = init_test_with_fake_client(cx);
+
+    cx.update_global::<SettingsStore, _>(|settings, cx| {
+        settings.update_user_settings(cx, |content| {
+            content
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_default()
+                .allow_data_collection = Some(EditPredictionDataCollectionChoice::Yes);
+        });
+    });
+
+    let user_store = cx.update(|cx| ep_store.read(cx).user_store.clone());
+    cx.update(|cx| {
+        user_store.update(cx, |user_store, cx| {
+            user_store.set_current_organization_configuration_for_test(
+                Arc::new(Organization {
+                    id: OrganizationId("org-1".into()),
+                    name: "Org 1".into(),
+                    is_personal: false,
+                }),
+                OrganizationConfiguration {
+                    is_zed_model_provider_enabled: true,
+                    is_agent_thread_feedback_enabled: true,
+                    is_collaboration_enabled: true,
+                    edit_prediction: OrganizationEditPredictionConfiguration {
+                        is_enabled: true,
+                        is_feedback_enabled: false,
+                    },
+                },
+                cx,
+            );
+        });
+
+        assert!(!ep_store.read(cx).is_data_collection_enabled(cx));
+    });
+}
+
+// When a user had data collection enabled via the legacy KV store (with no explicit
+// setting in settings.json), toggle_data_collection must read the *resolved* state
+// (true) and write Some(false).
+#[gpui::test]
+async fn test_toggle_data_collection_from_kv_enabled_state(cx: &mut TestAppContext) {
+    let (ep_store, _channels) =
+        init_test_with_fake_client_and_legacy_data_collection(cx, Some("true"));
+
+    cx.update(|cx| {
+        assert!(
+            ep_store.read(cx).is_data_collection_enabled(cx),
+            "data collection should be enabled via KV store before toggle"
+        );
+    });
+
+    // Simulate what toggle_data_collection does: capture the resolved current
+    // state, then write its inverse.
+    let is_currently_enabled = cx.update(|cx| ep_store.read(cx).is_data_collection_enabled(cx));
+    cx.update_global::<SettingsStore, _>(|settings, cx| {
+        settings.update_user_settings(cx, |content| {
+            content
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_default()
+                .allow_data_collection = Some(if is_currently_enabled {
+                EditPredictionDataCollectionChoice::No
+            } else {
+                EditPredictionDataCollectionChoice::Yes
+            });
+        });
+    });
+
+    cx.update(|cx| {
+        assert!(
+            !ep_store.read(cx).is_data_collection_enabled(cx),
+            "data collection should be disabled after toggling off from KV-enabled state"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_upsell_shown_by_default(cx: &mut TestAppContext) {
+    init_test(cx);
+    let kvp = cx.update(|cx| KeyValueStore::global(cx));
+    kvp.delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .ok();
+    kvp.delete_kvp(ZedPredictUpsell::KEY.into()).await.ok();
+
+    cx.update(|cx| assert!(should_show_upsell_modal(cx)));
+}
+
+#[gpui::test]
+async fn test_upsell_dismissed_when_data_collection_choice_in_kv_store(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    // Any value for the data collection key means the old upsell was already
+    // shown, regardless of whether data collection was accepted or declined.
+    for value in &["true", "false"] {
+        cx.update(|cx| KeyValueStore::global(cx))
+            .write_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into(), value.to_string())
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            assert!(
+                !should_show_upsell_modal(cx),
+                "upsell should be suppressed when data collection choice is '{value}'"
+            );
+        });
+    }
+
+    cx.update(|cx| KeyValueStore::global(cx))
+        .delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .unwrap();
+}
+
+#[gpui::test]
+async fn test_upsell_dismissed_when_dismissed_key_set(cx: &mut TestAppContext) {
+    init_test(cx);
+    let kvp = cx.update(|cx| KeyValueStore::global(cx));
+    kvp.delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .ok();
+    kvp.write_kvp(ZedPredictUpsell::KEY.into(), "1".into())
+        .await
+        .unwrap();
+
+    cx.update(|cx| assert!(!should_show_upsell_modal(cx)));
+
+    kvp.delete_kvp(ZedPredictUpsell::KEY.into()).await.unwrap();
+}
+
+#[gpui::test]
+async fn test_upsell_dismissed_via_dismissable_api(cx: &mut TestAppContext) {
+    init_test(cx);
+    let kvp = cx.update(|cx| KeyValueStore::global(cx));
+    kvp.delete_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE.into())
+        .await
+        .ok();
+    kvp.delete_kvp(ZedPredictUpsell::KEY.into()).await.ok();
+
+    cx.update(|cx| {
+        assert!(should_show_upsell_modal(cx));
+        ZedPredictUpsell::set_dismissed(true, cx);
+    });
+    cx.run_until_parked();
+
+    cx.update(|cx| assert!(!should_show_upsell_modal(cx)));
+
+    kvp.delete_kvp(ZedPredictUpsell::KEY.into()).await.unwrap();
 }
 
 #[ctor::ctor]

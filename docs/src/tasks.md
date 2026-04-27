@@ -53,9 +53,9 @@ Zed supports ways to spawn (and rerun) commands using its integrated [terminal](
     "show_command": true,
     // Which edited buffers to save before running the task:
     // * `all` — save all edited buffers
-    // * `current` — save current buffer only
+    // * `current` — save currently active buffer only
     // * `none` — don't save any buffers
-    "save": "all"
+    "save": "none"
     // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
     // "tags": []
   }
@@ -96,6 +96,7 @@ These variables allow you to pull information from the current editor and use it
 - `ZED_SELECTED_TEXT`: currently selected text
 - `ZED_LANGUAGE`: language of the currently opened buffer (e.g. `Rust`, `Python`, `Shell Script`)
 - `ZED_WORKTREE_ROOT`: absolute path to the root of the current worktree. (e.g. `/Users/my-user/path/to/project`)
+- `ZED_MAIN_GIT_WORKTREE`: absolute path to the main git worktree's working directory. For normal checkouts this equals `ZED_WORKTREE_ROOT`; for linked git worktrees this is the original repository's working directory.
 - `ZED_CUSTOM_RUST_PACKAGE`: (Rust-specific) name of the parent package of $ZED_FILE source file.
 
 To use a variable in a task, prefix it with a dollar sign (`$`):
@@ -228,6 +229,31 @@ This could be useful for launching a terminal application that you want to use i
   }
 }
 ```
+
+## Hooks
+
+In addition to being spawned manually, tasks can be configured to run automatically in response to certain Zed events by adding a hook to the `hooks` field on a task template. A task with a matching hook will be resolved and spawned when that event fires.
+
+The following hooks are currently supported:
+
+- `create_worktree` — runs after Zed creates a new linked Git worktree, either directly through the CLI or through the UI with the worktree modal. The task is spawned with `ZED_WORKTREE_ROOT` pointing at the newly created worktree and `ZED_MAIN_GIT_WORKTREE` pointing at the original repository's working directory, which makes these hooks well-suited to copying untracked files (such as `.env` files) or running per-worktree setup commands.
+
+Hook tasks are resolved from the same global and worktree-local `tasks.json` files as manually spawned tasks, and multiple tasks may register for the same hook; they all run when the hook fires. A hook task still benefits from the usual task configuration fields — `cwd`, `env`, `reveal`, `hide`, and so on — so you can control how much of the terminal UI is shown while it runs.
+
+```json [tasks]
+[
+  {
+    "label": "copy .env into new worktree",
+    "command": "cp",
+    "args": ["$ZED_MAIN_GIT_WORKTREE/.env", "$ZED_WORKTREE_ROOT/.env"],
+    "hooks": ["create_worktree"],
+    "reveal": "no_focus",
+    "hide": "on_success"
+  }
+]
+```
+
+Tasks that define `hooks` are still available from the task modal like any other task, so the same template can be reused for manual runs.
 
 ## VS Code Task Format
 

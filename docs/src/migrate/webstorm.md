@@ -112,7 +112,7 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 | Action            | Keybinding                       | Notes                                                         |
 | ----------------- | -------------------------------- | ------------------------------------------------------------- |
-| Toggle Right Dock | {#kb workspace::ToggleRightDock} | Assistant panel, notifications                                |
+| Toggle Right Dock | {#kb workspace::ToggleRightDock} | Agent panel, notifications                                    |
 | Split Pane Right  | {#kb pane::SplitRight}           | Use other arrow keys to create splits in different directions |
 
 ### How to Customize Keybindings
@@ -311,7 +311,6 @@ Zed's extension catalog is smaller and more focused:
 
 - Language support and syntax highlighting
 - Themes
-- Slash commands for AI
 - Context servers
 
 Several features that require plugins in WebStorm are built into Zed:

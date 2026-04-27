@@ -49,6 +49,7 @@ use objc::{
     runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
+use objc2_app_kit::NSBeep;
 use parking_lot::Mutex;
 use raw_window_handle as rwh;
 use smallvec::SmallVec;
@@ -186,6 +187,14 @@ unsafe fn build_classes() {
                 );
                 decl.add_method(
                     sel!(mouseDragged:),
+                    handle_view_event as extern "C" fn(&Object, Sel, id),
+                );
+                decl.add_method(
+                    sel!(rightMouseDragged:),
+                    handle_view_event as extern "C" fn(&Object, Sel, id),
+                );
+                decl.add_method(
+                    sel!(otherMouseDragged:),
                     handle_view_event as extern "C" fn(&Object, Sel, id),
                 );
                 decl.add_method(
@@ -619,6 +628,7 @@ impl MacWindow {
             display_id,
             window_min_size,
             tabbing_identifier,
+            ..
         }: WindowParams,
         foreground_executor: ForegroundExecutor,
         background_executor: BackgroundExecutor,
@@ -1429,6 +1439,14 @@ impl PlatformWindow for MacWindow {
         self.0.lock().move_traffic_light();
     }
 
+    fn set_document_path(&self, path: Option<&std::path::Path>) {
+        unsafe {
+            let window = self.0.lock().native_window;
+            let filename = path.map_or(ns_string(""), |p| ns_string(&p.to_string_lossy()));
+            let _: () = msg_send![window, setRepresentedFilename: filename];
+        }
+    }
+
     fn show_character_palette(&self) {
         let this = self.0.lock();
         let window = this.native_window;
@@ -1668,6 +1686,10 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn play_system_bell(&self) {
+        unsafe { NSBeep() }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     fn render_to_image(&self, scene: &gpui::Scene) -> Result<RgbaImage> {
         let mut this = self.0.lock();
@@ -1688,12 +1710,7 @@ impl rwh::HasWindowHandle for MacWindow {
 
 impl rwh::HasDisplayHandle for MacWindow {
     fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-        // SAFETY: This is a no-op on macOS
-        unsafe {
-            Ok(rwh::DisplayHandle::borrow_raw(
-                rwh::AppKitDisplayHandle::new().into(),
-            ))
-        }
+        Ok(rwh::DisplayHandle::appkit())
     }
 }
 

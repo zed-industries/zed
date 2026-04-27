@@ -1,12 +1,12 @@
+use crate::diagnostics::{DiagnosticsOptions, codeblock_fence_for_path, collect_diagnostics};
 use acp_thread::{MentionUri, selection_name};
 use agent::{ThreadStore, outline};
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_slash_commands::{codeblock_fence_for_path, collect_diagnostics_output};
 use collections::{HashMap, HashSet};
 use editor::{
-    Anchor, Editor, EditorSnapshot, ExcerptId, FoldPlaceholder, ToOffset,
+    Anchor, Editor, EditorSnapshot, FoldPlaceholder, ToOffset,
     display_map::{Crease, CreaseId, CreaseMetadata, FoldId},
     scroll::Autoscroll,
 };
@@ -18,7 +18,7 @@ use gpui::{
 use http_client::{AsyncBody, HttpClientWithUrl};
 use itertools::Either;
 use language::Buffer;
-use language_model::LanguageModelImage;
+use language_model::{LanguageModelImage, LanguageModelImageExt};
 use multi_buffer::MultiBufferRow;
 use postage::stream::Stream as _;
 use project::{Project, ProjectItem, ProjectPath, Worktree};
@@ -131,9 +131,6 @@ impl MentionSet {
             MentionUri::Fetch { url } => self.confirm_mention_for_fetch(url, http_client, cx),
             MentionUri::Directory { .. } => Task::ready(Ok(Mention::Link)),
             MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
-            MentionUri::TextThread { .. } => {
-                Task::ready(Err(anyhow!("Text thread mentions are no longer supported")))
-            }
             MentionUri::File { abs_path } => {
                 self.confirm_mention_for_file(abs_path, supports_images, cx)
             }
@@ -157,7 +154,7 @@ impl MentionSet {
             MentionUri::Selection { abs_path: None, .. } => Task::ready(Err(anyhow!(
                 "Untitled buffer selection mentions are not supported for paste"
             ))),
-            MentionUri::PastedImage
+            MentionUri::PastedImage { .. }
             | MentionUri::TerminalSelection { .. }
             | MentionUri::MergeConflict { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
@@ -177,17 +174,16 @@ impl MentionSet {
         self.mentions.values().map(|(uri, _)| uri.clone()).collect()
     }
 
+    pub fn mention_uri_for_crease(&self, crease_id: &CreaseId) -> Option<MentionUri> {
+        self.mentions.get(crease_id).map(|(uri, _)| uri.clone())
+    }
+
     pub fn set_mentions(&mut self, mentions: HashMap<CreaseId, (MentionUri, MentionTask)>) {
         self.mentions = mentions;
     }
 
     pub fn clear(&mut self) -> impl Iterator<Item = (CreaseId, (MentionUri, MentionTask))> {
         self.mentions.drain()
-    }
-
-    #[cfg(test)]
-    pub fn has_thread_store(&self) -> bool {
-        self.thread_store.is_some()
     }
 
     pub fn confirm_mention_completion(
@@ -207,19 +203,15 @@ impl MentionSet {
         };
 
         let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
-        let Some(start_anchor) = snapshot.buffer_snapshot().as_singleton_anchor(start) else {
+        let Some(start_anchor) = snapshot.buffer_snapshot().anchor_in_excerpt(start) else {
             return Task::ready(());
         };
-        let excerpt_id = start_anchor.excerpt_id;
         let end_anchor = snapshot.buffer_snapshot().anchor_before(
             start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1usize,
         );
 
         let crease = if let MentionUri::File { abs_path } = &mention_uri
-            && let Some(extension) = abs_path.extension()
-            && let Some(extension) = extension.to_str()
-            && Img::extensions().contains(&extension)
-            && !extension.contains("svg")
+            && is_raster_image_path(abs_path)
         {
             let Some(project_path) = project
                 .read(cx)
@@ -237,7 +229,6 @@ impl MentionSet {
                 })
                 .shared();
             insert_crease_for_mention(
-                excerpt_id,
                 start,
                 content_len,
                 mention_uri.name().into(),
@@ -252,7 +243,6 @@ impl MentionSet {
             )
         } else {
             insert_crease_for_mention(
-                excerpt_id,
                 start,
                 content_len,
                 crease_text,
@@ -276,9 +266,6 @@ impl MentionSet {
             }
             MentionUri::Directory { .. } => Task::ready(Ok(Mention::Link)),
             MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
-            MentionUri::TextThread { .. } => {
-                Task::ready(Err(anyhow!("Text thread mentions are no longer supported")))
-            }
             MentionUri::File { abs_path } => {
                 self.confirm_mention_for_file(abs_path, supports_images, cx)
             }
@@ -292,7 +279,7 @@ impl MentionSet {
                 include_errors,
                 include_warnings,
             } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
-            MentionUri::PastedImage => {
+            MentionUri::PastedImage { .. } => {
                 debug_panic!("pasted image URI should not be included in completions");
                 Task::ready(Err(anyhow!(
                     "pasted imaged URI should not be included in completions"
@@ -353,12 +340,8 @@ impl MentionSet {
         else {
             return Task::ready(Err(anyhow!("project path not found")));
         };
-        let extension = abs_path
-            .extension()
-            .and_then(OsStr::to_str)
-            .unwrap_or_default();
 
-        if Img::extensions().contains(&extension) && !extension.contains("svg") {
+        if is_raster_image_path(&abs_path) {
             if !supports_images {
                 return Task::ready(Err(anyhow!("This model does not support images yet")));
             }
@@ -474,7 +457,7 @@ impl MentionSet {
         };
 
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-        let Some(start) = snapshot.as_singleton_anchor(source_range.start) else {
+        let Some(start) = snapshot.anchor_in_excerpt(source_range.start) else {
             return;
         };
 
@@ -589,9 +572,9 @@ impl MentionSet {
             return Task::ready(Err(anyhow!("project not found")));
         };
 
-        let diagnostics_task = collect_diagnostics_output(
+        let diagnostics_task = collect_diagnostics(
             project,
-            assistant_slash_commands::Options {
+            DiagnosticsOptions {
                 include_errors,
                 include_warnings,
                 path_matcher: None,
@@ -599,9 +582,8 @@ impl MentionSet {
             cx,
         );
         cx.spawn(async move |_, _| {
-            let output = diagnostics_task.await?;
-            let content = output
-                .map(|output| output.text)
+            let content = diagnostics_task
+                .await?
                 .unwrap_or_else(|| "No diagnostics found.".into());
             Ok(Mention::Text {
                 content,
@@ -734,6 +716,25 @@ mod tests {
             other => panic!("Expected selection mention to resolve as text, got {other:?}"),
         }
     }
+
+    #[test]
+    fn test_is_raster_image_path_is_case_insensitive() {
+        // Regression test for #54308: drag-and-dropping a file whose extension
+        // is uppercase (e.g. `.PNG`) used to be treated as a non-image file.
+        assert!(is_raster_image_path(Path::new("/tmp/image.png")));
+        assert!(is_raster_image_path(Path::new("/tmp/image.PNG")));
+        assert!(is_raster_image_path(Path::new("/tmp/image.Png")));
+        assert!(is_raster_image_path(Path::new("/tmp/photo.JPEG")));
+        assert!(is_raster_image_path(Path::new("/tmp/animation.GIF")));
+
+        // SVG is handled via a different code path and must not be reported here.
+        assert!(!is_raster_image_path(Path::new("/tmp/icon.svg")));
+        assert!(!is_raster_image_path(Path::new("/tmp/icon.SVG")));
+
+        // Non-image extensions and paths with no extension.
+        assert!(!is_raster_image_path(Path::new("/tmp/notes.txt")));
+        assert!(!is_raster_image_path(Path::new("/tmp/README")));
+    }
 }
 
 /// Inserts a list of images into the editor as context mentions.
@@ -749,22 +750,22 @@ pub(crate) async fn insert_images_as_context(
         return;
     }
 
-    let replacement_text = MentionUri::PastedImage.as_link().to_string();
-
     for (image, name) in images {
-        let Some((excerpt_id, text_anchor, multibuffer_anchor)) = editor
+        let mention_uri = MentionUri::PastedImage {
+            name: name.to_string(),
+        };
+        let replacement_text = mention_uri.as_link().to_string();
+        let Some((text_anchor, multibuffer_anchor)) = editor
             .update_in(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                let (excerpt_id, _, buffer_snapshot) =
-                    snapshot.buffer_snapshot().as_singleton().unwrap();
-
-                let cursor_anchor = editor.selections.newest_anchor().start.text_anchor;
-                let text_anchor = cursor_anchor.bias_left(&buffer_snapshot);
-                let multibuffer_anchor = snapshot
+                let (cursor_anchor, buffer_snapshot) = snapshot
                     .buffer_snapshot()
-                    .anchor_in_excerpt(excerpt_id, text_anchor);
+                    .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)
+                    .unwrap();
+                let text_anchor = cursor_anchor.bias_left(buffer_snapshot);
+                let multibuffer_anchor = snapshot.buffer_snapshot().anchor_in_excerpt(text_anchor);
                 editor.insert(&format!("{replacement_text} "), window, cx);
-                (excerpt_id, text_anchor, multibuffer_anchor)
+                (text_anchor, multibuffer_anchor)
             })
             .ok()
         else {
@@ -782,7 +783,6 @@ pub(crate) async fn insert_images_as_context(
         let image = Arc::new(image);
         let Ok(Some((crease_id, tx))) = cx.update(|window, cx| {
             insert_crease_for_mention(
-                excerpt_id,
                 text_anchor,
                 content_len,
                 name.clone(),
@@ -817,7 +817,13 @@ pub(crate) async fn insert_images_as_context(
             .shared();
 
         mention_set.update(cx, |mention_set, _cx| {
-            mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
+            mention_set.insert_mention(
+                crease_id,
+                MentionUri::PastedImage {
+                    name: name.to_string(),
+                },
+                task.clone(),
+            )
         });
 
         if task
@@ -844,8 +850,26 @@ fn image_format_from_external_content(format: image::ImageFormat) -> Option<Imag
         image::ImageFormat::Bmp => Some(ImageFormat::Bmp),
         image::ImageFormat::Tiff => Some(ImageFormat::Tiff),
         image::ImageFormat::Ico => Some(ImageFormat::Ico),
-        _ => None,
+        image::ImageFormat::Pnm => Some(ImageFormat::Pnm),
+        _ => {
+            debug_panic!("An unhandled image format: {format:?}");
+            None
+        }
     }
+}
+
+// Case-insensitive so that e.g. `foo.PNG` is recognized the same as `foo.png`.
+// SVG is excluded because it is handled separately.
+fn is_raster_image_path(path: &Path) -> bool {
+    let Some(extension) = path.extension().and_then(OsStr::to_str) else {
+        return false;
+    };
+    if extension.eq_ignore_ascii_case("svg") {
+        return false;
+    }
+    Img::extensions()
+        .iter()
+        .any(|known| known.eq_ignore_ascii_case(extension))
 }
 
 pub(crate) fn load_external_image_from_path(
@@ -886,7 +910,7 @@ pub(crate) fn paste_images_as_context(
 
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
-        let default_name: SharedString = MentionUri::PastedImage.name().into();
+        let default_name: SharedString = "Image".into();
         let (mut images, paths): (Vec<(gpui::Image, SharedString)>, Vec<_>) = clipboard
             .into_entries()
             .filter_map(|entry| match entry {
@@ -916,7 +940,6 @@ pub(crate) fn paste_images_as_context(
 }
 
 pub(crate) fn insert_crease_for_mention(
-    excerpt_id: ExcerptId,
     anchor: text::Anchor,
     content_len: usize,
     crease_label: SharedString,
@@ -934,7 +957,7 @@ pub(crate) fn insert_crease_for_mention(
     let crease_id = editor.update(cx, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
 
-        let start = snapshot.anchor_in_excerpt(excerpt_id, anchor)?;
+        let start = snapshot.anchor_in_excerpt(anchor)?;
 
         let start = start.bias_right(&snapshot);
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);

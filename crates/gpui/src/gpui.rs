@@ -39,7 +39,6 @@ pub mod profiler;
 #[expect(missing_docs)]
 pub mod queue;
 mod scene;
-mod shared_string;
 mod shared_uri;
 mod style;
 mod styled;
@@ -92,6 +91,7 @@ pub use global::*;
 pub use gpui_macros::{
     AppContext, IntoElement, Render, VisualContext, property_test, register_action, test,
 };
+pub use gpui_shared_string::*;
 pub use gpui_util::arc_cow::ArcCow;
 pub use http_client;
 pub use input::*;
@@ -106,7 +106,6 @@ pub use profiler::*;
 pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
 pub use scene::*;
-pub use shared_string::*;
 pub use shared_uri::*;
 use std::{any::Any, future::Future};
 pub use style::*;
@@ -122,6 +121,8 @@ pub use text_system::*;
 pub use util::{FutureExt, Timeout};
 pub use view::*;
 pub use window::*;
+
+pub use pollster::block_on;
 
 /// The context trait, allows the different contexts in GPUI to be used
 /// interchangeably for certain operations.

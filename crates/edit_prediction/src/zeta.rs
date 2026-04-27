@@ -1,7 +1,7 @@
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
     EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore, StoredEvent,
-    ZedUpdateRequiredError,
+    ZedUpdateRequiredError, buffer_path_with_id_fallback,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
     prediction::EditPredictionResult,
 };
@@ -24,8 +24,9 @@ use zeta_prompt::{ParsedOutput, ZetaPromptInput};
 
 use std::{env, ops::Range, path::Path, sync::Arc};
 use zeta_prompt::{
-    CURSOR_MARKER, ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output,
-    prompt_input_contains_special_tokens, stop_tokens_for_format,
+    ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output,
+    parsed_output_from_editable_region, prompt_input_contains_special_tokens,
+    stop_tokens_for_format,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
 
@@ -42,6 +43,7 @@ pub fn request_prediction_with_zeta(
         related_files,
         events,
         debug_tx,
+        mode,
         trigger,
         project,
         diagnostic_search_range,
@@ -68,10 +70,7 @@ pub fn request_prediction_with_zeta(
     let preferred_experiment = store.preferred_experiment().map(|s| s.to_owned());
     let open_ai_compatible_api_key = load_open_ai_compatible_api_key_if_needed(provider, cx);
 
-    let excerpt_path: Arc<Path> = snapshot
-        .file()
-        .map(|file| -> Arc<Path> { file.full_path(cx).into() })
-        .unwrap_or_else(|| Arc::from(Path::new("untitled")));
+    let excerpt_path = buffer_path_with_id_fallback(snapshot.file(), &snapshot.text, cx);
 
     let repo_url = if can_collect_data {
         let buffer_id = buffer.read(cx).remote_id();
@@ -84,7 +83,6 @@ pub fn request_prediction_with_zeta(
     } else {
         None
     };
-
     let client = store.client.clone();
     let llm_token = store.llm_token.clone();
     let organization_id = store
@@ -101,7 +99,6 @@ pub fn request_prediction_with_zeta(
         edits: Vec<(Range<Anchor>, Arc<str>)>,
         cursor_position: Option<PredictedCursorPosition>,
         editable_range_in_buffer: Range<usize>,
-        model_version: Option<String>,
     }
 
     let request_task = cx.background_spawn({
@@ -119,7 +116,6 @@ pub fn request_prediction_with_zeta(
                 diagnostic_search_range,
                 excerpt_path,
                 cursor_offset,
-                preferred_experiment,
                 is_open_source,
                 can_collect_data,
                 repo_url,
@@ -181,6 +177,7 @@ pub fn request_prediction_with_zeta(
                             let parsed_output = output_text.map(|text| ParsedOutput {
                                 new_editable_region: text,
                                 range_in_excerpt: editable_range_in_excerpt,
+                                cursor_offset_in_new_editable_region: None,
                             });
 
                             (request_id, parsed_output, None, None)
@@ -272,21 +269,23 @@ pub fn request_prediction_with_zeta(
                     // Use V3 endpoint - server handles model/version selection and suffix stripping
                     let (response, usage) = EditPredictionStore::send_v3_request(
                         prompt_input.clone(),
+                        preferred_experiment.clone(),
                         client,
                         llm_token,
                         organization_id,
                         app_version,
                         trigger,
+                        mode,
                     )
                     .await?;
 
                     let request_id = EditPredictionId(response.request_id.into());
                     let output_text = Some(response.output).filter(|s| !s.is_empty());
                     let model_version = response.model_version;
-                    let parsed_output = ParsedOutput {
-                        new_editable_region: output_text.unwrap_or_default(),
-                        range_in_excerpt: response.editable_range,
-                    };
+                    let parsed_output = parsed_output_from_editable_region(
+                        response.editable_range,
+                        output_text.unwrap_or_default(),
+                    );
 
                     Some((request_id, Some(parsed_output), model_version, usage))
                 })
@@ -299,9 +298,10 @@ pub fn request_prediction_with_zeta(
             let Some(ParsedOutput {
                 new_editable_region: mut output_text,
                 range_in_excerpt: editable_range_in_excerpt,
+                cursor_offset_in_new_editable_region: cursor_offset_in_output,
             }) = output
             else {
-                return Ok((Some((request_id, None)), None));
+                return Ok((Some((request_id, None, model_version)), None));
             };
 
             let editable_range_in_buffer = editable_range_in_excerpt.start
@@ -311,13 +311,6 @@ pub fn request_prediction_with_zeta(
             let mut old_text = snapshot
                 .text_for_range(editable_range_in_buffer.clone())
                 .collect::<String>();
-
-            // Client-side cursor marker processing (applies to both raw and v3 responses)
-            let cursor_offset_in_output = output_text.find(CURSOR_MARKER);
-            if let Some(offset) = cursor_offset_in_output {
-                log::trace!("Stripping out {CURSOR_MARKER} from response at offset {offset}");
-                output_text.replace_range(offset..offset + CURSOR_MARKER.len(), "");
-            }
 
             if let Some(debug_tx) = &debug_tx {
                 debug_tx
@@ -346,26 +339,23 @@ pub fn request_prediction_with_zeta(
                 &snapshot,
             );
 
-            anyhow::Ok((
-                Some((
-                    request_id,
-                    Some(Prediction {
-                        prompt_input,
-                        buffer,
-                        snapshot: snapshot.clone(),
-                        edits,
-                        cursor_position,
-                        editable_range_in_buffer,
-                        model_version,
-                    }),
-                )),
-                usage,
-            ))
+            let prediction = Some(Prediction {
+                prompt_input,
+                buffer,
+                snapshot: snapshot.clone(),
+                edits,
+                cursor_position,
+                editable_range_in_buffer,
+            });
+
+            anyhow::Ok((Some((request_id, prediction, model_version)), usage))
         }
     });
 
     cx.spawn(async move |this, cx| {
-        let Some((id, prediction)) = handle_api_response(&this, request_task.await, cx)? else {
+        let Some((id, prediction, model_version)) =
+            handle_api_response(&this, request_task.await, cx)?
+        else {
             return Ok(None);
         };
         let request_duration = cx.background_executor().now() - request_start;
@@ -377,21 +367,37 @@ pub fn request_prediction_with_zeta(
             edits,
             cursor_position,
             editable_range_in_buffer,
-            model_version,
+            ..
         }) = prediction
         else {
             return Ok(Some(EditPredictionResult {
                 id,
-                e2e_latency: request_duration,
                 prediction: Err(EditPredictionRejectReason::Empty),
+                model_version,
+                e2e_latency: request_duration,
             }));
         };
 
-        if can_collect_data {
+        let result = EditPredictionResult::new(
+            id,
+            &edited_buffer,
+            &edited_buffer_snapshot,
+            edits.into(),
+            cursor_position,
+            inputs,
+            model_version,
+            request_duration,
+            cx,
+        )
+        .await;
+
+        if can_collect_data && let Ok(prediction) = &result.prediction {
             let weak_this = this.clone();
-            let id = id.clone();
+            let request_id = prediction.id.clone();
             let edited_buffer = edited_buffer.clone();
             let edited_buffer_snapshot = edited_buffer_snapshot.clone();
+            let editable_range_in_buffer = editable_range_in_buffer.clone();
+            let edit_preview = prediction.edit_preview.clone();
             let example_task = capture_data.and_then(|stored_events| {
                 cx.update(|cx| {
                     crate::capture_example(
@@ -414,11 +420,12 @@ pub fn request_prediction_with_zeta(
                 weak_this
                     .update(cx, |this, cx| {
                         this.enqueue_settled_prediction(
-                            id.clone(),
+                            request_id.clone(),
                             &project,
                             &edited_buffer,
                             &edited_buffer_snapshot,
                             editable_range_in_buffer,
+                            &edit_preview,
                             example_spec,
                             request_duration,
                             cx,
@@ -429,20 +436,7 @@ pub fn request_prediction_with_zeta(
             .detach();
         }
 
-        Ok(Some(
-            EditPredictionResult::new(
-                id,
-                &edited_buffer,
-                &edited_buffer_snapshot,
-                edits.into(),
-                cursor_position,
-                inputs,
-                model_version,
-                request_duration,
-                cx,
-            )
-            .await,
-        ))
+        Ok(Some(result))
     })
 }
 
@@ -535,7 +529,6 @@ pub fn zeta2_prompt_input(
     diagnostic_search_range: Range<Point>,
     excerpt_path: Arc<Path>,
     cursor_offset: usize,
-    preferred_experiment: Option<String>,
     is_open_source: bool,
     can_collect_data: bool,
     repo_url: Option<String>,
@@ -567,7 +560,6 @@ pub fn zeta2_prompt_input(
         active_buffer_diagnostics,
         excerpt_ranges,
         syntax_ranges: Some(syntax_ranges),
-        experiment: preferred_experiment,
         in_open_source_repo: is_open_source,
         can_collect_data,
         repo_url,

@@ -1,6 +1,7 @@
 use crate::{
     AnyActiveCall, AppState, CollaboratorId, FollowerState, Pane, ParticipantLocation, Workspace,
     WorkspaceSettings,
+    notifications::DetachAndPromptErr,
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
@@ -97,8 +98,8 @@ impl PaneGroup {
         }
     }
 
-    pub fn width_fraction_for_pane(&self, pane: &Entity<Pane>) -> Option<f32> {
-        self.root.width_fraction_for_pane(pane)
+    pub fn full_height_column_count(&self) -> usize {
+        self.root.full_height_column_count()
     }
 
     pub fn pane_at_pixel_position(&self, coordinate: Point<Pixels>) -> Option<&Entity<Pane>> {
@@ -306,10 +307,10 @@ impl Member {
         }
     }
 
-    fn width_fraction_for_pane(&self, pane: &Entity<Pane>) -> Option<f32> {
+    fn full_height_column_count(&self) -> usize {
         match self {
-            Member::Pane(found) => (found == pane).then_some(1.0),
-            Member::Axis(axis) => axis.width_fraction_for_pane(pane),
+            Member::Pane(_) => 1,
+            Member::Axis(axis) => axis.full_height_column_count(),
         }
     }
 }
@@ -438,14 +439,19 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
                                 let app_state = self.app_state.clone();
                                 this.cursor_pointer().on_mouse_down(
                                     MouseButton::Left,
-                                    move |_, _, cx| {
+                                    move |_, window, cx| {
                                         crate::join_in_room_project(
                                             leader_project_id,
                                             leader_user_id,
                                             app_state.clone(),
                                             cx,
                                         )
-                                        .detach_and_log_err(cx);
+                                        .detach_and_prompt_err(
+                                            "Failed to join project",
+                                            window,
+                                            cx,
+                                            |error, _, _| Some(format!("{error:#}")),
+                                        );
                                     },
                                 )
                             },
@@ -895,38 +901,21 @@ impl PaneAxis {
         None
     }
 
-    fn width_fraction_for_pane(&self, pane: &Entity<Pane>) -> Option<f32> {
-        let flexes = self.flexes.lock();
-        let total_flex = flexes.iter().copied().sum::<f32>();
-
-        for (index, member) in self.members.iter().enumerate() {
-            let child_fraction = if total_flex > 0.0 {
-                flexes[index] / total_flex
-            } else {
-                1.0 / self.members.len() as f32
-            };
-
-            match member {
-                Member::Pane(found) => {
-                    if found == pane {
-                        return Some(match self.axis {
-                            Axis::Horizontal => child_fraction,
-                            Axis::Vertical => 1.0,
-                        });
-                    }
-                }
-                Member::Axis(axis) => {
-                    if let Some(descendant_fraction) = axis.width_fraction_for_pane(pane) {
-                        return Some(match self.axis {
-                            Axis::Horizontal => child_fraction * descendant_fraction,
-                            Axis::Vertical => descendant_fraction,
-                        });
-                    }
-                }
-            }
+    fn full_height_column_count(&self) -> usize {
+        match self.axis {
+            Axis::Horizontal => self
+                .members
+                .iter()
+                .map(Member::full_height_column_count)
+                .sum::<usize>()
+                .max(1),
+            Axis::Vertical => self
+                .members
+                .iter()
+                .map(Member::full_height_column_count)
+                .max()
+                .unwrap_or(1),
         }
-
-        None
     }
 
     fn render(

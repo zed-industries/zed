@@ -5,14 +5,17 @@ use std::{
     time::{Duration, Instant},
 };
 
+use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
     App, AppContext, ClipboardItem, Context, Div, Entity, Hsla, InteractiveElement,
     ParentElement as _, ProfilingCollector, Render, SerializedLocation, SerializedTaskTiming,
     SerializedThreadTaskTimings, SharedString, StatefulInteractiveElement, Styled, Task,
     ThreadTimingsDelta, TitlebarOptions, UniformListScrollHandle, WeakEntity, WindowBounds,
-    WindowOptions, div, prelude::FluentBuilder, px, relative, size, uniform_list,
+    WindowOptions, div, prelude::FluentBuilder, profiler, px, relative, size, uniform_list,
 };
 use rpc::{AnyProtoClient, proto};
+use settings::{RegisterSetting, Settings, SettingsContent, SettingsStore};
+use std::any::TypeId;
 use util::ResultExt;
 use workspace::{
     Workspace,
@@ -61,7 +64,49 @@ impl ProfileSource {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, RegisterSetting)]
+struct PerformanceProfilerSettings {
+    enabled: bool,
+}
+
+impl Settings for PerformanceProfilerSettings {
+    fn from_settings(content: &SettingsContent) -> Self {
+        let instrumentation = content.instrumentation.as_ref().unwrap();
+        let profiler = instrumentation.performance_profiler.as_ref().unwrap();
+        Self {
+            enabled: profiler.enabled.unwrap(),
+        }
+    }
+}
+
 pub fn init(startup_time: Instant, cx: &mut App) {
+    let initial_enabled = PerformanceProfilerSettings::get_global(cx).enabled;
+    profiler::set_enabled(initial_enabled);
+    update_command_palette_filter(initial_enabled, cx);
+
+    cx.observe_global::<SettingsStore>(|cx| {
+        let enabled = PerformanceProfilerSettings::get_global(cx).enabled;
+        // `set_enabled` reports whether the value actually changed, so skip the
+        // filter update and window cleanup on the common no-op path — the
+        // settings observer fires for every settings change.
+        if !profiler::set_enabled(enabled) {
+            return;
+        }
+        update_command_palette_filter(enabled, cx);
+        if !enabled {
+            for window in cx
+                .windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<ProfilerWindow>())
+            {
+                window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .ok();
+            }
+        }
+    })
+    .detach();
+
     cx.observe_new(move |workspace: &mut workspace::Workspace, _, cx| {
         let workspace_handle = cx.entity().downgrade();
         workspace.register_action(move |_workspace, _: &OpenPerformanceProfiler, window, cx| {
@@ -69,6 +114,17 @@ pub fn init(startup_time: Instant, cx: &mut App) {
         });
     })
     .detach();
+}
+
+fn update_command_palette_filter(enabled: bool, cx: &mut App) {
+    CommandPaletteFilter::update_global(cx, |filter, _| {
+        let action = [TypeId::of::<OpenPerformanceProfiler>()];
+        if enabled {
+            filter.show_action_types(&action);
+        } else {
+            filter.hide_action_types(&action);
+        }
+    });
 }
 
 fn open_performance_profiler(

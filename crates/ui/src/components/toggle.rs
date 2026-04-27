@@ -2,7 +2,6 @@ use gpui::{
     AnyElement, AnyView, ClickEvent, ElementId, Hsla, IntoElement, KeybindingKeystroke, Keystroke,
     Styled, Window, div, hsla, prelude::*,
 };
-use settings::KeybindSource;
 use std::{rc::Rc, sync::Arc};
 
 use crate::utils::is_light;
@@ -1051,7 +1050,7 @@ impl Component for Switch {
                                         Keystroke::parse("cmd-s").unwrap(),
                                     )]
                                     .into(),
-                                    KeybindSource::Base,
+                                    false,
                                 )))
                                 .into_any_element(),
                         )],
