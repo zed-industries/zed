@@ -11363,10 +11363,16 @@ dependencies = [
 name = "nrepl"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "collections",
  "editor",
+ "futures 0.3.32",
  "gpui",
+ "log",
+ "parking_lot",
  "project",
  "settings",
+ "smol",
 ]
 
 [[package]]

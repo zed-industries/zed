@@ -16,10 +16,17 @@ path = "src/nrepl.rs"
 doctest = false
 
 [dependencies]
+anyhow.workspace = true
+collections.workspace = true
 editor.workspace = true
+futures.workspace = true
 gpui.workspace = true
+log.workspace = true
+parking_lot.workspace = true
 project.workspace = true
 settings.workspace = true
+smol.workspace = true
 
 [dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
