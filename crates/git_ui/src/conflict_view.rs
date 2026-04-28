@@ -857,6 +857,32 @@ impl Render for MergeConflictIndicator {
             )
             .child(
                 div().border_l_1().border_color(border_color).child(
+                    IconButton::new("prev-conflict", IconName::ChevronLeft)
+                        .icon_size(IconSize::XSmall)
+                        .tooltip(Tooltip::text("Previous Conflict"))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(zed_actions::git::GoToPreviousConflict),
+                                cx,
+                            );
+                        }),
+                ),
+            )
+            .child(
+                div().border_l_1().border_color(border_color).child(
+                    IconButton::new("next-conflict", IconName::ChevronRight)
+                        .icon_size(IconSize::XSmall)
+                        .tooltip(Tooltip::text("Next Conflict"))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(zed_actions::git::GoToNextConflict),
+                                cx,
+                            );
+                        }),
+                ),
+            )
+            .child(
+                div().border_l_1().border_color(border_color).child(
                     IconButton::new("dismiss-merge-conflicts", IconName::Close)
                         .icon_size(IconSize::XSmall)
                         .on_click(cx.listener(Self::dismiss)),
