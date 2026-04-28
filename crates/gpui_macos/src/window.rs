@@ -75,7 +75,6 @@ static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
 static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
-static mut TRANSPARENT_CURSOR: id = ptr::null_mut();
 
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
@@ -318,78 +317,6 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
     )
 }
 
-/// Returns an invisible cursor.
-///
-/// # Safety
-///
-/// This function is not thread safe. Callers must ensure this is called on the AppKit main
-/// thread because it reads and writes the cached cursor and sends messages to AppKit objects.
-unsafe fn transparent_cursor() -> id {
-    // SAFETY: The caller guarantees AppKit main-thread access, so reads and writes to the
-    // cached cursor are serialized. The cursor is retained for the lifetime of the process.
-    unsafe {
-        if TRANSPARENT_CURSOR.is_null() {
-            let image: id = msg_send![class!(NSImage), alloc];
-            let image: id = msg_send![image, initWithSize: NSSize::new(1., 1.)];
-            let cursor: id = msg_send![class!(NSCursor), alloc];
-            let cursor: id = msg_send![cursor, initWithImage: image hotSpot: NSPoint::new(0., 0.)];
-            let _: () = msg_send![image, release];
-            TRANSPARENT_CURSOR = cursor;
-        }
-
-        TRANSPARENT_CURSOR
-    }
-}
-
-/// Returns the `NSCursor` corresponding to the given GPUI cursor style.
-///
-/// # Safety
-///
-/// This function is not thread safe. Callers must ensure this is called on the AppKit main
-/// thread because it sends messages to AppKit classes and may initialize the transparent cursor.
-pub(crate) unsafe fn cursor_for_style(style: CursorStyle) -> id {
-    // SAFETY: The caller guarantees AppKit main-thread access. The selectors below are known
-    // cursor constructors, and the transparent cursor helper has the same precondition.
-    unsafe {
-        match style {
-            CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
-            CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
-            CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
-            CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
-            CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
-            CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
-            CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
-            CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
-            CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
-            CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
-            CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
-            CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
-            CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
-            CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
-
-            // Undocumented, private class methods:
-            // https://stackoverflow.com/questions/27242353/cocoa-predefined-resize-mouse-cursor
-            CursorStyle::ResizeUpLeftDownRight => {
-                msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
-            }
-            CursorStyle::ResizeUpRightDownLeft => {
-                msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
-            }
-
-            CursorStyle::IBeamCursorForVerticalLayout => {
-                msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
-            }
-            CursorStyle::OperationNotAllowed => {
-                msg_send![class!(NSCursor), operationNotAllowedCursor]
-            }
-            CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
-            CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
-            CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
-            CursorStyle::None => transparent_cursor(),
-        }
-    }
-}
-
 /// Stores the cursor style on the active GPUI window and invalidates its cursor rects.
 ///
 /// # Safety
@@ -536,6 +463,7 @@ struct MacWindowState {
     blurred_view: Option<id>,
     background_appearance: WindowBackgroundAppearance,
     cursor_style: CursorStyle,
+    cursor_hidden: bool,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -854,6 +782,7 @@ impl MacWindow {
                 blurred_view: None,
                 background_appearance: WindowBackgroundAppearance::Opaque,
                 cursor_style: CursorStyle::Arrow,
+                cursor_hidden: false,
                 display_link: None,
                 renderer: renderer::new_renderer(
                     renderer_context,
@@ -1883,9 +1812,66 @@ extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
         let _: () = msg_send![super(this, class!(NSView)), resetCursorRects];
 
         let window_state = get_window_state(this);
-        let cursor_style = window_state.lock().cursor_style;
+        let cursor_style;
+        let cursor_hidden;
 
-        let cursor = cursor_for_style(cursor_style);
+        {
+            let mut window_state = window_state.lock();
+
+            if matches!(window_state.cursor_style, CursorStyle::None) {
+                if !window_state.cursor_hidden {
+                    let _: () = msg_send![class!(NSCursor), hide];
+                    window_state.cursor_hidden = true;
+                }
+                return;
+            }
+
+            cursor_style = window_state.cursor_style;
+            cursor_hidden = window_state.cursor_hidden;
+        };
+
+        let cursor: id = match cursor_style {
+            CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
+            CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
+            CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
+            CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
+            CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
+            CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
+            CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
+            CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
+            CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
+            CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
+            CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
+            CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
+            CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
+            CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
+
+            // Undocumented, private class methods:
+            // https://stackoverflow.com/questions/27242353/cocoa-predefined-resize-mouse-cursor
+            CursorStyle::ResizeUpLeftDownRight => {
+                msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
+            }
+            CursorStyle::ResizeUpRightDownLeft => {
+                msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
+            }
+
+            CursorStyle::IBeamCursorForVerticalLayout => {
+                msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
+            }
+            CursorStyle::OperationNotAllowed => {
+                msg_send![class!(NSCursor), operationNotAllowedCursor]
+            }
+            CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
+            CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
+            CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
+            CursorStyle::None => unreachable!(),
+        };
+
+        if cursor_hidden {
+            let _: () = msg_send![class!(NSCursor), unhide];
+            window_state.lock().cursor_hidden = false;
+        }
+
         let bounds = NSView::bounds(this as *const Object as id);
         let _: () = msg_send![this, addCursorRect: bounds cursor: cursor];
     }
