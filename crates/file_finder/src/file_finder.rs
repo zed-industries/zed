@@ -614,7 +614,7 @@ impl Matches {
         // not have any duplicates after building the final list.
         for new_match in new_history_matches
             .into_values()
-            .chain(new_search_matches.into_iter())
+            .chain(new_search_matches)
         {
             match self.position(&new_match, currently_opened) {
                 Ok(_duplicate) => continue,

@@ -545,7 +545,7 @@ impl BufferDiagnosticsEditor {
                 let editor_blocks =
                     anchor_ranges
                         .into_iter()
-                        .zip(blocks.into_iter())
+                        .zip(blocks)
                         .map(|(anchor, block)| {
                             let editor = buffer_diagnostics_editor.editor.downgrade();
 

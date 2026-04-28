@@ -669,7 +669,7 @@ impl ProjectDiagnosticsEditor {
 
                 let editor_blocks = anchor_ranges
                     .into_iter()
-                    .zip_eq(result_blocks.into_iter())
+                    .zip_eq(result_blocks)
                     .filter_map(|(anchor, block)| {
                         let block = block?;
                         let editor = this.editor.downgrade();

@@ -313,7 +313,7 @@ async fn resolve_dynamic_schema(
                 .all_lsp_adapters()
                 .into_iter()
                 .map(|adapter| adapter.name())
-                .chain(languages.available_lsp_adapter_names().into_iter())
+                .chain(languages.available_lsp_adapter_names())
                 .map(|name| name.to_string())
                 .collect();
 
