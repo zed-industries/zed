@@ -988,10 +988,10 @@
     // Default: 72
     "commit_title_max_length": 72,
     // Whether opening a file from the git panel should automatically expand
-    // the diff hunks.
+    // all diff hunks and navigate to the first change.
     //
     // Default: true
-    "open_file_with_diff": true,
+    "expand_diff_hunks_on_open": true,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.

@@ -1338,7 +1338,8 @@ impl GitPanel {
                 })
                 .ok()?;
 
-            let open_file_with_diff = GitPanelSettings::get_global(cx).open_file_with_diff;
+            let expand_diff_hunks_on_open =
+                GitPanelSettings::get_global(cx).expand_diff_hunks_on_open;
             let workspace = self.workspace.clone();
             cx.spawn_in(window, async move |_, mut cx| {
                 let item = open_task
@@ -1352,7 +1353,7 @@ impl GitPanel {
                         diff_task.await;
                     }
 
-                    if open_file_with_diff {
+                    if expand_diff_hunks_on_open {
                         cx.update(|window, cx| {
                             active_editor.update(cx, |editor, cx| {
                                 editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);

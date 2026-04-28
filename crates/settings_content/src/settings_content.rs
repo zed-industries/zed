@@ -676,10 +676,10 @@ pub struct GitPanelSettingsContent {
     pub starts_open: Option<bool>,
 
     /// Whether opening a file from the git panel should automatically expand
-    /// the diff hunks.
+    /// all diff hunks and navigate to the first change.
     ///
     /// Default: true
-    pub open_file_with_diff: Option<bool>,
+    pub expand_diff_hunks_on_open: Option<bool>,
 
     /// Maximum length of the commit message title before a warning is shown.
     /// Set to 0 to disable.

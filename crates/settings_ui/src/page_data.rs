@@ -5724,22 +5724,22 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Open File With Diff",
+                title: "Expand Diff Hunks On Open",
                 description: "When opening a file from the Git panel, automatically expand all diff hunks and navigate to the first change.",
                 field: Box::new(SettingField {
-                    json_path: Some("git_panel.open_file_with_diff"),
+                    json_path: Some("git_panel.expand_diff_hunks_on_open"),
                     pick: |settings_content| {
                         settings_content
                             .git_panel
                             .as_ref()?
-                            .open_file_with_diff
+                            .expand_diff_hunks_on_open
                             .as_ref()
                     },
                     write: |settings_content, value, _| {
                         settings_content
                             .git_panel
                             .get_or_insert_default()
-                            .open_file_with_diff = value;
+                            .expand_diff_hunks_on_open = value;
                     },
                 }),
                 metadata: None,
