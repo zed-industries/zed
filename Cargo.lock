@@ -11360,6 +11360,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nrepl"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "gpui",
+ "project",
+ "settings",
+]
+
+[[package]]
 name = "ntapi"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22852,6 +22862,7 @@ dependencies = [
  "miniprofiler_ui",
  "node_runtime",
  "notifications",
+ "nrepl",
  "onboarding",
  "outline",
  "outline_panel",
