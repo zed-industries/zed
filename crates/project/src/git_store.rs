@@ -116,6 +116,8 @@ struct SharedDiffs {
 }
 
 struct BufferGitState {
+    index_buffer: Option<Entity<Buffer>>,
+    head_buffer: Option<Entity<Buffer>>,
     unstaged_diff: Option<WeakEntity<BufferDiff>>,
     uncommitted_diff: Option<WeakEntity<BufferDiff>>,
     oid_diffs: HashMap<Option<git::Oid>, WeakEntity<BufferDiff>>,
@@ -140,7 +142,7 @@ struct BufferGitState {
 
     head_text: Option<Arc<str>>,
     index_text: Option<Arc<str>>,
-    oid_texts: HashMap<git::Oid, Arc<str>>,
+    oid_texts: HashMap<git::Oid, (Arc<str>, language::BufferSnapshot)>,
     head_changed: bool,
     index_changed: bool,
     language_changed: bool,
@@ -3683,26 +3685,39 @@ impl BufferGitState {
     }
 
     #[ztracing::instrument(skip_all)]
-    fn recalculate_diffs(&mut self, buffer: text::BufferSnapshot, cx: &mut Context<Self>) {
+    fn recalculate_diffs(&mut self, buffer: language::BufferSnapshot, cx: &mut Context<Self>) {
         *self.recalculating_tx.borrow_mut() = true;
 
         let language = self.language.clone();
         let language_registry = self.language_registry.clone();
         let unstaged_diff = self.unstaged_diff();
         let uncommitted_diff = self.uncommitted_diff();
-        let head = self.head_text.clone();
-        let index = self.index_text.clone();
+        let head = self.head_text.clone().zip(
+            self.head_buffer
+                .as_ref()
+                .map(|buffer| buffer.read(cx).snapshot()),
+        );
+        let index = self.index_text.clone().zip(
+            self.index_buffer
+                .as_ref()
+                .map(|buffer| buffer.read(cx).snapshot()),
+        );
         let index_changed = self.index_changed;
         let head_changed = self.head_changed;
         let language_changed = self.language_changed;
         let prev_hunk_staging_operation_count = self.hunk_staging_operation_count_as_of_write;
         let index_matches_head = match (self.index_text.as_ref(), self.head_text.as_ref()) {
+            // todo!()
             (Some(index), Some(head)) => Arc::ptr_eq(index, head),
             (None, None) => true,
             _ => false,
         };
 
-        let oid_diffs: Vec<(Option<git::Oid>, Entity<BufferDiff>, Option<Arc<str>>)> = self
+        let oid_diffs: Vec<(
+            Option<git::Oid>,
+            Entity<BufferDiff>,
+            Option<(Arc<str>, language::BufferSnapshot)>,
+        )> = self
             .oid_diffs
             .iter()
             .filter_map(|(oid, weak)| {
@@ -3730,13 +3745,9 @@ impl BufferGitState {
             if let Some(unstaged_diff) = &unstaged_diff {
                 new_unstaged_diff = Some(
                     cx.update(|cx| {
-                        unstaged_diff.read(cx).update_diff(
-                            buffer.clone(),
-                            index,
-                            index_changed.then_some(false),
-                            language.clone(),
-                            cx,
-                        )
+                        unstaged_diff
+                            .read(cx)
+                            .update_diff(buffer.clone(), index, cx)
                     })
                     .await,
                 );
@@ -3753,13 +3764,9 @@ impl BufferGitState {
                 } else {
                     Some(
                         cx.update(|cx| {
-                            uncommitted_diff.read(cx).update_diff(
-                                buffer.clone(),
-                                head,
-                                head_changed.then_some(true),
-                                language.clone(),
-                                cx,
-                            )
+                            uncommitted_diff
+                                .read(cx)
+                                .update_diff(buffer.clone(), head, cx)
                         })
                         .await,
                     )
@@ -3798,12 +3805,8 @@ impl BufferGitState {
             let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
                 unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
             {
-                let task = unstaged_diff.update(cx, |diff, cx| {
-                    // For git index buffer we skip assigning the language as we do not really need to perform any syntax highlighting on
-                    // it. As a result, by skipping it we are potentially shaving off a lot of RSS plus we get a snappier feel for large diff
-                    // view multibuffers.
-                    diff.set_snapshot(new_unstaged_diff, &buffer, cx)
-                });
+                let task =
+                    unstaged_diff.update(cx, |diff, cx| diff.set_snapshot(new_unstaged_diff, cx));
                 Some(task.await)
             } else {
                 None
@@ -3821,9 +3824,7 @@ impl BufferGitState {
                         }
                         diff.set_snapshot_with_secondary(
                             new_uncommitted_diff,
-                            &buffer,
                             unstaged_changed_range.flatten(),
-                            true,
                             cx,
                         )
                     })
@@ -3834,15 +3835,7 @@ impl BufferGitState {
 
             for (oid, oid_diff, base_text) in oid_diffs {
                 let new_oid_diff = cx
-                    .update(|cx| {
-                        oid_diff.read(cx).update_diff(
-                            buffer.clone(),
-                            base_text,
-                            None,
-                            language.clone(),
-                            cx,
-                        )
-                    })
+                    .update(|cx| oid_diff.read(cx).update_diff(buffer.clone(), base_text, cx))
                     .await;
 
                 oid_diff
@@ -3850,7 +3843,7 @@ impl BufferGitState {
                         if language_changed {
                             diff.language_changed(language.clone(), language_registry.clone(), cx);
                         }
-                        diff.set_snapshot(new_oid_diff, &buffer, cx)
+                        diff.set_snapshot(new_oid_diff, cx)
                     })
                     .await;
 

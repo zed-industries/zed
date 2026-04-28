@@ -219,6 +219,7 @@ impl Diff {
 pub struct PendingDiff {
     multibuffer: Entity<MultiBuffer>,
     base_text: Arc<str>,
+    base_text_snapshot: language::BufferSnapshot,
     new_buffer: Entity<Buffer>,
     diff: Entity<BufferDiff>,
     revealed_ranges: Vec<Range<Anchor>>,
@@ -231,30 +232,24 @@ impl PendingDiff {
         let buffer = self.new_buffer.clone();
         let buffer_diff = self.diff.clone();
         let base_text = self.base_text.clone();
+        let base_text_snapshot = self.base_text_snapshot.clone();
         self.update_diff = cx.spawn(async move |diff, cx| {
-            let text_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
-            let language = buffer.read_with(cx, |buffer, _| buffer.language().cloned());
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
             let update = buffer_diff
                 .update(cx, |diff, cx| {
                     diff.update_diff(
-                        text_snapshot.clone(),
-                        Some(base_text.clone()),
-                        None,
-                        language,
+                        buffer_snapshot,
+                        Some((base_text.clone(), base_text_snapshot.clone())),
                         cx,
                     )
                 })
                 .await;
-            let (task1, task2) = buffer_diff.update(cx, |diff, cx| {
-                let task1 = diff.set_snapshot(update.clone(), &text_snapshot, cx);
-                let task2 = diff
-                    .secondary_diff()
+            buffer_diff.update(cx, |diff, cx| {
+                diff.set_snapshot(update.clone(), cx);
+                diff.secondary_diff()
                     .unwrap()
-                    .update(cx, |diff, cx| diff.set_snapshot(update, &text_snapshot, cx));
-                (task1, task2)
+                    .update(cx, |diff, cx| diff.set_snapshot(update, cx));
             });
-            task1.await;
-            task2.await;
             diff.update(cx, |diff, cx| {
                 if let Diff::Pending(diff) = diff {
                     diff.update_visible_ranges(cx);
