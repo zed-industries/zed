@@ -197,6 +197,20 @@ Click a button to resolve that conflict. The conflict markers are removed and re
 
 > **Tip:** For complex conflicts that need manual editing, you can edit the file directly. Remove the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) and keep the content you want.
 
+### Auto-Staging Resolved Files
+
+By default, when you resolve all conflict markers in a file and save it, Zed automatically stages the file for you. This mirrors the typical Git workflow where resolved files need to be staged before committing.
+
+To disable this behavior, add the following to your `settings.json`:
+
+```json
+{
+  "git": {
+    "auto_stage_on_conflict_resolution": false
+  }
+}
+```
+
 ## Stashing
 
 Git stash allows you to temporarily save your uncommitted changes and revert your working directory to a clean state. This is particularly useful when you need to quickly switch branches or pull updates without committing incomplete work.
