@@ -12141,6 +12141,93 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_git_worktree_in_bare_layout_uses_shared_project_root(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/monty"),
+        json!({
+            ".bare": {
+                "HEAD": "",
+                "config": "",
+                "worktrees": {
+                    "main": {
+                        "commondir": "../..\n",
+                        "HEAD": "",
+                        "config": ""
+                    },
+                    "feature-a": {
+                        "commondir": "../..\n",
+                        "HEAD": "",
+                        "config": ""
+                    }
+                }
+            },
+            "main": {
+                ".git": "gitdir: ../.bare/worktrees/main\n",
+                "src": {
+                    "a.txt": "A",
+                }
+            },
+            "feature-a": {
+                ".git": "gitdir: ../.bare/worktrees/feature-a\n",
+                "src": {
+                    "b.txt": "B",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/monty/feature-a").as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let repositories = project.update(cx, |project, cx| {
+        project
+            .repositories(cx)
+            .values()
+            .map(|repo| repo.read(cx).work_directory_abs_path.clone())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(repositories, [Path::new(path!("/monty/feature-a")).into()]);
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/monty/feature-a/src/b.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let (repository, barrier) = project.update(cx, |project, cx| {
+        let (repo, _) = project
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+            .unwrap();
+        let barrier = repo.update(cx, |repo, _| repo.barrier());
+        (repo.clone(), barrier)
+    });
+    barrier.await.unwrap();
+
+    repository.read_with(cx, |repo, _| {
+        pretty_assertions::assert_eq!(
+            repo.work_directory_abs_path,
+            Path::new(path!("/monty/feature-a")).into(),
+        );
+        pretty_assertions::assert_eq!(
+            repo.original_repo_abs_path,
+            Path::new(path!("/monty")).into(),
+        );
+        assert!(
+            repo.linked_worktree_path().is_some(),
+            "bare-layout worktree should be detected as a linked worktree"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_repository_deduplication(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
