@@ -223,15 +223,6 @@ message Envelope {
     LinkedEditingRange linked_editing_range = 209;
     LinkedEditingRangeResponse linked_editing_range_response = 210;
 
-    AdvertiseContexts advertise_contexts = 211;
-    OpenContext open_context = 212;
-    OpenContextResponse open_context_response = 213;
-    CreateContext create_context = 232;
-    CreateContextResponse create_context_response = 233;
-    UpdateContext update_context = 214;
-    SynchronizeContexts synchronize_contexts = 215;
-    SynchronizeContextsResponse synchronize_contexts_response = 216;
-
     GetSignatureHelp get_signature_help = 217;
     GetSignatureHelpResponse get_signature_help_response = 218;
 
@@ -432,9 +423,6 @@ message Envelope {
     OpenImageResponse open_image_response = 392;
     CreateImageForPeer create_image_for_peer = 393;
 
-    GitFileHistory git_file_history = 397;
-    GitFileHistoryResponse git_file_history_response = 398;
-
     RunGitHook run_git_hook = 399;
 
     GitDeleteBranch git_delete_branch = 400;
@@ -476,7 +464,23 @@ message Envelope {
     SpawnKernelResponse spawn_kernel_response = 427;
     KillKernel kill_kernel = 428;
     GitRemoveWorktree git_remove_worktree = 431;
-    GitRenameWorktree git_rename_worktree = 432; // current max
+    GitRenameWorktree git_rename_worktree = 432;
+    GitCreateCheckpoint git_create_checkpoint = 433;
+    GitCreateCheckpointResponse git_create_checkpoint_response = 434;
+    GitRestoreCheckpoint git_restore_checkpoint = 435;
+    GitCompareCheckpoints git_compare_checkpoints = 436;
+    GitCompareCheckpointsResponse git_compare_checkpoints_response = 437;
+    GitDiffCheckpoints git_diff_checkpoints = 438;
+    GitDiffCheckpointsResponse git_diff_checkpoints_response = 439;
+    GitGetHeadSha git_get_head_sha = 440;
+    GitGetHeadShaResponse git_get_head_sha_response = 441;
+    GitRepairWorktrees git_repair_worktrees = 442;
+    GitEditRef git_edit_ref = 443;
+    GitCreateArchiveCheckpoint git_create_archive_checkpoint = 444;
+    GitCreateArchiveCheckpointResponse git_create_archive_checkpoint_response = 445;
+    GitRestoreArchiveCheckpoint git_restore_archive_checkpoint = 446;
+    GetCommitData get_commit_data = 447;
+    GetCommitDataResponse get_commit_data_response = 448; // current max
   }
 
   reserved 87 to 88;
@@ -502,6 +506,8 @@ message Envelope {
   reserved 332 to 333;
   reserved 394 to 396;
   reserved 429 to 430;
+  reserved 211 to 216, 232 to 233;
+  reserved 397 to 398;
 }
 
 message Hello {

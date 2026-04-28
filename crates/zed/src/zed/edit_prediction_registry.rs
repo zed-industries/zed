@@ -62,8 +62,9 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         let editors = editors.clone();
         let client = client.clone();
 
-        move |user_store, event, cx| {
-            if let client::user::Event::PrivateUserInfoUpdated = event {
+        move |user_store, event, cx| match event {
+            client::user::Event::PrivateUserInfoUpdated
+            | client::user::Event::OrganizationChanged => {
                 let provider_config = edit_prediction_provider_config_for_settings(cx);
                 assign_edit_prediction_providers(
                     &editors,
@@ -73,6 +74,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                     cx,
                 );
             }
+            _ => {}
         }
     })
     .detach();
@@ -141,9 +143,7 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
                 ))
             }
         }
-        EditPredictionProvider::Sweep => Some(EditPredictionProviderConfig::Zed(
-            EditPredictionModel::Sweep,
-        )),
+
         EditPredictionProvider::Mercury => Some(EditPredictionProviderConfig::Zed(
             EditPredictionModel::Mercury,
         )),
@@ -183,7 +183,6 @@ impl EditPredictionProviderConfig {
             EditPredictionProviderConfig::Zed(model) => match model {
                 EditPredictionModel::Zeta => "Zeta",
                 EditPredictionModel::Fim { .. } => "FIM",
-                EditPredictionModel::Sweep => "Sweep",
                 EditPredictionModel::Mercury => "Mercury",
             },
         }
@@ -259,9 +258,7 @@ fn assign_edit_prediction_provider(
                 ep_store.update(cx, |this, cx| this.start_copilot_for_project(&project, cx));
 
             if let Some(copilot) = copilot {
-                if let Some(buffer) = singleton_buffer
-                    && buffer.read(cx).file().is_some()
-                {
+                if let Some(buffer) = singleton_buffer {
                     copilot.update(cx, |copilot, cx| {
                         copilot.register_buffer(&buffer, cx);
                     });
@@ -277,6 +274,18 @@ fn assign_edit_prediction_provider(
         }
         Some(EditPredictionProviderConfig::Zed(model)) => {
             let ep_store = edit_prediction::EditPredictionStore::global(client, &user_store, cx);
+
+            if let Some(organization_configuration) =
+                user_store.read(cx).current_organization_configuration()
+            {
+                if !organization_configuration.edit_prediction.is_enabled {
+                    editor.set_edit_prediction_provider::<ZedEditPredictionDelegate>(
+                        None, window, cx,
+                    );
+
+                    return;
+                }
+            }
 
             if let Some(project) = editor.project() {
                 ep_store.update(cx, |ep_store, cx| {
@@ -316,7 +325,12 @@ mod tests {
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
             client::init(&app_state.client, cx);
-            language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+            language_model::init(cx);
+            client::RefreshLlmTokenListener::register(
+                app_state.client.clone(),
+                app_state.user_store.clone(),
+                cx,
+            );
             editor::init(cx);
             app_state
         });

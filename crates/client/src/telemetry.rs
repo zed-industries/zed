@@ -129,7 +129,7 @@ pub fn os_version() -> String {
     {
         use objc2_foundation::NSProcessInfo;
         let process_info = NSProcessInfo::processInfo();
-        let version_nsstring = unsafe { process_info.operatingSystemVersionString() };
+        let version_nsstring = process_info.operatingSystemVersionString();
         // "Version 15.6.1 (Build 24G90)" -> "15.6.1 (Build 24G90)"
         let version_string = version_nsstring.to_string().replace("Version ", "");
         // "15.6.1 (Build 24G90)" -> "15.6.1"

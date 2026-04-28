@@ -1,9 +1,8 @@
 use super::tool_permissions::{
-    ResolvedProjectPath, SensitiveSettingsKind, authorize_symlink_access,
-    canonicalize_worktree_roots, path_has_symlink_escape, resolve_project_path,
-    sensitive_settings_kind,
+    ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
+    path_has_symlink_escape, resolve_project_path, sensitive_settings_kind,
 };
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use collections::FxHashSet;
 use futures::FutureExt as _;
@@ -18,7 +17,8 @@ use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 use crate::{
-    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_path,
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    authorize_with_sensitive_settings, decide_permission_for_path,
 };
 
 /// Discards unsaved changes in open buffers by reloading file contents from disk.
@@ -161,13 +161,16 @@ impl AgentTool for RestoreFileFromDiskTool {
                         break;
                     }
                 }
-                let title = match settings_kind {
-                    Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
-                    Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                    None => title,
-                };
                 let context = crate::ToolPermissionContext::new(Self::NAME, confirmation_paths);
-                let authorize = cx.update(|cx| event_stream.authorize(title, context, cx));
+                let authorize = cx.update(|cx| {
+                    authorize_with_sensitive_settings(
+                        settings_kind,
+                        context,
+                        &title,
+                        &event_stream,
+                        cx,
+                    )
+                });
                 authorize.await.map_err(|e| e.to_string())?;
             }
             let mut buffers_to_reload: FxHashSet<Entity<Buffer>> = FxHashSet::default();
@@ -523,7 +526,10 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let _result = task.await;
@@ -586,8 +592,8 @@ mod tests {
         assert!(result.is_err(), "Tool should fail when policy denies");
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Deny policy should not emit symlink authorization prompt",
         );
@@ -651,13 +657,16 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Expected a single authorization prompt",
         );

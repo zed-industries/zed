@@ -1,8 +1,8 @@
+use crate::merge_from::MergeFrom;
 use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
-use strum::EnumString;
 
 use std::sync::Arc;
 
@@ -16,6 +16,7 @@ pub struct AllLanguageModelSettingsContent {
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
+    pub opencode: Option<OpenCodeSettingsContent>,
     pub open_router: Option<OpenRouterSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
@@ -38,7 +39,7 @@ pub struct AnthropicSettingsContent {
 pub struct AnthropicAvailableModel {
     /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-latest, claude-3-opus-20240229, etc
     pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the agent panel.
     pub display_name: Option<String>,
     /// The model's context window size.
     pub max_tokens: u64,
@@ -108,7 +109,7 @@ pub struct OllamaSettingsContent {
 pub struct OllamaAvailableModel {
     /// The model name in the Ollama API (e.g. "llama3.2:latest")
     pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the agent panel.
     pub display_name: Option<String>,
     /// The Context Length parameter to the model (aka num_ctx or n_ctx)
     pub max_tokens: u64,
@@ -142,6 +143,42 @@ impl Default for KeepAlive {
     fn default() -> Self {
         Self::indefinite()
     }
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct OpenCodeSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<OpenCodeAvailableModel>>,
+    /// Whether to show OpenCode Zen models. Defaults to true.
+    pub show_zen_models: Option<bool>,
+    /// Whether to show OpenCode Go models. Defaults to true.
+    pub show_go_models: Option<bool>,
+    /// Whether to show OpenCode Free models. Defaults to true.
+    pub show_free_models: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenCodeModelSubscription {
+    Zen,
+    Go,
+    Free,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct OpenCodeAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    /// The API protocol to use for this model: "anthropic", "openai_responses", "openai_chat", or "google".
+    pub protocol: String,
+    /// The subscription for this model: "zen", "go", or "free". Defaults to Zen.
+    pub subscription: Option<OpenCodeModelSubscription>,
+    /// Custom Model API URL to use for this model.
+    pub custom_model_api_url: Option<String>,
 }
 
 #[with_fallible_options]
@@ -218,15 +255,12 @@ pub struct OpenAiAvailableModel {
     pub capabilities: OpenAiModelCapabilities,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, EnumString, JsonSchema, MergeFrom)]
-#[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")]
-pub enum OpenAiReasoningEffort {
-    Minimal,
-    Low,
-    Medium,
-    High,
-    XHigh,
+pub use language_model_core::ReasoningEffort as OpenAiReasoningEffort;
+
+impl MergeFrom for OpenAiReasoningEffort {
+    fn merge_from(&mut self, other: &Self) {
+        *self = *other;
+    }
 }
 
 #[with_fallible_options]
@@ -241,12 +275,15 @@ pub struct OpenAiCompatibleSettingsContent {
 pub struct OpenAiModelCapabilities {
     #[serde(default = "default_true")]
     pub chat_completions: bool,
+    #[serde(default = "default_true")]
+    pub images: bool,
 }
 
 impl Default for OpenAiModelCapabilities {
     fn default() -> Self {
         Self {
             chat_completions: default_true(),
+            images: default_true(),
         }
     }
 }
@@ -259,6 +296,7 @@ pub struct OpenAiCompatibleAvailableModel {
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
     pub max_completion_tokens: Option<u64>,
+    pub reasoning_effort: Option<OpenAiReasoningEffort>,
     #[serde(default)]
     pub capabilities: OpenAiCompatibleModelCapabilities,
 }
@@ -272,6 +310,8 @@ pub struct OpenAiCompatibleModelCapabilities {
     pub prompt_cache_key: bool,
     #[serde(default = "default_true")]
     pub chat_completions: bool,
+    #[serde(default)]
+    pub interleaved_reasoning: bool,
 }
 
 impl Default for OpenAiCompatibleModelCapabilities {
@@ -282,6 +322,7 @@ impl Default for OpenAiCompatibleModelCapabilities {
             parallel_tool_calls: false,
             prompt_cache_key: false,
             chat_completions: default_true(),
+            interleaved_reasoning: false,
         }
     }
 }
@@ -371,7 +412,7 @@ pub struct ZedDotDevAvailableModel {
     pub provider: ZedDotDevAvailableProvider,
     /// The model's name in the provider's API. e.g. claude-3-5-sonnet-20240620
     pub name: String,
-    /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+    /// The name displayed in the UI, such as in the agent panel model dropdown menu.
     pub display_name: Option<String>,
     /// The size of the context window, indicating the maximum number of tokens the model can process.
     pub max_tokens: usize,
@@ -459,15 +500,10 @@ pub struct LanguageModelCacheConfiguration {
     pub min_total_token: u64,
 }
 
-#[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
-)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum ModelMode {
-    #[default]
-    Default,
-    Thinking {
-        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
-        budget_tokens: Option<u32>,
-    },
+pub use language_model_core::ModelMode;
+
+impl MergeFrom for ModelMode {
+    fn merge_from(&mut self, other: &Self) {
+        *self = *other;
+    }
 }

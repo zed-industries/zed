@@ -3,11 +3,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use collections::HashMap;
 use futures::future::join_all;
-use gpui::{App, AppContext, AsyncApp, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use itertools::Itertools as _;
 use language::{
-    ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
-    LspAdapterDelegate, LspInstaller, Toolchain,
+    Buffer, ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore,
+    LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -425,10 +425,11 @@ async fn detect_package_manager(
 impl ContextProvider for TypeScriptContextProvider {
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
-        let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
+        let file = buffer.and_then(|buffer| buffer.read(cx).file());
+        let Some(file) = project::File::from_dyn(file).cloned() else {
             return Task::ready(None);
         };
         let Some(worktree_root) = file.worktree.read(cx).root_dir() else {
@@ -1081,6 +1082,213 @@ mod tests {
                     ("const local", 1),
                     ("x", 2),
                     ("y", 2),
+                ]
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_outline_with_nested_object_methods(cx: &mut TestAppContext) {
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+            crate::language("javascript", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let text = r#"
+            // Reproduction from https://github.com/zed-industries/zed/issues/48711
+            const a = {
+              p01: '01',
+              fn01: () => {},
+              fn02() {},
+              deep: {
+                subFn01: () => {},
+                subFn02() {},
+                subP03: '03',
+                deep2: {
+                  subFn01: () => {},
+                  subFn02() {},
+                  subP03: '03',
+                },
+              },
+            };
+
+            // Edge case: async methods in nested objects
+            const b = {
+              async topAsync() {},
+              nested: { async nestedAsync() {} },
+            };
+
+            // Edge case: object literal in function argument
+            foo({ bar() {}, inner: { baz() {} } });
+        "#
+            .unindent();
+
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            cx.run_until_parked();
+            let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+
+            let items: Vec<_> = outline
+                .items
+                .iter()
+                .map(|item| (item.text.as_str(), item.depth))
+                .collect();
+
+            assert_eq!(
+                items,
+                &[
+                    ("const a", 0),
+                    ("p01", 1),
+                    ("fn01", 1),
+                    ("fn02()", 1),
+                    ("deep", 1),
+                    ("subFn01", 2),
+                    ("subFn02()", 2),
+                    ("subP03", 2),
+                    ("deep2", 2),
+                    ("subFn01", 3),
+                    ("subFn02()", 3),
+                    ("subP03", 3),
+                    ("const b", 0),
+                    ("async topAsync()", 1),
+                    ("nested", 1),
+                    ("async nestedAsync()", 2),
+                    ("bar()", 0),
+                    ("inner", 0),
+                    ("baz()", 1),
+                ]
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_outline_with_complex_nested_objects(cx: &mut TestAppContext) {
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+            crate::language("javascript", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let text = r#"
+            const config = {
+              init() {},
+              destroy() {},
+              api: {
+                baseUrl: "x",
+                fetchData() {},
+                async submitForm() {},
+                errorHandler() {},
+              },
+              features: {
+                auth: {
+                  login() {},
+                  logout() {},
+                  refreshToken() {},
+                },
+                cache: {
+                  get() {},
+                  set() {},
+                  invalidate() {},
+                },
+              },
+              watch: {
+                value() {},
+              },
+              computed: {
+                fullName() {},
+                displayValue() {},
+              },
+            };
+
+            registerPlugin({
+              name: "my-plugin",
+              setup() {},
+              teardown() {},
+              hooks: {
+                beforeMount() {},
+                mounted() {},
+                beforeUnmount() {},
+              },
+            });
+
+            export const store = {
+              state: {},
+              mutations: {
+                setUser() {},
+                clearUser() {},
+              },
+              actions: {
+                async fetchUser() {},
+                logout() {},
+              },
+              getters: {
+                currentUser() {},
+                isAuthenticated() {},
+              },
+            };
+
+            function registerPlugin(_plugin: unknown) {}
+        "#
+            .unindent();
+
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            cx.run_until_parked();
+            let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
+
+            let items: Vec<_> = outline
+                .items
+                .iter()
+                .map(|item| (item.text.as_str(), item.depth))
+                .collect();
+
+            assert_eq!(
+                items,
+                &[
+                    ("const config", 0),
+                    ("init()", 1),
+                    ("destroy()", 1),
+                    ("api", 1),
+                    ("baseUrl", 2),
+                    ("fetchData()", 2),
+                    ("async submitForm()", 2),
+                    ("errorHandler()", 2),
+                    ("features", 1),
+                    ("auth", 2),
+                    ("login()", 3),
+                    ("logout()", 3),
+                    ("refreshToken()", 3),
+                    ("cache", 2),
+                    ("get()", 3),
+                    ("set()", 3),
+                    ("invalidate()", 3),
+                    ("watch", 1),
+                    ("value()", 2),
+                    ("computed", 1),
+                    ("fullName()", 2),
+                    ("displayValue()", 2),
+                    ("name", 0),
+                    ("setup()", 0),
+                    ("teardown()", 0),
+                    ("hooks", 0),
+                    ("beforeMount()", 1),
+                    ("mounted()", 1),
+                    ("beforeUnmount()", 1),
+                    ("const store", 0),
+                    ("state", 1),
+                    ("mutations", 1),
+                    ("setUser()", 2),
+                    ("clearUser()", 2),
+                    ("actions", 1),
+                    ("async fetchUser()", 2),
+                    ("logout()", 2),
+                    ("getters", 1),
+                    ("currentUser()", 2),
+                    ("isAuthenticated()", 2),
+                    ("function registerPlugin( )", 0),
                 ]
             );
         }

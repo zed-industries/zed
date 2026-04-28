@@ -1,108 +1,68 @@
-"break" @keyword
+[
+  "break"
+  "case"
+  "const"
+  "continue"
+  "default"
+  "do"
+  "else"
+  "enum"
+  "extern"
+  "for"
+  "if"
+  "inline"
+  "return"
+  "sizeof"
+  "static"
+  "struct"
+  "switch"
+  "typedef"
+  "union"
+  "volatile"
+  "while"
+  "#define"
+  "#elif"
+  "#else"
+  "#endif"
+  "#if"
+  "#ifdef"
+  "#ifndef"
+  "#include"
+  (preproc_directive)
+] @keyword
 
-"case" @keyword
+[
+  "--"
+  "-"
+  "-="
+  "->"
+  "="
+  "!="
+  "*"
+  "&"
+  "&&"
+  "+"
+  "++"
+  "+="
+  "<"
+  "=="
+  ">"
+  "||"
+  "."
+  ";"
+] @operator
 
-"const" @keyword
+[
+  (string_literal)
+  (system_lib_string)
+] @string
 
-"continue" @keyword
+(null) @constant.builtin
 
-"default" @keyword
-
-"do" @keyword
-
-"else" @keyword
-
-"enum" @keyword
-
-"extern" @keyword
-
-"for" @keyword
-
-"if" @keyword
-
-"inline" @keyword
-
-"return" @keyword
-
-"sizeof" @keyword
-
-"static" @keyword
-
-"struct" @keyword
-
-"switch" @keyword
-
-"typedef" @keyword
-
-"union" @keyword
-
-"volatile" @keyword
-
-"while" @keyword
-
-"#define" @keyword
-
-"#elif" @keyword
-
-"#else" @keyword
-
-"#endif" @keyword
-
-"#if" @keyword
-
-"#ifdef" @keyword
-
-"#ifndef" @keyword
-
-"#include" @keyword
-
-(preproc_directive) @keyword
-
-"--" @operator
-
-"-" @operator
-
-"-=" @operator
-
-"->" @operator
-
-"=" @operator
-
-"!=" @operator
-
-"*" @operator
-
-"&" @operator
-
-"&&" @operator
-
-"+" @operator
-
-"++" @operator
-
-"+=" @operator
-
-"<" @operator
-
-"==" @operator
-
-">" @operator
-
-"||" @operator
-
-"." @delimiter
-
-";" @delimiter
-
-(string_literal) @string
-
-(system_lib_string) @string
-
-(null) @constant
-
-(number_literal) @number
-
-(char_literal) @number
+[
+  (number_literal)
+  (char_literal)
+] @number
 
 (identifier) @variable
 
@@ -110,11 +70,11 @@
 
 (statement_identifier) @label
 
-(type_identifier) @type
-
-(primitive_type) @type
-
-(sized_type_specifier) @type
+[
+  (type_identifier)
+  (primitive_type)
+  (sized_type_specifier)
+] @type
 
 (call_expression
   function: (identifier) @function)

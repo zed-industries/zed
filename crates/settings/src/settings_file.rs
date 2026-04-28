@@ -5,6 +5,96 @@ use futures::{StreamExt, channel::mpsc};
 use gpui::{App, BackgroundExecutor, ReadGlobal};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use std::path::Path;
+
+    #[gpui::test]
+    async fn test_watch_config_dir_reloads_tracked_file_on_rescan(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let config_dir = PathBuf::from("/root/config");
+        let settings_path = PathBuf::from("/root/config/settings.json");
+
+        fs.insert_tree(
+            Path::new("/root"),
+            json!({
+                "config": {
+                    "settings.json": "A"
+                }
+            }),
+        )
+        .await;
+
+        let mut rx = watch_config_dir(
+            &cx.background_executor,
+            fs.clone(),
+            config_dir.clone(),
+            HashSet::from_iter([settings_path.clone()]),
+        );
+
+        assert_eq!(rx.next().await.as_deref(), Some("A"));
+        cx.run_until_parked();
+
+        fs.pause_events();
+        fs.insert_file(&settings_path, b"B".to_vec()).await;
+        fs.clear_buffered_events();
+
+        fs.emit_fs_event(&settings_path, Some(PathEventKind::Rescan));
+        fs.unpause_events_and_flush();
+        assert_eq!(rx.next().await.as_deref(), Some("B"));
+
+        fs.pause_events();
+        fs.insert_file(&settings_path, b"A".to_vec()).await;
+        fs.clear_buffered_events();
+
+        fs.emit_fs_event(&config_dir, Some(PathEventKind::Rescan));
+        fs.unpause_events_and_flush();
+        assert_eq!(rx.next().await.as_deref(), Some("A"));
+    }
+
+    #[gpui::test]
+    async fn test_watch_config_file_reloads_when_parent_dir_is_symlink(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let config_settings_path = PathBuf::from("/root/.config/zed/settings.json");
+        let target_settings_path = PathBuf::from("/root/dotfiles/zed/settings.json");
+
+        fs.insert_tree(
+            Path::new("/root"),
+            json!({
+                ".config": {},
+                "dotfiles": {
+                    "zed": {
+                        "settings.json": "A"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        fs.create_symlink(
+            Path::new("/root/.config/zed"),
+            PathBuf::from("/root/dotfiles/zed"),
+        )
+        .await
+        .unwrap();
+
+        let (mut rx, _task) =
+            watch_config_file(&cx.background_executor, fs.clone(), config_settings_path);
+        assert_eq!(rx.next().await.as_deref(), Some("A"));
+
+        fs.insert_file(&target_settings_path, b"B".to_vec()).await;
+        assert_eq!(rx.next().await.as_deref(), Some("B"));
+    }
+}
+
 pub const EMPTY_THEME_NAME: &str = "empty-theme";
 
 /// Settings for visual tests that use proper fonts instead of Courier.
@@ -79,6 +169,7 @@ pub fn watch_config_file(
 ) -> (mpsc::UnboundedReceiver<String>, gpui::Task<()>) {
     let (tx, rx) = mpsc::unbounded();
     let task = executor.spawn(async move {
+        let path = fs.canonicalize(&path).await.unwrap_or_else(|_| path);
         let (events, _) = fs.watch(&path, Duration::from_millis(100)).await;
         futures::pin_mut!(events);
 
@@ -139,7 +230,26 @@ pub fn watch_config_dir(
                                     return;
                                 }
                             }
+                            Some(PathEventKind::Rescan) => {
+                                for file_path in &config_paths {
+                                    if let Ok(contents) = fs.load(file_path).await
+                                        && tx.unbounded_send(contents).is_err()
+                                    {
+                                        return;
+                                    }
+                                }
+                            }
                             _ => {}
+                        }
+                    } else if matches!(event.kind, Some(PathEventKind::Rescan))
+                        && event.path == dir_path
+                    {
+                        for file_path in &config_paths {
+                            if let Ok(contents) = fs.load(file_path).await
+                                && tx.unbounded_send(contents).is_err()
+                            {
+                                return;
+                            }
                         }
                     }
                 }
@@ -155,5 +265,13 @@ pub fn update_settings_file(
     cx: &App,
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
 ) {
-    SettingsStore::global(cx).update_settings_file(fs, update);
+    SettingsStore::global(cx).update_settings_file(fs, update)
+}
+
+pub fn update_settings_file_with_completion(
+    fs: Arc<dyn Fs>,
+    cx: &App,
+    update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
+) -> futures::channel::oneshot::Receiver<anyhow::Result<()>> {
+    SettingsStore::global(cx).update_settings_file_with_completion(fs, update)
 }

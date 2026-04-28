@@ -1,66 +1,17 @@
-use crate::udiff::DiffLine;
 use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt::Write as _, mem, path::Path, sync::Arc};
 use telemetry_events::EditPredictionRating;
 
-pub const CURSOR_POSITION_MARKER: &str = "[CURSOR_POSITION]";
+pub use zeta_prompt::udiff::{
+    CURSOR_POSITION_MARKER, encode_cursor_in_patch, extract_cursor_from_patch,
+};
 pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
 
 /// Maximum cursor file size to capture (64KB).
 /// Files larger than this will not have their content captured,
 /// falling back to git-based loading.
 pub const MAX_CURSOR_FILE_SIZE: usize = 64 * 1024;
-
-/// Encodes a cursor position into a diff patch by adding a comment line with a caret
-/// pointing to the cursor column.
-///
-/// The cursor offset is relative to the start of the new text content (additions and context lines).
-/// Returns the patch with cursor marker comment lines inserted after the relevant addition line.
-pub fn encode_cursor_in_patch(patch: &str, cursor_offset: Option<usize>) -> String {
-    let Some(cursor_offset) = cursor_offset else {
-        return patch.to_string();
-    };
-
-    let mut result = String::new();
-    let mut line_start_offset = 0usize;
-
-    for line in patch.lines() {
-        if !result.is_empty() {
-            result.push('\n');
-        }
-        result.push_str(line);
-
-        match DiffLine::parse(line) {
-            DiffLine::Addition(content) => {
-                let line_end_offset = line_start_offset + content.len();
-
-                if cursor_offset >= line_start_offset && cursor_offset <= line_end_offset {
-                    let cursor_column = cursor_offset - line_start_offset;
-
-                    result.push('\n');
-                    result.push('#');
-                    for _ in 0..cursor_column {
-                        result.push(' ');
-                    }
-                    write!(result, "^{}", CURSOR_POSITION_MARKER).unwrap();
-                }
-
-                line_start_offset = line_end_offset + 1;
-            }
-            DiffLine::Context(content) => {
-                line_start_offset += content.len() + 1;
-            }
-            _ => {}
-        }
-    }
-
-    if patch.ends_with('\n') {
-        result.push('\n');
-    }
-
-    result
-}
 
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExampleSpec {
@@ -501,53 +452,7 @@ impl ExampleSpec {
     pub fn expected_patches_with_cursor_positions(&self) -> Vec<(String, Option<usize>)> {
         self.expected_patches
             .iter()
-            .map(|patch| {
-                let mut clean_patch = String::new();
-                let mut cursor_offset: Option<usize> = None;
-                let mut line_start_offset = 0usize;
-                let mut prev_line_start_offset = 0usize;
-
-                for line in patch.lines() {
-                    let diff_line = DiffLine::parse(line);
-
-                    match &diff_line {
-                        DiffLine::Garbage(content)
-                            if content.starts_with('#')
-                                && content.contains(CURSOR_POSITION_MARKER) =>
-                        {
-                            let caret_column = if let Some(caret_pos) = content.find('^') {
-                                caret_pos
-                            } else if let Some(_) = content.find('<') {
-                                0
-                            } else {
-                                continue;
-                            };
-                            let cursor_column = caret_column.saturating_sub('#'.len_utf8());
-                            cursor_offset = Some(prev_line_start_offset + cursor_column);
-                        }
-                        _ => {
-                            if !clean_patch.is_empty() {
-                                clean_patch.push('\n');
-                            }
-                            clean_patch.push_str(line);
-
-                            match diff_line {
-                                DiffLine::Addition(content) | DiffLine::Context(content) => {
-                                    prev_line_start_offset = line_start_offset;
-                                    line_start_offset += content.len() + 1;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-
-                if patch.ends_with('\n') && !clean_patch.is_empty() {
-                    clean_patch.push('\n');
-                }
-
-                (clean_patch, cursor_offset)
-            })
+            .map(|patch| extract_cursor_from_patch(patch))
             .collect()
     }
 
@@ -844,6 +749,31 @@ mod tests {
 
         let results = spec.expected_patches_with_cursor_positions();
         assert_eq!(results, vec![(clean_patch, None)]);
+    }
+
+    #[test]
+    fn test_encode_cursor_in_patch_is_idempotent() {
+        let patch = indoc! {r#"
+            --- a/test.rs
+            +++ b/test.rs
+            @@ -1,2 +1,2 @@
+            -fn old() {}
+            +fn new_name() {}
+            #       ^[CURSOR_POSITION]
+        "#};
+
+        let cursor_offset = "fn new_name() {}".find("name").unwrap();
+        let encoded_once = encode_cursor_in_patch(patch, Some(cursor_offset));
+        let encoded_twice = encode_cursor_in_patch(&encoded_once, Some(cursor_offset));
+
+        assert_eq!(encoded_once, encoded_twice);
+        assert_eq!(
+            encoded_once
+                .lines()
+                .filter(|line| line.contains(CURSOR_POSITION_MARKER))
+                .count(),
+            1
+        );
     }
 
     #[test]

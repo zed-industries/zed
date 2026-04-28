@@ -2,18 +2,26 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
-use node_runtime::NodeRuntime;
+use futures::TryFutureExt;
+use gpui::{AsyncWindowContext, Entity};
+use project::Worktree;
 use serde::Deserialize;
-use settings::DevContainerConnection;
-use smol::fs;
-use util::command::Command;
+use settings::{DevContainerConnection, infer_json_indent_size, replace_value_in_json_text};
 use util::rel_path::RelPath;
+use walkdir::WalkDir;
 use workspace::Workspace;
 use worktree::Snapshot;
 
-use crate::{DevContainerContext, DevContainerFeature, DevContainerTemplate};
+use crate::{
+    DevContainerContext, DevContainerFeature, DevContainerTemplate,
+    devcontainer_json::DevContainer,
+    devcontainer_manifest::{read_devcontainer_configuration, spawn_dev_container},
+    devcontainer_templates_repository, get_latest_oci_manifest, get_oci_token, ghcr_registry,
+    oci::download_oci_tarball,
+};
 
 /// Represents a discovered devcontainer configuration
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,64 +50,40 @@ impl DevContainerConfig {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DevContainerUp {
-    _outcome: String,
-    container_id: String,
-    remote_user: String,
-    remote_workspace_folder: String,
+pub(crate) struct DevContainerUp {
+    pub(crate) container_id: String,
+    pub(crate) remote_user: String,
+    pub(crate) remote_workspace_folder: String,
+    #[serde(default)]
+    pub(crate) extension_ids: Vec<String>,
+    #[serde(default)]
+    pub(crate) remote_env: HashMap<String, String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug)]
 pub(crate) struct DevContainerApply {
-    pub(crate) files: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct DevContainerConfiguration {
-    name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct DevContainerConfigurationOutput {
-    configuration: DevContainerConfiguration,
-}
-
-pub(crate) struct DevContainerCli {
-    pub path: PathBuf,
-    node_runtime_path: Option<PathBuf>,
-}
-
-impl DevContainerCli {
-    fn command(&self, use_podman: bool) -> Command {
-        let mut command = if let Some(node_runtime_path) = &self.node_runtime_path {
-            let mut command =
-                util::command::new_command(node_runtime_path.as_os_str().display().to_string());
-            command.arg(self.path.display().to_string());
-            command
-        } else {
-            util::command::new_command(self.path.display().to_string())
-        };
-
-        if use_podman {
-            command.arg("--docker-path");
-            command.arg("podman");
-        }
-        command
-    }
+    pub(crate) project_files: Vec<Arc<RelPath>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DevContainerError {
+    CommandFailed(String),
     DockerNotAvailable,
-    DevContainerCliNotAvailable,
+    ContainerNotValid(String),
     DevContainerTemplateApplyFailed(String),
+    DevContainerScriptsFailed,
     DevContainerUpFailed(String),
     DevContainerNotFound,
     DevContainerParseFailed,
-    NodeRuntimeNotAvailable,
+    DevContainerValidationFailed(String),
+    FilesystemError,
+    ResourceFetchFailed,
     NotInValidProject,
+    /// Multiple existing containers match this project's identifying labels
+    /// (`devcontainer.local_folder` + `devcontainer.config_file`). The spec
+    /// expects those labels to be unique per project, so Zed can't choose
+    /// which one to connect to. The user must remove the duplicate(s).
+    MultipleMatchingContainers(Vec<String>),
 }
 
 impl Display for DevContainerError {
@@ -110,8 +94,11 @@ impl Display for DevContainerError {
             match self {
                 DevContainerError::DockerNotAvailable =>
                     "docker CLI not found on $PATH".to_string(),
-                DevContainerError::DevContainerCliNotAvailable =>
-                    "devcontainer CLI not found on path".to_string(),
+                DevContainerError::ContainerNotValid(id) => format!(
+                    "docker image {id} did not have expected configuration for a dev container"
+                ),
+                DevContainerError::DevContainerScriptsFailed =>
+                    "lifecycle scripts could not execute for dev container".to_string(),
                 DevContainerError::DevContainerUpFailed(_) => {
                     "DevContainer creation failed".to_string()
                 }
@@ -122,12 +109,37 @@ impl Display for DevContainerError {
                     "No valid dev container definition found in project".to_string(),
                 DevContainerError::DevContainerParseFailed =>
                     "Failed to parse file .devcontainer/devcontainer.json".to_string(),
-                DevContainerError::NodeRuntimeNotAvailable =>
-                    "Cannot find a valid node runtime".to_string(),
                 DevContainerError::NotInValidProject => "Not within a valid project".to_string(),
+                DevContainerError::CommandFailed(program) =>
+                    format!("Failure running external program {program}"),
+                DevContainerError::FilesystemError =>
+                    "Error downloading resources locally".to_string(),
+                DevContainerError::ResourceFetchFailed =>
+                    "Failed to fetch resources from template or feature repository".to_string(),
+                DevContainerError::DevContainerValidationFailed(failure) => failure.to_string(),
+                DevContainerError::MultipleMatchingContainers(ids) => format!(
+                    "Multiple containers match this project's dev container labels ({}). \
+                     Zed can't decide which to connect to. Stop and remove the stale one(s) with \
+                     `docker stop <id>` and `docker rm <id>`, then try again.",
+                    ids.join(", ")
+                ),
             }
         )
     }
+}
+
+pub(crate) async fn read_default_devcontainer_configuration(
+    cx: &DevContainerContext,
+    environment: HashMap<String, String>,
+) -> Result<DevContainer, DevContainerError> {
+    let default_config = DevContainerConfig::default_config();
+
+    read_devcontainer_configuration(default_config, cx, environment)
+        .await
+        .map_err(|e| {
+            log::error!("Default configuration not found: {:?}", e);
+            DevContainerError::DevContainerNotFound
+        })
 }
 
 /// Finds all available devcontainer configurations in the project.
@@ -241,27 +253,35 @@ pub fn find_configs_in_snapshot(snapshot: &Snapshot) -> Vec<DevContainerConfig> 
 pub async fn start_dev_container_with_config(
     context: DevContainerContext,
     config: Option<DevContainerConfig>,
+    environment: HashMap<String, String>,
 ) -> Result<(DevContainerConnection, String), DevContainerError> {
     check_for_docker(context.use_podman).await?;
-    let cli = ensure_devcontainer_cli(&context.node_runtime).await?;
-    let config_path = config.map(|c| context.project_directory.join(&c.config_path));
 
-    match devcontainer_up(&context, &cli, config_path.as_deref()).await {
+    let Some(actual_config) = config.clone() else {
+        return Err(DevContainerError::NotInValidProject);
+    };
+
+    match spawn_dev_container(
+        &context,
+        environment.clone(),
+        actual_config.clone(),
+        context.project_directory.clone().as_ref(),
+    )
+    .await
+    {
         Ok(DevContainerUp {
             container_id,
             remote_workspace_folder,
             remote_user,
+            extension_ids,
+            remote_env,
             ..
         }) => {
             let project_name =
-                match read_devcontainer_configuration(&context, &cli, config_path.as_deref()).await
-                {
-                    Ok(DevContainerConfigurationOutput {
-                        configuration:
-                            DevContainerConfiguration {
-                                name: Some(project_name),
-                            },
-                    }) => project_name,
+                match read_devcontainer_configuration(actual_config, &context, environment).await {
+                    Ok(DevContainer {
+                        name: Some(name), ..
+                    }) => name,
                     _ => get_backup_project_name(&remote_workspace_folder, &container_id),
                 };
 
@@ -270,29 +290,18 @@ pub async fn start_dev_container_with_config(
                 container_id,
                 use_podman: context.use_podman,
                 remote_user,
+                extension_ids,
+                remote_env: remote_env.into_iter().collect(),
             };
 
             Ok((connection, remote_workspace_folder))
         }
+        Err(err @ DevContainerError::MultipleMatchingContainers(_)) => Err(err),
         Err(err) => {
-            let message = format!("Failed with nested error: {}", err);
+            let message = format!("Failed with nested error: {:?}", err);
             Err(DevContainerError::DevContainerUpFailed(message))
         }
     }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn dev_container_cli() -> String {
-    "devcontainer".to_string()
-}
-
-#[cfg(target_os = "windows")]
-fn dev_container_cli() -> String {
-    "devcontainer.cmd".to_string()
-}
-
-fn dev_container_script() -> String {
-    "devcontainer.js".to_string()
 }
 
 async fn check_for_docker(use_podman: bool) -> Result<(), DevContainerError> {
@@ -312,261 +321,157 @@ async fn check_for_docker(use_podman: bool) -> Result<(), DevContainerError> {
     }
 }
 
-pub(crate) async fn ensure_devcontainer_cli(
-    node_runtime: &NodeRuntime,
-) -> Result<DevContainerCli, DevContainerError> {
-    let mut command = util::command::new_command(&dev_container_cli());
-    command.arg("--version");
-
-    if let Err(e) = command.output().await {
-        log::error!(
-            "Unable to find devcontainer CLI in $PATH. Checking for a zed installed version. Error: {:?}",
-            e
-        );
-
-        let Ok(node_runtime_path) = node_runtime.binary_path().await else {
-            return Err(DevContainerError::NodeRuntimeNotAvailable);
-        };
-
-        let datadir_cli_path = paths::devcontainer_dir()
-            .join("node_modules")
-            .join("@devcontainers")
-            .join("cli")
-            .join(&dev_container_script());
-
-        log::debug!(
-            "devcontainer not found in path, using local location: ${}",
-            datadir_cli_path.display()
-        );
-
-        let mut command =
-            util::command::new_command(node_runtime_path.as_os_str().display().to_string());
-        command.arg(datadir_cli_path.display().to_string());
-        command.arg("--version");
-
-        match command.output().await {
-            Err(e) => log::error!(
-                "Unable to find devcontainer CLI in Data dir. Will try to install. Error: {:?}",
-                e
-            ),
-            Ok(output) => {
-                if output.status.success() {
-                    log::info!("Found devcontainer CLI in Data dir");
-                    return Ok(DevContainerCli {
-                        path: datadir_cli_path.clone(),
-                        node_runtime_path: Some(node_runtime_path.clone()),
-                    });
-                } else {
-                    log::error!(
-                        "Could not run devcontainer CLI from data_dir. Will try once more to install. Output: {:?}",
-                        output
-                    );
-                }
-            }
-        }
-
-        if let Err(e) = fs::create_dir_all(paths::devcontainer_dir()).await {
-            log::error!("Unable to create devcontainer directory. Error: {:?}", e);
-            return Err(DevContainerError::DevContainerCliNotAvailable);
-        }
-
-        if let Err(e) = node_runtime
-            .npm_install_packages(
-                &paths::devcontainer_dir(),
-                &[("@devcontainers/cli", "latest")],
-            )
-            .await
-        {
-            log::error!(
-                "Unable to install devcontainer CLI to data directory. Error: {:?}",
-                e
-            );
-            return Err(DevContainerError::DevContainerCliNotAvailable);
-        };
-
-        let mut command =
-            util::command::new_command(node_runtime_path.as_os_str().display().to_string());
-        command.arg(datadir_cli_path.display().to_string());
-        command.arg("--version");
-        if let Err(e) = command.output().await {
-            log::error!(
-                "Unable to find devcontainer cli after NPM install. Error: {:?}",
-                e
-            );
-            Err(DevContainerError::DevContainerCliNotAvailable)
-        } else {
-            Ok(DevContainerCli {
-                path: datadir_cli_path,
-                node_runtime_path: Some(node_runtime_path),
-            })
-        }
-    } else {
-        log::info!("Found devcontainer cli on $PATH, using it");
-        Ok(DevContainerCli {
-            path: PathBuf::from(&dev_container_cli()),
-            node_runtime_path: None,
-        })
-    }
-}
-
-async fn devcontainer_up(
-    context: &DevContainerContext,
-    cli: &DevContainerCli,
-    config_path: Option<&Path>,
-) -> Result<DevContainerUp, DevContainerError> {
-    let mut command = cli.command(context.use_podman);
-    command.arg("up");
-    command.arg("--workspace-folder");
-    command.arg(context.project_directory.display().to_string());
-
-    if let Some(config) = config_path {
-        command.arg("--config");
-        command.arg(config.display().to_string());
-    }
-
-    log::info!("Running full devcontainer up command: {:?}", command);
-
-    match command.output().await {
-        Ok(output) => {
-            if output.status.success() {
-                let raw = String::from_utf8_lossy(&output.stdout);
-                parse_json_from_cli(&raw)
-            } else {
-                let message = format!(
-                    "Non-success status running devcontainer up for workspace: out: {}, err: {}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
-
-                log::error!("{}", &message);
-                Err(DevContainerError::DevContainerUpFailed(message))
-            }
-        }
-        Err(e) => {
-            let message = format!("Error running devcontainer up: {:?}", e);
-            log::error!("{}", &message);
-            Err(DevContainerError::DevContainerUpFailed(message))
-        }
-    }
-}
-
-pub(crate) async fn read_devcontainer_configuration(
-    context: &DevContainerContext,
-    cli: &DevContainerCli,
-    config_path: Option<&Path>,
-) -> Result<DevContainerConfigurationOutput, DevContainerError> {
-    let mut command = cli.command(context.use_podman);
-    command.arg("read-configuration");
-    command.arg("--workspace-folder");
-    command.arg(context.project_directory.display().to_string());
-
-    if let Some(config) = config_path {
-        command.arg("--config");
-        command.arg(config.display().to_string());
-    }
-
-    match command.output().await {
-        Ok(output) => {
-            if output.status.success() {
-                let raw = String::from_utf8_lossy(&output.stdout);
-                parse_json_from_cli(&raw)
-            } else {
-                let message = format!(
-                    "Non-success status running devcontainer read-configuration for workspace: out: {:?}, err: {:?}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                log::error!("{}", &message);
-                Err(DevContainerError::DevContainerNotFound)
-            }
-        }
-        Err(e) => {
-            let message = format!("Error running devcontainer read-configuration: {:?}", e);
-            log::error!("{}", &message);
-            Err(DevContainerError::DevContainerNotFound)
-        }
-    }
-}
-
-pub(crate) async fn apply_dev_container_template(
+pub(crate) async fn apply_devcontainer_template(
+    worktree: Entity<Worktree>,
     template: &DevContainerTemplate,
     template_options: &HashMap<String, String>,
     features_selected: &HashSet<DevContainerFeature>,
     context: &DevContainerContext,
-    cli: &DevContainerCli,
+    cx: &mut AsyncWindowContext,
 ) -> Result<DevContainerApply, DevContainerError> {
-    let mut command = cli.command(context.use_podman);
+    let token = get_oci_token(
+        ghcr_registry(),
+        devcontainer_templates_repository(),
+        &context.http_client,
+    )
+    .map_err(|e| {
+        log::error!("Failed to get OCI auth token: {e}");
+        DevContainerError::ResourceFetchFailed
+    })
+    .await?;
+    let manifest = get_latest_oci_manifest(
+        &token.token,
+        ghcr_registry(),
+        devcontainer_templates_repository(),
+        &context.http_client,
+        Some(&template.id),
+    )
+    .map_err(|e| {
+        log::error!("Failed to fetch template from OCI repository: {e}");
+        DevContainerError::ResourceFetchFailed
+    })
+    .await?;
 
-    let Ok(serialized_options) = serde_json::to_string(template_options) else {
-        log::error!("Unable to serialize options for {:?}", template_options);
-        return Err(DevContainerError::DevContainerParseFailed);
-    };
+    let layer = &manifest.layers.get(0).ok_or_else(|| {
+        log::error!("Given manifest has no layers to query for blob. Aborting");
+        DevContainerError::ResourceFetchFailed
+    })?;
 
-    command.arg("templates");
-    command.arg("apply");
-    command.arg("--workspace-folder");
-    command.arg(context.project_directory.display().to_string());
-    command.arg("--template-id");
-    command.arg(format!(
-        "{}/{}",
-        template
-            .source_repository
-            .as_ref()
-            .unwrap_or(&String::from("")),
-        template.id
-    ));
-    command.arg("--template-args");
-    command.arg(serialized_options);
-    command.arg("--features");
-    command.arg(template_features_to_json(features_selected));
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let extract_dir = std::env::temp_dir()
+        .join(&template.id)
+        .join(format!("extracted-{timestamp}"));
 
-    log::debug!("Running full devcontainer apply command: {:?}", command);
+    context.fs.create_dir(&extract_dir).await.map_err(|e| {
+        log::error!("Could not create temporary directory: {e}");
+        DevContainerError::FilesystemError
+    })?;
 
-    match command.output().await {
-        Ok(output) => {
-            if output.status.success() {
-                let raw = String::from_utf8_lossy(&output.stdout);
-                parse_json_from_cli(&raw)
-            } else {
-                let message = format!(
-                    "Non-success status running devcontainer templates apply for workspace: out: {:?}, err: {:?}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                );
+    download_oci_tarball(
+        &token.token,
+        ghcr_registry(),
+        devcontainer_templates_repository(),
+        &layer.digest,
+        "application/vnd.oci.image.manifest.v1+json",
+        &extract_dir,
+        &context.http_client,
+        &context.fs,
+        Some(&template.id),
+    )
+    .map_err(|e| {
+        log::error!("Error downloading tarball: {:?}", e);
+        DevContainerError::ResourceFetchFailed
+    })
+    .await?;
 
-                log::error!("{}", &message);
-                Err(DevContainerError::DevContainerTemplateApplyFailed(message))
-            }
+    let downloaded_devcontainer_folder = &extract_dir.join(".devcontainer/");
+    let mut project_files = Vec::new();
+    for entry in WalkDir::new(downloaded_devcontainer_folder) {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        if !entry.file_type().is_file() {
+            continue;
         }
-        Err(e) => {
-            let message = format!("Error running devcontainer templates apply: {:?}", e);
-            log::error!("{}", &message);
-            Err(DevContainerError::DevContainerTemplateApplyFailed(message))
-        }
-    }
-}
-// Try to parse directly first (newer versions output pure JSON)
-// If that fails, look for JSON start (older versions have plaintext prefix)
-fn parse_json_from_cli<T: serde::de::DeserializeOwned>(raw: &str) -> Result<T, DevContainerError> {
-    serde_json::from_str::<T>(&raw)
-        .or_else(|e| {
-            log::error!("Error parsing json: {} - will try to find json object in larger plaintext", e);
-            let json_start = raw
-                .find(|c| c == '{')
-                .ok_or_else(|| {
-                    log::error!("No JSON found in devcontainer up output");
-                    DevContainerError::DevContainerParseFailed
-                })?;
+        let relative_path = entry.path().strip_prefix(&extract_dir).map_err(|e| {
+            log::error!("Can't create relative path: {e}");
+            DevContainerError::FilesystemError
+        })?;
+        let rel_path = RelPath::unix(relative_path)
+            .map_err(|e| {
+                log::error!("Can't create relative path: {e}");
+                DevContainerError::FilesystemError
+            })?
+            .into_arc();
+        let content = context.fs.load(entry.path()).await.map_err(|e| {
+            log::error!("Unable to read file: {e}");
+            DevContainerError::FilesystemError
+        })?;
 
-            serde_json::from_str(&raw[json_start..]).map_err(|e| {
-                log::error!(
-                    "Unable to parse JSON from devcontainer up output (starting at position {}), error: {:?}",
-                    json_start,
-                    e
-                );
-                DevContainerError::DevContainerParseFailed
+        let mut content = expand_template_options(content, template_options);
+        if let Some("devcontainer.json") = &rel_path.file_name() {
+            content = insert_features_into_devcontainer_json(&content, features_selected)
+        }
+        worktree
+            .update(cx, |worktree, cx| {
+                worktree.create_entry(rel_path.clone(), false, Some(content.into_bytes()), cx)
             })
+            .await
+            .map_err(|e| {
+                log::error!("Unable to create entry in worktree: {e}");
+                DevContainerError::NotInValidProject
+            })?;
+        project_files.push(rel_path);
+    }
+
+    Ok(DevContainerApply { project_files })
+}
+
+fn insert_features_into_devcontainer_json(
+    content: &str,
+    features: &HashSet<DevContainerFeature>,
+) -> String {
+    if features.is_empty() {
+        return content.to_string();
+    }
+
+    let features_value: serde_json::Value = features
+        .iter()
+        .map(|f| {
+            let key = format!(
+                "{}/{}:{}",
+                f.source_repository.as_deref().unwrap_or(""),
+                f.id,
+                f.major_version()
+            );
+            (key, serde_json::Value::Object(Default::default()))
         })
+        .collect::<serde_json::Map<String, serde_json::Value>>()
+        .into();
+
+    let tab_size = infer_json_indent_size(content);
+    let (range, replacement) = replace_value_in_json_text(
+        content,
+        &["features"],
+        tab_size,
+        Some(&features_value),
+        None,
+    );
+
+    let mut result = content.to_string();
+    result.replace_range(range, &replacement);
+    result
+}
+
+fn expand_template_options(content: String, template_options: &HashMap<String, String>) -> String {
+    let mut replaced_content = content;
+    for (key, val) in template_options {
+        replaced_content = replaced_content.replace(&format!("${{templateOption:{key}}}"), val)
+    }
+    replaced_content
 }
 
 fn get_backup_project_name(remote_workspace_folder: &str, container_id: &str) -> String {
@@ -577,36 +482,11 @@ fn get_backup_project_name(remote_workspace_folder: &str, container_id: &str) ->
         .unwrap_or_else(|| container_id.to_string())
 }
 
-fn template_features_to_json(features_selected: &HashSet<DevContainerFeature>) -> String {
-    let features_map = features_selected
-        .iter()
-        .map(|feature| {
-            let mut map = HashMap::new();
-            map.insert(
-                "id",
-                format!(
-                    "{}/{}:{}",
-                    feature
-                        .source_repository
-                        .as_ref()
-                        .unwrap_or(&String::from("")),
-                    feature.id,
-                    feature.major_version()
-                ),
-            );
-            map
-        })
-        .collect::<Vec<HashMap<&str, String>>>();
-    serde_json::to_string(&features_map).unwrap()
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use crate::devcontainer_api::{
-        DevContainerConfig, DevContainerUp, find_configs_in_snapshot, parse_json_from_cli,
-    };
+    use crate::devcontainer_api::{DevContainerConfig, find_configs_in_snapshot};
     use fs::FakeFs;
     use gpui::TestAppContext;
     use project::Project;
@@ -619,30 +499,6 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
-    }
-
-    #[test]
-    fn should_parse_from_devcontainer_json() {
-        let json = r#"{"outcome":"success","containerId":"826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/zed"}"#;
-        let up: DevContainerUp = parse_json_from_cli(json).unwrap();
-        assert_eq!(up._outcome, "success");
-        assert_eq!(
-            up.container_id,
-            "826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a"
-        );
-        assert_eq!(up.remote_user, "vscode");
-        assert_eq!(up.remote_workspace_folder, "/workspaces/zed");
-
-        let json_in_plaintext = r#"[2026-01-22T16:19:08.802Z] @devcontainers/cli 0.80.1. Node.js v22.21.1. darwin 24.6.0 arm64.
-            {"outcome":"success","containerId":"826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a","remoteUser":"vscode","remoteWorkspaceFolder":"/workspaces/zed"}"#;
-        let up: DevContainerUp = parse_json_from_cli(json_in_plaintext).unwrap();
-        assert_eq!(up._outcome, "success");
-        assert_eq!(
-            up.container_id,
-            "826abcac45afd412abff083ab30793daff2f3c8ce2c831df728baf39933cb37a"
-        );
-        assert_eq!(up.remote_user, "vscode");
-        assert_eq!(up.remote_workspace_folder, "/workspaces/zed");
     }
 
     #[gpui::test]

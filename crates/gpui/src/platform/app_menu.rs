@@ -7,14 +7,39 @@ pub struct Menu {
 
     /// The items in the menu
     pub items: Vec<MenuItem>,
+
+    /// Whether this menu is disabled
+    pub disabled: bool,
 }
 
 impl Menu {
+    /// Create a new Menu with the given name
+    pub fn new(name: impl Into<SharedString>) -> Self {
+        Self {
+            name: name.into(),
+            items: vec![],
+            disabled: false,
+        }
+    }
+
+    /// Set items to be in this menu
+    pub fn items(mut self, items: impl IntoIterator<Item = MenuItem>) -> Self {
+        self.items = items.into_iter().collect();
+        self
+    }
+
+    /// Set whether this menu is disabled
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
     /// Create an OwnedMenu from this Menu
     pub fn owned(self) -> OwnedMenu {
         OwnedMenu {
             name: self.name.to_string().into(),
             items: self.items.into_iter().map(|item| item.owned()).collect(),
+            disabled: self.disabled,
         }
     }
 }
@@ -75,6 +100,9 @@ pub enum MenuItem {
 
         /// Whether this action is checked
         checked: bool,
+
+        /// Whether this action is disabled
+        disabled: bool,
     },
 }
 
@@ -105,6 +133,7 @@ impl MenuItem {
             os_action: None,
             checkable: false,
             checked: false,
+            disabled: false,
         }
     }
 
@@ -120,6 +149,7 @@ impl MenuItem {
             os_action: Some(os_action),
             checkable: false,
             checked: false,
+            disabled: false,
         }
     }
 
@@ -134,12 +164,14 @@ impl MenuItem {
                 os_action,
                 checkable,
                 checked,
+                disabled,
             } => OwnedMenuItem::Action {
                 name: name.into(),
                 action,
                 os_action,
                 checkable,
                 checked,
+                disabled,
             },
             MenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.owned()),
         }
@@ -149,20 +181,49 @@ impl MenuItem {
     ///
     /// Only for [`MenuItem::Action`], otherwise, will be ignored
     pub fn checked(mut self, checked: bool) -> Self {
+        match &mut self {
+            MenuItem::Action { checked: old, .. } => {
+                *old = checked;
+            }
+            _ => {}
+        }
+        self
+    }
+
+    /// Returns whether this menu item is checked
+    ///
+    /// Only for [`MenuItem::Action`], otherwise, returns false
+    #[inline]
+    pub fn is_checked(&self) -> bool {
         match self {
-            MenuItem::Action {
-                action,
-                os_action,
-                name,
-                ..
-            } => MenuItem::Action {
-                name,
-                action,
-                os_action,
-                checkable: true,
-                checked,
-            },
-            _ => self,
+            MenuItem::Action { checked, .. } => *checked,
+            _ => false,
+        }
+    }
+
+    /// Set whether this menu item is disabled
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        match &mut self {
+            MenuItem::Action { disabled: old, .. } => {
+                *old = disabled;
+            }
+            MenuItem::Submenu(submenu) => {
+                submenu.disabled = disabled;
+            }
+            _ => {}
+        }
+        self
+    }
+
+    /// Returns whether this menu item is disabled
+    ///
+    /// Only for [`MenuItem::Action`] and [`MenuItem::Submenu`], otherwise, returns false
+    #[inline]
+    pub fn is_disabled(&self) -> bool {
+        match self {
+            MenuItem::Action { disabled, .. } => *disabled,
+            MenuItem::Submenu(submenu) => submenu.disabled,
+            _ => false,
         }
     }
 }
@@ -187,6 +248,9 @@ pub struct OwnedMenu {
 
     /// The items in the menu
     pub items: Vec<OwnedMenuItem>,
+
+    /// Whether this menu is disabled
+    pub disabled: bool,
 }
 
 /// The different kinds of items that can be in a menu
@@ -217,6 +281,9 @@ pub enum OwnedMenuItem {
 
         /// Whether this action is checked
         checked: bool,
+
+        /// Whether this action is disabled
+        disabled: bool,
     },
 }
 
@@ -231,12 +298,14 @@ impl Clone for OwnedMenuItem {
                 os_action,
                 checkable,
                 checked,
+                disabled,
             } => OwnedMenuItem::Action {
                 name: name.clone(),
                 action: action.boxed_clone(),
                 os_action: *os_action,
                 checkable: *checkable,
                 checked: *checked,
+                disabled: *disabled,
             },
             OwnedMenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.clone()),
         }
@@ -299,4 +368,71 @@ pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
             }
         }
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Menu;
+
+    #[test]
+    fn test_menu() {
+        let menu = Menu::new("App")
+            .items(vec![
+                crate::MenuItem::action("Action 1", gpui::NoAction),
+                crate::MenuItem::separator(),
+            ])
+            .disabled(true);
+
+        assert_eq!(menu.name.as_ref(), "App");
+        assert_eq!(menu.items.len(), 2);
+        assert!(menu.disabled);
+    }
+
+    #[test]
+    fn test_menu_item_builder() {
+        use super::MenuItem;
+
+        let item = MenuItem::action("Test Action", gpui::NoAction);
+        assert_eq!(
+            match &item {
+                MenuItem::Action { name, .. } => name.as_ref(),
+                _ => unreachable!(),
+            },
+            "Test Action"
+        );
+        assert!(matches!(
+            item,
+            MenuItem::Action {
+                checked: false,
+                disabled: false,
+                ..
+            }
+        ));
+
+        assert!(
+            MenuItem::action("Test Action", gpui::NoAction)
+                .checked(true)
+                .is_checked()
+        );
+        assert!(
+            MenuItem::action("Test Action", gpui::NoAction)
+                .disabled(true)
+                .is_disabled()
+        );
+
+        let submenu = MenuItem::submenu(super::Menu {
+            name: "Submenu".into(),
+            items: vec![],
+            disabled: true,
+        });
+        assert_eq!(
+            match &submenu {
+                MenuItem::Submenu(menu) => menu.name.as_ref(),
+                _ => unreachable!(),
+            },
+            "Submenu"
+        );
+        assert!(!submenu.is_checked());
+        assert!(submenu.is_disabled());
+    }
 }

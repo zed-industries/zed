@@ -968,7 +968,7 @@ fn build_menu_tree(
                 checked,
                 os_action,
                 checkable,
-                ..
+                disabled,
             } => {
                 let mut props = HashMap::new();
                 let label_value = Value::Str(name.clone().into());
@@ -976,6 +976,12 @@ fn build_menu_tree(
                     props.insert("label".to_string(), value);
                 } else {
                     log::error!("Failed to encode DBusMenu label for menu item {}", name);
+                }
+
+                if *disabled {
+                    if let Some(value) = owned_bool(false) {
+                        props.insert("enabled".to_string(), value);
+                    }
                 }
 
                 if let Some(shortcut) = dbus_shortcut_for_action(action.as_ref(), keymap) {
@@ -1019,7 +1025,7 @@ fn build_menu_tree(
                     child_id,
                     MenuItemEntry {
                         action: Some(action.boxed_clone()),
-                        enabled: Some(true),
+                        enabled: Some(!disabled),
                         properties: props,
                         children: Vec::new(),
                     },

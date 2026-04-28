@@ -29,9 +29,16 @@ pub(crate) fn migrate_settings(
 
     if let Some(profiles) = root_object.get_mut("profiles") {
         if let Some(profiles_object) = profiles.as_object_mut() {
-            for (_profile_name, profile_settings) in profiles_object.iter_mut() {
-                if let Some(profile_map) = profile_settings.as_object_mut() {
-                    migrate_one(profile_map)?;
+            for profile_value in profiles_object.values_mut() {
+                if let Some(profile_map) = profile_value.as_object_mut() {
+                    if let Some(inner) = profile_map
+                        .get_mut("settings")
+                        .and_then(|v| v.as_object_mut())
+                    {
+                        migrate_one(inner)?;
+                    } else {
+                        migrate_one(profile_map)?;
+                    }
                 }
             }
         }
@@ -93,12 +100,23 @@ pub(crate) fn migrate_language_setting(
         if let Some(profiles_object) = profiles.as_object_mut() {
             let profile_names: Vec<String> = profiles_object.keys().cloned().collect();
             for profile_name in &profile_names {
-                if let Some(profile_settings) = profiles_object.get_mut(profile_name.as_str()) {
-                    apply_to_value_and_languages(
-                        profile_settings,
-                        &["profiles", profile_name],
-                        migrate_fn,
-                    )?;
+                if let Some(profile_value) = profiles_object.get_mut(profile_name.as_str()) {
+                    if let Some(settings_value) = profile_value
+                        .as_object_mut()
+                        .and_then(|m| m.get_mut("settings"))
+                    {
+                        apply_to_value_and_languages(
+                            settings_value,
+                            &["profiles", profile_name],
+                            migrate_fn,
+                        )?;
+                    } else {
+                        apply_to_value_and_languages(
+                            profile_value,
+                            &["profiles", profile_name],
+                            migrate_fn,
+                        )?;
+                    }
                 }
             }
         }
@@ -303,4 +321,40 @@ pub(crate) mod m_2026_02_25 {
     mod settings;
 
     pub(crate) use settings::migrate_builtin_agent_servers_to_registry;
+}
+
+pub(crate) mod m_2026_03_16 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}
+
+pub(crate) mod m_2026_03_23 {
+    mod keymap;
+
+    pub(crate) use keymap::KEYMAP_PATTERNS;
+}
+
+pub(crate) mod m_2026_03_30 {
+    mod settings;
+
+    pub(crate) use settings::make_play_sound_when_agent_done_an_enum;
+}
+
+pub(crate) mod m_2026_04_01 {
+    mod settings;
+
+    pub(crate) use settings::restructure_profiles_with_settings_key;
+}
+
+pub(crate) mod m_2026_04_10 {
+    mod settings;
+
+    pub(crate) use settings::rename_web_search_to_search_web;
+}
+
+pub(crate) mod m_2026_04_17 {
+    mod settings;
+
+    pub(crate) use settings::promote_show_branch_icon_true_to_show_branch_status_icon;
 }

@@ -5,7 +5,6 @@ use serde::Deserialize;
 
 use crate::{
     amber, blue, cyan, gold, grass, indigo, iris, jade, lime, orange, pink, purple, tomato,
-    try_parse_color,
 };
 
 /// A collection of colors that are used to color indent aware lines in the editor.
@@ -65,26 +64,5 @@ impl AccentColors {
     /// Returns the color for the given index.
     pub fn color_for_index(&self, index: u32) -> Hsla {
         self.0[index as usize % self.0.len()]
-    }
-
-    /// Merges the given accent colors into this [`AccentColors`] instance.
-    pub fn merge(&mut self, accent_colors: &[settings::AccentContent]) {
-        if accent_colors.is_empty() {
-            return;
-        }
-
-        let colors = accent_colors
-            .iter()
-            .filter_map(|accent_color| {
-                accent_color
-                    .0
-                    .as_ref()
-                    .and_then(|color| try_parse_color(color).ok())
-            })
-            .collect::<Vec<_>>();
-
-        if !colors.is_empty() {
-            self.0 = Arc::from(colors);
-        }
     }
 }

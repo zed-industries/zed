@@ -1,16 +1,16 @@
 mod agent_configuration;
-pub(crate) mod agent_connection_store;
+pub mod agent_connection_store;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod agent_registry_ui;
-mod branch_names;
 mod buffer_codegen;
 mod completion_provider;
 mod config_options;
-pub(crate) mod connection_view;
 mod context;
 mod context_server_configuration;
+pub(crate) mod conversation_view;
+mod diagnostics;
 mod entry_view_state;
 mod external_source_prompt;
 mod favorite_models;
@@ -23,28 +23,25 @@ mod mode_selector;
 mod model_selector;
 mod model_selector_popover;
 mod profile_selector;
-pub mod sidebar;
-mod slash_command;
-mod slash_command_picker;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
-mod text_thread_editor;
-mod text_thread_history;
-mod thread_history;
-mod thread_history_view;
+mod thread_import;
+pub mod thread_metadata_store;
+pub mod thread_worktree_archive;
+
+pub mod threads_archive_view;
 mod ui;
 
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agent_client_protocol as acp;
+use ::ui::IconName;
+use agent_client_protocol::schema as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
-use assistant_slash_command::SlashCommandRegistry;
-use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{Action, App, Context, Entity, SharedString, Window, actions};
 use language::{
@@ -54,7 +51,7 @@ use language::{
 use language_model::{
     ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
-use project::DisableAiSettings;
+use project::{AgentId, DisableAiSettings};
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -63,33 +60,31 @@ use std::any::TypeId;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
-pub use crate::agent_panel::{
-    AgentPanel, AgentPanelEvent, ConcreteAssistantPanelDelegate, WorktreeCreationStatus,
-};
+pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
+pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, MaxIdleRetainedThreads};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
+pub use crate::thread_metadata_store::ThreadId;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
-pub(crate) use connection_view::ConnectionView;
+pub use conversation_view::ConversationView;
 pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
-pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
-pub(crate) use thread_history::ThreadHistory;
-pub(crate) use thread_history_view::*;
+pub use thread_import::{
+    AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
+    channels_with_threads, import_threads_from_other_channels,
+};
 use zed_actions;
+pub use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, SwitchWorktree};
 
+pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
+const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";
 actions!(
     agent,
     [
-        /// Creates a new text-based conversation thread.
-        NewTextThread,
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
-        /// Toggles the selector for choosing where new threads start (current project or new worktree).
-        ToggleStartThreadInSelector,
-        /// Toggles the navigation menu for switching between threads and views.
-        ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
         ToggleOptionsMenu,
         /// Toggles the profile or mode selector for switching between agent profiles.
@@ -100,12 +95,10 @@ actions!(
         CycleFavoriteModels,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
-        /// Removes all thread history.
-        RemoveHistory,
-        /// Opens the conversation history view.
-        OpenHistory,
         /// Adds a context server to the configuration.
         AddContextServer,
+        /// Archives the currently selected thread.
+        ArchiveSelectedThread,
         /// Removes the currently selected thread.
         RemoveSelectedThread,
         /// Starts a chat conversation with follow-up enabled.
@@ -176,6 +169,34 @@ actions!(
         ToggleThinkingEffortMenu,
         /// Toggles fast mode for models that support it.
         ToggleFastMode,
+        /// Scroll the output by one page up.
+        ScrollOutputPageUp,
+        /// Scroll the output by one page down.
+        ScrollOutputPageDown,
+        /// Scroll the output up by three lines.
+        ScrollOutputLineUp,
+        /// Scroll the output down by three lines.
+        ScrollOutputLineDown,
+        /// Scroll the output to the top.
+        ScrollOutputToTop,
+        /// Scroll the output to the bottom.
+        ScrollOutputToBottom,
+        /// Scroll the output to the previous user message.
+        ScrollOutputToPreviousMessage,
+        /// Scroll the output to the next user message.
+        ScrollOutputToNextMessage,
+        /// Import agent threads from other Zed release channels (e.g. Preview, Nightly).
+        ImportThreadsFromOtherChannels,
+    ]
+);
+
+actions!(
+    dev,
+    [
+        /// Shows metadata for the currently active thread.
+        ShowThreadMetadata,
+        /// Shows metadata for all threads in the sidebar.
+        ShowAllSidebarThreadMetadata,
     ]
 );
 
@@ -193,6 +214,29 @@ pub struct AuthorizeToolCall {
     pub option_kind: String,
 }
 
+/// Action to select a permission granularity option from the dropdown.
+/// This updates the selected granularity without triggering authorization.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct SelectPermissionGranularity {
+    /// The tool call ID for which to select the granularity.
+    pub tool_call_id: String,
+    /// The index of the selected granularity option.
+    pub index: usize,
+}
+
+/// Action to toggle a command pattern checkbox in the permission dropdown.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct ToggleCommandPattern {
+    /// The tool call ID for which to toggle the pattern.
+    pub tool_call_id: String,
+    /// The index of the command pattern to toggle.
+    pub pattern_index: usize,
+}
+
 /// Creates a new conversation thread, optionally based on an existing thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
@@ -205,82 +249,74 @@ pub struct NewThread;
 #[serde(deny_unknown_fields)]
 pub struct NewExternalAgentThread {
     /// Which agent to use for the conversation.
-    agent: Option<ExternalAgent>,
+    agent: Option<Agent>,
 }
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
 pub struct NewNativeAgentThreadFromSummary {
-    from_session_id: agent_client_protocol::SessionId,
+    from_session_id: acp::SessionId,
 }
 
-// TODO unify this with AgentType
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, JsonSchema)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum ExternalAgent {
+#[non_exhaustive]
+pub enum Agent {
+    #[default]
+    #[serde(alias = "NativeAgent", alias = "TextThread")]
     NativeAgent,
-    Custom { name: SharedString },
+    #[serde(alias = "Custom")]
+    Custom {
+        #[serde(rename = "name")]
+        id: AgentId,
+    },
+    #[cfg(any(test, feature = "test-support"))]
+    Stub,
 }
 
-// Custom impl handles legacy variant names from before the built-in agents were moved to
-// the registry: "claude_code" -> Custom { name: "claude-acp" }, "codex" -> Custom { name:
-// "codex-acp" }, "gemini" -> Custom { name: "gemini" }.
-// Can be removed at some point in the future and go back to #[derive(Deserialize)].
-impl<'de> serde::Deserialize<'de> for ExternalAgent {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use project::agent_server_store::{CLAUDE_AGENT_NAME, CODEX_NAME, GEMINI_NAME};
-
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        if let Some(s) = value.as_str() {
-            return match s {
-                "native_agent" => Ok(Self::NativeAgent),
-                "claude_code" | "claude_agent" => Ok(Self::Custom {
-                    name: CLAUDE_AGENT_NAME.into(),
-                }),
-                "codex" => Ok(Self::Custom {
-                    name: CODEX_NAME.into(),
-                }),
-                "gemini" => Ok(Self::Custom {
-                    name: GEMINI_NAME.into(),
-                }),
-                other => Err(serde::de::Error::unknown_variant(
-                    other,
-                    &[
-                        "native_agent",
-                        "custom",
-                        "claude_agent",
-                        "claude_code",
-                        "codex",
-                        "gemini",
-                    ],
-                )),
-            };
+impl From<AgentId> for Agent {
+    fn from(id: AgentId) -> Self {
+        if id.as_ref() == agent::ZED_AGENT_ID.as_ref() {
+            Self::NativeAgent
+        } else {
+            Self::Custom { id }
         }
-
-        if let Some(obj) = value.as_object() {
-            if let Some(inner) = obj.get("custom") {
-                #[derive(serde::Deserialize)]
-                struct CustomFields {
-                    name: SharedString,
-                }
-                let fields: CustomFields =
-                    serde_json::from_value(inner.clone()).map_err(serde::de::Error::custom)?;
-                return Ok(Self::Custom { name: fields.name });
-            }
-        }
-
-        Err(serde::de::Error::custom(
-            "expected a string variant or {\"custom\": {\"name\": ...}}",
-        ))
     }
 }
 
-impl ExternalAgent {
+impl Agent {
+    pub fn id(&self) -> AgentId {
+        match self {
+            Self::NativeAgent => agent::ZED_AGENT_ID.clone(),
+            Self::Custom { id } => id.clone(),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Stub => "stub".into(),
+        }
+    }
+
+    pub fn is_native(&self) -> bool {
+        matches!(self, Self::NativeAgent)
+    }
+
+    pub fn label(&self) -> SharedString {
+        match self {
+            Self::NativeAgent => "Zed Agent".into(),
+            Self::Custom { id, .. } => id.0.clone(),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Stub => "Stub Agent".into(),
+        }
+    }
+
+    pub fn icon(&self) -> Option<IconName> {
+        match self {
+            Self::NativeAgent => None,
+            Self::Custom { .. } => Some(IconName::Sparkle),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Stub => None,
+        }
+    }
+
     pub fn server(
         &self,
         fs: Arc<dyn fs::Fs>,
@@ -288,21 +324,13 @@ impl ExternalAgent {
     ) -> Rc<dyn agent_servers::AgentServer> {
         match self {
             Self::NativeAgent => Rc::new(agent::NativeAgentServer::new(fs, thread_store)),
-            Self::Custom { name } => Rc::new(agent_servers::CustomAgentServer::new(name.clone())),
+            Self::Custom { id: name } => {
+                Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Stub => Rc::new(crate::test_support::StubAgentServer::default_response()),
         }
     }
-}
-
-/// Sets where new threads will run.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action,
-)]
-#[action(namespace = agent)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum StartThreadIn {
-    #[default]
-    LocalProject,
-    NewWorktree,
 }
 
 /// Content to initialize new external agent with.
@@ -312,7 +340,7 @@ pub enum AgentInitialContent {
         title: Option<SharedString>,
     },
     ContentBlock {
-        blocks: Vec<agent_client_protocol::ContentBlock>,
+        blocks: Vec<acp::ContentBlock>,
         auto_submit: bool,
     },
     FromExternalSource(ExternalSourcePrompt),
@@ -356,29 +384,56 @@ impl ModelUsageContext {
     }
 }
 
+pub(crate) fn humanize_token_count(count: u64) -> String {
+    match count {
+        0..=999 => count.to_string(),
+        1000..=9999 => {
+            let thousands = count / 1000;
+            let hundreds = (count % 1000 + 50) / 100;
+            if hundreds == 0 {
+                format!("{}k", thousands)
+            } else if hundreds == 10 {
+                format!("{}k", thousands + 1)
+            } else {
+                format!("{}.{}k", thousands, hundreds)
+            }
+        }
+        10_000..=999_999 => format!("{}k", (count + 500) / 1000),
+        1_000_000..=9_999_999 => {
+            let millions = count / 1_000_000;
+            let hundred_thousands = (count % 1_000_000 + 50_000) / 100_000;
+            if hundred_thousands == 0 {
+                format!("{}M", millions)
+            } else if hundred_thousands == 10 {
+                format!("{}M", millions + 1)
+            } else {
+                format!("{}.{}M", millions, hundred_thousands)
+            }
+        }
+        10_000_000.. => format!("{}M", (count + 500_000) / 1_000_000),
+    }
+}
+
 /// Initializes the `agent` crate.
 pub fn init(
     fs: Arc<dyn Fs>,
-    client: Arc<Client>,
     prompt_builder: Arc<PromptBuilder>,
     language_registry: Arc<LanguageRegistry>,
+    is_new_install: bool,
     is_eval: bool,
     cx: &mut App,
 ) {
     agent::ThreadStore::init_global(cx);
-    assistant_text_thread::init(client, cx);
     rules_library::init(cx);
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
         // we're not running inside of the eval.
         init_language_model_settings(cx);
     }
-    assistant_slash_command::init(cx);
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
-    TextThreadEditor::init(cx);
+    thread_metadata_store::init(cx);
 
-    register_slash_commands(cx);
     inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
     terminal_inline_assistant::init(fs.clone(), prompt_builder, cx);
     cx.observe_new(move |workspace, window, cx| {
@@ -418,6 +473,17 @@ pub fn init(
     })
     .detach();
     cx.observe_new(ManageProfilesModal::register).detach();
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(
+            |workspace: &mut Workspace,
+             _: &ImportThreadsFromOtherChannels,
+             _window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                import_threads_from_other_channels(workspace, cx);
+            },
+        );
+    })
+    .detach();
 
     // Update command palette filter based on AI settings
     update_command_palette_filter(cx);
@@ -433,12 +499,36 @@ pub fn init(
         update_command_palette_filter(cx);
     })
     .detach();
+
+    maybe_backfill_editor_layout(fs, is_new_install, cx);
+}
+
+fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut App) {
+    let kvp = db::kvp::KeyValueStore::global(cx);
+    let already_backfilled =
+        util::ResultExt::log_err(kvp.read_kvp(PARALLEL_AGENT_LAYOUT_BACKFILL_KEY))
+            .flatten()
+            .is_some();
+
+    if !already_backfilled {
+        if !is_new_install {
+            AgentSettings::backfill_editor_layout(fs, cx);
+        }
+
+        db::write_and_log(cx, move || async move {
+            kvp.write_kvp(
+                PARALLEL_AGENT_LAYOUT_BACKFILL_KEY.to_string(),
+                "1".to_string(),
+            )
+            .await
+        });
+    }
 }
 
 fn update_command_palette_filter(cx: &mut App) {
     let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
     let agent_enabled = AgentSettings::get_global(cx).enabled;
-    let agent_v2_enabled = cx.has_flag::<AgentV2FeatureFlag>();
+
     let edit_prediction_provider = AllLanguageSettings::get_global(cx)
         .edit_predictions
         .provider;
@@ -495,7 +585,6 @@ fn update_command_palette_filter(cx: &mut App) {
                 | EditPredictionProvider::Codestral
                 | EditPredictionProvider::Ollama
                 | EditPredictionProvider::OpenAiCompatibleApi
-                | EditPredictionProvider::Sweep
                 | EditPredictionProvider::Mercury
                 | EditPredictionProvider::Experimental(_) => {
                     filter.show_namespace("edit_prediction");
@@ -506,12 +595,8 @@ fn update_command_palette_filter(cx: &mut App) {
 
             filter.show_namespace("zed_predict_onboarding");
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
-        }
 
-        if agent_v2_enabled {
             filter.show_namespace("multi_workspace");
-        } else {
-            filter.hide_namespace("multi_workspace");
         }
     });
 }
@@ -574,44 +659,17 @@ fn update_active_language_model_from_settings(cx: &mut App) {
     });
 }
 
-fn register_slash_commands(cx: &mut App) {
-    let slash_command_registry = SlashCommandRegistry::global(cx);
-
-    slash_command_registry.register_command(assistant_slash_commands::FileSlashCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::DeltaSlashCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::OutlineSlashCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::TabSlashCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::PromptSlashCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::SelectionCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::DefaultSlashCommand, false);
-    slash_command_registry.register_command(assistant_slash_commands::NowSlashCommand, false);
-    slash_command_registry
-        .register_command(assistant_slash_commands::DiagnosticsSlashCommand, true);
-    slash_command_registry.register_command(assistant_slash_commands::FetchSlashCommand, true);
-
-    cx.observe_flag::<assistant_slash_commands::StreamingExampleSlashCommandFeatureFlag, _>({
-        move |is_enabled, _cx| {
-            if is_enabled {
-                slash_command_registry.register_command(
-                    assistant_slash_commands::StreamingExampleSlashCommand,
-                    false,
-                );
-            }
-        }
-    })
-    .detach();
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use agent_settings::{AgentProfileId, AgentSettings};
     use command_palette_hooks::CommandPaletteFilter;
+    use db::kvp::KeyValueStore;
     use editor::actions::AcceptEditPrediction;
     use gpui::{BorrowAppContext, TestAppContext, px};
     use project::DisableAiSettings;
     use settings::{
-        DefaultAgentView, DockPosition, NotifyWhenAgentWaiting, Settings, SettingsStore,
+        DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings, SettingsStore,
     };
 
     #[gpui::test]
@@ -630,8 +688,10 @@ mod tests {
             enabled: true,
             button: true,
             dock: DockPosition::Right,
+            flexible: true,
             default_width: px(300.),
             default_height: px(600.),
+            max_content_width: Some(px(850.)),
             default_model: None,
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
@@ -640,11 +700,9 @@ mod tests {
             inline_alternatives: vec![],
             favorite_models: vec![],
             default_profile: AgentProfileId::default(),
-            default_view: DefaultAgentView::Thread,
             profiles: Default::default(),
-
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
-            play_sound_when_agent_done: false,
+            play_sound_when_agent_done: PlaySoundWhenAgentDone::Never,
             single_file_review: false,
             model_parameters: vec![],
             enable_feedback: false,
@@ -655,6 +713,10 @@ mod tests {
             message_editor_min_lines: 1,
             tool_permissions: Default::default(),
             show_turn_stats: false,
+            show_merge_conflict_indicator: true,
+            new_thread_location: Default::default(),
+            sidebar_side: Default::default(),
+            thinking_display: Default::default(),
         };
 
         cx.update(|cx| {
@@ -671,10 +733,6 @@ mod tests {
             assert!(
                 !filter.is_hidden(&NewThread),
                 "NewThread should be visible by default"
-            );
-            assert!(
-                !filter.is_hidden(&text_thread_editor::CopyCode),
-                "CopyCode should be visible when agent is enabled"
             );
         });
 
@@ -694,10 +752,6 @@ mod tests {
             assert!(
                 filter.is_hidden(&NewThread),
                 "NewThread should be hidden when agent is disabled"
-            );
-            assert!(
-                filter.is_hidden(&text_thread_editor::CopyCode),
-                "CopyCode should be hidden when agent is disabled"
             );
         });
 
@@ -747,40 +801,111 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_deserialize_legacy_external_agent_variants() {
-        use project::agent_server_store::{CLAUDE_AGENT_NAME, CODEX_NAME, GEMINI_NAME};
+    async fn setup_backfill_test(cx: &mut TestAppContext) -> Arc<dyn Fs> {
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
+        fs.save(
+            paths::settings_file().as_path(),
+            &"{}".into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(
-            serde_json::from_str::<ExternalAgent>(r#""claude_code""#).unwrap(),
-            ExternalAgent::Custom {
-                name: CLAUDE_AGENT_NAME.into(),
-            },
+        cx.update(|cx| {
+            cx.set_global(db::AppDatabase::test_new());
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            AgentSettings::register(cx);
+            DisableAiSettings::register(cx);
+            cx.set_staff(true);
+        });
+
+        fs
+    }
+
+    #[gpui::test]
+    async fn test_backfill_sets_kvp_flag(cx: &mut TestAppContext) {
+        let fs = setup_backfill_test(cx).await;
+
+        cx.update(|cx| {
+            let kvp = KeyValueStore::global(cx);
+            assert!(
+                kvp.read_kvp(PARALLEL_AGENT_LAYOUT_BACKFILL_KEY)
+                    .unwrap()
+                    .is_none()
+            );
+
+            maybe_backfill_editor_layout(fs.clone(), false, cx);
+        });
+
+        cx.run_until_parked();
+
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        assert!(
+            kvp.read_kvp(PARALLEL_AGENT_LAYOUT_BACKFILL_KEY)
+                .unwrap()
+                .is_some(),
+            "flag should be set after backfill"
         );
-        assert_eq!(
-            serde_json::from_str::<ExternalAgent>(r#""codex""#).unwrap(),
-            ExternalAgent::Custom {
-                name: CODEX_NAME.into(),
-            },
+    }
+
+    #[gpui::test]
+    async fn test_backfill_new_install_sets_flag_without_writing_settings(cx: &mut TestAppContext) {
+        let fs = setup_backfill_test(cx).await;
+
+        cx.update(|cx| {
+            maybe_backfill_editor_layout(fs.clone(), true, cx);
+        });
+
+        cx.run_until_parked();
+
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        assert!(
+            kvp.read_kvp(PARALLEL_AGENT_LAYOUT_BACKFILL_KEY)
+                .unwrap()
+                .is_some(),
+            "flag should be set even for new installs"
         );
+
+        let written = fs.load(paths::settings_file().as_path()).await.unwrap();
+        assert_eq!(written.trim(), "{}", "settings file should be unchanged");
+    }
+
+    #[gpui::test]
+    async fn test_backfill_is_idempotent(cx: &mut TestAppContext) {
+        let fs = setup_backfill_test(cx).await;
+
+        cx.update(|cx| {
+            maybe_backfill_editor_layout(fs.clone(), false, cx);
+        });
+
+        cx.run_until_parked();
+
+        let after_first = fs.load(paths::settings_file().as_path()).await.unwrap();
+
+        cx.update(|cx| {
+            maybe_backfill_editor_layout(fs.clone(), false, cx);
+        });
+
+        cx.run_until_parked();
+
+        let after_second = fs.load(paths::settings_file().as_path()).await.unwrap();
         assert_eq!(
-            serde_json::from_str::<ExternalAgent>(r#""gemini""#).unwrap(),
-            ExternalAgent::Custom {
-                name: GEMINI_NAME.into(),
-            },
+            after_first, after_second,
+            "second call should not change settings"
         );
     }
 
     #[test]
-    fn test_deserialize_current_external_agent_variants() {
+    fn test_deserialize_external_agent_variants() {
         assert_eq!(
-            serde_json::from_str::<ExternalAgent>(r#""native_agent""#).unwrap(),
-            ExternalAgent::NativeAgent,
+            serde_json::from_str::<Agent>(r#""NativeAgent""#).unwrap(),
+            Agent::NativeAgent,
         );
         assert_eq!(
-            serde_json::from_str::<ExternalAgent>(r#"{"custom":{"name":"my-agent"}}"#).unwrap(),
-            ExternalAgent::Custom {
-                name: "my-agent".into(),
+            serde_json::from_str::<Agent>(r#"{"Custom":{"name":"my-agent"}}"#).unwrap(),
+            Agent::Custom {
+                id: "my-agent".into(),
             },
         );
     }

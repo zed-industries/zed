@@ -1,3 +1,4 @@
+#[cfg(feature = "predict-edits")]
 pub mod predict_edits_v3;
 
 use std::str::FromStr;
@@ -10,6 +11,9 @@ use uuid::Uuid;
 
 /// The name of the header used to indicate which version of Zed the client is running.
 pub const ZED_VERSION_HEADER_NAME: &str = "x-zed-version";
+
+/// The name of the header used to indicate which edit prediction experiment should be used.
+pub const PREFERRED_EXPERIMENT_HEADER_NAME: &str = "x-zed-preferred-experiment";
 
 /// The name of the header used to indicate when a request failed due to an
 /// expired LLM token.
@@ -111,7 +115,8 @@ pub struct PredictEditsBody {
     pub trigger: PredictEditsRequestTrigger,
 }
 
-#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, strum::AsRefStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum PredictEditsRequestTrigger {
     Testing,
     Diagnostics,
@@ -144,6 +149,8 @@ pub struct AcceptEditPredictionBody {
     pub request_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub e2e_latency_ms: Option<u128>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -164,9 +171,14 @@ pub struct EditPredictionRejection {
     pub was_shown: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub e2e_latency_ms: Option<u128>,
 }
 
-#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, strum::AsRefStr,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum EditPredictionRejectReason {
     /// New requests were triggered before this one completed
     Canceled,
@@ -185,28 +197,12 @@ pub enum EditPredictionRejectReason {
     Rejected,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CompletionIntent {
-    UserPrompt,
-    ToolResults,
-    ThreadSummarization,
-    ThreadContextSummarization,
-    CreateFile,
-    EditFile,
-    InlineAssist,
-    TerminalInlineAssist,
-    GenerateGitCommitMessage,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompletionBody {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub thread_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub prompt_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub intent: Option<CompletionIntent>,
     pub provider: LanguageModelProvider,
     pub model: String,
     pub provider_request: serde_json::Value,
@@ -270,18 +266,6 @@ pub struct WebSearchResult {
     pub title: String,
     pub url: String,
     pub text: String,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct CountTokensBody {
-    pub provider: LanguageModelProvider,
-    pub model: String,
-    pub provider_request: serde_json::Value,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct CountTokensResponse {
-    pub tokens: usize,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]

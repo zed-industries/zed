@@ -1,11 +1,11 @@
-use agent_client_protocol as acp;
-use agent_settings::AgentSettings;
+use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use settings::Settings;
 use std::{
     path::{Path, PathBuf},
@@ -14,10 +14,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{
-    AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput, ToolPermissionDecision,
-    decide_permission_from_settings,
-};
+use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 
@@ -29,6 +26,8 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 ///
 /// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
 ///
+/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.
+///
 /// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
 ///
 /// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
@@ -39,7 +38,7 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 /// Some commands can be configured not to do this, such as `git --no-pager diff` and similar.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
-    /// The one-liner command to execute.
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user.
     pub command: String,
     /// Working directory for the command. This must be one of the root directories of the project.
     pub cd: String,
@@ -98,35 +97,14 @@ impl AgentTool for TerminalTool {
             let (working_dir, authorize) = cx.update(|cx| {
                 let working_dir =
                     working_dir(&input, &self.project, cx).map_err(|err| err.to_string())?;
-
-                let decision = decide_permission_from_settings(
-                    Self::NAME,
-                    std::slice::from_ref(&input.command),
-                    AgentSettings::get_global(cx),
-                );
-
-                let authorize = match decision {
-                    ToolPermissionDecision::Allow => None,
-                    ToolPermissionDecision::Deny(reason) => {
-                        return Err(reason);
-                    }
-                    ToolPermissionDecision::Confirm => {
-                        let context = crate::ToolPermissionContext::new(
-                            Self::NAME,
-                            vec![input.command.clone()],
-                        );
-                        Some(event_stream.authorize(
-                            self.initial_title(Ok(input.clone()), cx),
-                            context,
-                            cx,
-                        ))
-                    }
-                };
-                Ok((working_dir, authorize))
+                let context =
+                    crate::ToolPermissionContext::new(Self::NAME, vec![input.command.clone()]);
+                let authorize =
+                    event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx);
+                Result::<_, String>::Ok((working_dir, authorize))
             })?;
-            if let Some(authorize) = authorize {
-                authorize.await.map_err(|e| e.to_string())?;
-            }
+
+            authorize.await.map_err(|e| e.to_string())?;
 
             let terminal = self
                 .environment
@@ -626,6 +604,826 @@ mod tests {
             result.contains("No output was captured"),
             "Expected 'No output was captured' for empty output, got: {}",
             result
+        );
+    }
+
+    #[gpui::test]
+    async fn test_run_rejects_invalid_substitution_before_terminal_creation(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default()
+                .with_terminal(crate::tests::FakeTerminalHandle::new_never_exits(cx))
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Confirm;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "echo $HOME".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        let error = result.expect_err("expected invalid terminal command to be rejected");
+        assert!(
+            error.contains("does not allow shell substitutions or interpolations"),
+            "expected explicit invalid-command message, got: {error}"
+        );
+        assert!(
+            environment.terminal_creation_count() == 0,
+            "terminal should not be created for invalid commands"
+        );
+        assert!(
+            !matches!(
+                rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
+            ),
+            "invalid command should not request authorization"
+        );
+        assert!(
+            !matches!(
+                rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallUpdate(
+                    acp_thread::ToolCallUpdate::UpdateFields(_)
+                )))
+            ),
+            "invalid command should not emit a terminal card update"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_run_allows_invalid_substitution_in_unconditional_allow_all_mode(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "echo $HOME".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+            }),
+            "expected terminal content update in unconditional allow-all mode"
+        );
+
+        let result = task
+            .await
+            .expect("command should proceed in unconditional allow-all mode");
+        assert!(
+            environment.terminal_creation_count() == 1,
+            "terminal should be created exactly once"
+        );
+        assert!(
+            !result.contains("could not be approved"),
+            "unexpected invalid-command rejection output: {result}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_run_hardcoded_denial_still_wins_in_unconditional_allow_all_mode(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default()
+                .with_terminal(crate::tests::FakeTerminalHandle::new_never_exits(cx))
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "echo $(rm -rf /)".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let error = task
+            .await
+            .expect_err("hardcoded denial should override unconditional allow-all");
+        assert!(
+            error.contains("built-in security rule"),
+            "expected hardcoded denial message, got: {error}"
+        );
+        assert!(
+            environment.terminal_creation_count() == 0,
+            "hardcoded denial should prevent terminal creation"
+        );
+        assert!(
+            !matches!(
+                rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
+            ),
+            "hardcoded denial should not request authorization"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_run_env_prefixed_allow_pattern_is_used_end_to_end(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Deny;
+            settings.tool_permissions.tools.insert(
+                TerminalTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Deny),
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(r"^PAGER=blah\s+git\s+log(\s|$)", false)
+                            .unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "PAGER=blah git log --oneline".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+            }),
+            "expected terminal content update for matching env-prefixed allow rule"
+        );
+
+        let result = task
+            .await
+            .expect("expected env-prefixed command to be allowed");
+        assert!(
+            environment.terminal_creation_count() == 1,
+            "terminal should be created for allowed env-prefixed command"
+        );
+        assert!(
+            result.contains("command output") || result.contains("Command executed successfully."),
+            "unexpected terminal result: {result}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_run_old_anchored_git_pattern_no_longer_auto_allows_env_prefix(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Deny;
+            settings.tool_permissions.tools.insert(
+                TerminalTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Confirm),
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(r"^git\b", false).unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let _task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "PAGER=blah git log".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let _auth = rx.expect_authorization().await;
+        assert!(
+            environment.terminal_creation_count() == 0,
+            "confirm flow should not create terminal before authorization"
+        );
+    }
+
+    #[test]
+    fn test_terminal_tool_description_mentions_forbidden_substitutions() {
+        let description = <TerminalTool as crate::AgentTool>::description().to_string();
+
+        assert!(
+            description.contains("$VAR"),
+            "missing $VAR example: {description}"
+        );
+        assert!(
+            description.contains("${VAR}"),
+            "missing ${{VAR}} example: {description}"
+        );
+        assert!(
+            description.contains("$(...)"),
+            "missing $(...) example: {description}"
+        );
+        assert!(
+            description.contains("backticks"),
+            "missing backticks example: {description}"
+        );
+        assert!(
+            description.contains("$((...))"),
+            "missing $((...)) example: {description}"
+        );
+        assert!(
+            description.contains("<(...)") && description.contains(">(...)"),
+            "missing process substitution examples: {description}"
+        );
+    }
+
+    #[test]
+    fn test_terminal_tool_input_schema_mentions_forbidden_substitutions() {
+        let schema = <TerminalTool as crate::AgentTool>::input_schema(
+            language_model::LanguageModelToolSchemaFormat::JsonSchema,
+        );
+        let schema_json = serde_json::to_value(schema).expect("schema should serialize");
+        let schema_text = schema_json.to_string();
+
+        assert!(
+            schema_text.contains("$VAR"),
+            "missing $VAR example: {schema_text}"
+        );
+        assert!(
+            schema_text.contains("${VAR}"),
+            "missing ${{VAR}} example: {schema_text}"
+        );
+        assert!(
+            schema_text.contains("$(...)"),
+            "missing $(...) example: {schema_text}"
+        );
+        assert!(
+            schema_text.contains("backticks"),
+            "missing backticks example: {schema_text}"
+        );
+        assert!(
+            schema_text.contains("$((...))"),
+            "missing $((...)) example: {schema_text}"
+        );
+        assert!(
+            schema_text.contains("<(...)") && schema_text.contains(">(...)"),
+            "missing process substitution examples: {schema_text}"
+        );
+    }
+
+    async fn assert_rejected_before_terminal_creation(
+        command: &str,
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default()
+                .with_terminal(crate::tests::FakeTerminalHandle::new_never_exits(cx))
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Confirm;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: command.to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let result = task.await;
+        let error = result.unwrap_err();
+        assert!(
+            error.contains("does not allow shell substitutions or interpolations"),
+            "command {command:?} should be rejected with substitution message, got: {error}"
+        );
+        assert!(
+            environment.terminal_creation_count() == 0,
+            "no terminal should be created for rejected command {command:?}"
+        );
+        assert!(
+            !matches!(
+                rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
+            ),
+            "rejected command {command:?} should not request authorization"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_rejects_variable_expansion(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo ${HOME}", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_positional_parameter(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $1", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_special_parameter_question(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $?", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_special_parameter_dollar(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $$", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_special_parameter_at(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $@", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_command_substitution_dollar_parens(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $(whoami)", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_command_substitution_backticks(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo `whoami`", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_arithmetic_expansion(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $((1 + 1))", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_process_substitution_input(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("cat <(ls)", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_process_substitution_output(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("ls >(cat)", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_env_prefix_with_variable(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("PAGER=$HOME git log", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_env_prefix_with_command_substitution(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("PAGER=$(whoami) git log", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_env_prefix_with_brace_expansion(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation(
+            "GIT_SEQUENCE_EDITOR=${EDITOR} git rebase -i HEAD~2",
+            cx,
+        )
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_multiline_with_forbidden_on_second_line(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo ok\necho $HOME", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_multiline_with_forbidden_mixed(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("PAGER=less git log\necho $(whoami)", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_rejects_nested_command_substitution(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        assert_rejected_before_terminal_creation("echo $(cat $(whoami).txt)", cx).await;
+    }
+
+    #[gpui::test]
+    async fn test_allow_all_terminal_specific_default_with_empty_patterns(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Deny;
+            settings.tool_permissions.tools.insert(
+                TerminalTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Allow),
+                    always_allow: vec![],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "echo $(whoami)".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+            }),
+            "terminal-specific allow-all should bypass substitution rejection"
+        );
+
+        let result = task
+            .await
+            .expect("terminal-specific allow-all should let the command proceed");
+        assert!(
+            environment.terminal_creation_count() == 1,
+            "terminal should be created exactly once"
+        );
+        assert!(
+            !result.contains("could not be approved"),
+            "unexpected rejection output: {result}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_env_prefix_pattern_rejects_different_value(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Deny;
+            settings.tool_permissions.tools.insert(
+                TerminalTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Deny),
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(r"^PAGER=blah\s+git\s+log(\s|$)", false)
+                            .unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "PAGER=other git log".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let error = task
+            .await
+            .expect_err("different env-var value should not match allow pattern");
+        assert!(
+            error.contains("could not be approved")
+                || error.contains("denied")
+                || error.contains("disabled"),
+            "expected denial for mismatched env value, got: {error}"
+        );
+        assert!(
+            environment.terminal_creation_count() == 0,
+            "terminal should not be created for non-matching env value"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_env_prefix_multiple_assignments_preserved_in_order(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Deny;
+            settings.tool_permissions.tools.insert(
+                TerminalTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Deny),
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(r"^A=1\s+B=2\s+git\s+log(\s|$)", false)
+                            .unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "A=1 B=2 git log".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+            }),
+            "multi-assignment pattern should match and produce terminal content"
+        );
+
+        let result = task
+            .await
+            .expect("multi-assignment command matching pattern should be allowed");
+        assert!(
+            environment.terminal_creation_count() == 1,
+            "terminal should be created for matching multi-assignment command"
+        );
+        assert!(
+            result.contains("command output") || result.contains("Command executed successfully."),
+            "unexpected terminal result: {result}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_env_prefix_quoted_whitespace_value_matches_only_with_quotes_in_pattern(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/root", serde_json::json!({})).await;
+        let project = project::Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let environment = std::rc::Rc::new(cx.update(|cx| {
+            crate::tests::FakeThreadEnvironment::default().with_terminal(
+                crate::tests::FakeTerminalHandle::new_with_immediate_exit(cx, 0),
+            )
+        }));
+
+        cx.update(|cx| {
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Deny;
+            settings.tool_permissions.tools.insert(
+                TerminalTool::NAME.into(),
+                agent_settings::ToolRules {
+                    default: Some(settings::ToolPermissionMode::Deny),
+                    always_allow: vec![
+                        agent_settings::CompiledRegex::new(
+                            r#"^PAGER="less\ -R"\s+git\s+log(\s|$)"#,
+                            false,
+                        )
+                        .unwrap(),
+                    ],
+                    always_deny: vec![],
+                    always_confirm: vec![],
+                    invalid_patterns: vec![],
+                },
+            );
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = std::sync::Arc::new(TerminalTool::new(project, environment.clone()));
+        let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+        let task = cx.update(|cx| {
+            tool.run(
+                crate::ToolInput::resolved(TerminalToolInput {
+                    command: "PAGER=\"less -R\" git log".to_string(),
+                    cd: "root".to_string(),
+                    timeout_ms: None,
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let update = rx.expect_update_fields().await;
+        assert!(
+            update.content.iter().any(|blocks| {
+                blocks
+                    .iter()
+                    .any(|content| matches!(content, acp::ToolCallContent::Terminal(_)))
+            }),
+            "quoted whitespace value should match pattern with quoted form"
+        );
+
+        let result = task
+            .await
+            .expect("quoted whitespace env value matching pattern should be allowed");
+        assert!(
+            environment.terminal_creation_count() == 1,
+            "terminal should be created for matching quoted-value command"
+        );
+        assert!(
+            result.contains("command output") || result.contains("Command executed successfully."),
+            "unexpected terminal result: {result}"
         );
     }
 }

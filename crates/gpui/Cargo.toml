@@ -38,6 +38,7 @@ screen-capture = [
     "scap",
 ]
 windows-manifest = ["dep:embed-resource"]
+input-latency-histogram = ["dep:hdrhistogram"]
 
 [lib]
 path = "src/gpui.rs"
@@ -56,6 +57,7 @@ etagere = "0.2"
 futures.workspace = true
 futures-concurrency.workspace = true
 gpui_macros.workspace = true
+gpui_shared_string.workspace = true
 http_client.workspace = true
 image.workspace = true
 inventory.workspace = true
@@ -70,14 +72,17 @@ chrono.workspace = true
 profiling.workspace = true
 rand.workspace = true
 raw-window-handle = "0.6"
+regex.workspace = true
 refineable.workspace = true
 scheduler.workspace = true
 resvg = { version = "0.45.0", default-features = false, features = [
     "text",
     "system-fonts",
     "memmap-fonts",
+    "raster-images"
 ] }
 usvg = { version = "0.45.0", default-features = false }
+ttf-parser = "0.25"
 util_macros.workspace = true
 schemars.workspace = true
 seahash = "4.1"
@@ -89,13 +94,13 @@ async-channel.workspace = true
 stacksafe.workspace = true
 strum.workspace = true
 sum_tree.workspace = true
-taffy = "=0.9.0"
+taffy = "=0.10.1"
 thiserror.workspace = true
 gpui_util.workspace = true
+hdrhistogram = { workspace = true, optional = true }
 waker-fn = "1.2.0"
 lyon = "1.0"
 pin-project = "1.1.10"
-circular-buffer.workspace = true
 spin = "0.10.0"
 pollster.workspace = true
 url.workspace = true
@@ -117,7 +122,7 @@ core-graphics = "0.24"
 core-video.workspace = true
 core-text = "21"
 # WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "110523127440aefb11ce0cf280ae7c5071337ec5", package = "zed-font-kit", version = "0.14.1-zed", optional = true }
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "94b0f28166665e8fd2f53ff6d268a14955c82269", package = "zed-font-kit", version = "0.14.1-zed", optional = true }
 foreign-types = "0.5"
 log.workspace = true
 media.workspace = true
@@ -144,13 +149,13 @@ windows = { version = "0.61", features = ["Win32_Foundation"] }
 backtrace.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
-gpui_platform.workspace = true
+gpui_platform = { workspace = true, features = ["font-kit"] }
+gpui_util = { workspace = true }
 lyon = { version = "1.0", features = ["extra"] }
+proptest = { workspace = true }
 rand.workspace = true
 scheduler = { workspace = true, features = ["test-support"] }
-unicode-segmentation.workspace = true
-gpui_util = { workspace = true }
-proptest = { workspace = true }
+unicode-segmentation = { workspace = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 http_client = { workspace = true, features = ["test-support"] }
@@ -234,6 +239,10 @@ path = "examples/window_shadow.rs"
 [[example]]
 name = "grid_layout"
 path = "examples/grid_layout.rs"
+
+[[example]]
+name = "list_example"
+path = "examples/list_example.rs"
 
 [[example]]
 name = "mouse_pressure"
