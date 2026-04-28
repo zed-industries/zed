@@ -23,7 +23,7 @@ use parking_lot::RwLock;
 use slotmap::SlotMap;
 
 pub use async_context::*;
-use collections::{FxHashMap, FxHashSet, HashMap, IndexMap, VecDeque};
+use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use context::*;
 pub use entity_map::*;
 use gpui_util::{ResultExt, debug_panic};
@@ -636,7 +636,7 @@ pub struct App {
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
     pub(crate) window_invalidators_by_entity:
-        FxHashMap<EntityId, IndexMap<WindowId, WindowInvalidator>>,
+        FxHashMap<EntityId, FxHashMap<WindowId, WindowInvalidator>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     pub(crate) current_window_by_entity: FxHashMap<EntityId, WindowId>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1574,6 +1574,12 @@ impl App {
         let window_id = *self.current_window_by_entity.get(&entity_id)?;
         self.update_window_id(window_id, |_, window, cx| f(window, cx))
             .ok()
+    }
+
+    fn ensure_window(&mut self, entity_id: EntityId, window: WindowId) {
+        self.current_window_by_entity
+            .entry(entity_id)
+            .or_insert(window);
     }
 
     pub(crate) fn update_window_id<T, F>(&mut self, id: WindowId, update: F) -> Result<T>
