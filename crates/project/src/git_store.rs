@@ -5254,47 +5254,50 @@ impl Repository {
             }
         };
 
+        let read_commit_data = |sha| reader.read(sha).map(move |result| (sha, result));
         let mut read_futures = FuturesUnordered::new();
 
         loop {
-            let next_sha = if read_futures.is_empty() {
+            if read_futures.is_empty() {
                 let timeout = background_executor.timer(Duration::from_secs(10));
 
                 futures::select_biased! {
-                    sha = futures::FutureExt::fuse(receive_commit_data_request(&request_rx)) => sha,
+                    sha = futures::FutureExt::fuse(receive_commit_data_request(&request_rx)) => {
+                        if let Some(sha) = sha {
+                            read_futures.push(read_commit_data(sha));
+                        }
+                    }
                     _ = futures::FutureExt::fuse(timeout) => {
                         break;
                     }
                 }
-            } else {
-                let next_read = read_futures.next().fuse();
-                futures::pin_mut!(next_read);
+            }
 
-                futures::select_biased! {
-                    result = next_read => {
-                        let Some((sha, result)) = result else {
-                            continue;
-                        };
+            let next_read = read_futures.next().fuse();
+            futures::pin_mut!(next_read);
 
-                        match result {
-                            Ok(commit_data) => {
-                                if result_tx.send((sha, commit_data)).await.is_err() {
-                                    return;
-                                }
-                            }
-                            Err(error) => {
-                                log::error!("failed to read commit data for {sha}: {error:?}");
+            futures::select_biased! {
+                result = next_read => {
+                    let Some((sha, result)) = result else {
+                        continue;
+                    };
+
+                    match result {
+                        Ok(commit_data) => {
+                            if result_tx.send((sha, commit_data)).await.is_err() {
+                                return;
                             }
                         }
-
-                        None
+                        Err(error) => {
+                            log::error!("failed to read commit data for {sha}: {error:?}");
+                        }
                     }
-                    sha = futures::FutureExt::fuse(receive_commit_data_request(&request_rx)) => sha,
                 }
-            };
-
-            if let Some(sha) = next_sha {
-                read_futures.push(reader.read(sha).map(move |result| (sha, result)));
+                sha = futures::FutureExt::fuse(receive_commit_data_request(&request_rx)) => {
+                    if let Some(sha) = sha {
+                        read_futures.push(read_commit_data(sha));
+                    }
+                }
             }
         }
 
