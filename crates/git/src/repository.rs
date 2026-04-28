@@ -2043,7 +2043,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 git_binary?
-                    .run(&["branch", if is_remote { "-dr" } else { "-d" }, &name])
+                    .run(&["branch", if is_remote { "-dr" } else { "-D" }, &name])
                     .await?;
                 anyhow::Ok(())
             })
@@ -3772,6 +3772,76 @@ mod tests {
         assert!(
             !output.status.success(),
             "hooksPath should NOT be overridden for trusted repos"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_delete_local_branch_forces_deletion(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let file_path = repo_dir.path().join("file.txt");
+        smol::fs::write(&file_path, "initial").await.unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        let default_branch = repo
+            .branches()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|branch| branch.is_head)
+            .unwrap()
+            .name()
+            .to_string();
+
+        repo.create_branch("unmerged".to_string(), None)
+            .await
+            .unwrap();
+        smol::fs::write(&file_path, "unmerged").await.unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Unmerged commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        repo.change_branch(default_branch).await.unwrap();
+        repo.delete_branch(false, "unmerged".to_string())
+            .await
+            .unwrap();
+
+        let branches = repo.branches().await.unwrap();
+        assert!(
+            branches.iter().all(|branch| branch.name() != "unmerged"),
+            "unmerged branch should be deleted"
         );
     }
 

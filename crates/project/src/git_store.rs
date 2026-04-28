@@ -7027,7 +7027,7 @@ impl Repository {
             Some(
                 format!(
                     "git branch {} {}",
-                    if is_remote { "-dr" } else { "-d" },
+                    if is_remote { "-dr" } else { "-D" },
                     branch_name
                 )
                 .into(),

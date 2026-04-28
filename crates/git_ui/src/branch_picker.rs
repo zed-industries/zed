@@ -558,7 +558,7 @@ impl BranchListDelegate {
                         } else {
                             show_error_toast(
                                 workspace,
-                                format!("branch -d {}", entry.name()),
+                                format!("branch -D {}", entry.name()),
                                 e,
                                 cx,
                             )
