@@ -202,12 +202,6 @@ impl TestAppContext {
         &self.foreground_executor
     }
 
-    #[expect(clippy::wrong_self_convention)]
-    fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
-        let mut cx = self.app.borrow_mut();
-        cx.new(build_entity)
-    }
-
     /// Gives you an `&mut App` for the duration of the closure
     pub fn update<R>(&self, f: impl FnOnce(&mut App) -> R) -> R {
         let mut cx = self.app.borrow_mut();
