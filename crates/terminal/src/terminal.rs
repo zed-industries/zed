@@ -424,6 +424,8 @@ impl TerminalBuilder {
             path_style,
             #[cfg(any(test, feature = "test-support"))]
             input_log: Vec::new(),
+            #[cfg(test)]
+            suppress_hyperlink_throttle_once: false,
         };
 
         Ok(TerminalBuilder {
@@ -658,6 +660,8 @@ impl TerminalBuilder {
                 path_style,
                 #[cfg(any(test, feature = "test-support"))]
                 input_log: Vec::new(),
+                #[cfg(test)]
+                suppress_hyperlink_throttle_once: false,
             };
 
             if !activation_script.is_empty() && no_task {
@@ -900,6 +904,8 @@ pub struct Terminal {
     path_style: PathStyle,
     #[cfg(any(test, feature = "test-support"))]
     input_log: Vec<Vec<u8>>,
+    #[cfg(test)]
+    suppress_hyperlink_throttle_once: bool,
 }
 
 struct CopyTemplate {
@@ -1273,7 +1279,6 @@ impl Terminal {
         if self.last_content.last_hovered_word.is_some() {
             self.last_content.last_hovered_word = None;
             cx.emit(Event::NewNavigationTarget(None));
-            cx.notify();
         }
     }
 
@@ -1289,11 +1294,7 @@ impl Terminal {
             && prev_word.word == word
             && prev_word.word_match == word_match
         {
-            self.last_content.last_hovered_word = Some(HoveredWord {
-                word,
-                word_match,
-                id: prev_word.id,
-            });
+            self.last_content.last_hovered_word = Some(prev_word);
             return;
         }
 
@@ -1664,6 +1665,10 @@ impl Terminal {
         if self.last_content.grid_lines_change == GridLinesChange::Changed {
             debug_assert!(self.last_content.last_hovered_word.is_none());
             self.refresh_hovered_word(window, cx);
+
+            // Because refresh_hovered_word() may result
+            // in new events, but will not trigger a repaint
+            cx.emit(Event::Wakeup);
         }
     }
 
@@ -1897,7 +1902,7 @@ impl Terminal {
 
         // Throttle hyperlink searches to avoid excessive processing
         let now = Instant::now();
-        if self
+        let throttle = !self
             .last_hyperlink_search_position
             .map_or(true, |last_pos| {
                 // Only search if mouse moved significantly or enough time passed
@@ -1907,16 +1912,27 @@ impl Terminal {
                 let time_elapsed =
                     now.duration_since(self.last_mouse_move_time) > FIND_HYPERLINK_THROTTLE_MS;
                 distance_moved || time_elapsed
-            })
-        {
-            self.last_mouse_move_time = now;
-            self.last_hyperlink_search_position = Some(position);
-            self.events.push_back(InternalEvent::FindHyperlink(
-                position - self.last_content.terminal_bounds.bounds.origin,
-                false,
-            ));
-            cx.notify();
+            });
+
+        #[cfg(test)]
+        let throttle = if self.suppress_hyperlink_throttle_once {
+            self.suppress_hyperlink_throttle_once = false;
+            false
+        } else {
+            throttle
+        };
+
+        if throttle {
+            return;
         }
+
+        self.last_mouse_move_time = now;
+        self.last_hyperlink_search_position = Some(position);
+        self.events.push_back(InternalEvent::FindHyperlink(
+            position - self.last_content.terminal_bounds.bounds.origin,
+            false,
+        ));
+        cx.notify();
     }
 
     pub fn select_word_at_event_position(&mut self, e: &MouseDownEvent) {
@@ -3323,7 +3339,6 @@ mod tests {
         use super::init_terminal_test_with_window;
         use crate::*;
         use alacritty_terminal::index::{Column, Line, Point as AlacPoint};
-        use context::HyperlinkVisualTestContext;
         use gpui::{
             Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
             Point, TestAppContext, VisualContext, bounds, point, size,
@@ -3422,118 +3437,108 @@ mod tests {
             }
         }
 
-        mod context {
-            use super::*;
-            use crate::{AlacPoint, FIND_HYPERLINK_THROTTLE_MS, HoveredWord};
-            use alacritty_terminal::index::{Column, Line};
-            use gpui::{Modifiers, Pixels, Point};
-            use std::time::Instant;
+        struct HyperlinkVisualTestContext<'a, 'b> {
+            terminal: &'a mut Terminal,
+            window: &'a mut Window,
+            cx: &'a mut Context<'b, Terminal>,
+        }
 
-            pub struct HyperlinkVisualTestContext<'a, 'b> {
+        impl<'a, 'b> HyperlinkVisualTestContext<'a, 'b> {
+            fn new(
                 terminal: &'a mut Terminal,
                 window: &'a mut Window,
                 cx: &'a mut Context<'b, Terminal>,
+            ) -> Self {
+                Self {
+                    terminal,
+                    window,
+                    cx,
+                }
             }
 
-            impl<'a, 'b> HyperlinkVisualTestContext<'a, 'b> {
-                pub fn new(
-                    terminal: &'a mut Terminal,
-                    window: &'a mut Window,
-                    cx: &'a mut Context<'b, Terminal>,
-                ) -> Self {
-                    Self {
-                        terminal,
-                        window,
-                        cx,
-                    }
+            #[track_caller]
+            fn assert_visible_lines_match(
+                &self,
+                expected_lines: impl IntoIterator<Item = (i32, &'static str)>,
+            ) {
+                fn visible_lines(terminal: &Terminal) -> Vec<(i32, String)> {
+                    let term = terminal.term.lock_unfair();
+                    let grid = term.grid();
+                    let columns = grid.columns();
+                    // From Grid::display_iter()
+                    let start_line = Line(-(grid.display_offset() as i32));
+                    let end_line = min(start_line + grid.screen_lines(), grid.bottommost_line());
+                    (start_line.0..end_line.0)
+                        .map(|line| {
+                            (
+                                line,
+                                term.bounds_to_string(
+                                    AlacPoint::new(Line(line), Column(0)),
+                                    AlacPoint::new(Line(line), Column(columns)),
+                                ),
+                            )
+                        })
+                        .collect()
                 }
 
-                #[track_caller]
-                pub fn assert_visible_lines_match(
-                    &self,
-                    expected_lines: impl IntoIterator<Item = (i32, &'static str)>,
-                ) {
-                    fn visible_lines(terminal: &Terminal) -> Vec<(i32, String)> {
-                        let term = terminal.term.lock_unfair();
-                        let grid = term.grid();
-                        let columns = grid.columns();
-                        // From Grid::display_iter()
-                        let start_line = Line(-(grid.display_offset() as i32));
-                        let end_line =
-                            min(start_line + grid.screen_lines(), grid.bottommost_line());
-                        (start_line.0..end_line.0)
-                            .map(|line| {
-                                (
-                                    line,
-                                    term.bounds_to_string(
-                                        AlacPoint::new(Line(line), Column(0)),
-                                        AlacPoint::new(Line(line), Column(columns)),
-                                    ),
-                                )
-                            })
-                            .collect()
-                    }
-
-                    let lines = visible_lines(self.terminal);
-                    let mut expected_lines = expected_lines.into_iter();
-                    for (line, text) in &lines {
-                        let Some((expected_line, expected_text)) = expected_lines.next() else {
-                            // More actual lines than expected lines, ignore
-                            return;
-                        };
-                        assert_eq!(*line, expected_line, "Mismatched line at line {line}");
-                        assert_eq!(*text, expected_text, "Mismatched text at line {line}");
-                    }
-
-                    assert!(expected_lines.next().is_none(), "Extra expected lines")
+                let lines = visible_lines(self.terminal);
+                let mut expected_lines = expected_lines.into_iter();
+                for (line, text) in &lines {
+                    let Some((expected_line, expected_text)) = expected_lines.next() else {
+                        // More actual lines than expected lines, ignore
+                        return;
+                    };
+                    assert_eq!(*line, expected_line, "Mismatched line at line {line}");
+                    assert_eq!(*text, expected_text, "Mismatched text at line {line}");
                 }
 
-                #[track_caller]
-                pub fn assert_hovered_word(&self, expected_hovered_word: Option<&HoveredWord>) {
-                    assert_eq!(
-                        self.terminal.last_content().last_hovered_word.as_ref(),
-                        expected_hovered_word,
-                        "Mismatched hovered word"
-                    );
-                }
+                assert!(expected_lines.next().is_none(), "Extra expected lines")
+            }
 
-                pub fn ctrl_mouse_move_to_and_sync(&mut self, position: Point<Pixels>) {
-                    self.unthrottle();
-                    ctrl_mouse_move_to(position, self.terminal, self.window, self.cx);
-                    self.sync();
-                }
+            #[track_caller]
+            fn assert_hovered_word(&self, expected_hovered_word: Option<&HoveredWord>) {
+                assert_eq!(
+                    self.terminal.last_content().last_hovered_word.as_ref(),
+                    expected_hovered_word,
+                    "Mismatched hovered word"
+                );
+            }
 
-                pub fn try_modifiers_change_and_sync(&mut self, modifiers: Modifiers) {
-                    self.unthrottle();
-                    self.terminal
-                        .try_modifiers_change(&modifiers, self.window, self.cx);
-                    self.sync();
-                }
+            fn ctrl_mouse_move_to_and_sync(&mut self, position: Point<Pixels>) {
+                self.unthrottle();
+                ctrl_mouse_move_to(position, self.terminal, self.window, self.cx);
+                self.sync();
+            }
 
-                pub fn write_output_lines_and_sync(&mut self, output: &str, repeat: usize) {
-                    for _ in 0..repeat {
-                        self.terminal.write_output(output.as_bytes(), self.cx);
-                        self.terminal.write_output(b"\n", self.cx);
-                    }
-                    self.sync();
-                }
+            fn try_modifiers_change_and_sync(&mut self, modifiers: Modifiers) {
+                self.unthrottle();
+                self.terminal
+                    .try_modifiers_change(&modifiers, self.window, self.cx);
+                self.sync();
+            }
 
-                pub fn scroll_up_by_and_sync(&mut self, lines: usize) {
-                    self.unthrottle();
-                    self.terminal.scroll_up_by(lines);
-                    self.sync();
+            fn write_output_lines_and_sync(&mut self, output: &str, repeat: usize) {
+                for _ in 0..repeat {
+                    self.terminal.write_output(output.as_bytes(), self.cx);
+                    self.terminal.write_output(b"\n", self.cx);
                 }
+                self.sync();
+            }
 
-                pub fn sync(&mut self) {
-                    self.unthrottle();
-                    self.terminal.sync(self.window, self.cx);
-                }
+            fn scroll_up_by_and_sync(&mut self, lines: usize) {
+                self.unthrottle();
+                self.terminal.scroll_up_by(lines);
+                self.sync();
+            }
 
-                fn unthrottle(&mut self) {
-                    // Suppress hyperlink throttling for testing
-                    self.terminal.last_mouse_move_time =
-                        Instant::now() - FIND_HYPERLINK_THROTTLE_MS * 2;
-                }
+            fn sync(&mut self) {
+                self.unthrottle();
+                self.terminal.sync(self.window, self.cx);
+            }
+
+            fn unthrottle(&mut self) {
+                // Suppress hyperlink throttling for testing
+                self.terminal.suppress_hyperlink_throttle_once = true;
             }
         }
 
@@ -3662,7 +3667,8 @@ mod tests {
             });
         }
 
-        const OUTPUT: &str = "Visit https://zed.dev/ for more";
+        const OUTPUT_ZED_DEV: &str = "Visit https://zed.dev/ for more";
+        const OUTPUT_NONE: &str = "None";
         const ZED_DEV_STR: &str = "https://zed.dev/";
         const ZED_DEV_PT: Point<Pixels> = point(px(30.0), px(2.5));
 
@@ -3675,25 +3681,25 @@ mod tests {
                 // Set initial expected hovered word
                 let mut expected_hovered_word: HoveredWord =
                     (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
-                cx.write_output_lines_and_sync(OUTPUT, 1);
-                cx.assert_visible_lines_match(vec![(0, OUTPUT)]);
+                cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
+                cx.assert_visible_lines_match(vec![(0, OUTPUT_ZED_DEV)]);
                 cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
 
                 // Existing hovered_word IS reused when viewport is static
-                cx.write_output_lines_and_sync(OUTPUT, 1);
-                cx.assert_visible_lines_match(vec![(0, OUTPUT), (1, OUTPUT)]);
+                cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
+                cx.assert_visible_lines_match(vec![(0, OUTPUT_ZED_DEV), (1, OUTPUT_ZED_DEV)]);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
 
                 // Existing hovered_word IS NOT reused when viewport is changing (total lines changed,
                 // but display offset did not have a corresponding change)
-                cx.write_output_lines_and_sync(OUTPUT, 8);
+                cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 8);
                 cx.assert_visible_lines_match(vec![
-                    (0, OUTPUT),
-                    (1, OUTPUT),
-                    (2, OUTPUT),
-                    (3, OUTPUT),
-                    (4, OUTPUT),
+                    (0, OUTPUT_ZED_DEV),
+                    (1, OUTPUT_ZED_DEV),
+                    (2, OUTPUT_ZED_DEV),
+                    (3, OUTPUT_ZED_DEV),
+                    (4, OUTPUT_ZED_DEV),
                 ]);
                 cx.assert_hovered_word(None);
                 // ...AND new hovered_word is set if secondary is held.
@@ -3701,30 +3707,51 @@ mod tests {
                 expected_hovered_word = expected_hovered_word.with_id(expected_hovered_word.id + 1);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
 
+                // And just for good measure
+                for _ in 0..5 {
+                    cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
+                    cx.write_output_lines_and_sync(OUTPUT_NONE, 1);
+                }
+                expected_hovered_word = expected_hovered_word.with_id(expected_hovered_word.id + 7);
+
+                for _ in 0..5 {
+                    cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
+                    cx.assert_hovered_word(None);
+                    cx.sync();
+                    expected_hovered_word =
+                        expected_hovered_word.with_id(expected_hovered_word.id + 1);
+                    cx.assert_hovered_word(Some(&expected_hovered_word));
+
+                    cx.write_output_lines_and_sync(OUTPUT_NONE, 1);
+                    cx.assert_hovered_word(None);
+                    cx.sync();
+                    cx.assert_hovered_word(None);
+                }
+
                 // Existing hovered word IS NOT reused when scrolling
-                cx.scroll_up_by_and_sync(2);
+                cx.scroll_up_by_and_sync(3);
                 cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
                 cx.assert_visible_lines_match(vec![
-                    (-2, OUTPUT),
-                    (-1, OUTPUT),
-                    (0, OUTPUT),
-                    (1, OUTPUT),
-                    (2, OUTPUT),
-                    (3, OUTPUT),
+                    (-3, OUTPUT_ZED_DEV),
+                    (-2, OUTPUT_NONE),
+                    (-1, OUTPUT_ZED_DEV),
+                    (0, OUTPUT_NONE),
+                    (1, OUTPUT_ZED_DEV),
+                    (2, OUTPUT_NONE),
                 ]);
                 expected_hovered_word =
-                    expected_hovered_word.with_line_and_id(-2, expected_hovered_word.id + 2);
+                    expected_hovered_word.with_line_and_id(-3, expected_hovered_word.id + 2);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
 
                 // Existing hovered word IS reused when total lines changed, but visible lines unchanged
-                cx.write_output_lines_and_sync(OUTPUT, 3);
+                cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 2);
                 cx.assert_visible_lines_match(vec![
-                    (-5, OUTPUT),
-                    (-4, OUTPUT),
-                    (-3, OUTPUT),
-                    (-2, OUTPUT),
-                    (-1, OUTPUT),
-                    (0, OUTPUT),
+                    (-5, OUTPUT_ZED_DEV),
+                    (-4, OUTPUT_NONE),
+                    (-3, OUTPUT_ZED_DEV),
+                    (-2, OUTPUT_NONE),
+                    (-1, OUTPUT_ZED_DEV),
+                    (0, OUTPUT_NONE),
                 ]);
                 expected_hovered_word = expected_hovered_word.with_line(-5);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
@@ -3740,8 +3767,8 @@ mod tests {
                 // Set initial expected hovered word
                 let mut expected_hovered_word: HoveredWord =
                     (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
-                cx.write_output_lines_and_sync(OUTPUT, 1);
-                cx.assert_visible_lines_match(vec![(0, OUTPUT)]);
+                cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
+                cx.assert_visible_lines_match(vec![(0, OUTPUT_ZED_DEV)]);
                 cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
 
