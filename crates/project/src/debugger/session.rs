@@ -1811,7 +1811,6 @@ impl Session {
                     .map(|thread| (ThreadId(thread.id), Thread::from(thread)))
                     .collect();
 
-                this.invalidate_command_type::<StackTraceCommand>();
                 cx.emit(SessionEvent::Threads);
                 cx.notify();
             },
