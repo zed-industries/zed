@@ -25,11 +25,11 @@ use cocoa::{
 };
 use dispatch2::DispatchQueue;
 use gpui::{
-    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, ExternalPaths, FileDropEvent,
-    ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel,
-    RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
+    AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalPaths,
+    FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
+    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams, point,
     px, size,
 };
@@ -75,6 +75,7 @@ static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
 static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
+static mut TRANSPARENT_CURSOR: id = ptr::null_mut();
 
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
@@ -172,6 +173,10 @@ unsafe fn build_classes() {
                 decl.add_method(
                     sel!(mouseMoved:),
                     handle_view_event as extern "C" fn(&Object, Sel, id),
+                );
+                decl.add_method(
+                    sel!(resetCursorRects),
+                    reset_cursor_rects as extern "C" fn(&Object, Sel),
                 );
                 decl.add_method(
                     sel!(pressureChangeWithEvent:),
@@ -313,6 +318,82 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
     )
 }
 
+unsafe fn transparent_cursor() -> id {
+    unsafe {
+        if TRANSPARENT_CURSOR.is_null() {
+            let image: id = msg_send![class!(NSImage), alloc];
+            let image: id = msg_send![image, initWithSize: NSSize::new(1., 1.)];
+            let cursor: id = msg_send![class!(NSCursor), alloc];
+            let cursor: id = msg_send![cursor, initWithImage: image hotSpot: NSPoint::new(0., 0.)];
+            let _: () = msg_send![image, release];
+            TRANSPARENT_CURSOR = cursor;
+        }
+
+        TRANSPARENT_CURSOR
+    }
+}
+
+pub(crate) unsafe fn cursor_for_style(style: CursorStyle) -> id {
+    unsafe {
+        match style {
+            CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
+            CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
+            CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
+            CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
+            CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
+            CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
+            CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
+            CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
+            CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
+            CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
+            CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
+            CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
+            CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
+            CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
+
+            // Undocumented, private class methods:
+            // https://stackoverflow.com/questions/27242353/cocoa-predefined-resize-mouse-cursor
+            CursorStyle::ResizeUpLeftDownRight => {
+                msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
+            }
+            CursorStyle::ResizeUpRightDownLeft => {
+                msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
+            }
+
+            CursorStyle::IBeamCursorForVerticalLayout => {
+                msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
+            }
+            CursorStyle::OperationNotAllowed => {
+                msg_send![class!(NSCursor), operationNotAllowedCursor]
+            }
+            CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
+            CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
+            CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
+            CursorStyle::None => transparent_cursor(),
+        }
+    }
+}
+
+pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
+    unsafe {
+        let app = NSApplication::sharedApplication(nil);
+        let main_window: id = msg_send![app, mainWindow];
+        if main_window.is_null() || !msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
+            return;
+        }
+
+        let window_state = get_window_state(&*main_window);
+        let mut window_state = window_state.lock();
+        if window_state.cursor_style != style {
+            window_state.cursor_style = style;
+            let _: () = msg_send![
+                window_state.native_window,
+                invalidateCursorRectsForView: window_state.native_view.as_ptr()
+            ];
+        }
+    }
+}
+
 unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const Class {
     unsafe {
         let mut decl = ClassDecl::new(name, superclass).unwrap();
@@ -429,6 +510,7 @@ struct MacWindowState {
     native_view: NonNull<Object>,
     blurred_view: Option<id>,
     background_appearance: WindowBackgroundAppearance,
+    cursor_style: CursorStyle,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -746,6 +828,7 @@ impl MacWindow {
                 native_view: NonNull::new_unchecked(native_view),
                 blurred_view: None,
                 background_appearance: WindowBackgroundAppearance::Opaque,
+                cursor_style: CursorStyle::Arrow,
                 display_link: None,
                 renderer: renderer::new_renderer(
                     renderer_context,
@@ -1764,6 +1847,19 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
     unsafe {
         drop_window_state(this);
         let _: () = msg_send![super(this, class!(NSView)), dealloc];
+    }
+}
+
+extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSView)), resetCursorRects];
+
+        let window_state = get_window_state(this);
+        let cursor_style = window_state.lock().cursor_style;
+
+        let cursor = cursor_for_style(cursor_style);
+        let bounds = NSView::bounds(this as *const Object as id);
+        let _: () = msg_send![this, addCursorRect: bounds cursor: cursor];
     }
 }
 
