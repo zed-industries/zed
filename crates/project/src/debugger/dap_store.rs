@@ -47,7 +47,7 @@ use std::{
     borrow::Borrow,
     collections::BTreeMap,
     ffi::OsStr,
-    net::Ipv4Addr,
+    net::{IpAddr, Ipv4Addr},
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
@@ -323,7 +323,7 @@ impl DapStore {
                     let port_forwarding;
                     let connection;
                     if let Some(c) = binary.connection {
-                        let host = Ipv4Addr::LOCALHOST;
+                        let host = IpAddr::V4(Ipv4Addr::LOCALHOST);
                         let port;
                         if remote.read_with(cx, |remote, _cx| remote.shares_network_interface()) {
                             port = c.port;

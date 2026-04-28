@@ -5012,8 +5012,7 @@ impl Render for Sidebar {
                                     .when_some(sticky_header, |this, header| this.child(header))
                                     .custom_scrollbars(
                                         Scrollbars::new(ScrollAxes::Vertical)
-                                            .tracked_scroll_handle(&self.list_state)
-                                            .width_sm(),
+                                            .tracked_scroll_handle(&self.list_state),
                                         window,
                                         cx,
                                     ),
