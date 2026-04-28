@@ -7692,7 +7692,6 @@ dependencies = [
  "wayland-protocols",
  "wayland-protocols-plasma",
  "wayland-protocols-wlr",
- "wayland-scanner",
  "x11-clipboard",
  "x11rb",
  "xkbcommon",

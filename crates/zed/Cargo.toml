@@ -13,7 +13,6 @@ workspace = true
 
 [features]
 tracy = ["ztracing/tracy"]
-global-menu = ["gpui_platform/global-menu"]
 test-support = [
     "gpui/test-support",
     "gpui_platform/screen-capture",

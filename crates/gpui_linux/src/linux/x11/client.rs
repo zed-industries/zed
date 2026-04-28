@@ -213,11 +213,8 @@ pub struct X11ClientState {
 
     pointer_device_states: BTreeMap<xinput::DeviceId, PointerDeviceState>,
 
-    #[cfg(feature = "global-menu")]
     pub(crate) dbus_service_name: Option<String>,
-    #[cfg(feature = "global-menu")]
     pub(crate) dbus_unique_name: Option<String>,
-    #[cfg(feature = "global-menu")]
     pub(crate) dbus_menu_thread: Option<std::thread::JoinHandle<()>>,
 
     pub(crate) common: LinuxCommon,
@@ -301,7 +298,6 @@ impl X11ClientStatePtr {
     }
 }
 
-#[cfg(feature = "global-menu")]
 impl crate::linux::dbusmenu::GlobalMenuState for X11ClientState {
     fn linux_common(&mut self) -> &mut crate::linux::LinuxCommon {
         &mut self.common
@@ -320,7 +316,6 @@ impl Drop for X11Client {
             return;
         }
 
-        #[cfg(feature = "global-menu")]
         {
             let (dbus_menu_server, dbus_menu_thread) = match self.0.try_borrow_mut() {
                 Ok(mut state) => (
@@ -578,11 +573,8 @@ impl X11Client {
 
             pointer_device_states,
 
-            #[cfg(feature = "global-menu")]
             dbus_service_name: None,
-            #[cfg(feature = "global-menu")]
             dbus_unique_name: None,
-            #[cfg(feature = "global-menu")]
             dbus_menu_thread: None,
 
             clipboard,
@@ -590,7 +582,6 @@ impl X11Client {
             xdnd_state: Xdnd::default(),
         }));
 
-        #[cfg(feature = "global-menu")]
         {
             let root = xcb_connection.setup().roots[x_root_index].root;
             let has_appmenu = x11_global_menu_supported(&xcb_connection, &atoms, root);
@@ -649,9 +640,9 @@ impl X11Client {
 
                 let object_path = crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string();
                 let dbus_menu_thread = dbus_menu_server.spawn_dbus_menu_thread(
-                    service_name.clone(),
+                    service_name,
                     object_path,
-                    Some(unique_name_tx.clone()),
+                    Some(unique_name_tx),
                 );
 
                 if let Some(thread) = dbus_menu_thread {
@@ -1682,7 +1673,6 @@ impl LinuxClient for X11Client {
         )
         .log_err();
 
-        #[cfg(feature = "global-menu")]
         if let Some(service_name) = x11_appmenu_service_name(&state) {
             let object_path = crate::linux::dbusmenu::DBUSMENU_OBJECT_PATH.to_string();
 
@@ -2251,7 +2241,6 @@ fn check_gtk_frame_extents_supported(
     supported_atom_ids.contains(&atoms._GTK_FRAME_EXTENTS)
 }
 
-#[cfg(feature = "global-menu")]
 fn x11_global_menu_supported(
     xcb_connection: &XCBConnection,
     atoms: &XcbAtoms,
@@ -2282,7 +2271,6 @@ fn x11_global_menu_supported(
         || supported_atom_ids.contains(&atoms._KDE_NET_WM_APPMENU_OBJECT_PATH)
 }
 
-#[cfg(feature = "global-menu")]
 fn x11_appmenu_service_name(state: &X11ClientState) -> Option<String> {
     state
         .dbus_unique_name
@@ -2290,7 +2278,6 @@ fn x11_appmenu_service_name(state: &X11ClientState) -> Option<String> {
         .or_else(|| state.dbus_service_name.clone())
 }
 
-#[cfg(feature = "global-menu")]
 fn set_x11_appmenu_properties(
     xcb_connection: &XCBConnection,
     atoms: &XcbAtoms,

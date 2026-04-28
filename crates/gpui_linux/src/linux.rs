@@ -1,4 +1,3 @@
-#[cfg(feature = "global-menu")]
 pub mod dbusmenu;
 mod dispatcher;
 mod headless;

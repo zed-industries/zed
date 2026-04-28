@@ -14,7 +14,6 @@ path = "src/gpui_linux.rs"
 [features]
 default = ["wayland", "x11"]
 test-support = ["gpui/test-support"]
-global-menu = ["dep:async-channel", "dep:zbus", "dep:wayland-scanner"]
 wayland = [
     "bitflags",
     "gpui_wgpu",
@@ -72,9 +71,8 @@ strum.workspace = true
 url.workspace = true
 util.workspace = true
 uuid.workspace = true
-async-channel = { workspace = true, optional = true }
-zbus = { version = "5", optional = true }
-wayland-scanner = { version = "0.31.9", optional = true }
+async-channel.workspace = true
+zbus = "5"
 
 # Always used
 oo7 = { version = "0.6", default-features = false, features = [

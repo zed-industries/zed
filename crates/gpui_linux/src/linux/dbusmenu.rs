@@ -116,7 +116,6 @@ pub fn setup_global_menu_sources<D: 'static, T: GlobalMenuState + 'static>(
             }
         },
         {
-            let client = client.clone();
             move || {
                 if let Some(client) = client.upgrade() {
                     let mut state = client.borrow_mut();
