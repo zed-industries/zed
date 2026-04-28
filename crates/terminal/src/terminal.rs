@@ -1668,7 +1668,9 @@ impl Terminal {
 
             // Because refresh_hovered_word() may result
             // in new events, but will not trigger a repaint
-            cx.emit(Event::Wakeup);
+            if !self.events.is_empty() {
+                cx.emit(Event::Wakeup);
+            }
         }
     }
 
