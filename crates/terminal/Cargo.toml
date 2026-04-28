@@ -20,10 +20,12 @@ path = "src/terminal.rs"
 doctest = false
 
 [dependencies]
+async-channel.workspace = true
 alacritty_terminal.workspace = true
 anyhow.workspace = true
 collections.workspace = true
 futures.workspace = true
+futures-lite.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 libc.workspace = true
@@ -34,7 +36,6 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 sysinfo.workspace = true
-smol.workspace = true
 task.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
@@ -43,6 +44,7 @@ url.workspace = true
 util.workspace = true
 urlencoding.workspace = true
 parking_lot.workspace = true
+percent-encoding.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

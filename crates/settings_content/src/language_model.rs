@@ -1,5 +1,6 @@
 use crate::merge_from::MergeFrom;
 use collections::HashMap;
+use language_model_core::ReasoningEffort;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -150,6 +151,20 @@ impl Default for KeepAlive {
 pub struct OpenCodeSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenCodeAvailableModel>>,
+    /// Whether to show OpenCode Zen models. Defaults to true.
+    pub show_zen_models: Option<bool>,
+    /// Whether to show OpenCode Go models. Defaults to true.
+    pub show_go_models: Option<bool>,
+    /// Whether to show OpenCode Free models. Defaults to true.
+    pub show_free_models: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenCodeModelSubscription {
+    Zen,
+    Go,
+    Free,
 }
 
 #[with_fallible_options]
@@ -161,6 +176,12 @@ pub struct OpenCodeAvailableModel {
     pub max_output_tokens: Option<u64>,
     /// The API protocol to use for this model: "anthropic", "openai_responses", "openai_chat", or "google".
     pub protocol: String,
+    /// The subscription for this model: "zen", "go", or "free". Defaults to Zen.
+    pub subscription: Option<OpenCodeModelSubscription>,
+    /// Custom Model API URL to use for this model.
+    pub custom_model_api_url: Option<String>,
+    /// Supported reasoning effort levels, for example `["low", "medium", "high"].
+    pub reasoning_effort_levels: Option<Vec<ReasoningEffort>>,
 }
 
 #[with_fallible_options]
@@ -257,12 +278,15 @@ pub struct OpenAiCompatibleSettingsContent {
 pub struct OpenAiModelCapabilities {
     #[serde(default = "default_true")]
     pub chat_completions: bool,
+    #[serde(default = "default_true")]
+    pub images: bool,
 }
 
 impl Default for OpenAiModelCapabilities {
     fn default() -> Self {
         Self {
             chat_completions: default_true(),
+            images: default_true(),
         }
     }
 }

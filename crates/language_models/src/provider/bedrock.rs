@@ -2,6 +2,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
+use async_lock::OnceCell;
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::{Credentials, Token};
@@ -40,7 +41,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore};
-use smol::lock::OnceCell;
 use std::sync::LazyLock;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, prelude::*};
@@ -918,9 +918,10 @@ pub fn into_bedrock(
                         }
                         MessageContent::ToolResult(tool_result) => {
                             messages_contain_tool_content = true;
-                            BedrockToolResultBlock::builder()
-                                .tool_use_id(tool_result.tool_use_id.to_string())
-                                .content(match tool_result.content {
+                            let mut builder = BedrockToolResultBlock::builder()
+                                .tool_use_id(tool_result.tool_use_id.to_string());
+                            for part in tool_result.content {
+                                let block = match part {
                                     LanguageModelToolResultContent::Text(text) => {
                                         BedrockToolResultContentBlock::Text(text.to_string())
                                     }
@@ -961,7 +962,10 @@ pub fn into_bedrock(
                                             }
                                         }
                                     }
-                                })
+                                };
+                                builder = builder.content(block);
+                            }
+                            builder
                                 .status({
                                     if tool_result.is_error {
                                         BedrockToolResultStatus::Error

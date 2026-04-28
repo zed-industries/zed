@@ -3199,7 +3199,16 @@ mod tests {
             }
             "#
             .unindent(),
-            None,
+            Some(
+                &r#"
+                {
+                    "edit_predictions": {
+                        "provider": "zed"
+                    }
+                }
+                "#
+                .unindent(),
+            ),
         );
 
         // Platform key: settings nested inside "linux" should be migrated

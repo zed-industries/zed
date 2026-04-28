@@ -494,7 +494,9 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
     assert_eq!(pending_completion.messages[0].role, Role::System);
 
     let system_message = &pending_completion.messages[0];
-    let system_prompt = system_message.content[0].to_str().unwrap();
+    let MessageContent::Text(system_prompt) = &system_message.content[0] else {
+        panic!("Expected text content");
+    };
     assert!(
         system_prompt.contains("test-shell"),
         "unexpected system message: {:?}",
@@ -530,7 +532,9 @@ async fn test_system_prompt_without_tools(cx: &mut TestAppContext) {
     assert_eq!(pending_completion.messages[0].role, Role::System);
 
     let system_message = &pending_completion.messages[0];
-    let system_prompt = system_message.content[0].to_str().unwrap();
+    let MessageContent::Text(system_prompt) = &system_message.content[0] else {
+        panic!("Expected text content");
+    };
     assert!(
         !system_prompt.contains("## Tool Use"),
         "unexpected system message: {:?}",
@@ -637,7 +641,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
         tool_use_id: "tool_1".into(),
         tool_name: EchoTool::NAME.into(),
         is_error: false,
-        content: "test".into(),
+        content: vec!["test".into()],
         output: Some("test".into()),
     };
     assert_eq!(
@@ -866,14 +870,14 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 tool_use_id: tool_call_auth_1.tool_call.tool_call_id.0.to_string().into(),
                 tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
-                content: "Allowed".into(),
+                content: vec!["Allowed".into()],
                 output: Some("Allowed".into())
             }),
             language_model::MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_2.tool_call.tool_call_id.0.to_string().into(),
                 tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: true,
-                content: "Permission to run tool denied by user".into(),
+                content: vec!["Permission to run tool denied by user".into()],
                 output: Some("Permission to run tool denied by user".into())
             })
         ]
@@ -912,7 +916,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 tool_use_id: tool_call_auth_3.tool_call.tool_call_id.0.to_string().into(),
                 tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
-                content: "Allowed".into(),
+                content: vec!["Allowed".into()],
                 output: Some("Allowed".into())
             }
         )]
@@ -940,7 +944,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 tool_use_id: "tool_id_4".into(),
                 tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
-                content: "Allowed".into(),
+                content: vec!["Allowed".into()],
                 output: Some("Allowed".into())
             }
         )]
@@ -1562,17 +1566,137 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
                 tool_use_id: "tool_3".into(),
                 tool_name: "echo".into(),
                 is_error: false,
-                content: "native".into(),
+                content: vec!["native".into()],
                 output: Some("native".into()),
             },),
             MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: "tool_2".into(),
                 tool_name: "test_server_echo".into(),
                 is_error: false,
-                content: "mcp".into(),
+                content: vec!["mcp".into()],
                 output: Some("mcp".into()),
             },),
         ]
+    );
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+}
+
+#[gpui::test]
+async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    fake_model.set_supports_images(true);
+
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {}
+                    },
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    let mut mcp_tool_calls = setup_context_server(
+        "screenshot_server",
+        vec![context_server::types::Tool {
+            name: "screenshot".into(),
+            description: None,
+            input_schema: json!({"type": "object", "properties": {}}),
+            output_schema: None,
+            annotations: None,
+        }],
+        &context_server_store,
+        cx,
+    );
+
+    let events = thread.update(cx, |thread, cx| {
+        thread
+            .send(UserMessageId::new(), ["Take a screenshot"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "screenshot".into(),
+            raw_input: json!({}).to_string(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    let _ = completion;
+
+    let (tool_call_params, tool_call_response) = mcp_tool_calls.next().await.unwrap();
+    assert_eq!(tool_call_params.name, "screenshot");
+    tool_call_response
+        .send(context_server::types::CallToolResponse {
+            content: vec![
+                context_server::types::ToolResponseContent::Text {
+                    text: "Some text".into(),
+                },
+                context_server::types::ToolResponseContent::Image {
+                    data: "aGVsbG8=".into(),
+                    mime_type: "image/png".into(),
+                },
+                context_server::types::ToolResponseContent::Text {
+                    text: "Some more text".into(),
+                },
+            ],
+            is_error: None,
+            meta: None,
+            structured_content: None,
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Verify the tool result round-trips back to the model as a multi-part Vec.
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let tool_result = completion
+        .messages
+        .last()
+        .unwrap()
+        .content
+        .iter()
+        .find_map(|c| match c {
+            MessageContent::ToolResult(r) => Some(r.clone()),
+            _ => None,
+        })
+        .expect("expected a tool result");
+    assert_eq!(tool_result.tool_use_id, "tool_1".into());
+    assert_eq!(tool_result.content.len(), 2);
+    assert_eq!(
+        tool_result.content[0],
+        language_model::LanguageModelToolResultContent::Text(Arc::from("Some text"))
+    );
+    assert_eq!(
+        tool_result.content[1],
+        language_model::LanguageModelToolResultContent::Text(Arc::from("Some more text"))
     );
     fake_model.end_last_completion_stream();
     events.collect::<Vec<_>>().await;
@@ -2106,10 +2230,7 @@ async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext
             .get(&tool_use.id)
             .expect("expected tool result");
 
-        let result_text = match &tool_result.content {
-            language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
-            _ => panic!("expected text content in tool result"),
-        };
+        let result_text = tool_result.text_contents();
 
         // "partial output" comes from FakeTerminalHandle's output field
         assert!(
@@ -2571,10 +2692,7 @@ async fn test_terminal_tool_stopped_via_terminal_card_button(cx: &mut TestAppCon
             .get(&tool_use.id)
             .expect("expected tool result");
 
-        let result_text = match &tool_result.content {
-            language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
-            _ => panic!("expected text content in tool result"),
-        };
+        let result_text = tool_result.text_contents();
 
         assert!(
             result_text.contains("The user stopped this command"),
@@ -2666,10 +2784,7 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
             .get(&tool_use.id)
             .expect("expected tool result");
 
-        let result_text = match &tool_result.content {
-            language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
-            _ => panic!("expected text content in tool result"),
-        };
+        let result_text = tool_result.text_contents();
 
         assert!(
             result_text.contains("timed out"),
@@ -3290,7 +3405,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
                     tool_use_id: echo_tool_use.id.clone(),
                     tool_name: echo_tool_use.name,
                     is_error: false,
-                    content: "test".into(),
+                    content: vec!["test".into()],
                     output: Some("test".into())
                 })],
                 cache: false,
@@ -3776,7 +3891,7 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
                         tool_use_id: tool_use_1.id.clone(),
                         tool_name: tool_use_1.name.clone(),
                         is_error: false,
-                        content: "test".into(),
+                        content: vec!["test".into()],
                         output: Some("test".into())
                     }
                 )],
@@ -3936,8 +4051,10 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
                         tool_use_id: tool_use.id.clone(),
                         tool_name: tool_use.name,
                         is_error: true,
-                        content: "Failed to receive tool input: tool input was not fully received"
-                            .into(),
+                        content: vec![
+                            "Failed to receive tool input: tool input was not fully received"
+                                .into(),
+                        ],
                         output: Some(
                             "Failed to receive tool input: tool input was not fully received"
                                 .into()
@@ -4044,10 +4161,7 @@ async fn test_streaming_tool_json_parse_error_is_forwarded_to_running_tool(
 
     let result = tool_results[0];
     assert!(result.is_error);
-    let content_text = match &result.content {
-        language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
-        other => panic!("Expected text content, got {:?}", other),
-    };
+    let content_text = result.text_contents();
     assert!(
         content_text.contains("Saw partial text 'partial' before invalid JSON"),
         "Expected tool-enriched partial context, got: {content_text}"
@@ -4127,6 +4241,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             DelayTool::NAME: true,
                             WordListTool::NAME: true,
                             ToolRequiringPermission::NAME: true,
+                            ToolRequiringPermission2::NAME: true,
                             InfiniteTool::NAME: true,
                             CancellationAwareTool::NAME: true,
                             StreamingEchoTool::NAME: true,
@@ -6531,6 +6646,394 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
     );
 }
 
+/// Approving one pending tool call with "Always for <tool>" auto-resolves
+/// sibling pending authorizations for the same tool in the same turn.
+#[gpui::test]
+async fn test_always_allow_resolves_pending_authorizations(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(ToolRequiringPermission);
+            thread.send(UserMessageId::new(), ["abc"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Two parallel tool calls, both require permission.
+    for id in ["tool_id_1", "tool_id_2"] {
+        fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+            LanguageModelToolUse {
+                id: id.into(),
+                name: ToolRequiringPermission::NAME.into(),
+                raw_input: "{}".into(),
+                input: json!({}),
+                is_input_complete: true,
+                thought_signature: None,
+            },
+        ));
+    }
+    fake_model.end_last_completion_stream();
+
+    let tool_call_auth_1 = next_tool_call_authorization(&mut events).await;
+    let tool_call_auth_2 = next_tool_call_authorization(&mut events).await;
+
+    // Approve the first with "always allow" — this persists a setting that
+    // makes the tool unconditionally allowed. The second pending
+    // authorization should resolve without user interaction.
+    tool_call_auth_1
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("always_allow:tool_requiring_permission"),
+            acp::PermissionOptionKind::AllowAlways,
+        ))
+        .unwrap();
+    cx.run_until_parked();
+
+    // The second tool's receiver was dropped by the auto-resolve path, so
+    // sending a late response should fail.
+    let late_send = tool_call_auth_2
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("allow"),
+            acp::PermissionOptionKind::AllowOnce,
+        ));
+    assert!(
+        late_send.is_err(),
+        "expected tool 2's response receiver to be dropped after auto-resolve"
+    );
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let message = completion.messages.last().unwrap();
+    let results: Vec<_> = message
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            language_model::MessageContent::ToolResult(r) => Some(r),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        results.len(),
+        2,
+        "both tool calls should have produced results"
+    );
+    assert!(
+        results.iter().all(|r| !r.is_error),
+        "both results should be successful after auto-resolve, got: {:?}",
+        results
+    );
+}
+
+/// Externally editing settings (e.g. the user opening settings.json and
+/// adding an `always_allow` rule) resolves pending authorization prompts
+/// for tool calls that match the new rule.
+#[gpui::test]
+async fn test_external_settings_edit_resolves_pending_authorization(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(ToolRequiringPermission);
+            thread.send(UserMessageId::new(), ["abc"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_1".into(),
+            name: ToolRequiringPermission::NAME.into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    let tool_call_auth = next_tool_call_authorization(&mut events).await;
+
+    // Simulate the user editing settings.json to globally allow the tool.
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            ToolRequiringPermission::NAME.into(),
+            agent_settings::ToolRules {
+                default: Some(settings::ToolPermissionMode::Allow),
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+    cx.run_until_parked();
+
+    // The pending prompt auto-resolves without the user clicking anything.
+    let late_send = tool_call_auth
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("allow"),
+            acp::PermissionOptionKind::AllowOnce,
+        ));
+    assert!(
+        late_send.is_err(),
+        "response receiver should have been dropped after settings-driven auto-resolve"
+    );
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let message = completion.messages.last().unwrap();
+    let result = message
+        .content
+        .iter()
+        .find_map(|c| match c {
+            language_model::MessageContent::ToolResult(r) => Some(r),
+            _ => None,
+        })
+        .expect("expected a tool result");
+    assert!(!result.is_error, "tool should have been auto-allowed");
+}
+
+/// Externally adding a deny rule to settings dismisses a pending
+/// authorization prompt and returns the tool call as denied.
+#[gpui::test]
+async fn test_external_deny_rule_resolves_pending_authorization(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(ToolRequiringPermission);
+            thread.send(UserMessageId::new(), ["abc"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_1".into(),
+            name: ToolRequiringPermission::NAME.into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    let tool_call_auth = next_tool_call_authorization(&mut events).await;
+
+    // Simulate the user adding a deny default for the tool.
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            ToolRequiringPermission::NAME.into(),
+            agent_settings::ToolRules {
+                default: Some(settings::ToolPermissionMode::Deny),
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+    cx.run_until_parked();
+
+    let late_send = tool_call_auth
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("allow"),
+            acp::PermissionOptionKind::AllowOnce,
+        ));
+    assert!(
+        late_send.is_err(),
+        "response receiver should have been dropped after deny auto-resolve"
+    );
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let message = completion.messages.last().unwrap();
+    let result = message
+        .content
+        .iter()
+        .find_map(|c| match c {
+            language_model::MessageContent::ToolResult(r) => Some(r),
+            _ => None,
+        })
+        .expect("expected a tool result");
+    assert!(
+        result.is_error,
+        "tool should have been auto-denied by the new rule"
+    );
+}
+
+/// Unrelated settings changes must not spuriously resolve pending
+/// authorizations: if the re-check still returns `Confirm`, the prompt
+/// stays visible and waits for the user.
+#[gpui::test]
+async fn test_unrelated_settings_change_does_not_resolve_pending_authorization(
+    cx: &mut TestAppContext,
+) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(ToolRequiringPermission);
+            thread.send(UserMessageId::new(), ["abc"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_1".into(),
+            name: ToolRequiringPermission::NAME.into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    let tool_call_auth = next_tool_call_authorization(&mut events).await;
+
+    // Touch SettingsStore with a change that doesn't affect tool
+    // permissions; the pending authorization should remain pending.
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.single_file_review = !settings.single_file_review;
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+    cx.run_until_parked();
+
+    // The user still has to act — resolve with an Allow Once.
+    tool_call_auth
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("allow"),
+            acp::PermissionOptionKind::AllowOnce,
+        ))
+        .expect("response receiver should still be alive");
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let message = completion.messages.last().unwrap();
+    let result = message
+        .content
+        .iter()
+        .find_map(|c| match c {
+            language_model::MessageContent::ToolResult(r) => Some(r),
+            _ => None,
+        })
+        .expect("expected a tool result");
+    assert!(!result.is_error);
+}
+
+/// Approving one pending tool call with "Always for <tool A>" must not
+/// dismiss a sibling pending authorization for a *different* tool: the
+/// persisted rule is scoped to tool A, so tool B's prompt stays visible
+/// and waits for the user.
+#[gpui::test]
+async fn test_always_allow_does_not_resolve_unrelated_tool_authorization(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.add_tool(ToolRequiringPermission);
+            thread.add_tool(ToolRequiringPermission2);
+            thread.send(UserMessageId::new(), ["abc"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Two parallel tool calls, each for a distinct tool with its own
+    // permission scope.
+    for (id, name) in [
+        ("tool_id_1", ToolRequiringPermission::NAME),
+        ("tool_id_2", ToolRequiringPermission2::NAME),
+    ] {
+        fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+            LanguageModelToolUse {
+                id: id.into(),
+                name: name.into(),
+                raw_input: "{}".into(),
+                input: json!({}),
+                is_input_complete: true,
+                thought_signature: None,
+            },
+        ));
+    }
+    fake_model.end_last_completion_stream();
+
+    let auth_a = next_tool_call_authorization(&mut events).await;
+    let auth_b = next_tool_call_authorization(&mut events).await;
+
+    // Match prompts back to their originating tools via the authorization
+    // context so the test doesn't depend on scheduling order.
+    let (auth_for_tool_1, auth_for_tool_2) = {
+        let a_name = auth_a
+            .context
+            .as_ref()
+            .expect("settings-driven authorization must carry a context")
+            .tool_name
+            .clone();
+        if a_name == ToolRequiringPermission::NAME {
+            (auth_a, auth_b)
+        } else {
+            (auth_b, auth_a)
+        }
+    };
+
+    // Approve tool 1 with "always allow". Only tool 1's rule is persisted.
+    auth_for_tool_1
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("always_allow:tool_requiring_permission"),
+            acp::PermissionOptionKind::AllowAlways,
+        ))
+        .unwrap();
+    cx.run_until_parked();
+
+    // Tool 2's receiver must still be alive: its permission is unrelated
+    // to the rule that was just added, so its prompt stays pending.
+    auth_for_tool_2
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("allow"),
+            acp::PermissionOptionKind::AllowOnce,
+        ))
+        .expect("tool 2's response receiver should still be alive");
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let message = completion.messages.last().unwrap();
+    let results: Vec<_> = message
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            language_model::MessageContent::ToolResult(r) => Some(r),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        results.len(),
+        2,
+        "both tool calls should have produced results"
+    );
+    assert!(
+        results.iter().all(|r| !r.is_error),
+        "both results should be successful, got: {:?}",
+        results
+    );
+}
+
 #[gpui::test]
 async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
     init_test(cx);
@@ -6680,7 +7183,7 @@ async fn test_streaming_tool_error_breaks_stream_loop_immediately(cx: &mut TestA
                         tool_use_id: tool_use.id.clone(),
                         tool_name: tool_use.name,
                         is_error: true,
-                        content: "failed".into(),
+                        content: vec!["failed".into()],
                         output: Some("failed".into()),
                     }
                 )],
@@ -6791,14 +7294,14 @@ async fn test_streaming_tool_error_waits_for_prior_tools_to_complete(cx: &mut Te
                         tool_use_id: second_tool_use.id.clone(),
                         tool_name: second_tool_use.name,
                         is_error: true,
-                        content: "failed".into(),
+                        content: vec!["failed".into()],
                         output: Some("failed".into()),
                     }),
                     language_model::MessageContent::ToolResult(LanguageModelToolResult {
                         tool_use_id: first_tool_use.id.clone(),
                         tool_name: first_tool_use.name,
                         is_error: false,
-                        content: "hello world".into(),
+                        content: vec!["hello world".into()],
                         output: Some("hello world".into()),
                     }),
                 ],

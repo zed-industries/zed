@@ -94,18 +94,25 @@ pub fn init(cx: &mut App) {
 fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
     let store = ThreadMetadataStore::global(cx);
     let db = store.read(cx).db.clone();
+    let thread_store = ThreadStore::global(cx);
+    let thread_store_ready = thread_store.read(cx).reload_task();
 
     cx.spawn(async move |cx| {
+        // Wait for `ThreadStore`'s initial reload to complete. Without this,
+        // reading `entries()` races with the store's async population from
+        // disk and usually observes an empty iterator, silently skipping the
+        // migration on every launch. The regression test
+        // `test_migration_awaits_thread_store_reload` pins this behavior.
+        thread_store_ready.await;
+
         let existing_list = db.list()?;
-        let is_first_migration = existing_list.is_empty();
         let existing_session_ids: HashSet<Arc<str>> = existing_list
             .into_iter()
             .filter_map(|m| m.session_id.map(|s| s.0))
             .collect();
 
-        let mut to_migrate = store.read_with(cx, |_store, cx| {
-            ThreadStore::global(cx)
-                .read(cx)
+        let mut to_migrate = thread_store.read_with(cx, |store, _cx| {
+            store
                 .entries()
                 .filter_map(|entry| {
                     if existing_session_ids.contains(&entry.id.0) {
@@ -138,24 +145,26 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
             return anyhow::Ok(());
         }
 
-        // On the first migration (no entries in DB yet), keep the 5 most
-        // recent threads per project unarchived.
-        if is_first_migration {
-            let mut per_project: HashMap<PathList, Vec<&mut ThreadMetadata>> = HashMap::default();
-            for entry in &mut to_migrate {
-                if entry.worktree_paths.is_empty() {
-                    continue;
-                }
-                per_project
-                    .entry(entry.worktree_paths.folder_path_list().clone())
-                    .or_default()
-                    .push(entry);
+        // For each batch of newly-migrated threads, keep the 5 most recent
+        // per project unarchived. Previously this was gated on
+        // `is_first_migration` (an empty `sidebar_threads`), which meant any
+        // subsequent batch of newly-discovered legacy threads got migrated as
+        // fully archived. Running the rescue per-batch keeps the behavior
+        // idempotent across partial migrations and re-runs.
+        let mut per_project: HashMap<PathList, Vec<&mut ThreadMetadata>> = HashMap::default();
+        for entry in &mut to_migrate {
+            if entry.worktree_paths.is_empty() {
+                continue;
             }
-            for entries in per_project.values_mut() {
-                entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-                for entry in entries.iter_mut().take(5) {
-                    entry.archived = false;
-                }
+            per_project
+                .entry(entry.worktree_paths.folder_path_list().clone())
+                .or_default()
+                .push(entry);
+        }
+        for entries in per_project.values_mut() {
+            entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+            for entry in entries.iter_mut().take(5) {
+                entry.archived = false;
             }
         }
 
@@ -460,8 +469,8 @@ pub struct ThreadMetadataStore {
     threads_by_session: HashMap<acp::SessionId, ThreadId>,
     reload_task: Option<Shared<Task<()>>>,
     conversation_subscriptions: HashMap<gpui::EntityId, Subscription>,
-    pending_thread_ops_tx: smol::channel::Sender<DbOperation>,
-    in_flight_archives: HashMap<ThreadId, (Task<()>, smol::channel::Sender<()>)>,
+    pending_thread_ops_tx: async_channel::Sender<DbOperation>,
+    in_flight_archives: HashMap<ThreadId, (Task<()>, async_channel::Sender<()>)>,
     _db_operations_task: Task<()>,
 }
 
@@ -517,7 +526,7 @@ impl ThreadMetadataStore {
     #[cfg(any(test, feature = "test-support"))]
     pub fn init_global(cx: &mut App) {
         let db_name = TestMetadataDbName::global(cx);
-        let db = smol::block_on(db::open_test_db::<ThreadMetadataDb>(&db_name));
+        let db = gpui::block_on(db::open_test_db::<ThreadMetadataDb>(&db_name));
         let thread_store = cx.new(|cx| Self::new(ThreadMetadataDb(db), cx));
         cx.set_global(GlobalThreadMetadataStore(thread_store));
     }
@@ -777,7 +786,7 @@ impl ThreadMetadataStore {
     pub fn archive(
         &mut self,
         thread_id: ThreadId,
-        archive_job: Option<(Task<()>, smol::channel::Sender<()>)>,
+        archive_job: Option<(Task<()>, async_channel::Sender<()>)>,
         cx: &mut Context<Self>,
     ) {
         self.update_archived(thread_id, true, cx);
@@ -785,6 +794,8 @@ impl ThreadMetadataStore {
         if let Some(job) = archive_job {
             self.in_flight_archives.insert(thread_id, job);
         }
+
+        cx.emit(ThreadMetadataStoreEvent::ThreadArchived(thread_id));
     }
 
     pub fn unarchive(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
@@ -1098,7 +1109,7 @@ impl ThreadMetadataStore {
         })
         .detach();
 
-        let (tx, rx) = smol::channel::unbounded();
+        let (tx, rx) = async_channel::unbounded();
         let _db_operations_task = cx.background_spawn({
             let db = db.clone();
             async move {
@@ -1227,6 +1238,13 @@ impl ThreadMetadataStore {
 }
 
 impl Global for ThreadMetadataStore {}
+
+#[derive(Clone, Debug)]
+pub enum ThreadMetadataStoreEvent {
+    ThreadArchived(ThreadId),
+}
+
+impl gpui::EventEmitter<ThreadMetadataStoreEvent> for ThreadMetadataStore {}
 
 struct ThreadMetadataDb(ThreadSafeConnection);
 
@@ -1769,7 +1787,7 @@ mod tests {
 
     fn clear_thread_metadata_remote_connection_backfill(cx: &mut TestAppContext) {
         let kvp = cx.update(|cx| KeyValueStore::global(cx));
-        smol::block_on(kvp.delete_kvp("thread-metadata-remote-connection-backfill".to_string()))
+        gpui::block_on(kvp.delete_kvp("thread-metadata-remote-connection-backfill".to_string()))
             .unwrap();
     }
 
@@ -1792,7 +1810,7 @@ mod tests {
         let thread = std::thread::current();
         let test_name = thread.name().unwrap_or("unknown_test");
         let db_name = format!("THREAD_METADATA_DB_{}", test_name);
-        let db = ThreadMetadataDb(smol::block_on(db::open_test_db::<ThreadMetadataDb>(
+        let db = ThreadMetadataDb(gpui::block_on(db::open_test_db::<ThreadMetadataDb>(
             &db_name,
         )));
 
@@ -2087,16 +2105,20 @@ mod tests {
         assert!(migrated_session_ids.iter().any(|s| s == "b-session-0"));
         assert!(migrated_session_ids.iter().any(|s| s == "projectless"));
 
-        let migrated_entries: Vec<_> = list
+        // The per-batch top-5 rescue applies: each migrated thread that has
+        // a project becomes the most-recent-in-its-project within this batch
+        // and is unarchived. Only the projectless thread stays archived,
+        // because the rescue only applies to threads with a folder path.
+        let migrated_by_session: HashMap<String, &ThreadMetadata> = list
             .iter()
-            .filter(|metadata| {
-                !metadata
-                    .session_id
-                    .as_ref()
-                    .is_some_and(|s| s.0.as_ref() == "a-session-0")
+            .filter_map(|metadata| {
+                let session_id = metadata.session_id.as_ref()?.0.to_string();
+                (session_id != "a-session-0").then_some((session_id, metadata))
             })
             .collect();
-        assert!(migrated_entries.iter().all(|metadata| metadata.archived));
+        assert!(!migrated_by_session["a-session-1"].archived);
+        assert!(!migrated_by_session["b-session-0"].archived);
+        assert!(migrated_by_session["projectless"].archived);
     }
 
     #[gpui::test]
@@ -2323,6 +2345,71 @@ mod tests {
             .collect();
         assert_eq!(project_b_entries.len(), 3);
         assert!(project_b_entries.iter().all(|m| !m.archived));
+    }
+
+    // Regression test for the race between `ThreadStore::reload` and
+    // `migrate_thread_metadata`. `ThreadStore::new` constructs with an empty
+    // in-memory cache and kicks off `reload()` as a fire-and-forget task. If
+    // `migrate_thread_metadata` reads `ThreadStore::entries()` before that
+    // reload completes, it observes an empty iterator and no-ops, even though
+    // the on-disk legacy DB has threads to migrate. In production this
+    // manifests as "my old threads disappeared after upgrading": the threads
+    // are still in the legacy `threads.db`, but never make it into
+    // `sidebar_threads`, so the new sidebar UI can't see them.
+    #[gpui::test]
+    async fn test_migration_awaits_thread_store_reload(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Seed the legacy threads DB via the ThreadStore (the only public
+        // save path in this crate), then park to make sure the rows are on
+        // disk and `ThreadStore`'s in-memory cache is populated.
+        let project_paths = PathList::new(&[Path::new("/project-a")]);
+        let now = Utc::now();
+        for i in 0..3 {
+            let save_task = cx.update(|cx| {
+                let thread_store = ThreadStore::global(cx);
+                let session_id = format!("legacy-session-{i}");
+                let title = format!("Legacy Thread {i}");
+                let updated_at = now + chrono::Duration::seconds(i as i64);
+                let paths = project_paths.clone();
+                thread_store.update(cx, |store, cx| {
+                    store.save_thread(
+                        acp::SessionId::new(session_id),
+                        make_db_thread(&title, updated_at),
+                        paths,
+                        cx,
+                    )
+                })
+            });
+            save_task.await.unwrap();
+            cx.run_until_parked();
+        }
+
+        // Re-initialize `ThreadStore` so its in-memory cache is freshly empty
+        // and a new async `reload` task is kicked off. This reproduces the
+        // cold-boot state where the migration runs before the store has
+        // populated itself from disk. The on-disk legacy DB still has the
+        // three threads we saved above.
+        cx.update(|cx| ThreadStore::init_global(cx));
+
+        // Crucially: do NOT run_until_parked here. If we parked, the reload
+        // would complete, ThreadStore::entries() would return the 3 rows, and
+        // the race would be hidden. We want the migration to run with
+        // `ThreadStore::entries()` still returning an empty iterator.
+        run_store_migrations(cx);
+
+        let list = cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.read(cx).entries().cloned().collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            list.len(),
+            3,
+            "Expected migration to pick up all 3 legacy threads even when \
+             ThreadStore::reload has not yet completed, but got {} entries",
+            list.len()
+        );
     }
 
     #[gpui::test]

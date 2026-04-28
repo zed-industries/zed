@@ -666,7 +666,7 @@ fn tool_result(
         tool_use_id: LanguageModelToolUseId::from(id.into()),
         tool_name: name.into(),
         is_error: false,
-        content: LanguageModelToolResultContent::Text(result.into()),
+        content: vec![LanguageModelToolResultContent::Text(result.into())],
         output: None,
     })
 }
@@ -729,7 +729,7 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
             let jitter = retry_after.mul_f64(rand::rng().random_range(0.0..1.0));
             eprintln!("Attempt #{attempt}: Retry after {retry_after:?} + jitter of {jitter:?}");
             #[allow(clippy::disallowed_methods)]
-            smol::Timer::after(retry_after + jitter).await;
+            async_io::Timer::after(retry_after + jitter).await;
         } else {
             return response;
         }

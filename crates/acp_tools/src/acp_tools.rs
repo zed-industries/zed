@@ -1,133 +1,28 @@
-use std::{
-    collections::{HashSet, VecDeque},
-    fmt::Display,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::{collections::HashSet, fmt::Display, rc::Rc, sync::Arc};
 
 use agent_client_protocol::schema as acp;
+use agent_servers::{AcpDebugMessage, AcpDebugMessageContent, AcpDebugMessageDirection};
+use agent_ui::agent_connection_store::AgentConnectionStatus;
+use agent_ui::{Agent, AgentConnectionStore, AgentPanel};
 use collections::HashMap;
 use gpui::{
-    App, Empty, Entity, EventEmitter, FocusHandle, Focusable, Global, ListAlignment, ListState,
-    StyleRefinement, Subscription, Task, TextStyleRefinement, Window, actions, list, prelude::*,
+    App, Empty, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, ListState,
+    SharedString, StyleRefinement, Subscription, Task, TextStyleRefinement, WeakEntity, Window,
+    actions, list, prelude::*,
 };
 use language::LanguageRegistry;
 use markdown::{CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use project::{AgentId, Project};
 use settings::Settings;
 use theme_settings::ThemeSettings;
-use ui::{CopyButton, Tooltip, WithScrollbar, prelude::*};
+use ui::{
+    ContextMenu, CopyButton, DropdownMenu, DropdownStyle, IconPosition, Tooltip, WithScrollbar,
+    prelude::*,
+};
 use util::ResultExt as _;
 use workspace::{
     Item, ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum StreamMessageDirection {
-    Incoming,
-    Outgoing,
-    /// Lines captured from the agent's stderr. These are not part of the
-    /// JSON-RPC protocol, but agents often emit useful diagnostics there.
-    Stderr,
-}
-
-#[derive(Clone)]
-pub enum StreamMessageContent {
-    Request {
-        id: acp::RequestId,
-        method: Arc<str>,
-        params: Option<serde_json::Value>,
-    },
-    Response {
-        id: acp::RequestId,
-        result: Result<Option<serde_json::Value>, acp::Error>,
-    },
-    Notification {
-        method: Arc<str>,
-        params: Option<serde_json::Value>,
-    },
-    /// A raw stderr line from the agent process.
-    Stderr { line: Arc<str> },
-}
-
-#[derive(Clone)]
-pub struct StreamMessage {
-    pub direction: StreamMessageDirection,
-    pub message: StreamMessageContent,
-}
-
-impl StreamMessage {
-    /// Build a `StreamMessage` from a raw line captured off the transport.
-    ///
-    /// For `Stderr`, the line is wrapped as-is (no JSON parsing). For
-    /// `Incoming`/`Outgoing`, the line is parsed as JSON-RPC; returns `None`
-    /// if it doesn't look like a valid JSON-RPC message.
-    pub fn from_raw_line(direction: StreamMessageDirection, line: &str) -> Option<Self> {
-        if direction == StreamMessageDirection::Stderr {
-            return Some(StreamMessage {
-                direction,
-                message: StreamMessageContent::Stderr {
-                    line: Arc::from(line),
-                },
-            });
-        }
-
-        let value: serde_json::Value = serde_json::from_str(line).ok()?;
-        let obj = value.as_object()?;
-
-        let parsed_id = obj
-            .get("id")
-            .map(|raw| serde_json::from_value::<acp::RequestId>(raw.clone()));
-
-        let message = if let Some(method) = obj.get("method").and_then(|m| m.as_str()) {
-            match parsed_id {
-                Some(Ok(id)) => StreamMessageContent::Request {
-                    id,
-                    method: method.into(),
-                    params: obj.get("params").cloned(),
-                },
-                Some(Err(err)) => {
-                    log::warn!("Skipping JSON-RPC message with unparsable id: {err}");
-                    return None;
-                }
-                None => StreamMessageContent::Notification {
-                    method: method.into(),
-                    params: obj.get("params").cloned(),
-                },
-            }
-        } else if let Some(parsed_id) = parsed_id {
-            let id = match parsed_id {
-                Ok(id) => id,
-                Err(err) => {
-                    log::warn!("Skipping JSON-RPC response with unparsable id: {err}");
-                    return None;
-                }
-            };
-            if let Some(error) = obj.get("error") {
-                let acp_err =
-                    serde_json::from_value::<acp::Error>(error.clone()).unwrap_or_else(|err| {
-                        log::warn!("Failed to deserialize ACP error: {err}");
-                        acp::Error::internal_error().data(error.to_string())
-                    });
-                StreamMessageContent::Response {
-                    id,
-                    result: Err(acp_err),
-                }
-            } else {
-                StreamMessageContent::Response {
-                    id,
-                    result: Ok(obj.get("result").cloned()),
-                }
-            }
-        } else {
-            return None;
-        };
-
-        Some(StreamMessage { direction, message })
-    }
-}
 
 actions!(dev, [OpenAcpLogs]);
 
@@ -135,8 +30,17 @@ pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace.register_action(|workspace, _: &OpenAcpLogs, window, cx| {
-                let acp_tools =
-                    Box::new(cx.new(|cx| AcpTools::new(workspace.project().clone(), cx)));
+                let connection_store = workspace
+                    .panel::<AgentPanel>(cx)
+                    .map(|panel| panel.read(cx).connection_store().clone());
+                let acp_tools = Box::new(cx.new(|cx| {
+                    AcpTools::new(
+                        workspace.weak_handle(),
+                        workspace.project().clone(),
+                        connection_store,
+                        cx,
+                    )
+                }));
                 workspace.add_item_to_active_pane(acp_tools, None, true, window, cx);
             });
         },
@@ -144,207 +48,21 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-struct GlobalAcpConnectionRegistry(Entity<AcpConnectionRegistry>);
-
-impl Global for GlobalAcpConnectionRegistry {}
-
-/// A raw line captured from the transport (or from stderr), tagged with
-/// direction. Deserialization into [`StreamMessage`] happens on the
-/// registry's foreground task so the ring buffer can be replayed to late
-/// subscribers.
-struct RawStreamLine {
-    direction: StreamMessageDirection,
-    line: Arc<str>,
-}
-
-/// Handle to an ACP connection's log tap. Passed back by
-/// [`AcpConnectionRegistry::set_active_connection`] so that the connection
-/// can publish transport and stderr lines without knowing anything about
-/// the logs panel's channel.
-///
-/// The tap carries a shared `enabled` flag that the registry flips on when
-/// the first observer subscribes. Until then, `emit_*` methods are
-/// effectively free: they check an atomic and return. This keeps the
-/// logs panel's memory footprint opt-in — if no one ever opens it, the
-/// transport never allocates a line or pushes a channel item.
-#[derive(Clone)]
-pub struct AcpLogTap {
-    enabled: Arc<AtomicBool>,
-    sender: smol::channel::Sender<RawStreamLine>,
-}
-
-impl AcpLogTap {
-    fn is_enabled(&self) -> bool {
-        self.enabled.load(Ordering::Relaxed)
-    }
-
-    fn enable(&self) {
-        self.enabled.store(true, Ordering::Relaxed);
-    }
-
-    fn emit(&self, direction: StreamMessageDirection, line: &str) {
-        if !self.is_enabled() {
-            return;
-        }
-        self.sender
-            .try_send(RawStreamLine {
-                direction,
-                line: Arc::from(line),
-            })
-            .log_err();
-    }
-
-    /// Record a line read from the agent's stdout.
-    pub fn emit_incoming(&self, line: &str) {
-        self.emit(StreamMessageDirection::Incoming, line);
-    }
-
-    /// Record a line written to the agent's stdin.
-    pub fn emit_outgoing(&self, line: &str) {
-        self.emit(StreamMessageDirection::Outgoing, line);
-    }
-
-    /// Record a line read from the agent's stderr.
-    pub fn emit_stderr(&self, line: &str) {
-        self.emit(StreamMessageDirection::Stderr, line);
-    }
-}
-
-/// Maximum number of messages retained in the registry's backlog.
-///
-/// Mirrors `MAX_STORED_LOG_ENTRIES` in the LSP log store, so that opening the
-/// ACP logs panel after a session has been running for a while still shows
-/// meaningful history.
-const MAX_BACKLOG_MESSAGES: usize = 2000;
-
-#[derive(Default)]
-pub struct AcpConnectionRegistry {
-    active_agent_id: Option<AgentId>,
-    generation: u64,
-    /// Bounded ring buffer of every message observed on the current connection.
-    /// When a new connection is set, this is cleared.
-    backlog: VecDeque<StreamMessage>,
-    subscribers: Vec<smol::channel::Sender<StreamMessage>>,
-    /// The tap handed to the currently active connection, so the registry
-    /// can flip its `enabled` flag the first time someone subscribes.
-    active_tap: Option<AcpLogTap>,
-    _broadcast_task: Option<Task<()>>,
-}
-
-impl AcpConnectionRegistry {
-    pub fn default_global(cx: &mut App) -> Entity<Self> {
-        if cx.has_global::<GlobalAcpConnectionRegistry>() {
-            cx.global::<GlobalAcpConnectionRegistry>().0.clone()
-        } else {
-            let registry = cx.new(|_cx| AcpConnectionRegistry::default());
-            cx.set_global(GlobalAcpConnectionRegistry(registry.clone()));
-            registry
-        }
-    }
-
-    /// Register a new active connection and return an [`AcpLogTap`] that
-    /// the connection should hand to its transport + stderr readers.
-    ///
-    /// The tap starts out disabled: transport lines are dropped cheaply
-    /// until someone subscribes via [`Self::subscribe`], at which point
-    /// the tap is flipped on and subsequent lines are broadcast to all
-    /// current and future subscribers.
-    pub fn set_active_connection(
-        &mut self,
-        agent_id: AgentId,
-        cx: &mut Context<Self>,
-    ) -> AcpLogTap {
-        let (sender, raw_rx) = smol::channel::unbounded::<RawStreamLine>();
-        let tap = AcpLogTap {
-            enabled: Arc::new(AtomicBool::new(false)),
-            sender,
-        };
-
-        self.active_agent_id = Some(agent_id);
-        self.generation += 1;
-        self.backlog.clear();
-        self.subscribers.clear();
-        self.active_tap = Some(tap.clone());
-
-        self._broadcast_task = Some(cx.spawn(async move |this, cx| {
-            while let Ok(raw) = raw_rx.recv().await {
-                this.update(cx, |this, _cx| {
-                    let Some(message) = StreamMessage::from_raw_line(raw.direction, &raw.line)
-                    else {
-                        return;
-                    };
-
-                    if this.backlog.len() == MAX_BACKLOG_MESSAGES {
-                        this.backlog.pop_front();
-                    }
-                    this.backlog.push_back(message.clone());
-
-                    this.subscribers.retain(|sender| !sender.is_closed());
-                    for sender in &this.subscribers {
-                        sender.try_send(message.clone()).log_err();
-                    }
-                })
-                .log_err();
-            }
-
-            // The transport closed — clear state so observers (e.g. the ACP
-            // logs tab) can transition back to the disconnected state.
-            this.update(cx, |this, cx| {
-                this.active_agent_id = None;
-                this.subscribers.clear();
-                this.active_tap = None;
-                cx.notify();
-            })
-            .log_err();
-        }));
-
-        cx.notify();
-        tap
-    }
-
-    /// Clear the retained message history for the current connection and force
-    /// watchers to resubscribe so their local correlation state is reset too.
-    pub fn clear_messages(&mut self, cx: &mut Context<Self>) {
-        self.backlog.clear();
-        self.generation += 1;
-        self.subscribers.clear();
-        cx.notify();
-    }
-
-    /// Subscribe to messages on the current connection.
-    ///
-    /// Returns the existing backlog (already-observed messages) together with
-    /// a receiver for new messages. The caller is responsible for flushing the
-    /// backlog into its local state before draining the receiver, so that no
-    /// messages are dropped between the snapshot and live subscription.
-    ///
-    /// The first subscription enables the connection's log tap; prior
-    /// messages are therefore not available. This is intentional: the tap
-    /// is opt-in so that the default case (no one ever opens the ACP logs
-    /// panel) performs zero per-message bookkeeping.
-    pub fn subscribe(&mut self) -> (Vec<StreamMessage>, smol::channel::Receiver<StreamMessage>) {
-        if let Some(tap) = &self.active_tap {
-            tap.enable();
-        }
-        let backlog = self.backlog.iter().cloned().collect();
-        let (sender, receiver) = smol::channel::unbounded();
-        self.subscribers.push(sender);
-        (backlog, receiver)
-    }
-}
-
 struct AcpTools {
+    workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     focus_handle: FocusHandle,
     expanded: HashSet<usize>,
-    watched_connection: Option<WatchedConnection>,
-    connection_registry: Entity<AcpConnectionRegistry>,
-    _subscription: Subscription,
+    watched_connections: HashMap<AgentId, WatchedConnection>,
+    selected_connection: Option<AgentId>,
+    connection_store: Option<Entity<AgentConnectionStore>>,
+    _workspace_subscription: Option<Subscription>,
+    _connection_store_subscription: Option<Subscription>,
 }
 
 struct WatchedConnection {
     agent_id: AgentId,
-    generation: u64,
+    connection: Rc<agent_servers::AcpConnection>,
     messages: Vec<WatchedConnectionMessage>,
     list_state: ListState,
     incoming_request_methods: HashMap<acp::RequestId, Arc<str>>,
@@ -353,156 +71,278 @@ struct WatchedConnection {
 }
 
 impl AcpTools {
-    fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
-        let connection_registry = AcpConnectionRegistry::default_global(cx);
-
-        let subscription = cx.observe(&connection_registry, |this, _, cx| {
-            this.update_connection(cx);
-            cx.notify();
+    fn new(
+        workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
+        connection_store: Option<Entity<AgentConnectionStore>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let workspace_subscription = workspace.upgrade().map(|workspace| {
+            cx.observe(&workspace, |this, _, cx| {
+                this.update_connection_store(cx);
+            })
         });
 
-        let mut this = Self {
+        let mut acp_tools = Self {
+            workspace,
             project,
             focus_handle: cx.focus_handle(),
             expanded: HashSet::default(),
-            watched_connection: None,
-            connection_registry,
-            _subscription: subscription,
+            watched_connections: HashMap::default(),
+            selected_connection: None,
+            connection_store: None,
+            _workspace_subscription: workspace_subscription,
+            _connection_store_subscription: None,
         };
-        this.update_connection(cx);
-        this
+        acp_tools.set_connection_store(connection_store, cx);
+        acp_tools
     }
 
-    fn update_connection(&mut self, cx: &mut Context<Self>) {
-        let (generation, agent_id) = {
-            let registry = self.connection_registry.read(cx);
-            (registry.generation, registry.active_agent_id.clone())
-        };
-
-        let Some(agent_id) = agent_id else {
-            self.watched_connection = None;
-            self.expanded.clear();
+    fn set_connection_store(
+        &mut self,
+        connection_store: Option<Entity<AgentConnectionStore>>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.connection_store == connection_store {
             return;
-        };
-
-        if let Some(watched) = self.watched_connection.as_ref() {
-            if watched.generation == generation {
-                return;
-            }
         }
 
-        self.expanded.clear();
+        self.connection_store = connection_store.clone();
+        self._connection_store_subscription = connection_store.as_ref().map(|connection_store| {
+            cx.observe(connection_store, |this, _, cx| {
+                this.refresh_connections(cx);
+            })
+        });
+        self.refresh_connections(cx);
+    }
 
-        let (backlog, messages_rx) = self
-            .connection_registry
-            .update(cx, |registry, _cx| registry.subscribe());
+    fn update_connection_store(&mut self, cx: &mut Context<Self>) {
+        let connection_store = self.workspace.upgrade().and_then(|workspace| {
+            workspace
+                .read(cx)
+                .panel::<AgentPanel>(cx)
+                .map(|panel| panel.read(cx).connection_store().clone())
+        });
+        self.set_connection_store(connection_store, cx);
+    }
 
-        let task = cx.spawn(async move |this, cx| {
-            while let Ok(message) = messages_rx.recv().await {
-                this.update(cx, |this, cx| {
-                    this.push_stream_message(message, cx);
+    fn refresh_connections(&mut self, cx: &mut Context<Self>) {
+        let active_connections = self
+            .connection_store
+            .as_ref()
+            .map(|connection_store| connection_store.read(cx).active_acp_connections(cx))
+            .unwrap_or_default();
+
+        self.watched_connections
+            .retain(|agent_id, watched_connection| {
+                active_connections.iter().any(|active_connection| {
+                    active_connection.agent_id == *agent_id
+                        && Rc::ptr_eq(
+                            &active_connection.connection,
+                            &watched_connection.connection,
+                        )
                 })
-                .log_err();
-            }
-        });
+            });
 
-        self.watched_connection = Some(WatchedConnection {
-            agent_id,
-            generation,
-            messages: vec![],
-            list_state: ListState::new(0, ListAlignment::Bottom, px(2048.)),
-            incoming_request_methods: HashMap::default(),
-            outgoing_request_methods: HashMap::default(),
-            _task: task,
-        });
-
-        for message in backlog {
-            self.push_stream_message(message, cx);
-        }
-    }
-
-    fn push_stream_message(&mut self, stream_message: StreamMessage, cx: &mut Context<Self>) {
-        let Some(connection) = self.watched_connection.as_mut() else {
-            return;
-        };
-        let language_registry = self.project.read(cx).languages().clone();
-        let index = connection.messages.len();
-
-        let (request_id, method, message_type, params) = match stream_message.message {
-            StreamMessageContent::Request { id, method, params } => {
-                let method_map = match stream_message.direction {
-                    StreamMessageDirection::Incoming => &mut connection.incoming_request_methods,
-                    StreamMessageDirection::Outgoing => &mut connection.outgoing_request_methods,
-                    // Stderr lines never carry request/response correlation.
-                    StreamMessageDirection::Stderr => return,
-                };
-
-                method_map.insert(id.clone(), method.clone());
-                (Some(id), method.into(), MessageType::Request, Ok(params))
-            }
-            StreamMessageContent::Response { id, result } => {
-                let method_map = match stream_message.direction {
-                    StreamMessageDirection::Incoming => &mut connection.outgoing_request_methods,
-                    StreamMessageDirection::Outgoing => &mut connection.incoming_request_methods,
-                    StreamMessageDirection::Stderr => return,
-                };
-
-                if let Some(method) = method_map.remove(&id) {
-                    (Some(id), method.into(), MessageType::Response, result)
-                } else {
-                    (
-                        Some(id),
-                        "[unrecognized response]".into(),
-                        MessageType::Response,
-                        result,
+        for active_connection in active_connections {
+            if self
+                .watched_connections
+                .get(&active_connection.agent_id)
+                .is_some_and(|watched_connection| {
+                    Rc::ptr_eq(
+                        &active_connection.connection,
+                        &watched_connection.connection,
                     )
-                }
+                })
+            {
+                continue;
             }
-            StreamMessageContent::Notification { method, params } => {
-                (None, method.into(), MessageType::Notification, Ok(params))
-            }
-            StreamMessageContent::Stderr { line } => {
-                // Stderr is rendered as plain text inline with JSON-RPC traffic,
-                // using `stderr` as the pseudo-method name so it shows up in the
-                // header the same way real methods do.
-                (
-                    None,
-                    "stderr".into(),
-                    MessageType::Stderr,
-                    Ok(Some(serde_json::Value::String(line.to_string()))),
-                )
-            }
-        };
 
-        let message = WatchedConnectionMessage {
-            name: method,
-            message_type,
-            request_id,
-            direction: stream_message.direction,
-            collapsed_params_md: match params.as_ref() {
-                Ok(params) => params
-                    .as_ref()
-                    .map(|params| collapsed_params_md(params, &language_registry, cx)),
-                Err(err) => {
-                    if let Ok(err) = &serde_json::to_value(err) {
-                        Some(collapsed_params_md(&err, &language_registry, cx))
-                    } else {
-                        None
+            let (backlog, messages_rx) = active_connection.connection.subscribe_debug_messages();
+            let agent_id = active_connection.agent_id.clone();
+            let task = cx.spawn({
+                let agent_id = agent_id.clone();
+                async move |this, cx| {
+                    while let Ok(message) = messages_rx.recv().await {
+                        this.update(cx, |this, cx| {
+                            this.push_stream_message(&agent_id, message, cx);
+                        })
+                        .log_err();
                     }
                 }
-            },
+            });
 
-            expanded_params_md: None,
-            params,
+            let mut watched_connection = WatchedConnection {
+                agent_id: agent_id.clone(),
+                messages: Vec::new(),
+                list_state: ListState::new(0, ListAlignment::Bottom, px(2048.)),
+                connection: active_connection.connection.clone(),
+                incoming_request_methods: HashMap::default(),
+                outgoing_request_methods: HashMap::default(),
+                _task: task,
+            };
+
+            for message in backlog {
+                push_stream_message_for_connection(
+                    &mut watched_connection,
+                    &self.project,
+                    message,
+                    cx,
+                );
+            }
+
+            self.watched_connections
+                .insert(agent_id, watched_connection);
+        }
+
+        self.selected_connection = self
+            .selected_connection
+            .clone()
+            .filter(|agent_id| self.should_keep_selected_connection(agent_id, cx))
+            .or_else(|| self.watched_connections.keys().next().cloned());
+        self.expanded.clear();
+        cx.notify();
+    }
+
+    fn should_keep_selected_connection(&self, agent_id: &AgentId, cx: &App) -> bool {
+        self.watched_connections.contains_key(agent_id)
+            || self
+                .connection_store
+                .as_ref()
+                .is_some_and(|connection_store| {
+                    connection_store
+                        .read(cx)
+                        .connection_status(&Agent::from(agent_id.clone()), cx)
+                        != AgentConnectionStatus::Disconnected
+                })
+    }
+
+    fn select_connection(&mut self, agent_id: Option<AgentId>, cx: &mut Context<Self>) {
+        if self.selected_connection == agent_id {
+            return;
+        }
+
+        self.selected_connection = agent_id;
+        self.expanded.clear();
+        cx.notify();
+    }
+
+    fn restart_selected_connection(&mut self, cx: &mut Context<Self>) {
+        let Some(agent_id) = self.selected_connection.clone() else {
+            return;
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
         };
 
-        connection.messages.push(message);
-        connection.list_state.splice(index..index, 1);
+        workspace.update(cx, |workspace, cx| {
+            let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                return;
+            };
+
+            let fs = workspace.app_state().fs.clone();
+            let (thread_store, connection_store) = {
+                let panel = panel.read(cx);
+                (
+                    panel.thread_store().clone(),
+                    panel.connection_store().clone(),
+                )
+            };
+            let agent = Agent::from(agent_id);
+            let server = agent.server(fs, thread_store);
+            connection_store.update(cx, |store, cx| {
+                store.restart_connection(agent, server, cx);
+            });
+        });
+    }
+
+    fn selected_connection_status(&self, cx: &App) -> Option<AgentConnectionStatus> {
+        let agent = Agent::from(self.selected_connection.clone()?);
+        Some(
+            self.connection_store
+                .as_ref()?
+                .read(cx)
+                .connection_status(&agent, cx),
+        )
+    }
+
+    fn selected_watched_connection(&self) -> Option<&WatchedConnection> {
+        let selected_connection = self.selected_connection.as_ref()?;
+        self.watched_connections.get(selected_connection)
+    }
+
+    fn selected_watched_connection_mut(&mut self) -> Option<&mut WatchedConnection> {
+        let selected_connection = self.selected_connection.clone()?;
+        self.watched_connections.get_mut(&selected_connection)
+    }
+
+    fn connection_menu_entries(&self) -> Vec<SharedString> {
+        let mut entries: Vec<_> = self
+            .watched_connections
+            .values()
+            .map(|connection| connection.agent_id.0.clone())
+            .collect();
+        entries.sort();
+        entries
+    }
+
+    fn selected_connection_label(&self) -> SharedString {
+        self.selected_connection
+            .as_ref()
+            .map(|agent_id| agent_id.0.clone())
+            .unwrap_or_else(|| SharedString::from("No connection selected"))
+    }
+
+    fn connection_menu(&self, window: &mut Window, cx: &mut Context<Self>) -> Entity<ContextMenu> {
+        let entries = self.connection_menu_entries();
+        let selected_connection = self.selected_connection.clone();
+        let acp_tools = cx.entity().downgrade();
+
+        ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
+            if entries.is_empty() {
+                return menu.entry("No active connections", None, |_, _| {});
+            }
+
+            for entry in &entries {
+                let label = entry.clone();
+                let is_selected = selected_connection
+                    .as_ref()
+                    .is_some_and(|agent_id| agent_id.0.as_ref() == label.as_ref());
+                let acp_tools = acp_tools.clone();
+                menu = menu.toggleable_entry(
+                    label.clone(),
+                    is_selected,
+                    IconPosition::Start,
+                    None,
+                    move |_window, cx| {
+                        acp_tools
+                            .update(cx, |this, cx| {
+                                this.select_connection(Some(AgentId(label.clone())), cx);
+                            })
+                            .ok();
+                    },
+                );
+            }
+
+            menu
+        })
+    }
+
+    fn push_stream_message(
+        &mut self,
+        agent_id: &AgentId,
+        stream_message: AcpDebugMessage,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(connection) = self.watched_connections.get_mut(agent_id) else {
+            return;
+        };
+        push_stream_message_for_connection(connection, &self.project, stream_message, cx);
         cx.notify();
     }
 
     fn serialize_observed_messages(&self) -> Option<String> {
-        let connection = self.watched_connection.as_ref()?;
+        let connection = self.selected_watched_connection()?;
 
         let messages: Vec<serde_json::Value> = connection
             .messages
@@ -515,9 +355,9 @@ impl AcpTools {
                 };
                 Some(serde_json::json!({
                     "_direction": match message.direction {
-                        StreamMessageDirection::Incoming => "incoming",
-                        StreamMessageDirection::Outgoing => "outgoing",
-                        StreamMessageDirection::Stderr => "stderr",
+                        AcpDebugMessageDirection::Incoming => "incoming",
+                        AcpDebugMessageDirection::Outgoing => "outgoing",
+                        AcpDebugMessageDirection::Stderr => "stderr",
                     },
                     "_type": message.message_type.to_string().to_lowercase(),
                     "id": message.request_id,
@@ -531,7 +371,7 @@ impl AcpTools {
     }
 
     fn clear_messages(&mut self, cx: &mut Context<Self>) {
-        if let Some(connection) = self.watched_connection.as_mut() {
+        if let Some(connection) = self.selected_watched_connection_mut() {
             connection.messages.clear();
             connection.list_state.reset(0);
             connection.incoming_request_methods.clear();
@@ -547,7 +387,7 @@ impl AcpTools {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(connection) = self.watched_connection.as_ref() else {
+        let Some(connection) = self.selected_watched_connection() else {
             return Empty.into_any();
         };
 
@@ -589,25 +429,26 @@ impl AcpTools {
                             this.expanded.remove(&index);
                         } else {
                             this.expanded.insert(index);
-                            let Some(connection) = &mut this.watched_connection else {
+                            let project = this.project.clone();
+                            let Some(connection) = this.selected_watched_connection_mut() else {
                                 return;
                             };
                             let Some(message) = connection.messages.get_mut(index) else {
                                 return;
                             };
-                            message.expanded(this.project.read(cx).languages().clone(), cx);
+                            message.expanded(project.read(cx).languages().clone(), cx);
                             connection.list_state.scroll_to_reveal_item(index);
                         }
                         cx.notify()
                     }))
                     .child(match message.direction {
-                        StreamMessageDirection::Incoming => Icon::new(IconName::ArrowDown)
+                        AcpDebugMessageDirection::Incoming => Icon::new(IconName::ArrowDown)
                             .color(Color::Error)
                             .size(IconSize::Small),
-                        StreamMessageDirection::Outgoing => Icon::new(IconName::ArrowUp)
+                        AcpDebugMessageDirection::Outgoing => Icon::new(IconName::ArrowUp)
                             .color(Color::Success)
                             .size(IconSize::Small),
-                        StreamMessageDirection::Stderr => Icon::new(IconName::Warning)
+                        AcpDebugMessageDirection::Stderr => Icon::new(IconName::Warning)
                             .color(Color::Warning)
                             .size(IconSize::Small),
                     })
@@ -678,10 +519,79 @@ impl AcpTools {
     }
 }
 
+fn push_stream_message_for_connection(
+    connection: &mut WatchedConnection,
+    project: &Entity<Project>,
+    stream_message: AcpDebugMessage,
+    cx: &mut App,
+) {
+    let language_registry = project.read(cx).languages().clone();
+    let index = connection.messages.len();
+
+    let (request_id, method, message_type, params) = match stream_message.message {
+        AcpDebugMessageContent::Request { id, method, params } => {
+            let method_map = match stream_message.direction {
+                AcpDebugMessageDirection::Incoming => &mut connection.incoming_request_methods,
+                AcpDebugMessageDirection::Outgoing => &mut connection.outgoing_request_methods,
+                AcpDebugMessageDirection::Stderr => return,
+            };
+
+            method_map.insert(id.clone(), method.clone());
+            (Some(id), method.into(), MessageType::Request, Ok(params))
+        }
+        AcpDebugMessageContent::Response { id, result } => {
+            let method_map = match stream_message.direction {
+                AcpDebugMessageDirection::Incoming => &mut connection.outgoing_request_methods,
+                AcpDebugMessageDirection::Outgoing => &mut connection.incoming_request_methods,
+                AcpDebugMessageDirection::Stderr => return,
+            };
+
+            if let Some(method) = method_map.remove(&id) {
+                (Some(id), method.into(), MessageType::Response, result)
+            } else {
+                (
+                    Some(id),
+                    "[unrecognized response]".into(),
+                    MessageType::Response,
+                    result,
+                )
+            }
+        }
+        AcpDebugMessageContent::Notification { method, params } => {
+            (None, method.into(), MessageType::Notification, Ok(params))
+        }
+        AcpDebugMessageContent::Stderr { line } => (
+            None,
+            "stderr".into(),
+            MessageType::Stderr,
+            Ok(Some(serde_json::Value::String(line.to_string()))),
+        ),
+    };
+
+    let message = WatchedConnectionMessage {
+        name: method,
+        message_type,
+        request_id,
+        direction: stream_message.direction,
+        collapsed_params_md: match &params {
+            Ok(Some(params)) => Some(collapsed_params_md(params, &language_registry, cx)),
+            Ok(None) => None,
+            Err(err) => serde_json::to_value(err)
+                .ok()
+                .map(|err| collapsed_params_md(&err, &language_registry, cx)),
+        },
+        expanded_params_md: None,
+        params,
+    };
+
+    connection.messages.push(message);
+    connection.list_state.splice(index..index, 1);
+}
+
 struct WatchedConnectionMessage {
     name: SharedString,
     request_id: Option<acp::RequestId>,
-    direction: StreamMessageDirection,
+    direction: AcpDebugMessageDirection,
     message_type: MessageType,
     params: Result<Option<serde_json::Value>, acp::Error>,
     collapsed_params_md: Option<Entity<Markdown>>,
@@ -765,8 +675,7 @@ impl Item for AcpTools {
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> ui::SharedString {
         format!(
             "ACP: {}",
-            self.watched_connection
-                .as_ref()
+            self.selected_watched_connection()
                 .map_or("Disconnected", |connection| connection.agent_id.0.as_ref())
         )
         .into()
@@ -785,11 +694,67 @@ impl Focusable for AcpTools {
 
 impl Render for AcpTools {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_messages = self
+            .selected_watched_connection()
+            .is_some_and(|connection| !connection.messages.is_empty());
+        let can_restart = matches!(
+            self.selected_connection_status(cx),
+            Some(status) if status != AgentConnectionStatus::Connecting
+        );
+        let copied_messages = self.serialize_observed_messages().unwrap_or_default();
+
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().editor_background)
-            .child(match self.watched_connection.as_ref() {
+            .child(
+                h_flex()
+                    .w_full()
+                    .px_3()
+                    .py_2()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(
+                        DropdownMenu::new(
+                            "acp-connection-selector",
+                            self.selected_connection_label(),
+                            self.connection_menu(window, cx),
+                        )
+                        .style(DropdownStyle::Subtle)
+                        .disabled(self.watched_connections.is_empty()),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                IconButton::new("restart_connection", IconName::RotateCw)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Restart Connection"))
+                                    .disabled(!can_restart)
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.restart_selected_connection(cx);
+                                    })),
+                            )
+                            .child(
+                                CopyButton::new("copy-all-messages", copied_messages)
+                                    .tooltip_label("Copy All Messages")
+                                    .disabled(!has_messages),
+                            )
+                            .child(
+                                IconButton::new("clear_messages", IconName::Trash)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Clear Messages"))
+                                    .disabled(!has_messages)
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        this.clear_messages(cx);
+                                    })),
+                            ),
+                    ),
+            )
+            .child(match self.selected_watched_connection() {
                 Some(connection) => {
                     if connection.messages.is_empty() {
                         h_flex()
@@ -814,12 +779,23 @@ impl Render for AcpTools {
                             .into_any()
                     }
                 }
-                None => h_flex()
-                    .size_full()
-                    .justify_center()
-                    .items_center()
-                    .child("No active connection")
-                    .into_any(),
+                None => match self.selected_connection_status(cx) {
+                    Some(AgentConnectionStatus::Connecting) => h_flex()
+                        .size_full()
+                        .justify_center()
+                        .items_center()
+                        .child(format!(
+                            "Reconnecting to {}",
+                            self.selected_connection_label()
+                        ))
+                        .into_any(),
+                    _ => h_flex()
+                        .size_full()
+                        .justify_center()
+                        .items_center()
+                        .child("No active connection")
+                        .into_any(),
+                },
             })
     }
 }
@@ -836,45 +812,8 @@ impl AcpToolsToolbarItemView {
 
 impl Render for AcpToolsToolbarItemView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(acp_tools) = self.acp_tools.as_ref() else {
-            return Empty.into_any_element();
-        };
-
-        let acp_tools = acp_tools.clone();
-        let connection_registry = acp_tools.read(cx).connection_registry.clone();
-        let has_messages = acp_tools
-            .read(cx)
-            .watched_connection
-            .as_ref()
-            .is_some_and(|connection| !connection.messages.is_empty());
-
-        h_flex()
-            .gap_2()
-            .child({
-                let message = acp_tools
-                    .read(cx)
-                    .serialize_observed_messages()
-                    .unwrap_or_default();
-
-                CopyButton::new("copy-all-messages", message)
-                    .tooltip_label("Copy All Messages")
-                    .disabled(!has_messages)
-            })
-            .child(
-                IconButton::new("clear_messages", IconName::Trash)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("Clear Messages"))
-                    .disabled(!has_messages)
-                    .on_click(cx.listener(move |_this, _, _window, cx| {
-                        connection_registry.update(cx, |registry, cx| {
-                            registry.clear_messages(cx);
-                        });
-                        acp_tools.update(cx, |acp_tools, cx| {
-                            acp_tools.clear_messages(cx);
-                        });
-                    })),
-            )
-            .into_any()
+        let _ = (&self.acp_tools, cx);
+        Empty.into_any_element()
     }
 }
 
@@ -892,7 +831,7 @@ impl ToolbarItemView for AcpToolsToolbarItemView {
         {
             self.acp_tools = Some(acp_tools);
             cx.notify();
-            return ToolbarItemLocation::PrimaryRight;
+            return ToolbarItemLocation::Hidden;
         }
         if self.acp_tools.take().is_some() {
             cx.notify();

@@ -185,10 +185,11 @@ pub fn render_ollama_model_picker(
                             field.json_path,
                             window,
                             cx,
-                            move |settings, _cx| {
+                            move |settings, app| {
                                 (field.write)(
                                     settings,
                                     Some(settings::OllamaModelName(model_name.to_string())),
+                                    app,
                                 );
                             },
                         )
