@@ -7675,7 +7675,6 @@ dependencies = [
  "mach2 0.5.0",
  "media",
  "metal",
- "naga 29.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "num_cpus",
  "objc",
  "objc2",
@@ -10940,31 +10939,6 @@ name = "multimap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
-
-[[package]]
-name = "naga"
-version = "29.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85b4372fed0bd362d646d01b6926df0e837859ccc522fed720c395e0460f29c8"
-dependencies = [
- "arrayvec",
- "bit-set 0.9.1",
- "bitflags 2.10.0",
- "cfg-if",
- "cfg_aliases 0.2.1",
- "codespan-reporting",
- "half",
- "hashbrown 0.16.1",
- "hexf-parse",
- "indexmap 2.11.4",
- "libm",
- "log",
- "num-traits",
- "once_cell",
- "rustc-hash 1.1.0",
- "thiserror 2.0.17",
- "unicode-ident",
-]
 
 [[package]]
 name = "naga"
@@ -20515,7 +20489,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "js-sys",
  "log",
- "naga 29.0.0 (git+https://github.com/zed-industries/wgpu.git?branch=v29)",
+ "naga",
  "parking_lot",
  "portable-atomic",
  "profiling",
@@ -20545,7 +20519,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "indexmap 2.11.4",
  "log",
- "naga 29.0.0 (git+https://github.com/zed-industries/wgpu.git?branch=v29)",
+ "naga",
  "once_cell",
  "parking_lot",
  "portable-atomic",
@@ -20610,7 +20584,7 @@ dependencies = [
  "libc",
  "libloading",
  "log",
- "naga 29.0.0 (git+https://github.com/zed-industries/wgpu.git?branch=v29)",
+ "naga",
  "ndk-sys",
  "objc2",
  "objc2-core-foundation",
@@ -20643,7 +20617,7 @@ name = "wgpu-naga-bridge"
 version = "29.0.0"
 source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
 dependencies = [
- "naga 29.0.0 (git+https://github.com/zed-industries/wgpu.git?branch=v29)",
+ "naga",
  "wgpu-types",
 ]
 

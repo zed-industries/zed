@@ -621,7 +621,6 @@ markup5ever_rcdom = "0.3.0"
 metal = "0.33"
 minidumper = "0.9"
 moka = { version = "0.12.10", features = ["sync"] }
-naga = { version = "29.0", features = ["wgsl-in"] }
 nanoid = "0.4"
 nbformat = "1.2.0"
 nix = "0.29"
