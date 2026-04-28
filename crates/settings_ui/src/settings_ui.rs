@@ -3961,19 +3961,17 @@ pub(crate) fn update_settings_file(
             return;
         };
 
-        settings_window
-            .update(cx, |this, cx| match result {
-                Ok(()) => {
-                    if this.settings_write_error.take().is_some() {
-                        cx.notify();
-                    }
-                }
-                Err(err) => {
-                    this.settings_write_error = Some(format!("{err:#}"));
+        settings_window.update(cx, |this, cx| match result {
+            Ok(()) => {
+                if this.settings_write_error.take().is_some() {
                     cx.notify();
                 }
-            })
-            .log_err();
+            }
+            Err(err) => {
+                this.settings_write_error = Some(format!("{err:#}"));
+                cx.notify();
+            }
+        });
     })
     .detach();
 }
@@ -5237,6 +5235,51 @@ mod project_settings_update_tests {
             rel_path,
             project_path,
         }
+    }
+
+    #[gpui::test]
+    async fn test_sets_write_error_when_user_settings_update_fails(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.atomic_write(
+            paths::settings_file().to_path_buf(),
+            "{ invalid json".to_string(),
+        )
+        .await
+        .expect("settings file should be written");
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs, cx));
+
+        let (settings_window, window_cx) = cx.add_window_view(SettingsWindow::test);
+        window_cx.update(|window, cx| {
+            update_settings_file(
+                SettingsUiFile::User,
+                Some("tab_size"),
+                window,
+                cx,
+                |settings, _| {
+                    settings.project.all_languages.defaults.tab_size =
+                        Some(NonZeroU32::new(4).unwrap());
+                },
+            );
+        });
+        window_cx.run_until_parked();
+
+        settings_window.read_with(&window_cx.cx, |settings_window, _| {
+            let error = settings_window
+                .settings_write_error
+                .as_ref()
+                .expect("failed settings update should set write error");
+            assert!(
+                error.contains("Settings file could not be parsed"),
+                "unexpected settings write error: {error}"
+            );
+        });
     }
 
     #[gpui::test]
