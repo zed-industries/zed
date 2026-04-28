@@ -2812,11 +2812,12 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let is_remote = envelope.payload.is_remote;
+        let force = envelope.payload.force;
         let branch_name = envelope.payload.branch_name;
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.delete_branch(is_remote, branch_name)
+                repository_handle.delete_branch(is_remote, force, branch_name)
             })
             .await??;
 
@@ -6989,6 +6990,7 @@ impl Repository {
     pub fn delete_branch(
         &mut self,
         is_remote: bool,
+        force: bool,
         branch_name: String,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
@@ -7004,7 +7006,10 @@ impl Repository {
             move |repo, _cx| async move {
                 match repo {
                     RepositoryState::Local(state) => {
-                        state.backend.delete_branch(is_remote, branch_name).await
+                        state
+                            .backend
+                            .delete_branch(is_remote, force, branch_name)
+                            .await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
@@ -7013,6 +7018,7 @@ impl Repository {
                                 repository_id: id.to_proto(),
                                 is_remote,
                                 branch_name,
+                                force,
                             })
                             .await?;
 

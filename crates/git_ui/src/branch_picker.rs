@@ -7,8 +7,8 @@ use git::repository::Branch;
 use gpui::http_client::Url;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
+    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptLevel,
+    Render, SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::{Repository, RepositoryEvent};
@@ -529,7 +529,7 @@ impl BranchListDelegate {
 
                     is_remote = branch.is_remote();
                     repo.update(cx, |repo, _| {
-                        repo.delete_branch(is_remote, branch.name().to_string())
+                        repo.delete_branch(is_remote, false, branch.name().to_string())
                     })
                     .await?
                 }
@@ -542,31 +542,57 @@ impl BranchListDelegate {
             if let Err(e) = result {
                 if is_remote {
                     log::error!("Failed to delete remote branch: {}", e);
-                } else {
-                    log::error!("Failed to delete branch: {}", e);
-                }
-
-                if let Some(workspace) = workspace.upgrade() {
-                    cx.update(|_window, cx| {
-                        if is_remote {
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|_window, cx| {
                             show_error_toast(
                                 workspace,
                                 format!("branch -dr {}", entry.name()),
                                 e,
                                 cx,
                             )
-                        } else {
+                        })?;
+                    }
+                    return Ok(());
+                }
+
+                log::error!("Failed to delete branch: {}", e);
+
+                let answer = cx
+                    .update(|window, cx| {
+                        window.prompt(
+                            PromptLevel::Warning,
+                            &format!("Failed to delete '{}'", entry.name()),
+                            Some("Force delete this branch? This cannot be undone."),
+                            &["Force Delete", "Cancel"],
+                            cx,
+                        )
+                    })?
+                    .await;
+
+                if answer != Ok(0) {
+                    return Ok(());
+                }
+
+                let force_result = repo
+                    .update(cx, |repo, _| {
+                        repo.delete_branch(false, true, entry.name().to_string())
+                    })
+                    .await?;
+
+                if let Err(e) = force_result {
+                    log::error!("Failed to force delete branch: {}", e);
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|_window, cx| {
                             show_error_toast(
                                 workspace,
-                                format!("branch -d {}", entry.name()),
+                                format!("branch -D {}", entry.name()),
                                 e,
                                 cx,
                             )
-                        }
-                    })?;
+                        })?;
+                    }
+                    return Ok(());
                 }
-
-                return Ok(());
             }
 
             picker.update_in(cx, |picker, _, cx| {
