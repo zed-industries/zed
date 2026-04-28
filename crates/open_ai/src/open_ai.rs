@@ -294,10 +294,6 @@ impl Model {
         }
     }
 
-    pub fn uses_responses_api(&self) -> bool {
-        !matches!(self, Self::Custom { .. })
-    }
-
     /// Returns whether the given model supports the `parallel_tool_calls` parameter.
     ///
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
