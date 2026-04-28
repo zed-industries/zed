@@ -20,8 +20,8 @@ use ollama::{
 pub use settings::OllamaAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::LazyLock;
-use std::{collections::HashMap, sync::Arc};
 use ui::{
     ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, List, ListBulletItem, Tooltip,
     prelude::*,
@@ -29,6 +29,7 @@ use ui::{
 use ui_input::InputField;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::model_list::merge_models_by_name;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
@@ -266,27 +267,22 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: HashMap<String, ollama::Model> = HashMap::new();
         let settings = OllamaLanguageModelProvider::settings(cx);
+        let discovered_models = self.state.read(cx).fetched_models.clone();
+        let configured_models = settings.available_models.iter().map(model_from_settings);
 
-        // Add models from the Ollama API
-        for model in self.state.read(cx).fetched_models.iter() {
-            let mut model = model.clone();
-            if let Some(context_window) = settings.context_window {
+        let mut models = merge_models_by_name(discovered_models, configured_models, |model| {
+            model.name.as_str()
+        });
+
+        if let Some(context_window) = settings.context_window {
+            for model in &mut models {
                 model.max_tokens = context_window;
             }
-            models.insert(model.name.clone(), model);
         }
 
-        // Override with available models from settings
-        merge_settings_into_models(
-            &mut models,
-            &settings.available_models,
-            settings.context_window,
-        );
-
         let mut models = models
-            .into_values()
+            .into_iter()
             .map(|model| {
                 Arc::new(OllamaLanguageModel {
                     id: LanguageModelId::from(model.name.clone()),
@@ -1034,35 +1030,15 @@ impl Render for ConfigurationView {
     }
 }
 
-fn merge_settings_into_models(
-    models: &mut HashMap<String, ollama::Model>,
-    available_models: &[AvailableModel],
-    context_window: Option<u64>,
-) {
-    for setting_model in available_models {
-        if let Some(model) = models.get_mut(&setting_model.name) {
-            if context_window.is_none() {
-                model.max_tokens = setting_model.max_tokens;
-            }
-            model.display_name = setting_model.display_name.clone();
-            model.keep_alive = setting_model.keep_alive.clone();
-            model.supports_tools = setting_model.supports_tools;
-            model.supports_vision = setting_model.supports_images;
-            model.supports_thinking = setting_model.supports_thinking;
-        } else {
-            models.insert(
-                setting_model.name.clone(),
-                ollama::Model {
-                    name: setting_model.name.clone(),
-                    display_name: setting_model.display_name.clone(),
-                    max_tokens: context_window.unwrap_or(setting_model.max_tokens),
-                    keep_alive: setting_model.keep_alive.clone(),
-                    supports_tools: setting_model.supports_tools,
-                    supports_vision: setting_model.supports_images,
-                    supports_thinking: setting_model.supports_thinking,
-                },
-            );
-        }
+fn model_from_settings(model: &AvailableModel) -> ollama::Model {
+    ollama::Model {
+        name: model.name.clone(),
+        display_name: model.display_name.clone(),
+        max_tokens: model.max_tokens,
+        keep_alive: model.keep_alive.clone(),
+        supports_tools: model.supports_tools,
+        supports_vision: model.supports_images,
+        supports_thinking: model.supports_thinking,
     }
 }
 
@@ -1079,79 +1055,188 @@ fn tool_into_ollama(tool: LanguageModelRequestTool) -> ollama::OllamaTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{future::Future, pin::Pin};
+
+    use gpui::UpdateGlobal;
+    use http_client::FakeHttpClient;
+    use settings::AllLanguageModelSettingsContent;
+
+    struct TestCredentialsProvider;
+
+    impl CredentialsProvider for TestCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn available_model(name: &str, display_name: Option<&str>, max_tokens: u64) -> AvailableModel {
+        AvailableModel {
+            name: name.to_string(),
+            display_name: display_name.map(ToString::to_string),
+            max_tokens,
+            keep_alive: None,
+            supports_tools: None,
+            supports_images: None,
+            supports_thinking: None,
+        }
+    }
+
+    fn ollama_model(name: &str, display_name: Option<&str>, max_tokens: u64) -> ollama::Model {
+        ollama::Model {
+            name: name.to_string(),
+            display_name: display_name.map(ToString::to_string),
+            max_tokens,
+            keep_alive: None,
+            supports_tools: None,
+            supports_vision: None,
+            supports_thinking: None,
+        }
+    }
+
+    fn init_settings(
+        available_models: Vec<AvailableModel>,
+        context_window: Option<u64>,
+        cx: &mut App,
+    ) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                let ollama_settings = settings
+                    .language_models
+                    .get_or_insert_with(AllLanguageModelSettingsContent::default)
+                    .ollama
+                    .get_or_insert_default();
+                ollama_settings.available_models = Some(available_models);
+                ollama_settings.context_window = context_window;
+            });
+        });
+    }
+
+    fn provider_with_fetched_models(
+        fetched_models: Vec<ollama::Model>,
+        cx: &mut App,
+    ) -> OllamaLanguageModelProvider {
+        let http_client = FakeHttpClient::with_404_response();
+        let state = cx.new({
+            let http_client = http_client.clone();
+            move |_| State {
+                api_key_state: ApiKeyState::new(OLLAMA_API_URL.into(), (*API_KEY_ENV_VAR).clone()),
+                credentials_provider: Arc::new(TestCredentialsProvider),
+                http_client,
+                fetched_models,
+                fetch_model_task: None,
+            }
+        });
+
+        OllamaLanguageModelProvider { http_client, state }
+    }
 
     #[test]
-    fn test_merge_settings_preserves_display_names_for_similar_models() {
-        // Regression test for https://github.com/zed-industries/zed/issues/43646
-        // When multiple models share the same base name (e.g., qwen2.5-coder:1.5b and qwen2.5-coder:3b),
-        // each model should get its own display_name from settings, not a random one.
-
-        let mut models: HashMap<String, ollama::Model> = HashMap::new();
-        models.insert(
-            "qwen2.5-coder:1.5b".to_string(),
-            ollama::Model {
-                name: "qwen2.5-coder:1.5b".to_string(),
-                display_name: None,
-                max_tokens: 4096,
-                keep_alive: None,
-                supports_tools: None,
-                supports_vision: None,
-                supports_thinking: None,
-            },
-        );
-        models.insert(
-            "qwen2.5-coder:3b".to_string(),
-            ollama::Model {
-                name: "qwen2.5-coder:3b".to_string(),
-                display_name: None,
-                max_tokens: 4096,
-                keep_alive: None,
-                supports_tools: None,
-                supports_vision: None,
-                supports_thinking: None,
-            },
-        );
-
+    fn test_merge_settings_uses_last_configured_model_for_duplicate_names() {
         let available_models = vec![
-            AvailableModel {
-                name: "qwen2.5-coder:1.5b".to_string(),
-                display_name: Some("QWEN2.5 Coder 1.5B".to_string()),
-                max_tokens: 5000,
-                keep_alive: None,
-                supports_tools: Some(true),
-                supports_images: None,
-                supports_thinking: None,
-            },
-            AvailableModel {
-                name: "qwen2.5-coder:3b".to_string(),
-                display_name: Some("QWEN2.5 Coder 3B".to_string()),
-                max_tokens: 6000,
-                keep_alive: None,
-                supports_tools: Some(true),
-                supports_images: None,
-                supports_thinking: None,
-            },
+            available_model("llama3.2:latest", Some("First Llama"), 4096),
+            available_model("llama3.2:latest", Some("Second Llama"), 8192),
         ];
 
-        merge_settings_into_models(&mut models, &available_models, None);
+        let models = merge_models_by_name(
+            Vec::<ollama::Model>::new(),
+            available_models.iter().map(model_from_settings),
+            |model| model.name.as_str(),
+        );
 
-        let model_1_5b = models
-            .get("qwen2.5-coder:1.5b")
-            .expect("1.5b model missing");
-        let model_3b = models.get("qwen2.5-coder:3b").expect("3b model missing");
+        let model = models
+            .iter()
+            .find(|model| model.name == "llama3.2:latest")
+            .expect("configured model missing");
+        assert_eq!(model.display_name, Some("Second Llama".to_string()));
+        assert_eq!(model.max_tokens, 8192);
+    }
+
+    #[gpui::test]
+    fn test_provided_models_applies_context_window_to_discovered_models(cx: &mut App) {
+        init_settings(Vec::new(), Some(12345), cx);
+        let provider =
+            provider_with_fetched_models(vec![ollama_model("llama3.2:latest", None, 4096)], cx);
+
+        let models = provider.provided_models(cx);
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id().0.to_string(), "llama3.2:latest");
+        assert_eq!(models[0].max_token_count(), 12345);
+    }
+
+    #[gpui::test]
+    fn test_provided_models_applies_context_window_to_configured_only_models(cx: &mut App) {
+        init_settings(
+            vec![available_model(
+                "configured-model",
+                Some("Configured Model"),
+                4096,
+            )],
+            Some(12345),
+            cx,
+        );
+        let provider = provider_with_fetched_models(Vec::new(), cx);
+
+        let models = provider.provided_models(cx);
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id().0.to_string(), "configured-model");
+        assert_eq!(models[0].max_token_count(), 12345);
+    }
+
+    #[gpui::test]
+    fn test_provided_models_sorts_models_by_name(cx: &mut App) {
+        init_settings(
+            vec![available_model(
+                "configured-model",
+                Some("Configured Model"),
+                4096,
+            )],
+            None,
+            cx,
+        );
+        let provider = provider_with_fetched_models(
+            vec![
+                ollama_model("zeta-model", None, 4096),
+                ollama_model("alpha-model", None, 4096),
+            ],
+            cx,
+        );
+
+        let model_names = provider
+            .provided_models(cx)
+            .into_iter()
+            .map(|model| model.name().0.to_string())
+            .collect::<Vec<_>>();
 
         assert_eq!(
-            model_1_5b.display_name,
-            Some("QWEN2.5 Coder 1.5B".to_string()),
-            "1.5b model should have its own display_name"
+            model_names,
+            vec!["Configured Model", "alpha-model", "zeta-model"]
         );
-        assert_eq!(model_1_5b.max_tokens, 5000);
-
-        assert_eq!(
-            model_3b.display_name,
-            Some("QWEN2.5 Coder 3B".to_string()),
-            "3b model should have its own display_name"
-        );
-        assert_eq!(model_3b.max_tokens, 6000);
     }
 }

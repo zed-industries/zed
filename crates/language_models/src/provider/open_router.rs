@@ -22,6 +22,7 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
+use crate::provider::model_list::merge_models_by_name;
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
@@ -211,36 +212,18 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models_from_api = self.state.read(cx).available_models.clone();
-        let mut settings_models = Vec::new();
+        let discovered_models = self.state.read(cx).available_models.clone();
+        let configured_models = Self::settings(cx)
+            .available_models
+            .iter()
+            .map(model_from_settings);
 
-        for model in &Self::settings(cx).available_models {
-            settings_models.push(open_router::Model {
-                name: model.name.clone(),
-                display_name: model.display_name.clone(),
-                max_tokens: model.max_tokens,
-                supports_tools: model.supports_tools,
-                supports_images: model.supports_images,
-                mode: model.mode.unwrap_or_default(),
-                provider: model.provider.clone(),
-            });
-        }
-
-        for settings_model in &settings_models {
-            if let Some(pos) = models_from_api
-                .iter()
-                .position(|m| m.name == settings_model.name)
-            {
-                models_from_api[pos] = settings_model.clone();
-            } else {
-                models_from_api.push(settings_model.clone());
-            }
-        }
-
-        models_from_api
-            .into_iter()
-            .map(|model| self.create_language_model(model))
-            .collect()
+        merge_models_by_name(discovered_models, configured_models, |model| {
+            model.name.as_str()
+        })
+        .into_iter()
+        .map(|model| self.create_language_model(model))
+        .collect()
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
@@ -264,6 +247,18 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
+    }
+}
+
+fn model_from_settings(model: &AvailableModel) -> open_router::Model {
+    open_router::Model {
+        name: model.name.clone(),
+        display_name: model.display_name.clone(),
+        max_tokens: model.max_tokens,
+        supports_tools: model.supports_tools,
+        supports_images: model.supports_images,
+        mode: model.mode.unwrap_or_default(),
+        provider: model.provider.clone(),
     }
 }
 
@@ -872,7 +867,100 @@ impl Render for ConfigurationView {
 mod tests {
     use super::*;
 
+    use credentials_provider::CredentialsProvider;
+    use gpui::UpdateGlobal;
+    use http_client::FakeHttpClient;
     use open_router::{ChoiceDelta, FunctionChunk, ResponseMessageDelta, ToolCallChunk};
+    use settings::AllLanguageModelSettingsContent;
+    use std::{future::Future, pin::Pin};
+
+    struct TestCredentialsProvider;
+
+    impl CredentialsProvider for TestCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn available_model(name: &str, display_name: &str) -> AvailableModel {
+        AvailableModel {
+            name: name.to_string(),
+            display_name: Some(display_name.to_string()),
+            max_tokens: 4096,
+            max_output_tokens: None,
+            max_completion_tokens: None,
+            supports_tools: None,
+            supports_images: None,
+            mode: None,
+            provider: None,
+        }
+    }
+
+    fn init_settings(available_models: Vec<AvailableModel>, cx: &mut App) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                let open_router_settings = settings
+                    .language_models
+                    .get_or_insert_with(AllLanguageModelSettingsContent::default)
+                    .open_router
+                    .get_or_insert_default();
+                open_router_settings.available_models = Some(available_models);
+            });
+        });
+    }
+
+    fn provider(cx: &mut App) -> OpenRouterLanguageModelProvider {
+        OpenRouterLanguageModelProvider::new(
+            FakeHttpClient::with_404_response(),
+            Arc::new(TestCredentialsProvider),
+            cx,
+        )
+    }
+
+    #[gpui::test]
+    fn test_provided_models_preserves_manual_only_settings_order(cx: &mut App) {
+        init_settings(
+            vec![
+                available_model("zeta-model", "Zeta Model"),
+                available_model("alpha-model", "Alpha Model"),
+            ],
+            cx,
+        );
+        let provider = provider(cx);
+
+        let model_names = provider
+            .provided_models(cx)
+            .into_iter()
+            .map(|model| model.name().0.to_string())
+            .collect::<Vec<_>>();
+
+        assert_eq!(model_names, vec!["Zeta Model", "Alpha Model"]);
+    }
 
     #[gpui::test]
     async fn test_reasoning_details_preservation_with_tool_calls() {
