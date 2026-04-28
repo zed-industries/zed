@@ -135,8 +135,8 @@ impl ExtensionBuilder {
             )
         });
 
-        let tasks = (extension_manifest.lib.kind == Some(ExtensionLibraryKind::Rust))
-            .then(|| {
+        let rust_compilation_task =
+            (extension_manifest.lib.kind == Some(ExtensionLibraryKind::Rust)).then(|| {
                 async {
                     log::info!("compiling Rust extension {}", extension_dir.display());
                     self.compile_rust_extension(extension_dir, extension_manifest, tx, &options)
@@ -147,83 +147,85 @@ impl ExtensionBuilder {
                     Ok(())
                 }
                 .boxed()
-            })
-            .into_iter()
-            .chain(
-                extension_manifest
-                    .debug_adapters
-                    .iter()
-                    .map(|(debug_adapter_name, meta)| {
-                        let fs = fs.clone();
-                        async move {
-                            let debug_adapter_schema_path = extension_dir
-                                .join(build_debug_adapter_schema_path(debug_adapter_name, meta)?);
+            });
 
-                            let debug_adapter_schema =
-                                fs.load(&debug_adapter_schema_path).await.with_context(|| {
-                                    anyhow::anyhow!(
-                                        "failed to read debug adapter schema for \
-                                        `{debug_adapter_name}` from `{debug_adapter_schema_path:?}`"
-                                    )
-                                })?;
-                            _ = serde_json::Value::from_str(&debug_adapter_schema).with_context(
-                                || {
-                                    anyhow::anyhow!(
-                                        "Debug adapter schema for `{debug_adapter_name}`\
-                                        (path: `{debug_adapter_schema_path:?}`) is not a valid JSON"
-                                    )
-                                },
-                            )?;
+        let debug_adapter_validation_tasks =
+            extension_manifest
+                .debug_adapters
+                .iter()
+                .map(|(debug_adapter_name, meta)| {
+                    let fs = fs.clone();
+                    async move {
+                        let debug_adapter_schema_path = extension_dir
+                            .join(build_debug_adapter_schema_path(debug_adapter_name, meta)?);
 
-                            Ok(())
-                        }
-                        .boxed()
-                    }),
-            )
-            .chain(
-                extension_manifest
-                    .grammars
-                    .iter()
-                    .zip(clang_path.into_iter().flatten())
-                    .map(|((grammar_name, grammar_metadata), clang_path_task)| {
-                        async move {
-                            let snake_cased_grammar_name = grammar_name.to_snake_case();
-                            if grammar_name.as_ref() != snake_cased_grammar_name.as_str() {
-                                bail!(
-                                    "grammar name '{grammar_name}' must be \
-                                        written in snake_case: {snake_cased_grammar_name}"
-                                );
-                            }
-
-                            log::info!(
-                                "compiling grammar {grammar_name} for extension {}",
-                                extension_dir.display()
-                            );
-
-                            let clang_path = clang_path_task
-                                .await
-                                .context("Failed to resolve clang path")?;
-
-                            self.compile_grammar(
-                                extension_dir,
-                                grammar_name.as_ref(),
-                                grammar_metadata,
-                                &clang_path,
-                            )
-                            .await
-                            .with_context(|| {
-                                format!("failed to compile grammar '{grammar_name}'")
+                        let debug_adapter_schema =
+                            fs.load(&debug_adapter_schema_path).await.with_context(|| {
+                                anyhow::anyhow!(
+                                    "failed to read debug adapter schema for \
+                                `{debug_adapter_name}` from `{debug_adapter_schema_path:?}`"
+                                )
                             })?;
-                            log::info!(
-                                "compiled grammar {grammar_name} for extension {}",
-                                extension_dir.display()
-                            );
+                        _ = serde_json::Value::from_str(&debug_adapter_schema).with_context(
+                            || {
+                                anyhow::anyhow!(
+                                    "Debug adapter schema for `{debug_adapter_name}`\
+                                (path: `{debug_adapter_schema_path:?}`) is not a valid JSON"
+                                )
+                            },
+                        )?;
 
-                            Ok(())
-                        }
-                        .boxed()
-                    }),
-            );
+                        Ok(())
+                    }
+                    .boxed()
+                });
+
+        let grammar_compilation_tasks = extension_manifest
+            .grammars
+            .iter()
+            .zip(clang_path.into_iter().flatten())
+            .map(|((grammar_name, grammar_metadata), clang_path_task)| {
+                async move {
+                    let snake_cased_grammar_name = grammar_name.to_snake_case();
+                    if grammar_name.as_ref() != snake_cased_grammar_name.as_str() {
+                        bail!(
+                            "grammar name '{grammar_name}' must be \
+                                written in snake_case: {snake_cased_grammar_name}"
+                        );
+                    }
+
+                    log::info!(
+                        "compiling grammar {grammar_name} for extension {}",
+                        extension_dir.display()
+                    );
+
+                    let clang_path = clang_path_task
+                        .await
+                        .context("Failed to resolve clang path")?;
+
+                    self.compile_grammar(
+                        extension_dir,
+                        grammar_name.as_ref(),
+                        grammar_metadata,
+                        &clang_path,
+                    )
+                    .await
+                    .with_context(|| format!("failed to compile grammar '{grammar_name}'"))?;
+                    log::info!(
+                        "compiled grammar {grammar_name} for extension {}",
+                        extension_dir.display()
+                    );
+
+                    Ok(())
+                }
+                .boxed()
+            });
+
+        let tasks = rust_compilation_task
+            .into_iter()
+            .chain(debug_adapter_validation_tasks)
+            .chain(grammar_compilation_tasks)
+            .collect::<Vec<_>>();
 
         match options.max_concurrency {
             CompilationConcurrency::Unbounded => {
