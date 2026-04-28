@@ -9,6 +9,7 @@ use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
 use anyhow::{Context as _, Result, anyhow, bail};
 use clap::Parser;
 use cloud_api_types::ExtensionProvides;
+use extension::extension_builder::CompilationConcurrency;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
 use language::LanguageConfig;
@@ -47,6 +48,11 @@ async fn main() -> Result<()> {
         .source_dir
         .canonicalize()
         .context("failed to canonicalize source_dir")?;
+
+    fs.create_dir(&args.scratch_dir)
+        .await
+        .context("failed to create scratch dir")?;
+
     let scratch_dir = args
         .scratch_dir
         .canonicalize()
@@ -75,7 +81,10 @@ async fn main() -> Result<()> {
         .compile_extension(
             &extension_path,
             &mut manifest,
-            CompileExtensionOptions { release: true },
+            CompileExtensionOptions {
+                release: true,
+                max_concurrency: CompilationConcurrency::Unbounded,
+            },
             fs.clone(),
         )
         .await
@@ -411,28 +420,34 @@ async fn test_themes(
     extension_path: &Path,
     fs: Arc<dyn Fs>,
 ) -> Result<()> {
-    for relative_theme_path in &manifest.themes {
-        let theme_path = extension_path.join(relative_theme_path);
-        let theme_family =
-            theme_settings::deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
-        log::info!("loaded theme family {}", theme_family.name);
+    futures::future::try_join_all(manifest.themes.iter().map(|relative_theme_path| {
+        let fs = fs.clone();
+        async move {
+            let theme_path = extension_path.join(relative_theme_path);
+            let theme_family =
+                theme_settings::deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
+            log::info!("loaded theme family {}", theme_family.name);
 
-        for theme in &theme_family.themes {
-            if theme
-                .style
-                .colors
-                .deprecated_scrollbar_thumb_background
-                .is_some()
-            {
-                bail!(
-                    r#"Theme "{theme_name}" is using a deprecated style property: scrollbar_thumb.background. Use `scrollbar.thumb.background` instead."#,
-                    theme_name = theme.name
-                )
+            for theme in &theme_family.themes {
+                if theme
+                    .style
+                    .colors
+                    .deprecated_scrollbar_thumb_background
+                    .is_some()
+                {
+                    bail!(
+                        r#"Theme "{theme_name}" is using a deprecated style property: \
+                    scrollbar_thumb.background. Use `scrollbar.thumb.background` instead."#,
+                        theme_name = theme.name
+                    )
+                }
             }
-        }
-    }
 
-    Ok(())
+            Ok(())
+        }
+    }))
+    .await
+    .map(|_| ())
 }
 
 async fn test_snippets(
@@ -440,33 +455,43 @@ async fn test_snippets(
     extension_path: &Path,
     fs: Arc<dyn Fs>,
 ) -> Result<()> {
-    for relative_snippet_path in manifest
-        .snippets
-        .as_ref()
-        .map(ExtensionSnippets::paths)
-        .into_iter()
-        .flatten()
-    {
-        let snippet_path = extension_path.join(relative_snippet_path);
-        let snippets_content = fs.load_bytes(&snippet_path).await?;
-        let snippets_file = serde_json_lenient::from_slice::<VsSnippetsFile>(&snippets_content)
-            .with_context(|| anyhow!("Failed to parse snippet file at {snippet_path:?}"))?;
-        let snippet_errors = file_to_snippets(snippets_file, &snippet_path)
-            .flat_map(Result::err)
-            .collect::<Vec<_>>();
-        let error_count = snippet_errors.len();
+    futures::future::try_join_all(
+        manifest
+            .snippets
+            .as_ref()
+            .map(ExtensionSnippets::paths)
+            .into_iter()
+            .flatten()
+            .map(|relative_snippet_path| {
+                let fs = fs.clone();
+                async move {
+                    let snippet_path = extension_path.join(relative_snippet_path);
+                    let snippets_content = fs.load_bytes(&snippet_path).await?;
+                    let snippets_file =
+                        serde_json_lenient::from_slice::<VsSnippetsFile>(&snippets_content)
+                            .with_context(|| {
+                                anyhow!("Failed to parse snippet file at {snippet_path:?}")
+                            })?;
+                    let snippet_errors = file_to_snippets(snippets_file, &snippet_path)
+                        .flat_map(Result::err)
+                        .collect::<Vec<_>>();
+                    let error_count = snippet_errors.len();
 
-        anyhow::ensure!(
-            error_count == 0,
-            "Could not parse {error_count} snippet{suffix} in file {snippet_path:?}:\n\n{snippet_errors}",
-            suffix = if error_count == 1 { "" } else { "s" },
-            snippet_errors = snippet_errors
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-    }
-
-    Ok(())
+                    anyhow::ensure!(
+                        error_count == 0,
+                        "Could not parse {error_count} snippet{suffix} \
+                        in file {snippet_path:?}:\n\n{snippet_errors}",
+                        suffix = if error_count == 1 { "" } else { "s" },
+                        snippet_errors = snippet_errors
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    );
+                    Ok(())
+                }
+            }),
+    )
+    .await
+    .map(|_| ())
 }
