@@ -78,7 +78,7 @@ pub(crate) fn write_to_clipboard(item: ClipboardItem) {
             match entry {
                 ClipboardEntry::String(string) => write_string(string)?,
                 ClipboardEntry::Image(image) => write_image(image)?,
-                ClipboardEntry::ExternalPaths(paths) => write_files(paths)?,
+                ClipboardEntry::ExternalPaths(paths) => write_paths(paths)?,
             }
         }
         Ok(())
@@ -268,7 +268,16 @@ fn read_files() -> Option<ClipboardEntry> {
     )))
 }
 
-fn write_files(paths: &ExternalPaths) -> Result<()> {
+#[repr(C)]
+struct DropFilesHeader {
+    p_files: u32,
+    pt_x: u32,
+    pt_y: u32,
+    f_nc: u32,
+    f_wide: u32,
+}
+
+fn write_paths(paths: &ExternalPaths) -> Result<()> {
     // HDROP structure: DROPFILES header + null-terminated wide strings + final null
     let mut wide_paths = Vec::new();
     for path in paths.paths() {
@@ -278,8 +287,7 @@ fn write_files(paths: &ExternalPaths) -> Result<()> {
     }
     wide_paths.push(0); // final null terminator
 
-    // DROPFILES structure size is 20 bytes
-    let header_size = 20usize;
+    let header_size = std::mem::size_of::<DropFilesHeader>();
     let total_size = header_size + wide_paths.len() * std::mem::size_of::<u16>();
 
     unsafe {
@@ -287,12 +295,19 @@ fn write_files(paths: &ExternalPaths) -> Result<()> {
         let ptr = GlobalLock(*global) as *mut u8;
         anyhow::ensure!(!ptr.is_null(), "GlobalLock returned null");
 
-        // Write DROPFILES header
-        std::ptr::write_unaligned(ptr as *mut u32, header_size as u32); // pFiles offset
-        std::ptr::write_unaligned(ptr.add(4) as *mut u32, 0); // pt.x
-        std::ptr::write_unaligned(ptr.add(8) as *mut u32, 0); // pt.y
-        std::ptr::write_unaligned(ptr.add(12) as *mut u32, 0); // fNC
-        std::ptr::write_unaligned(ptr.add(16) as *mut u32, 1); // fWide (Unicode)
+        // GlobalLock returns *mut u8 (1-byte aligned), so we use write_unaligned
+        // to avoid UB when casting to *mut DropFilesHeader, even if the memory
+        // happens to be sufficiently aligned at runtime.
+        std::ptr::write_unaligned(
+            ptr as *mut DropFilesHeader,
+            DropFilesHeader {
+                p_files: header_size as u32,
+                pt_x: 0,
+                pt_y: 0,
+                f_nc: 0,
+                f_wide: 1,
+            },
+        );
 
         // Write wide strings
         std::ptr::copy_nonoverlapping(
