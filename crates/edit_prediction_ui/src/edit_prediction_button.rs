@@ -428,6 +428,13 @@ impl Render for EditPredictionButton {
                     None
                 };
 
+                let zed_cloud_needs_sign_in = matches!(
+                    provider,
+                    EditPredictionProvider::Zed | EditPredictionProvider::Experimental(_)
+                ) && user.is_none();
+                let provider_unavailable =
+                    missing_token || mercury_has_error || zed_cloud_needs_sign_in;
+
                 let icon_button = IconButton::new("zed-predict-pending-button", ep_icon)
                     .shape(IconButtonShape::Square)
                     .when_some(indicator_color, |this, color| {
@@ -435,19 +442,15 @@ impl Render for EditPredictionButton {
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
                     })
                     .when(!self.popover_menu_handle.is_deployed(), |element| {
-                        let user = user.clone();
-
                         element.tooltip(move |_window, cx| {
-                            let description = if enabled {
-                                if show_editor_predictions {
-                                    tooltip_meta
-                                } else if user.is_none() {
-                                    "Sign In Or Configure a Provider"
-                                } else {
-                                    "Hidden For This File"
-                                }
-                            } else {
+                            let description = if !enabled {
                                 "Disabled For This File"
+                            } else if zed_cloud_needs_sign_in {
+                                "Sign In Or Configure a Provider"
+                            } else if provider_unavailable || show_editor_predictions {
+                                tooltip_meta
+                            } else {
+                                "Enable to Use"
                             };
 
                             Tooltip::with_meta(

@@ -14502,7 +14502,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
             .output()
             .await?;
         let global_node_modules =
-            PathBuf::from(String::from_utf8_lossy(&output.stdout).to_string());
+            PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
 
         if let Some(version) =
             read_package_installed_version(global_node_modules.clone(), package_name).await?
