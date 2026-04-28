@@ -521,6 +521,11 @@ pub struct GitSettings {
     ///
     /// Default: ../worktrees
     pub worktree_directory: Option<String>,
+    /// Whether to automatically stage files when all conflict markers
+    /// have been resolved and the file is saved.
+    ///
+    /// Default: true
+    pub auto_stage_on_conflict_resolution: Option<bool>,
 }
 
 #[with_fallible_options]

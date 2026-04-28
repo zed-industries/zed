@@ -1621,6 +1621,9 @@
     //
     // Trailing slashes are ignored.
     "worktree_directory": "../worktrees",
+    // Whether to automatically stage files when all conflict markers
+    // have been resolved and the file is saved.
+    "auto_stage_on_conflict_resolution": true,
   },
   // The list of custom Git hosting providers.
   "git_hosting_providers": [

@@ -8,7 +8,7 @@ mod conflict_set_tests {
         repository::{RepoPath, repo_path},
         status::{UnmergedStatus, UnmergedStatusCode},
     };
-    use gpui::{BackgroundExecutor, TestAppContext};
+    use gpui::{BackgroundExecutor, TestAppContext, UpdateGlobal as _};
     use project::git_store::*;
     use serde_json::json;
     use text::{Buffer, BufferId, OffsetRangeExt, Point, ReplicaId, ToOffset as _};

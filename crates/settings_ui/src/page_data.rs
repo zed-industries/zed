@@ -6995,6 +6995,29 @@ fn version_control_page() -> SettingsPage {
                             }),
                             metadata: None,
                         },
+                        SettingItem {
+                            files: USER,
+                            title: "Auto-Stage on Conflict Resolution",
+                            description:
+                                "Automatically stage files when all conflict markers have been resolved and the file is saved.",
+                            field: Box::new(SettingField::<bool> {
+                                json_path: Some("git.auto_stage_on_conflict_resolution"),
+                                pick: |settings_content| {
+                                    settings_content
+                                        .git
+                                        .as_ref()?
+                                        .auto_stage_on_conflict_resolution
+                                        .as_ref()
+                                },
+                                write: |settings_content, value, _| {
+                                    settings_content
+                                        .git
+                                        .get_or_insert_default()
+                                        .auto_stage_on_conflict_resolution = value;
+                                },
+                            }),
+                            metadata: None,
+                        },
                     ],
                 ],
             }),
