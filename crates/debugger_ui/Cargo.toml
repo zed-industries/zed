@@ -67,6 +67,7 @@ tasks_ui.workspace = true
 terminal_view.workspace = true
 text.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter.workspace = true
 ui.workspace = true

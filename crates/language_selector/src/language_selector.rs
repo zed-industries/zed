@@ -51,11 +51,11 @@ impl LanguageSelector {
         cx: &mut Context<Workspace>,
     ) -> Option<()> {
         let registry = workspace.app_state().languages.clone();
-        let (_, buffer, _) = workspace
+        let buffer = workspace
             .active_item(cx)?
             .act_as::<Editor>(cx)?
             .read(cx)
-            .active_excerpt(cx)?;
+            .active_buffer(cx)?;
         let project = workspace.project().clone();
 
         workspace.toggle_modal(window, cx, move |window, cx| {
@@ -414,10 +414,10 @@ mod tests {
     ) -> Entity<Editor> {
         let editor = open_new_buffer_editor(workspace, project, cx).await;
         // Ensure the buffer has no language after the editor is created
-        let (_, buffer, _) = editor.read_with(cx, |editor, cx| {
+        let buffer = editor.read_with(cx, |editor, cx| {
             editor
-                .active_excerpt(cx)
-                .expect("editor should have an active excerpt")
+                .active_buffer(cx)
+                .expect("editor should have an active buffer")
         });
         buffer.update(cx, |buffer, cx| {
             buffer.set_language(None, cx);
@@ -454,8 +454,8 @@ mod tests {
             .await
             .expect("language should exist in registry");
         editor.update(cx, move |editor, cx| {
-            let (_, buffer, _) = editor
-                .active_excerpt(cx)
+            let buffer = editor
+                .active_buffer(cx)
                 .expect("editor should have an active excerpt");
             buffer.update(cx, |buffer, cx| {
                 buffer.set_language(Some(language), cx);
@@ -578,6 +578,15 @@ mod tests {
 
         assert_selected_language_for_editor(&workspace, &rust_editor, Some("Rust"), cx);
         assert_selected_language_for_editor(&workspace, &typescript_editor, Some("TypeScript"), cx);
+        // Ensure the empty editor's buffer has no language before asserting
+        let buffer = empty_editor.read_with(cx, |editor, cx| {
+            editor
+                .active_buffer(cx)
+                .expect("editor should have an active excerpt")
+        });
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(None, cx);
+        });
         assert_selected_language_for_editor(&workspace, &empty_editor, None, cx);
     }
 

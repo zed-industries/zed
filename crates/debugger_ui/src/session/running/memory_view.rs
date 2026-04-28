@@ -14,10 +14,10 @@ use gpui::{
     Subscription, Task, TextStyle, UniformList, UniformListScrollHandle, WeakEntity, actions,
     anchored, deferred, uniform_list,
 };
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use project::debugger::{MemoryCell, dap_command::DataBreakpointContext, session::Session};
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, Divider, DropdownMenu, FluentBuilder, IntoElement, PopoverMenuHandle, Render,
     ScrollableHandle, StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
@@ -480,7 +480,7 @@ impl MemoryView {
                                             cx.emit(DismissEvent)
                                         });
                                     }).detach();
-                                    this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                                    this.icon(Icon::new(IconName::XCircle).size(IconSize::Small).color(Color::Error))
                                 }),
                                 cx,
                             );
@@ -914,7 +914,7 @@ impl Render for MemoryView {
                         deferred(
                             anchored()
                                 .position(*position)
-                                .anchor(gpui::Corner::TopLeft)
+                                .anchor(gpui::Anchor::TopLeft)
                                 .child(menu.clone()),
                         )
                         .with_priority(1)

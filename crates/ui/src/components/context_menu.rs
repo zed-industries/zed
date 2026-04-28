@@ -1,21 +1,19 @@
 use crate::{
-    IconButtonShape, KeyBinding, List, ListItem, ListSeparator, ListSubHeader, Tooltip, prelude::*,
-    utils::WithRemSize,
+    ButtonCommon, ButtonStyle, IconButtonShape, KeyBinding, List, ListItem, ListSeparator,
+    ListSubHeader, Tooltip, prelude::*, utils::WithRemSize,
 };
 use gpui::{
-    Action, AnyElement, App, Bounds, Corner, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Action, Anchor, AnyElement, App, Bounds, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Size,
     Subscription, anchored, canvas, prelude::*, px,
 };
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
-use settings::Settings;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     rc::Rc,
     time::{Duration, Instant},
 };
-use theme::ThemeSettings;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum SubmenuOpenTrigger {
@@ -28,6 +26,7 @@ struct OpenSubmenu {
     entity: Entity<ContextMenu>,
     trigger_bounds: Option<Bounds<Pixels>>,
     offset: Option<Pixels>,
+    flip_left: bool,
     _dismiss_subscription: Subscription,
 }
 
@@ -682,6 +681,17 @@ impl ContextMenu {
         self
     }
 
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        if let Some(ContextMenuItem::CustomEntry {
+            selectable: entry_selectable,
+            ..
+        }) = self.items.last_mut()
+        {
+            *entry_selectable = selectable;
+        }
+        self
+    }
+
     pub fn label(mut self, label: impl Into<SharedString>) -> Self {
         self.items.push(ContextMenuItem::Label(label.into()));
         self
@@ -1292,6 +1302,11 @@ impl ContextMenu {
         let (submenu, dismiss_subscription) =
             Self::create_submenu(builder, cx.entity(), window, cx);
 
+        let flip_left = self
+            .main_menu_observed_bounds
+            .get()
+            .is_some_and(|bounds| bounds.right() + px(200.0) > window.viewport_size().width);
+
         // If we're switching from one submenu item to another, throw away any previously-captured
         // offset so we don't reuse a stale position.
         self.main_menu_observed_bounds.set(None);
@@ -1313,6 +1328,7 @@ impl ContextMenu {
             entity: submenu,
             trigger_bounds,
             offset: None,
+            flip_left,
             _dismiss_subscription: dismiss_subscription,
         });
 
@@ -1656,6 +1672,7 @@ impl ContextMenu {
         ix: usize,
         submenu: Entity<ContextMenu>,
         offset: Pixels,
+        flip_left: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let bounds_cell = self.main_menu_observed_bounds.clone();
@@ -1675,9 +1692,9 @@ impl ContextMenu {
         div()
             .id(("submenu-container", ix))
             .absolute()
-            .left_full()
-            .ml_neg_0p5()
             .top(offset)
+            .when(flip_left, |this| this.right_full().mr_neg_0p5())
+            .when(!flip_left, |this| this.left_full().ml_neg_0p5())
             .on_hover(cx.listener(|this, hovered, _, _| {
                 if *hovered {
                     this.hover_target = HoverTarget::Submenu;
@@ -1685,7 +1702,11 @@ impl ContextMenu {
             }))
             .child(
                 anchored()
-                    .anchor(Corner::TopLeft)
+                    .anchor(if flip_left {
+                        Anchor::TopRight
+                    } else {
+                        Anchor::TopLeft
+                    })
                     .snap_to_window_with_margin(px(8.0))
                     .child(
                         div()
@@ -1970,6 +1991,7 @@ impl ContextMenu {
                             el.end_slot({
                                 let icon_button = IconButton::new("end-slot-icon", *icon)
                                     .shape(IconButtonShape::Square)
+                                    .style(ButtonStyle::Subtle)
                                     .tooltip({
                                         let action_context = self.action_context.clone();
                                         let title = title.clone();
@@ -2050,7 +2072,7 @@ impl ContextMenuItem {
 
 impl Render for ContextMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+        let ui_font_size = theme::theme_settings(cx).ui_font_size(cx);
         let window_size = window.viewport_size();
         let rem_size = window.rem_size();
         let is_wide_window = window_size.width / rem_size > rems_from_px(800.).0;
@@ -2083,7 +2105,12 @@ impl Render for ContextMenu {
                     }
 
                     focus_submenu = Some(open_submenu.entity.read(cx).focus_handle.clone());
-                    Some((open_submenu.item_index, open_submenu.entity.clone(), offset))
+                    Some((
+                        open_submenu.item_index,
+                        open_submenu.entity.clone(),
+                        offset,
+                        open_submenu.flip_left,
+                    ))
                 } else {
                     None
                 }
@@ -2252,9 +2279,14 @@ impl Render for ContextMenu {
                             .child(render_aside(aside, cx))
                     }))
                 })
-                .when_some(submenu_container, |this, (ix, submenu, offset)| {
-                    this.child(self.render_submenu_container(ix, submenu, offset, cx))
-                })
+                .when_some(
+                    submenu_container,
+                    |this, (ix, submenu, offset, flip_left)| {
+                        this.child(
+                            self.render_submenu_container(ix, submenu, offset, flip_left, cx),
+                        )
+                    },
+                )
         } else {
             v_flex()
                 .w_full()
@@ -2263,9 +2295,14 @@ impl Render for ContextMenu {
                 .justify_end()
                 .children(aside.map(|(_, aside)| render_aside(aside, cx)))
                 .child(render_menu(cx, window))
-                .when_some(submenu_container, |this, (ix, submenu, offset)| {
-                    this.child(self.render_submenu_container(ix, submenu, offset, cx))
-                })
+                .when_some(
+                    submenu_container,
+                    |this, (ix, submenu, offset, flip_left)| {
+                        this.child(
+                            self.render_submenu_container(ix, submenu, offset, flip_left, cx),
+                        )
+                    },
+                )
         }
     }
 }

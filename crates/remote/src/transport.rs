@@ -263,10 +263,6 @@ async fn build_remote_server_from_source(
             rust_flags.push_str(&format!(" -C link-arg=-L{path}"));
         }
     }
-    if build_remote_server.contains("mold") {
-        rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
-    }
-
     if platform.arch.as_str() == std::env::consts::ARCH
         && platform.os.as_str() == std::env::consts::OS
     {
@@ -320,6 +316,7 @@ async fn build_remote_server_from_source(
         log::info!("building remote binary from source for {triple} with Zig");
         run_cmd(
             new_command("cargo")
+                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .args([
                     "zigbuild",
                     "--package",
@@ -335,7 +332,8 @@ async fn build_remote_server_from_source(
         )
         .await?;
     };
-    let bin_path = Path::new("target")
+    let bin_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .join("target")
         .join("remote_server")
         .join(&triple)
         .join("debug")

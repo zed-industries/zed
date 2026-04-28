@@ -1,7 +1,8 @@
 use crate::{
-    CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
-    SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
-    WorkspaceItemBuilder, ZoomIn, ZoomOut,
+    CloseWindow, NewCenterTerminal, NewFile, NewTerminal, OpenInTerminal, OpenOptions,
+    OpenTerminal, OpenVisible, SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom,
+    Workspace, WorkspaceItemBuilder, ZoomIn, ZoomOut,
+    focus_follows_mouse::FocusFollowsMouse as _,
     invalid_item_view::InvalidItemView,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
@@ -11,13 +12,13 @@ use crate::{
     move_item,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
-    workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
+    workspace_settings::{AutosaveSetting, FocusFollowsMouse, TabBarSettings, WorkspaceSettings},
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
+    Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
     Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window, actions, anchored,
@@ -42,13 +43,15 @@ use std::{
     },
     time::Duration,
 };
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButtonShape, IconDecoration,
     IconDecorationKind, Indicator, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition,
     Tooltip, prelude::*, right_click_menu,
 };
-use util::{ResultExt, debug_panic, maybe, paths::PathStyle, truncate_and_remove_front};
+use util::{
+    ResultExt, debug_panic, maybe, paths::PathStyle, serde::default_true, truncate_and_remove_front,
+};
 
 /// A selected entry in e.g. project panel.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -80,6 +83,8 @@ pub enum SaveIntent {
     /// write all files (even if unchanged)
     /// prompt before overwriting on-disk changes
     Save,
+    /// same as Save, but always formats regardless of the format_on_save setting
+    FormatAndSave,
     /// same as Save, but without auto formatting
     SaveWithoutFormat,
     /// write any files that have local changes
@@ -192,6 +197,16 @@ pub struct DeploySearch {
     pub included_files: Option<String>,
     #[serde(default)]
     pub excluded_files: Option<String>,
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub regex: Option<bool>,
+    #[serde(default)]
+    pub case_sensitive: Option<bool>,
+    #[serde(default)]
+    pub whole_word: Option<bool>,
+    #[serde(default)]
+    pub include_ignored: Option<bool>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema, Default)]
@@ -229,13 +244,41 @@ split_structs!(
     SplitVertical => "Splits the pane vertically."
 );
 
+/// Activates the previous item in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct ActivatePreviousItem {
+    /// Whether to wrap from the first item to the last item.
+    #[serde(default = "default_true")]
+    pub wrap_around: bool,
+}
+
+impl Default for ActivatePreviousItem {
+    fn default() -> Self {
+        Self { wrap_around: true }
+    }
+}
+
+/// Activates the next item in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct ActivateNextItem {
+    /// Whether to wrap from the last item to the first item.
+    #[serde(default = "default_true")]
+    pub wrap_around: bool,
+}
+
+impl Default for ActivateNextItem {
+    fn default() -> Self {
+        Self { wrap_around: true }
+    }
+}
+
 actions!(
     pane,
     [
-        /// Activates the previous item in the pane.
-        ActivatePreviousItem,
-        /// Activates the next item in the pane.
-        ActivateNextItem,
         /// Activates the last item in the pane.
         ActivateLastItem,
         /// Switches to the alternate file.
@@ -274,16 +317,6 @@ actions!(
         UnpinAllTabs,
     ]
 );
-
-impl DeploySearch {
-    pub fn find() -> Self {
-        Self {
-            replace_enabled: false,
-            included_files: None,
-            excluded_files: None,
-        }
-    }
-}
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -413,6 +446,7 @@ pub struct Pane {
     pinned_tab_count: usize,
     diagnostics: HashMap<ProjectPath, DiagnosticSeverity>,
     zoom_out_on_close: bool,
+    focus_follows_mouse: FocusFollowsMouse,
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
@@ -473,6 +507,9 @@ pub struct NavigationEntry {
     pub data: Option<Arc<dyn Any + Send + Sync>>,
     pub timestamp: usize,
     pub is_preview: bool,
+    /// Row position for Neovim-style deduplication. When set, entries with the
+    /// same item and row are considered duplicates and deduplicated.
+    pub row: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -582,6 +619,7 @@ impl Pane {
             pinned_tab_count: 0,
             diagnostics: Default::default(),
             zoom_out_on_close: true,
+            focus_follows_mouse: WorkspaceSettings::get_global(cx).focus_follows_mouse,
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
             welcome_page: None,
@@ -749,7 +787,6 @@ impl Pane {
 
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let tab_bar_settings = TabBarSettings::get_global(cx);
-        let new_max_tabs = WorkspaceSettings::get_global(cx).max_tabs;
 
         if let Some(display_nav_history_buttons) = self.display_nav_history_buttons.as_mut() {
             *display_nav_history_buttons = tab_bar_settings.show_nav_history_buttons;
@@ -761,6 +798,12 @@ impl Pane {
             self.preview_item_id = None;
             self.nav_history.0.lock().preview_item_id = None;
         }
+
+        let workspace_settings = WorkspaceSettings::get_global(cx);
+
+        self.focus_follows_mouse = workspace_settings.focus_follows_mouse;
+
+        let new_max_tabs = workspace_settings.max_tabs;
 
         if self.use_max_tabs && new_max_tabs != self.max_tabs {
             self.max_tabs = new_max_tabs;
@@ -1058,6 +1101,8 @@ impl Pane {
             }
         }
 
+        let preview_was_active = self.preview_item_idx() == Some(self.active_item_index);
+
         let set_up_existing_item =
             |index: usize, pane: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                 if !allow_preview && let Some(item) = pane.items.get(index) {
@@ -1072,8 +1117,10 @@ impl Pane {
                                pane: &mut Self,
                                window: &mut Window,
                                cx: &mut Context<Self>| {
-            if allow_preview {
-                pane.replace_preview_item_id(new_item.item_id(), window, cx);
+            let new_item_id = new_item.item_id();
+
+            if allow_preview && preview_was_active {
+                pane.set_preview_item_id(Some(new_item_id), cx);
             }
 
             if let Some(text) = new_item.telemetry_event_text(cx) {
@@ -1089,6 +1136,10 @@ impl Pane {
                 window,
                 cx,
             );
+
+            if allow_preview && !preview_was_active {
+                pane.set_preview_item_id(Some(new_item_id), cx);
+            }
         };
 
         if let Some((index, existing_item)) = existing_item {
@@ -1159,6 +1210,9 @@ impl Pane {
         let prev_active_item_index = self.active_item_index;
         self.remove_item(id, false, false, window, cx);
         self.active_item_index = prev_active_item_index;
+        if item_idx < prev_active_item_index {
+            self.active_item_index -= 1;
+        }
         self.nav_history.0.lock().preview_item_id = None;
 
         if item_idx < self.items.len() {
@@ -1474,14 +1528,14 @@ impl Pane {
 
     pub fn activate_previous_item(
         &mut self,
-        _: &ActivatePreviousItem,
+        action: &ActivatePreviousItem,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let mut index = self.active_item_index;
         if index > 0 {
             index -= 1;
-        } else if !self.items.is_empty() {
+        } else if action.wrap_around && !self.items.is_empty() {
             index = self.items.len() - 1;
         }
         self.activate_item(index, true, true, window, cx);
@@ -1489,14 +1543,14 @@ impl Pane {
 
     pub fn activate_next_item(
         &mut self,
-        _: &ActivateNextItem,
+        action: &ActivateNextItem,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let mut index = self.active_item_index;
         if index + 1 < self.items.len() {
             index += 1;
-        } else {
+        } else if action.wrap_around {
             index = 0;
         }
         self.activate_item(index, true, true, window, cx);
@@ -2226,7 +2280,10 @@ impl Pane {
         })?;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
-        if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
+        if save_intent == SaveIntent::Save
+            || save_intent == SaveIntent::FormatAndSave
+            || save_intent == SaveIntent::SaveWithoutFormat
+        {
             is_dirty = true;
         }
 
@@ -2241,6 +2298,7 @@ impl Pane {
         }
 
         let should_format = save_intent != SaveIntent::SaveWithoutFormat;
+        let force_format = save_intent == SaveIntent::FormatAndSave;
 
         if has_conflict && can_save {
             if has_deleted_file && is_singleton {
@@ -2260,6 +2318,7 @@ impl Pane {
                             item.save(
                                 SaveOptions {
                                     format: should_format,
+                                    force_format,
                                     autosave: false,
                                 },
                                 project,
@@ -2294,6 +2353,7 @@ impl Pane {
                             item.save(
                                 SaveOptions {
                                     format: should_format,
+                                    force_format,
                                     autosave: false,
                                 },
                                 project,
@@ -2375,6 +2435,7 @@ impl Pane {
                     item.save(
                         SaveOptions {
                             format: should_format,
+                            force_format,
                             autosave: false,
                         },
                         project,
@@ -2425,13 +2486,29 @@ impl Pane {
                             pane.remove_item(item.item_id(), false, false, window, cx);
                         }
 
-                        item.save_as(project, new_path, window, cx)
+                        item.save_as(project.clone(), new_path, window, cx)
                     })?
                 } else {
                     return Ok(false);
                 };
 
                 save_task.await?;
+                if should_format {
+                    pane.update_in(cx, |pane, window, cx| {
+                        pane.unpreview_item_if_preview(item.item_id());
+                        item.save(
+                            SaveOptions {
+                                format: true,
+                                autosave: false,
+                                force_format,
+                            },
+                            project,
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await?;
+                }
                 return Ok(true);
             }
         }
@@ -2459,6 +2536,7 @@ impl Pane {
             item.save(
                 SaveOptions {
                     format,
+                    force_format: false,
                     autosave: true,
                 },
                 project,
@@ -2846,12 +2924,13 @@ impl Pane {
             }))
             .on_aux_click(
                 cx.listener(move |pane: &mut Self, event: &ClickEvent, window, cx| {
-                    if !event.is_middle_click() {
+                    if !event.is_middle_click() || is_pinned {
                         return;
                     }
 
                     pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                         .detach_and_log_err(cx);
+                    cx.stop_propagation();
                 }),
             )
             .on_drag(
@@ -3628,11 +3707,16 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_external_paths_drop(paths, window, cx)
             }))
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                if event.click_count() == 2 {
+                    window.dispatch_action(this.double_click_dispatch_action.boxed_clone(), cx);
+                }
+            }))
     }
 
     pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
         div().absolute().bottom_0().right_0().size_0().child(
-            deferred(anchored().anchor(Corner::TopRight).child(menu.clone())).with_priority(1),
+            deferred(anchored().anchor(Anchor::TopRight).child(menu.clone())).with_priority(1),
         )
     }
 
@@ -4131,25 +4215,21 @@ fn default_render_tab_bar_buttons(
                     IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
                     Tooltip::text("New..."),
                 )
-                .anchor(Corner::TopRight)
+                .anchor(Anchor::TopRight)
                 .with_handle(pane.new_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _, _| {
                         menu.action("New File", NewFile.boxed_clone())
                             .action("Open File", ToggleFileFinder::default().boxed_clone())
                             .separator()
-                            .action(
-                                "Search Project",
-                                DeploySearch {
-                                    replace_enabled: false,
-                                    included_files: None,
-                                    excluded_files: None,
-                                }
-                                .boxed_clone(),
-                            )
+                            .action("Search Project", DeploySearch::default().boxed_clone())
                             .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
                             .separator()
                             .action("New Terminal", NewTerminal::default().boxed_clone())
+                            .action(
+                                "New Center Terminal",
+                                NewCenterTerminal::default().boxed_clone(),
+                            )
                     }))
                 }),
         )
@@ -4161,7 +4241,7 @@ fn default_render_tab_bar_buttons(
                         .disabled(!can_clone && !can_split_move),
                     Tooltip::text("Split Pane"),
                 )
-                .anchor(Corner::TopRight)
+                .anchor(Anchor::TopRight)
                 .with_handle(pane.split_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
@@ -4351,21 +4431,37 @@ impl Render for Pane {
                         .detach_and_log_err(cx)
                 },
             ))
-            .on_action(
-                cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, _, cx| {
-                    let entry_id = action
-                        .entry_id
-                        .map(ProjectEntryId::from_proto)
-                        .or_else(|| pane.active_item()?.project_entry_ids(cx).first().copied());
-                    if let Some(entry_id) = entry_id {
-                        pane.project
-                            .update(cx, |_, cx| {
-                                cx.emit(project::Event::RevealInProjectPanel(entry_id))
-                            })
-                            .ok();
-                    }
-                }),
-            )
+            .on_action(cx.listener(
+                |pane: &mut Self, action: &RevealInProjectPanel, _window, cx| {
+                    let active_item = pane.active_item();
+                    let entry_id = active_item.as_ref().and_then(|item| {
+                        action
+                            .entry_id
+                            .map(ProjectEntryId::from_proto)
+                            .or_else(|| item.project_entry_ids(cx).first().copied())
+                    });
+
+                    pane.project
+                        .update(cx, |project, cx| {
+                            if let Some(entry_id) = entry_id
+                                && project
+                                    .worktree_for_entry(entry_id, cx)
+                                    .is_some_and(|worktree| worktree.read(cx).is_visible())
+                            {
+                                return cx.emit(project::Event::RevealInProjectPanel(entry_id));
+                            }
+
+                            // When no entry is found, which is the case when
+                            // working with an unsaved buffer, or the worktree
+                            // is not visible, for example, a file that doesn't
+                            // belong to an open project, we can't reveal the
+                            // entry but we still want to activate the project
+                            // panel.
+                            cx.emit(project::Event::ActivateProjectPanel);
+                        })
+                        .log_err();
+                },
+            ))
             .on_action(cx.listener(|_, _: &menu::Cancel, window, cx| {
                 if cx.stop_active_drag(window) {
                 } else {
@@ -4426,6 +4522,7 @@ impl Render for Pane {
                                 placeholder.child(self.welcome_page.clone().unwrap())
                             }
                         }
+                        .focus_follows_mouse(self.focus_follows_mouse, cx)
                     })
                     .child(
                         // drag target
@@ -4510,7 +4607,12 @@ impl Render for Pane {
 }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Any + Send + Sync>(&mut self, data: Option<D>, cx: &mut App) {
+    pub fn push<D: 'static + Any + Send + Sync>(
+        &mut self,
+        data: Option<D>,
+        row: Option<u32>,
+        cx: &mut App,
+    ) {
         if self
             .item
             .upgrade()
@@ -4518,7 +4620,7 @@ impl ItemNavHistory {
         {
             let is_preview_item = self.history.0.lock().preview_item_id == Some(self.item.id());
             self.history
-                .push(data, self.item.clone(), is_preview_item, cx);
+                .push(data, self.item.clone(), is_preview_item, row, cx);
         }
     }
 
@@ -4526,9 +4628,10 @@ impl ItemNavHistory {
         let is_preview_item = self.history.0.lock().preview_item_id == Some(self.item.id());
         NavigationEntry {
             item: self.item.clone(),
-            data: data,
-            timestamp: 0, // not used
+            data,
+            timestamp: 0,
             is_preview: is_preview_item,
+            row: None,
         }
     }
 
@@ -4632,12 +4735,22 @@ impl NavHistory {
         data: Option<D>,
         item: Arc<dyn WeakItemHandle + Send + Sync>,
         is_preview: bool,
+        row: Option<u32>,
         cx: &mut App,
     ) {
         let state = &mut *self.0.lock();
+        let new_item_id = item.id();
+
+        let is_same_location =
+            |entry: &NavigationEntry| entry.item.id() == new_item_id && entry.row == row;
+
         match state.mode {
             NavigationMode::Disabled => {}
             NavigationMode::Normal | NavigationMode::ReopeningClosedItem => {
+                state
+                    .backward_stack
+                    .retain(|entry| !is_same_location(entry));
+
                 if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     state.backward_stack.pop_front();
                 }
@@ -4646,10 +4759,13 @@ impl NavHistory {
                     data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
+                    row,
                 });
                 state.forward_stack.clear();
             }
             NavigationMode::GoingBack => {
+                state.forward_stack.retain(|entry| !is_same_location(entry));
+
                 if state.forward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     state.forward_stack.pop_front();
                 }
@@ -4658,9 +4774,14 @@ impl NavHistory {
                     data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
+                    row,
                 });
             }
             NavigationMode::GoingForward => {
+                state
+                    .backward_stack
+                    .retain(|entry| !is_same_location(entry));
+
                 if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
                     state.backward_stack.pop_front();
                 }
@@ -4669,6 +4790,7 @@ impl NavHistory {
                     data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
+                    row,
                 });
             }
             NavigationMode::ClosingItem if is_preview => return,
@@ -4681,6 +4803,7 @@ impl NavHistory {
                     data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send + Sync>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
+                    row,
                 });
             }
         }
@@ -4781,36 +4904,9 @@ fn dirty_message_for(buffer_path: Option<ProjectPath>, path_style: PathStyle) ->
 }
 
 pub fn tab_details(items: &[Box<dyn ItemHandle>], _window: &Window, cx: &App) -> Vec<usize> {
-    let mut tab_details = items.iter().map(|_| 0).collect::<Vec<_>>();
-    let mut tab_descriptions = HashMap::default();
-    let mut done = false;
-    while !done {
-        done = true;
-
-        // Store item indices by their tab description.
-        for (ix, (item, detail)) in items.iter().zip(&tab_details).enumerate() {
-            let description = item.tab_content_text(*detail, cx);
-            if *detail == 0 || description != item.tab_content_text(detail - 1, cx) {
-                tab_descriptions
-                    .entry(description)
-                    .or_insert(Vec::new())
-                    .push(ix);
-            }
-        }
-
-        // If two or more items have the same tab description, increase their level
-        // of detail and try again.
-        for (_, item_ixs) in tab_descriptions.drain() {
-            if item_ixs.len() > 1 {
-                done = false;
-                for ix in item_ixs {
-                    tab_details[ix] += 1;
-                }
-            }
-        }
-    }
-
-    tab_details
+    util::disambiguate::compute_disambiguation_details(items, |item, detail| {
+        item.tab_content_text(detail, cx)
+    })
 }
 
 pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &App) -> Option<Indicator> {
@@ -4848,14 +4944,17 @@ impl Render for DraggedTab {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, iter::zip, num::NonZero};
+    use std::{cell::Cell, iter::zip, num::NonZero, rc::Rc};
 
     use super::*;
     use crate::{
         Member,
         item::test::{TestItem, TestProjectItem},
     };
-    use gpui::{AppContext, Axis, TestAppContext, VisualTestContext, size};
+    use gpui::{
+        AppContext, Axis, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+        TestAppContext, VisualTestContext, size,
+    };
     use project::FakeFs;
     use settings::SettingsStore;
     use theme::LoadThemes;
@@ -6580,8 +6679,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_drag_tab_to_middle_tab_with_mouse_events(cx: &mut TestAppContext) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -6633,8 +6730,6 @@ mod tests {
     async fn test_drag_pinned_tab_when_show_pinned_tabs_in_separate_row_enabled(
         cx: &mut TestAppContext,
     ) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         set_pinned_tabs_separate_row(cx, true);
         let fs = FakeFs::new(cx.executor());
@@ -6710,8 +6805,6 @@ mod tests {
     async fn test_drag_unpinned_tab_when_show_pinned_tabs_in_separate_row_enabled(
         cx: &mut TestAppContext,
     ) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         set_pinned_tabs_separate_row(cx, true);
         let fs = FakeFs::new(cx.executor());
@@ -6764,8 +6857,6 @@ mod tests {
     async fn test_drag_mixed_tabs_when_show_pinned_tabs_in_separate_row_enabled(
         cx: &mut TestAppContext,
     ) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         set_pinned_tabs_separate_row(cx, true);
         let fs = FakeFs::new(cx.executor());
@@ -6827,6 +6918,145 @@ mod tests {
         cx.run_until_parked();
 
         assert_item_labels(&pane, ["A!", "B!", "D", "E", "C*", "F"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_middle_click_pinned_tab_does_not_close(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.pin_tab_at(
+                pane.index_for_item_id(item_a.item_id()).unwrap(),
+                window,
+                cx,
+            );
+        });
+        assert_item_labels(&pane, ["A!", "B*"], cx);
+        cx.run_until_parked();
+
+        let tab_a_bounds = cx
+            .debug_bounds("TAB-0")
+            .expect("Tab A (index 1) should have debug bounds");
+        let tab_b_bounds = cx
+            .debug_bounds("TAB-1")
+            .expect("Tab B (index 2) should have debug bounds");
+
+        cx.simulate_event(MouseDownEvent {
+            position: tab_a_bounds.center(),
+            button: MouseButton::Middle,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
+
+        cx.run_until_parked();
+
+        cx.simulate_event(MouseUpEvent {
+            position: tab_a_bounds.center(),
+            button: MouseButton::Middle,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        });
+
+        cx.run_until_parked();
+
+        cx.simulate_event(MouseDownEvent {
+            position: tab_b_bounds.center(),
+            button: MouseButton::Middle,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            first_mouse: false,
+        });
+
+        cx.run_until_parked();
+
+        cx.simulate_event(MouseUpEvent {
+            position: tab_b_bounds.center(),
+            button: MouseButton::Middle,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        });
+
+        cx.run_until_parked();
+
+        assert_item_labels(&pane, ["A*!"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_double_click_pinned_tab_bar_empty_space_creates_new_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // The real NewFile handler lives in editor::init, which isn't initialized
+        // in workspace tests. Register a global action handler that sets a flag so
+        // we can verify the action is dispatched without depending on the editor crate.
+        // TODO: If editor::init is ever available in workspace tests, remove this
+        // flag and assert the resulting tab bar state directly instead.
+        let new_file_dispatched = Rc::new(Cell::new(false));
+        cx.update(|_, cx| {
+            let new_file_dispatched = new_file_dispatched.clone();
+            cx.on_action(move |_: &NewFile, _cx| {
+                new_file_dispatched.set(true);
+            });
+        });
+
+        set_pinned_tabs_separate_row(cx, true);
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane
+                .index_for_item_id(item_a.item_id())
+                .expect("item A should exist");
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B*"], cx);
+        cx.run_until_parked();
+
+        let pinned_drop_target_bounds = cx
+            .debug_bounds("pinned_tabs_border")
+            .expect("pinned_tabs_border should have debug bounds");
+
+        cx.simulate_event(MouseDownEvent {
+            position: pinned_drop_target_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 2,
+            first_mouse: false,
+        });
+
+        cx.run_until_parked();
+
+        cx.simulate_event(MouseUpEvent {
+            position: pinned_drop_target_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 2,
+        });
+
+        cx.run_until_parked();
+
+        // TODO: If editor::init is ever available in workspace tests, replace this
+        // with an assert_item_labels check that verifies a new tab is actually created.
+        assert!(
+            new_file_dispatched.get(),
+            "Double-clicking pinned tab bar empty space should dispatch the new file action"
+        );
     }
 
     #[gpui::test]
@@ -7812,6 +8042,74 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_format_runs_on_first_save_of_new_file(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = add_labeled_item(&pane, "untitled", true, cx);
+        item.update(cx, |item, cx| {
+            item.project_items.push(TestProjectItem::new_untitled(cx));
+        });
+        assert_item_labels(&pane, ["untitled*^"], cx);
+
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_item_by_id(item.item_id(), SaveIntent::Save, window, cx)
+        });
+
+        cx.executor().run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(Default::default()));
+        close_task.await.unwrap();
+
+        item.read_with(cx, |item, _| {
+            assert_eq!(item.save_as_count, 1);
+            assert_eq!(
+                item.save_count, 1,
+                "formatter should run after the file is given a path on first save"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_format_does_not_run_on_first_save_when_save_without_format(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = add_labeled_item(&pane, "untitled", true, cx);
+        item.update(cx, |item, cx| {
+            item.project_items.push(TestProjectItem::new_untitled(cx));
+        });
+        assert_item_labels(&pane, ["untitled*^"], cx);
+
+        let close_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_item_by_id(item.item_id(), SaveIntent::SaveWithoutFormat, window, cx)
+        });
+
+        cx.executor().run_until_parked();
+        cx.simulate_new_path_selection(|_| Some(Default::default()));
+        close_task.await.unwrap();
+
+        item.read_with(cx, |item, _| {
+            assert_eq!(item.save_as_count, 1);
+            assert_eq!(
+                item.save_count, 0,
+                "formatter should not run when SaveWithoutFormat is used"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_discard_does_not_reload_multibuffer(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -8085,9 +8383,10 @@ mod tests {
         let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
         let scroll_bounds = tab_bar_scroll_handle.bounds();
         let scroll_offset = tab_bar_scroll_handle.offset();
+        assert!(scroll_offset.x < px(0.));
+        assert!(scroll_offset.x >= -tab_bar_scroll_handle.max_offset().x);
+        assert!(tab_bounds.left() >= scroll_bounds.left());
         assert!(tab_bounds.right() <= scroll_bounds.right());
-        // -39.5 is the magic number for this setup
-        assert_eq!(scroll_offset.x, px(-39.5));
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
             "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"
@@ -8482,11 +8781,56 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_activate_item_with_wrap_around(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_next_item(&ActivateNextItem { wrap_around: false }, window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_next_item(&ActivateNextItem::default(), window, cx);
+        });
+        assert_item_labels(&pane, ["A*", "B", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_previous_item(&ActivatePreviousItem { wrap_around: false }, window, cx);
+        });
+        assert_item_labels(&pane, ["A*", "B", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_previous_item(&ActivatePreviousItem::default(), window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_previous_item(&ActivatePreviousItem { wrap_around: false }, window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_next_item(&ActivateNextItem { wrap_around: false }, window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(LoadThemes::JustBase, cx);
+            theme_settings::init(LoadThemes::JustBase, cx);
         });
     }
 
@@ -8744,6 +9088,340 @@ mod tests {
             }
             SplitMode::MovePane => {
                 assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
+            }
+        }
+    }
+
+    mod property_test {
+        use super::*;
+        use proptest::prelude::*;
+        use serde_json::json;
+        use std::{collections::HashSet, sync::Arc};
+        use util::{
+            path,
+            rel_path::{RelPath, rel_path},
+        };
+
+        struct TestFileItem {
+            project_path: ProjectPath,
+        }
+
+        impl project::ProjectItem for TestFileItem {
+            fn try_open(
+                _project: &Entity<Project>,
+                path: &ProjectPath,
+                cx: &mut App,
+            ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
+                let project_path = path.clone();
+                Some(cx.spawn(async move |cx| Ok(cx.new(|_| Self { project_path }))))
+            }
+
+            fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {
+                None
+            }
+
+            fn project_path(&self, _: &App) -> Option<ProjectPath> {
+                Some(self.project_path.clone())
+            }
+
+            fn is_dirty(&self) -> bool {
+                false
+            }
+        }
+
+        struct TestItemView {
+            focus_handle: FocusHandle,
+            project_item: Entity<TestFileItem>,
+            nav_history: Option<ItemNavHistory>,
+        }
+
+        impl EventEmitter<()> for TestItemView {}
+
+        impl Focusable for TestItemView {
+            fn focus_handle(&self, _cx: &App) -> FocusHandle {
+                self.focus_handle.clone()
+            }
+        }
+
+        impl Render for TestItemView {
+            fn render(
+                &mut self,
+                _window: &mut Window,
+                _cx: &mut Context<Self>,
+            ) -> impl IntoElement {
+                gpui::Empty
+            }
+        }
+
+        impl Item for TestItemView {
+            type Event = ();
+
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+                "".into()
+            }
+
+            fn for_each_project_item(
+                &self,
+                cx: &App,
+                f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
+            ) {
+                f(self.project_item.entity_id(), self.project_item.read(cx))
+            }
+
+            fn buffer_kind(&self, _: &App) -> ItemBufferKind {
+                ItemBufferKind::Singleton
+            }
+
+            fn set_nav_history(
+                &mut self,
+                history: ItemNavHistory,
+                _window: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+                self.nav_history = Some(history);
+            }
+
+            fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+                if let Some(nav_history) = self.nav_history.as_mut() {
+                    nav_history.push::<()>(None, None, cx);
+                }
+            }
+        }
+
+        impl crate::ProjectItem for TestItemView {
+            type Item = TestFileItem;
+
+            fn for_project_item(
+                _project: Entity<Project>,
+                _pane: Option<&Pane>,
+                item: Entity<Self::Item>,
+                _: &mut Window,
+                cx: &mut Context<Self>,
+            ) -> Self
+            where
+                Self: Sized,
+            {
+                Self {
+                    focus_handle: cx.focus_handle(),
+                    project_item: item,
+                    nav_history: None,
+                }
+            }
+        }
+
+        fn arbitrary_path() -> impl Strategy<Value = Arc<RelPath>> {
+            prop_oneof![
+                Just(rel_path("1.txt").into()),
+                Just(rel_path("2.js").into()),
+                Just(rel_path("3.rs").into()),
+            ]
+        }
+
+        #[derive(Debug, Clone, proptest_derive::Arbitrary)]
+        enum Operation {
+            Open {
+                #[proptest(strategy = "arbitrary_path()")]
+                path: Arc<RelPath>,
+                allow_preview: bool,
+            },
+            GoBack,
+            GoForward,
+        }
+
+        struct Oracle {
+            /// The active item's path, if known.
+            current: Option<Arc<RelPath>>,
+            /// The path that the back button would navigate to, if known.
+            previous: Option<Arc<RelPath>>,
+            /// The path that the forward button would navigate to, if known.
+            next: Option<Arc<RelPath>>,
+        }
+
+        impl Oracle {
+            fn new() -> Self {
+                Self {
+                    current: None,
+                    previous: None,
+                    next: None,
+                }
+            }
+
+            fn apply(&mut self, operation: Operation) {
+                match operation {
+                    Operation::Open { path, .. } => {
+                        if self.current.as_ref() != Some(&path) {
+                            self.previous = self.current.replace(path);
+                            self.next = None;
+                        }
+                    }
+                    Operation::GoBack => {
+                        if let Some(previous) = self.previous.take() {
+                            self.next = self.current.replace(previous);
+                        } else {
+                            // `previous` isn't set, so backward navigation may not have been
+                            // possible, hence we don't know which item a following forward
+                            // navigation will lead to
+                            self.next = None;
+                            self.current = None;
+                        }
+                    }
+                    Operation::GoForward => {
+                        if let Some(next) = self.next.take() {
+                            self.previous = self.current.replace(next);
+                        } else {
+                            self.previous = None;
+                            self.current = None;
+                        }
+                    }
+                }
+            }
+        }
+
+        struct PaneHarness {
+            cx: VisualTestContext,
+            workspace: Entity<Workspace>,
+            pane: Entity<Pane>,
+            worktree_id: WorktreeId,
+        }
+
+        impl PaneHarness {
+            async fn new(cx: &mut TestAppContext) -> Self {
+                init_test(cx);
+                cx.update(|cx| crate::register_project_item::<TestItemView>(cx));
+
+                let fs = FakeFs::new(cx.executor());
+                fs.insert_tree(
+                    path!("/root"),
+                    json!({
+                        "1.txt": "one",
+                        "2.js": "two",
+                        "3.rs": "three",
+                    }),
+                )
+                .await;
+                let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+                let worktree_id = project.update(cx, |project, cx| {
+                    project.worktrees(cx).next().unwrap().read(cx).id()
+                });
+                let window = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+                let workspace = window.root(cx).unwrap();
+                let cx = VisualTestContext::from_window(*window, cx);
+                let pane = workspace.read_with(&cx, |workspace, _| workspace.active_pane().clone());
+
+                Self {
+                    cx,
+                    workspace,
+                    pane,
+                    worktree_id,
+                }
+            }
+
+            async fn apply(&mut self, operation: Operation) {
+                match operation {
+                    Operation::Open {
+                        path,
+                        allow_preview,
+                    } => {
+                        self.workspace
+                            .update_in(&mut self.cx, |workspace, window, cx| {
+                                workspace.open_path_preview(
+                                    ProjectPath {
+                                        worktree_id: self.worktree_id,
+                                        path,
+                                    },
+                                    None,
+                                    true,
+                                    allow_preview,
+                                    true,
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .await
+                            .unwrap();
+                    }
+                    Operation::GoBack => {
+                        self.workspace
+                            .update_in(&mut self.cx, |workspace, window, cx| {
+                                workspace.go_back(self.pane.downgrade(), window, cx)
+                            })
+                            .await
+                            .unwrap();
+                    }
+                    Operation::GoForward => {
+                        self.workspace
+                            .update_in(&mut self.cx, |workspace, window, cx| {
+                                workspace.go_forward(self.pane.downgrade(), window, cx)
+                            })
+                            .await
+                            .unwrap();
+                    }
+                }
+            }
+
+            fn check_invariants(&self, expected_path: &Option<Arc<RelPath>>) {
+                self.pane.read_with(&self.cx, |pane, cx| {
+                    let open_paths = pane
+                        .items()
+                        .map(|item| item.project_path(cx).unwrap())
+                        .collect::<Vec<_>>();
+                    let active_path = pane
+                        .active_item()
+                        .map(|item| item.project_path(cx).unwrap());
+                    let preview_path = pane
+                        .preview_item()
+                        .map(|item| item.project_path(cx).unwrap());
+
+                    let unique_paths = open_paths.iter().collect::<HashSet<_>>();
+                    assert_eq!(
+                        unique_paths.len(),
+                        open_paths.len(),
+                        "pane should not contain duplicate open paths"
+                    );
+
+                    assert_eq!(
+                        active_path.is_none(),
+                        open_paths.is_empty(),
+                        "pane should have an active item iff it has open paths"
+                    );
+                    assert!(
+                        active_path
+                            .as_ref()
+                            .is_none_or(|path| open_paths.contains(path)),
+                        "active path should be open"
+                    );
+                    assert!(
+                        preview_path
+                            .as_ref()
+                            .is_none_or(|path| open_paths.contains(path)),
+                        "preview path should be open"
+                    );
+
+                    if let Some(expected_active_path) = expected_path {
+                        assert_eq!(
+                            &active_path.as_ref().unwrap().path,
+                            expected_active_path,
+                            "active path should match the oracle"
+                        );
+                    }
+                });
+            }
+        }
+
+        #[gpui::property_test]
+        async fn single_pane_navigation(
+            #[strategy = proptest::collection::vec(any::<Operation>(), 1..32)] operations: Vec<
+                Operation,
+            >,
+            cx: &mut TestAppContext,
+        ) {
+            let mut harness = PaneHarness::new(cx).await;
+            let mut oracle = Oracle::new();
+
+            for operation in operations {
+                oracle.apply(operation.clone());
+                harness.apply(operation).await;
+                harness.check_invariants(&oracle.current);
             }
         }
     }

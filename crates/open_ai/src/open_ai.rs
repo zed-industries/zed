@@ -1,4 +1,5 @@
 pub mod batches;
+pub mod completion;
 pub mod responses;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -7,9 +8,9 @@ use http_client::{
     AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode,
     http::{HeaderMap, HeaderValue},
 };
+pub use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-pub use settings::OpenAiReasoningEffort as ReasoningEffort;
 use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
 use thiserror::Error;
@@ -94,10 +95,14 @@ pub enum Model {
     FivePointFour,
     #[serde(rename = "gpt-5.4-pro")]
     FivePointFourPro,
+    #[serde(rename = "gpt-5.5")]
+    FivePointFive,
+    #[serde(rename = "gpt-5.5-pro")]
+    FivePointFivePro,
     #[serde(rename = "custom")]
     Custom {
         name: String,
-        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        /// The name displayed in the UI, such as in the agent panel model dropdown menu.
         display_name: Option<String>,
         max_tokens: u64,
         max_output_tokens: Option<u64>,
@@ -105,10 +110,16 @@ pub enum Model {
         reasoning_effort: Option<ReasoningEffort>,
         #[serde(default = "default_supports_chat_completions")]
         supports_chat_completions: bool,
+        #[serde(default = "default_supports_images")]
+        supports_images: bool,
     },
 }
 
 const fn default_supports_chat_completions() -> bool {
+    true
+}
+
+const fn default_supports_images() -> bool {
     true
 }
 
@@ -137,6 +148,8 @@ impl Model {
             "gpt-5.3-codex" => Ok(Self::FivePointThreeCodex),
             "gpt-5.4" => Ok(Self::FivePointFour),
             "gpt-5.4-pro" => Ok(Self::FivePointFourPro),
+            "gpt-5.5" => Ok(Self::FivePointFive),
+            "gpt-5.5-pro" => Ok(Self::FivePointFivePro),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -161,6 +174,8 @@ impl Model {
             Self::FivePointThreeCodex => "gpt-5.3-codex",
             Self::FivePointFour => "gpt-5.4",
             Self::FivePointFourPro => "gpt-5.4-pro",
+            Self::FivePointFive => "gpt-5.5",
+            Self::FivePointFivePro => "gpt-5.5-pro",
             Self::Custom { name, .. } => name,
         }
     }
@@ -185,6 +200,8 @@ impl Model {
             Self::FivePointThreeCodex => "gpt-5.3-codex",
             Self::FivePointFour => "gpt-5.4",
             Self::FivePointFourPro => "gpt-5.4-pro",
+            Self::FivePointFive => "gpt-5.5",
+            Self::FivePointFivePro => "gpt-5.5-pro",
             Self::Custom { display_name, .. } => display_name.as_deref().unwrap_or(&self.id()),
         }
     }
@@ -209,6 +226,8 @@ impl Model {
             Self::FivePointThreeCodex => 400_000,
             Self::FivePointFour => 1_050_000,
             Self::FivePointFourPro => 1_050_000,
+            Self::FivePointFive => 1_050_000,
+            Self::FivePointFivePro => 1_050_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -236,6 +255,8 @@ impl Model {
             Self::FivePointThreeCodex => Some(128_000),
             Self::FivePointFour => Some(128_000),
             Self::FivePointFourPro => Some(128_000),
+            Self::FivePointFive => Some(128_000),
+            Self::FivePointFivePro => Some(128_000),
         }
     }
 
@@ -244,21 +265,19 @@ impl Model {
             Self::Custom {
                 reasoning_effort, ..
             } => reasoning_effort.to_owned(),
-            Self::FivePointThreeCodex | Self::FivePointFourPro => Some(ReasoningEffort::Medium),
+            Self::FivePointThreeCodex | Self::FivePointFourPro | Self::FivePointFivePro => {
+                Some(ReasoningEffort::Medium)
+            }
             _ => None,
         }
     }
 
-    pub fn supports_chat_completions(&self) -> bool {
+    pub fn uses_responses_api(&self) -> bool {
         match self {
             Self::Custom {
                 supports_chat_completions,
                 ..
-            } => *supports_chat_completions,
-            Self::FiveCodex
-            | Self::FivePointTwoCodex
-            | Self::FivePointThreeCodex
-            | Self::FivePointFourPro => false,
+            } => !*supports_chat_completions,
             _ => true,
         }
     }
@@ -282,6 +301,8 @@ impl Model {
             | Self::FivePointThreeCodex
             | Self::FivePointFour
             | Self::FivePointFourPro
+            | Self::FivePointFive
+            | Self::FivePointFivePro
             | Self::FiveNano => true,
             Self::O1 | Self::O3 | Self::O3Mini | Model::Custom { .. } => false,
         }
@@ -365,6 +386,8 @@ pub enum RequestMessage {
         content: Option<MessageContent>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_content: Option<String>,
     },
     User {
         content: MessageContent,
@@ -715,5 +738,28 @@ pub fn embed<'a>(
         let response: OpenAiEmbeddingResponse =
             serde_json::from_str(&body).context("failed to parse OpenAI embedding response")?;
         Ok(response)
+    }
+}
+
+// -- Conversions to `language_model_core` types --
+
+impl From<RequestError> for language_model_core::LanguageModelCompletionError {
+    fn from(error: RequestError) -> Self {
+        match error {
+            RequestError::HttpResponseError {
+                provider,
+                status_code,
+                body,
+                headers,
+            } => {
+                let retry_after = headers
+                    .get(http_client::http::header::RETRY_AFTER)
+                    .and_then(|val| val.to_str().ok()?.parse::<u64>().ok())
+                    .map(std::time::Duration::from_secs);
+
+                Self::from_http_status(provider.into(), status_code, body, retry_after)
+            }
+            RequestError::Other(e) => Self::Other(e),
+        }
     }
 }

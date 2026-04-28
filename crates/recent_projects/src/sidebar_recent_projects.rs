@@ -1,8 +1,7 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, WeakEntity, Window,
@@ -13,13 +12,15 @@ use picker::{
 };
 use remote::RemoteConnectionOptions;
 use settings::Settings;
-use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{ButtonLike, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    MultiWorkspace, OpenOptions, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb,
-    WorkspaceId, notifications::DetachAndPromptErr,
+    MultiWorkspace, OpenMode, OpenOptions, PathList, ProjectGroupKey, SerializedWorkspaceLocation,
+    Workspace, WorkspaceDb, WorkspaceId, notifications::DetachAndPromptErr,
 };
+
+use zed_actions::OpenRemote;
 
 use crate::{highlights_for_path, icon_for_remote_connection, open_remote_project};
 
@@ -31,7 +32,7 @@ pub struct SidebarRecentProjects {
 impl SidebarRecentProjects {
     pub fn popover(
         workspace: WeakEntity<Workspace>,
-        sibling_workspace_ids: HashSet<WorkspaceId>,
+        window_project_groups: Vec<ProjectGroupKey>,
         _focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut App,
@@ -43,7 +44,7 @@ impl SidebarRecentProjects {
         cx.new(|cx| {
             let delegate = SidebarRecentProjectsDelegate {
                 workspace,
-                sibling_workspace_ids,
+                window_project_groups,
                 workspaces: Vec::new(),
                 filtered_workspaces: Vec::new(),
                 selected_index: 0,
@@ -69,7 +70,7 @@ impl SidebarRecentProjects {
             cx.spawn_in(window, async move |this, cx| {
                 let Some(fs) = fs else { return };
                 let workspaces = db
-                    .recent_workspaces_on_disk(fs.as_ref())
+                    .recent_project_workspaces(fs.as_ref())
                     .await
                     .log_err()
                     .unwrap_or_default();
@@ -114,7 +115,7 @@ impl Render for SidebarRecentProjects {
 
 pub struct SidebarRecentProjectsDelegate {
     workspace: WeakEntity<Workspace>,
-    sibling_workspace_ids: HashSet<WorkspaceId>,
+    window_project_groups: Vec<ProjectGroupKey>,
     workspaces: Vec<(
         WorkspaceId,
         SerializedWorkspaceLocation,
@@ -193,7 +194,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let query = query.trim_start();
-        let smart_case = query.chars().any(|c| c.is_uppercase());
+        let case = fuzzy_nucleo::Case::smart_if_uppercase_in(query);
         let is_empty_query = query.is_empty();
 
         let current_workspace_id = self
@@ -205,8 +206,12 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, (id, _, _, _))| {
-                Some(*id) != current_workspace_id && !self.sibling_workspace_ids.contains(id)
+            .filter(|(_, (id, _, paths, _))| {
+                Some(*id) != current_workspace_id
+                    && !self
+                        .window_project_groups
+                        .iter()
+                        .any(|key| key.path_list() == paths)
             })
             .map(|(id, (_, _, paths, _))| {
                 let combined_string = paths
@@ -229,22 +234,13 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 })
                 .collect();
         } else {
-            let mut matches = smol::block_on(fuzzy::match_strings(
+            self.filtered_workspaces = match_strings(
                 &candidates,
                 query,
-                smart_case,
-                true,
+                case,
+                fuzzy_nucleo::LengthPenalty::On,
                 100,
-                &Default::default(),
-                cx.background_executor().clone(),
-            ));
-            matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then_with(|| a.candidate_id.cmp(&b.candidate_id))
-            });
-            self.filtered_workspaces = matches;
+            );
         }
 
         self.selected_index = 0;
@@ -272,7 +268,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     cx.defer(move |cx| {
                         if let Some(task) = handle
                             .update(cx, |multi_workspace, window, cx| {
-                                multi_workspace.open_project(paths, window, cx)
+                                multi_workspace.open_project(paths, OpenMode::Activate, window, cx)
                             })
                             .log_err()
                         {
@@ -287,7 +283,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     let app_state = workspace.app_state().clone();
                     let replace_window = window.window_handle().downcast::<MultiWorkspace>();
                     let open_options = OpenOptions {
-                        replace_window,
+                        requesting_window: replace_window,
                         ..Default::default()
                     };
                     if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
@@ -372,6 +368,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             prefix,
             match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
             paths: Vec::new(),
+            active: false,
         };
 
         let icon = icon_for_remote_connection(match location {
@@ -393,7 +390,14 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         })
                         .child(highlighted_match.render(window, cx)),
                 )
-                .tooltip(Tooltip::text(tooltip_path))
+                .tooltip(move |_, cx| {
+                    Tooltip::with_meta(
+                        "Open Project in This Window",
+                        None,
+                        tooltip_path.clone(),
+                        cx,
+                    )
+                })
                 .into_any_element(),
         )
     }
@@ -403,8 +407,8 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
 
         Some(
             v_flex()
-                .flex_1()
                 .p_1p5()
+                .flex_1()
                 .gap_1()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
@@ -412,12 +416,49 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     let open_action = workspace::Open {
                         create_new_window: false,
                     };
-                    Button::new("open_local_folder", "Add Local Project")
-                        .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
-                        .on_click(move |_, window, cx| {
-                            window.dispatch_action(open_action.boxed_clone(), cx)
-                        })
+
+                    ButtonLike::new("open_local_folder")
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_1()
+                                .justify_between()
+                                .child(Label::new("Add Local Folders"))
+                                .child(KeyBinding::for_action_in(&open_action, &focus_handle, cx)),
+                        )
+                        .on_click(cx.listener(move |_, _, window, cx| {
+                            window.dispatch_action(open_action.boxed_clone(), cx);
+                            cx.emit(DismissEvent);
+                        }))
                 })
+                .child(
+                    ButtonLike::new("open_remote_folder")
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_1()
+                                .justify_between()
+                                .child(Label::new("Add Remote Folder"))
+                                .child(KeyBinding::for_action(
+                                    &OpenRemote {
+                                        from_existing_connection: false,
+                                        create_new_window: false,
+                                    },
+                                    cx,
+                                )),
+                        )
+                        .on_click(cx.listener(|_, _, window, cx| {
+                            window.dispatch_action(
+                                OpenRemote {
+                                    from_existing_connection: false,
+                                    create_new_window: false,
+                                }
+                                .boxed_clone(),
+                                cx,
+                            );
+                            cx.emit(DismissEvent);
+                        })),
+                )
                 .into_any(),
         )
     }

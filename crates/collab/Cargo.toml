@@ -75,12 +75,8 @@ uuid.workspace = true
 
 [dev-dependencies]
 agent = { workspace = true, features = ["test-support"] }
-
-
-
-assistant_text_thread.workspace = true
-assistant_slash_command.workspace = true
 async-trait.workspace = true
+async-channel.workspace = true
 
 buffer_diff.workspace = true
 call = { workspace = true, features = ["test-support"] }
@@ -130,6 +126,7 @@ settings = { workspace = true, features = ["test-support"] }
 smol.workspace = true
 sqlx = { version = "0.8", features = ["sqlite"] }
 task.workspace = true
+theme_settings = { workspace = true, features = ["test-support"] }
 theme.workspace = true
 
 unindent.workspace = true

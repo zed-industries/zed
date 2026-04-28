@@ -23,7 +23,7 @@ use gpui::{
     VisualTestContext,
 };
 use indoc::indoc;
-use language::{FakeLspAdapter, language_settings::language_settings, rust_lang};
+use language::{FakeLspAdapter, language_settings::LanguageSettings, rust_lang};
 use lsp::DEFAULT_LSP_REQUEST_TIMEOUT;
 use multi_buffer::{AnchorRangeExt as _, MultiBufferRow};
 use pretty_assertions::assert_eq;
@@ -1203,6 +1203,13 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
     cx_b.update(editor::init);
+    cx_b.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.code_lens = Some(settings::CodeLens::Menu);
+            });
+        });
+    });
 
     let command_name = "test_command";
     let capabilities = lsp::ServerCapabilities {
@@ -2732,9 +2739,9 @@ async fn test_lsp_pull_diagnostics(
     let closure_workspace_diagnostics_pulls_result_ids =
         workspace_diagnostics_pulls_result_ids.clone();
     let (workspace_diagnostic_cancel_tx, closure_workspace_diagnostic_cancel_rx) =
-        smol::channel::bounded::<()>(1);
+        async_channel::bounded::<()>(1);
     let (closure_workspace_diagnostic_received_tx, workspace_diagnostic_received_rx) =
-        smol::channel::bounded::<()>(1);
+        async_channel::bounded::<()>(1);
 
     let capabilities = lsp::ServerCapabilities {
         diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
@@ -4036,6 +4043,8 @@ async fn test_collaborating_with_external_editorconfig(
         .await
         .unwrap();
 
+    project_a.update(cx_a, |project, _| project.languages().add(rust_lang()));
+
     // Open buffer on client A
     let buffer_a = project_a
         .update(cx_a, |p, cx| {
@@ -4048,13 +4057,13 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client A sees external editorconfig settings
     cx_a.read(|cx| {
-        let file = buffer_a.read(cx).file();
-        let settings = language_settings(Some("Rust".into()), file, cx);
+        let settings = LanguageSettings::for_buffer(&buffer_a.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
     });
 
     // Client B joins the project
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    project_b.update(cx_b, |project, _| project.languages().add(rust_lang()));
     let buffer_b = project_b
         .update(cx_b, |p, cx| {
             p.open_buffer((worktree_id, rel_path("src/main.rs")), cx)
@@ -4066,8 +4075,7 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client B also sees external editorconfig settings
     cx_b.read(|cx| {
-        let file = buffer_b.read(cx).file();
-        let settings = language_settings(Some("Rust".into()), file, cx);
+        let settings = LanguageSettings::for_buffer(&buffer_b.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
     });
 
@@ -4086,15 +4094,13 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client A sees updated settings
     cx_a.read(|cx| {
-        let file = buffer_a.read(cx).file();
-        let settings = language_settings(Some("Rust".into()), file, cx);
+        let settings = LanguageSettings::for_buffer(&buffer_a.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(9));
     });
 
     // Verify client B also sees updated settings
     cx_b.read(|cx| {
-        let file = buffer_b.read(cx).file();
-        let settings = language_settings(Some("Rust".into()), file, cx);
+        let settings = LanguageSettings::for_buffer(&buffer_b.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(9));
     });
 }

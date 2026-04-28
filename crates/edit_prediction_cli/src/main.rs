@@ -5,6 +5,7 @@ mod filter_languages;
 mod format_prompt;
 mod git;
 mod headless;
+
 mod load_project;
 mod metrics;
 mod openai_client;
@@ -45,6 +46,7 @@ use std::fmt::Display;
 use std::fs::{File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::str::FromStr;
 use std::sync::Mutex;
 use std::{path::PathBuf, sync::Arc};
 
@@ -358,14 +360,13 @@ impl TeacherBackend {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PredictionProvider {
-    Sweep,
     Mercury,
     Zeta1,
     Zeta2(ZetaFormat),
     Baseten(ZetaFormat),
-    Teacher(TeacherBackend),
+    Teacher(TeacherBackend, ZetaFormat),
     TeacherMultiRegion(TeacherBackend),
-    TeacherNonBatching(TeacherBackend),
+    TeacherNonBatching(TeacherBackend, ZetaFormat),
     TeacherMultiRegionNonBatching(TeacherBackend),
     Repair,
 }
@@ -379,17 +380,18 @@ impl Default for PredictionProvider {
 impl std::fmt::Display for PredictionProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PredictionProvider::Sweep => write!(f, "sweep"),
             PredictionProvider::Mercury => write!(f, "mercury"),
             PredictionProvider::Zeta1 => write!(f, "zeta1"),
             PredictionProvider::Zeta2(format) => write!(f, "zeta2:{format}"),
             PredictionProvider::Baseten(format) => write!(f, "baseten:{format}"),
-            PredictionProvider::Teacher(backend) => write!(f, "teacher:{backend}"),
+            PredictionProvider::Teacher(backend, format) => {
+                write!(f, "teacher:{backend}:{format:?}")
+            }
             PredictionProvider::TeacherMultiRegion(backend) => {
                 write!(f, "teacher-multi-region:{backend}")
             }
-            PredictionProvider::TeacherNonBatching(backend) => {
-                write!(f, "teacher-non-batching:{backend}")
+            PredictionProvider::TeacherNonBatching(backend, format) => {
+                write!(f, "teacher-non-batching:{backend}:{format:?}")
             }
             PredictionProvider::TeacherMultiRegionNonBatching(backend) => {
                 write!(f, "teacher-multi-region-non-batching:{backend}")
@@ -407,7 +409,6 @@ impl std::str::FromStr for PredictionProvider {
 
         let provider_lower = provider.to_lowercase();
         match provider_lower.as_str() {
-            "sweep" => Ok(PredictionProvider::Sweep),
             "mercury" => Ok(PredictionProvider::Mercury),
             "zeta1" => Ok(PredictionProvider::Zeta1),
             "zeta2" => {
@@ -415,11 +416,12 @@ impl std::str::FromStr for PredictionProvider {
                 Ok(PredictionProvider::Zeta2(format))
             }
             "teacher" => {
-                let backend = arg
-                    .map(|a| a.parse())
-                    .transpose()?
-                    .unwrap_or(TeacherBackend::default());
-                Ok(PredictionProvider::Teacher(backend))
+                let (backend, format) = parse_teacher_args(arg)?;
+                Ok(PredictionProvider::Teacher(backend, format))
+            }
+            "teacher-non-batching" | "teacher_non_batching" => {
+                let (backend, format) = parse_teacher_args(arg)?;
+                Ok(PredictionProvider::TeacherNonBatching(backend, format))
             }
             "teacher-multi-region" | "teacher_multi_region" => {
                 let backend = arg
@@ -427,13 +429,6 @@ impl std::str::FromStr for PredictionProvider {
                     .transpose()?
                     .unwrap_or(TeacherBackend::default());
                 Ok(PredictionProvider::TeacherMultiRegion(backend))
-            }
-            "teacher-non-batching" | "teacher_non_batching" => {
-                let backend = arg
-                    .map(|a| a.parse())
-                    .transpose()?
-                    .unwrap_or(TeacherBackend::default());
-                Ok(PredictionProvider::TeacherNonBatching(backend))
             }
             "teacher-multi-region-non-batching" | "teacher_multi_region_non_batching" => {
                 let backend = arg
@@ -452,7 +447,7 @@ impl std::str::FromStr for PredictionProvider {
             }
             _ => {
                 anyhow::bail!(
-                    "unknown provider `{provider}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-multi-region, teacher-multi-region:<backend>, teacher-non-batching, teacher-multi-region-non-batching, repair\n\
+                    "unknown provider `{provider}`. Valid options: mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-multi-region, teacher-multi-region:<backend>, teacher-non-batching, teacher-multi-region-non-batching, repair\n\
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
                  For teacher providers, you can specify a backend like `teacher:sonnet46`, `teacher-multi-region:sonnet46`, `teacher-multi-region-non-batching:sonnet46`, or `teacher:gpt52`.\n\
                  Available zeta versions:\n{}",
@@ -461,6 +456,27 @@ impl std::str::FromStr for PredictionProvider {
             }
         }
     }
+}
+
+fn parse_teacher_args(arg: Option<&str>) -> Result<(TeacherBackend, ZetaFormat), anyhow::Error> {
+    let mut backend = TeacherBackend::default();
+    let mut format = ZetaFormat::default();
+
+    for arg in arg.unwrap_or_default().split(':') {
+        if arg.is_empty() {
+            continue;
+        }
+
+        if let Ok(parsed_backend) = TeacherBackend::from_str(arg) {
+            backend = parsed_backend;
+        } else if let Ok(parsed_format) = ZetaFormat::parse(arg) {
+            format = parsed_format;
+        } else {
+            anyhow::bail!("unknown teacher backend or zeta format `{arg}`");
+        }
+    }
+
+    Ok((backend, format))
 }
 
 impl Serialize for PredictionProvider {
@@ -972,7 +988,7 @@ fn main() {
 
     match &command {
         Command::ImportBatch(import_args) => {
-            smol::block_on(async {
+            gpui::block_on(async {
                 match import_args.provider {
                     BatchProvider::Anthropic => {
                         let client = anthropic_client::AnthropicClient::batch(&paths::LLM_CACHE_DB)
@@ -1031,7 +1047,7 @@ fn main() {
                 output_dir,
                 fresh: synth_args.fresh,
             };
-            smol::block_on(async {
+            gpui::block_on(async {
                 if let Err(e) = run_synthesize(config).await {
                     eprintln!("Error: {:?}", e);
                     std::process::exit(1);

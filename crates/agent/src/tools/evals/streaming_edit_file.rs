@@ -6,7 +6,7 @@ use crate::{
 };
 use Role::*;
 use anyhow::{Context as _, Result};
-use client::{Client, UserStore};
+use client::{Client, RefreshLlmTokenListener, UserStore};
 use fs::FakeFs;
 use futures::{FutureExt, StreamExt, future::LocalBoxFuture};
 use gpui::{AppContext as _, AsyncApp, Entity, TestAppContext, UpdateGlobal as _};
@@ -274,7 +274,8 @@ impl StreamingEditToolTest {
             cx.set_http_client(http_client);
             let client = Client::production(cx);
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-            language_model::init(user_store.clone(), client.clone(), cx);
+            language_model::init(cx);
+            RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
             language_models::init(user_store, client, cx);
         });
 
@@ -665,7 +666,7 @@ fn tool_result(
         tool_use_id: LanguageModelToolUseId::from(id.into()),
         tool_name: name.into(),
         is_error: false,
-        content: LanguageModelToolResultContent::Text(result.into()),
+        content: vec![LanguageModelToolResultContent::Text(result.into())],
         output: None,
     })
 }
@@ -728,7 +729,7 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
             let jitter = retry_after.mul_f64(rand::rng().random_range(0.0..1.0));
             eprintln!("Attempt #{attempt}: Retry after {retry_after:?} + jitter of {jitter:?}");
             #[allow(clippy::disallowed_methods)]
-            smol::Timer::after(retry_after + jitter).await;
+            async_io::Timer::after(retry_after + jitter).await;
         } else {
             return response;
         }
@@ -808,6 +809,8 @@ fn eval_extract_handle_command_output() {
         include_str!("fixtures/extract_handle_command_output/possible-05.diff"),
         include_str!("fixtures/extract_handle_command_output/possible-06.diff"),
         include_str!("fixtures/extract_handle_command_output/possible-07.diff"),
+        include_str!("fixtures/extract_handle_command_output/possible-08.diff"),
+        include_str!("fixtures/extract_handle_command_output/possible-09.diff"),
     ];
 
     eval_utils::eval(100, 0.95, eval_utils::NoProcessor, move || {

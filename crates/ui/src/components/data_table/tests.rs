@@ -1,4 +1,5 @@
-use super::*;
+use super::table_row::TableRow;
+use crate::{RedistributableColumnsState, TableResizeBehavior};
 
 fn is_almost_eq(a: &[f32], b: &[f32]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
@@ -82,7 +83,7 @@ mod reset_column_size {
         let cols = initial_sizes.len();
         let resize_behavior_vec = parse_resize_behavior(resize_behavior, total_1, cols);
         let resize_behavior = TableRow::from_vec(resize_behavior_vec, cols);
-        let result = TableColumnWidths::reset_to_initial_size(
+        let result = RedistributableColumnsState::reset_to_initial_size(
             column_index,
             TableRow::from_vec(widths, cols),
             TableRow::from_vec(initial_sizes, cols),
@@ -259,7 +260,7 @@ mod drag_handle {
         let distance = distance as f32 / total_1;
 
         let mut widths_table_row = TableRow::from_vec(widths, cols);
-        TableColumnWidths::drag_column_handle(
+        RedistributableColumnsState::drag_column_handle(
             distance,
             column_index,
             &mut widths_table_row,
