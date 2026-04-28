@@ -498,7 +498,9 @@ impl Model {
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => Some(65_536),
             Self::Nemotron3SuperFree => Some(128_000),
-            Self::MimoV2_5Pro | Self::MimoV2_5 | Self::MimoV2Pro | Self::MimoV2Omni => Some(128_000),
+            Self::MimoV2_5Pro | Self::MimoV2_5 | Self::MimoV2Pro | Self::MimoV2Omni => {
+                Some(128_000)
+            }
             Self::Ling2_6FlashFree => Some(32_800),
             Self::Hy3PreviewFree => Some(64_000),
 
@@ -587,13 +589,11 @@ impl Model {
             | Self::MimoV2_5
             | Self::MimoV2Pro
             | Self::MimoV2Omni
-            | Self::Hy3PreviewFree => {
-                Some(vec![
-                    ReasoningEffort::Low,
-                    ReasoningEffort::Medium,
-                    ReasoningEffort::High,
-                ])
-            }
+            | Self::Hy3PreviewFree => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ]),
 
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(vec![
                 ReasoningEffort::Low,
