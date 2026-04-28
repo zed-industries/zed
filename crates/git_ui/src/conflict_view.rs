@@ -875,3 +875,533 @@ impl StatusItemView for MergeConflictIndicator {
     ) {
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git::status::{UnmergedStatus, UnmergedStatusCode};
+    use gpui::{TestAppContext, VisualTestContext};
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::Path;
+    use text::{Buffer, BufferId, ReplicaId};
+    use unindent::Unindent as _;
+    use util::{path, rel_path::rel_path};
+    use workspace::MultiWorkspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            language::language_settings::AllLanguageSettings::register(cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+    }
+
+    fn make_project_path(worktree_id: usize, path: &str) -> ProjectPath {
+        ProjectPath {
+            worktree_id: settings::WorktreeId::from_usize(worktree_id),
+            path: Arc::from(rel_path(path)),
+        }
+    }
+
+    // ── find_next_path tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_find_next_path_empty() {
+        let paths: Vec<ProjectPath> = vec![];
+        assert!(find_next_path(&paths, None, true).is_none());
+        assert!(find_next_path(&paths, None, false).is_none());
+    }
+
+    #[test]
+    fn test_find_next_path_no_current() {
+        let paths = vec![
+            make_project_path(0, "a.rs"),
+            make_project_path(0, "b.rs"),
+            make_project_path(0, "c.rs"),
+        ];
+
+        assert_eq!(find_next_path(&paths, None, true), Some(paths[0].clone()));
+        assert_eq!(find_next_path(&paths, None, false), Some(paths[2].clone()));
+    }
+
+    #[test]
+    fn test_find_next_path_advances() {
+        let paths = vec![
+            make_project_path(0, "a.rs"),
+            make_project_path(0, "b.rs"),
+            make_project_path(0, "c.rs"),
+        ];
+
+        assert_eq!(
+            find_next_path(&paths, Some(&paths[0]), true),
+            Some(paths[1].clone())
+        );
+        assert_eq!(
+            find_next_path(&paths, Some(&paths[1]), true),
+            Some(paths[2].clone())
+        );
+        assert_eq!(
+            find_next_path(&paths, Some(&paths[2]), false),
+            Some(paths[1].clone())
+        );
+        assert_eq!(
+            find_next_path(&paths, Some(&paths[1]), false),
+            Some(paths[0].clone())
+        );
+    }
+
+    #[test]
+    fn test_find_next_path_wraps() {
+        let paths = vec![
+            make_project_path(0, "a.rs"),
+            make_project_path(0, "b.rs"),
+        ];
+
+        assert_eq!(
+            find_next_path(&paths, Some(&paths[1]), true),
+            Some(paths[0].clone()),
+        );
+        assert_eq!(
+            find_next_path(&paths, Some(&paths[0]), false),
+            Some(paths[1].clone()),
+        );
+    }
+
+    #[test]
+    fn test_find_next_path_single() {
+        let paths = vec![make_project_path(0, "a.rs")];
+
+        assert_eq!(
+            find_next_path(&paths, Some(&paths[0]), true),
+            Some(paths[0].clone()),
+        );
+        assert_eq!(
+            find_next_path(&paths, Some(&paths[0]), false),
+            Some(paths[0].clone()),
+        );
+    }
+
+    #[test]
+    fn test_find_next_path_current_not_in_list() {
+        let paths = vec![
+            make_project_path(0, "a.rs"),
+            make_project_path(0, "c.rs"),
+        ];
+        let current = make_project_path(0, "b.rs");
+
+        assert_eq!(
+            find_next_path(&paths, Some(&current), true),
+            Some(paths[1].clone()),
+        );
+        assert_eq!(
+            find_next_path(&paths, Some(&current), false),
+            Some(paths[0].clone()),
+        );
+    }
+
+    // ── find_conflict_in_snapshot tests ───────────────────────────────
+
+    fn make_conflicted_buffer(content: &str) -> (text::Buffer, ConflictSetSnapshot) {
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(ReplicaId::LOCAL, buffer_id, content.to_string());
+        let snapshot = buffer.snapshot();
+        let conflict_set = ConflictSet::parse(&snapshot);
+        (buffer, conflict_set)
+    }
+
+    #[test]
+    fn test_find_conflict_in_snapshot_empty() {
+        let (buffer, conflict_set) = make_conflicted_buffer("no conflicts here\n");
+        let snapshot = buffer.snapshot();
+        assert!(find_conflict_in_snapshot(&conflict_set, &snapshot, 0, true).is_none());
+        assert!(find_conflict_in_snapshot(&conflict_set, &snapshot, 0, false).is_none());
+    }
+
+    #[test]
+    fn test_find_conflict_in_snapshot_next() {
+        let content = r#"
+            line 1
+            <<<<<<< HEAD
+            ours
+            =======
+            theirs
+            >>>>>>> branch
+            middle
+            <<<<<<< HEAD
+            ours2
+            =======
+            theirs2
+            >>>>>>> branch
+        "#
+        .unindent();
+
+        let (buffer, conflict_set) = make_conflicted_buffer(&content);
+        let snapshot = buffer.snapshot();
+        assert_eq!(conflict_set.conflicts.len(), 2);
+
+        let first_start = conflict_set.conflicts[0].range.start.to_offset(&snapshot);
+        let second_start = conflict_set.conflicts[1].range.start.to_offset(&snapshot);
+
+        let result = find_conflict_in_snapshot(&conflict_set, &snapshot, 0, true);
+        assert_eq!(
+            result,
+            Some(conflict_set.conflicts[0].range.start.to_point(&snapshot))
+        );
+
+        let result = find_conflict_in_snapshot(&conflict_set, &snapshot, first_start, true);
+        assert_eq!(
+            result,
+            Some(conflict_set.conflicts[1].range.start.to_point(&snapshot))
+        );
+
+        let result = find_conflict_in_snapshot(&conflict_set, &snapshot, second_start, true);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_conflict_in_snapshot_previous() {
+        let content = r#"
+            line 1
+            <<<<<<< HEAD
+            ours
+            =======
+            theirs
+            >>>>>>> branch
+            middle
+            <<<<<<< HEAD
+            ours2
+            =======
+            theirs2
+            >>>>>>> branch
+        "#
+        .unindent();
+
+        let (buffer, conflict_set) = make_conflicted_buffer(&content);
+        let snapshot = buffer.snapshot();
+        let second_start = conflict_set.conflicts[1].range.start.to_offset(&snapshot);
+        let second_end = conflict_set.conflicts[1].range.end.to_offset(&snapshot);
+
+        let result = find_conflict_in_snapshot(&conflict_set, &snapshot, second_end, false);
+        assert_eq!(
+            result,
+            Some(conflict_set.conflicts[1].range.start.to_point(&snapshot))
+        );
+
+        let result = find_conflict_in_snapshot(&conflict_set, &snapshot, second_start, false);
+        assert_eq!(
+            result,
+            Some(conflict_set.conflicts[0].range.start.to_point(&snapshot))
+        );
+
+        let result = find_conflict_in_snapshot(&conflict_set, &snapshot, 0, false);
+        assert!(result.is_none());
+    }
+
+    // ── Integration tests for go_to_next/previous_conflict ───────────
+
+    fn unmerged() -> git::status::FileStatus {
+        UnmergedStatus {
+            first_head: UnmergedStatusCode::Updated,
+            second_head: UnmergedStatusCode::Updated,
+        }
+        .into()
+    }
+
+    #[gpui::test]
+    async fn test_go_to_next_conflict_within_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.rs": "line 1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nmiddle\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\n",
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("file.rs", unmerged())],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window.read_with(cx, |mw, _| mw.workspace().clone()).unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .id()
+                .to_usize()
+        });
+
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(
+                    make_project_path(worktree_id, "file.rs"),
+                    None,
+                    true,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            go_to_conflict_impl(workspace, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, _window, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
+            assert_eq!(cursor, text::Point::new(1, 0));
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            go_to_conflict_impl(workspace, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, _window, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
+            assert_eq!(cursor, text::Point::new(7, 0));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_go_to_previous_conflict_within_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.rs": "line 1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nmiddle\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\n",
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("file.rs", unmerged())],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window.read_with(cx, |mw, _| mw.workspace().clone()).unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .id()
+                .to_usize()
+        });
+
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(
+                    make_project_path(worktree_id, "file.rs"),
+                    None,
+                    true,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(None.into(), window, cx, |s| {
+                s.select_ranges([text::Point::new(12, 0)..text::Point::new(12, 0)]);
+            });
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            go_to_conflict_impl(workspace, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, _window, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
+            assert_eq!(cursor, text::Point::new(7, 0));
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            go_to_conflict_impl(workspace, false, window, cx);
+        });
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, _window, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
+            assert_eq!(cursor, text::Point::new(1, 0));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_go_to_conflict_crosses_files(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "aaa.rs": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n",
+                "bbb.rs": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n",
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("aaa.rs", unmerged()), ("bbb.rs", unmerged())],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window.read_with(cx, |mw, _| mw.workspace().clone()).unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .id()
+                .to_usize()
+        });
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(
+                    make_project_path(worktree_id, "aaa.rs"),
+                    None,
+                    true,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Cursor starts at 0,0 which is the start of the only conflict in aaa.rs.
+        // "Next conflict" finds no conflict ahead (0 > 0 is false) and jumps
+        // to the next conflicted file (bbb.rs) asynchronously.
+        workspace.update_in(cx, |workspace, window, cx| {
+            go_to_conflict_impl(workspace, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, _window, cx| {
+            let item = workspace.active_item(cx).unwrap();
+            let editor = item.act_as::<Editor>(cx).unwrap();
+            let active_path = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap()
+                .read(cx)
+                .project_path(cx);
+            assert_eq!(
+                active_path,
+                Some(make_project_path(worktree_id, "bbb.rs"))
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_go_to_conflict_no_conflicts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.rs": "fn main() {}\n",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window.read_with(cx, |mw, _| mw.workspace().clone()).unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        let worktree_id = workspace.update_in(cx, |workspace, _window, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .id()
+                .to_usize()
+        });
+
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(
+                    make_project_path(worktree_id, "file.rs"),
+                    None,
+                    true,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            go_to_conflict_impl(workspace, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        editor.update_in(cx, |editor, _window, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let cursor = editor.selections.newest::<text::Point>(&snapshot).head();
+            assert_eq!(cursor, text::Point::new(0, 0));
+        });
+    }
+}
