@@ -1,5 +1,7 @@
 use crate::multibuffer_hint::MultibufferHint;
 use client::{Client, UserStore, zed_urls};
+use cloud_api_types::Plan;
+use project::agent_server_store::AllAgentServersSettings;
 use db::kvp::KeyValueStore;
 use fs::Fs;
 use gpui::{
@@ -215,6 +217,38 @@ struct Onboarding {
 impl Onboarding {
     fn new(workspace: &Workspace, cx: &mut App) -> Entity<Self> {
         let font_family_cache = theme::FontFamilyCache::global(cx);
+
+        let installed_agents = cx
+            .global::<SettingsStore>()
+            .get::<AllAgentServersSettings>(None)
+            .clone();
+        let client = Client::global(cx);
+        let status = *client.status().borrow();
+        let plan = workspace.user_store().read(cx).plan();
+        let zed_agent_state = if status.is_signed_out()
+            || matches!(
+                status,
+                client::Status::AuthenticationError | client::Status::ConnectionError
+            )
+        {
+            "signed_out"
+        } else if status.is_signing_in() {
+            "signing_in"
+        } else {
+            match plan {
+                Some(Plan::ZedPro) => "pro",
+                Some(Plan::ZedProTrial) => "trial",
+                _ => "free",
+            }
+        };
+        telemetry::event!(
+            "Welcome Agent Setup Viewed",
+            zed_agent = zed_agent_state,
+            claude_installed = installed_agents.contains_key("claude-acp"),
+            codex_installed = installed_agents.contains_key("codex-acp"),
+            github_copilot_installed = installed_agents.contains_key("github-copilot-cli"),
+            cursor_installed = installed_agents.contains_key("cursor"),
+        );
 
         cx.new(|cx| {
             cx.spawn(async move |this, cx| {
