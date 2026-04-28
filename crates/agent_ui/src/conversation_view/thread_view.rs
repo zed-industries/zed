@@ -2824,8 +2824,16 @@ impl ThreadView {
                                             .color(Color::Success)
                                             .into_any_element()
                                     }
-                                    acp::PlanEntryStatus::Pending | _ => {
+                                    acp::PlanEntryStatus::Pending => {
                                         Icon::new(IconName::TodoPending)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted)
+                                            .into_any_element()
+                                    }
+                                    _ => {
+                                        // Skipped or future unknown status: render
+                                        // a muted dash to signal intentional omission.
+                                        Icon::new(IconName::Dash)
                                             .size(IconSize::Small)
                                             .color(Color::Muted)
                                             .into_any_element()
