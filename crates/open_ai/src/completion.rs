@@ -107,12 +107,10 @@ pub fn into_open_ai(
                         // interleaved_reasoning is enabled.
                         if interleaved_reasoning {
                             if let Some(reasoning) = current_reasoning.take() {
-                                if reasoning_content.is_none() {
-                                    *reasoning_content = Some(reasoning);
+                                if let Some(rc) = reasoning_content {
+                                    rc.push_str(&reasoning);
                                 } else {
-                                    reasoning_content
-                                        .get_or_insert_default()
-                                        .push_str(&reasoning);
+                                    *reasoning_content = Some(reasoning);
                                 }
                             }
                         }
@@ -931,6 +929,33 @@ mod tests {
         })
     }
 
+    fn make_tool_use(
+        id: &str,
+        name: &str,
+        input: serde_json::Value,
+    ) -> (LanguageModelToolUse, String) {
+        let arguments = serde_json::to_string(&input).unwrap();
+        let tool_use = LanguageModelToolUse {
+            id: LanguageModelToolUseId::from(id),
+            name: Arc::from(name),
+            raw_input: arguments.clone(),
+            input,
+            is_input_complete: true,
+            thought_signature: None,
+        };
+        (tool_use, arguments)
+    }
+
+    fn make_tool_result(id: &str, name: &str, text: &str) -> LanguageModelToolResult {
+        LanguageModelToolResult {
+            tool_use_id: LanguageModelToolUseId::from(id),
+            tool_name: Arc::from(name),
+            is_error: false,
+            content: vec![LanguageModelToolResultContent::Text(Arc::from(text))],
+            output: None,
+        }
+    }
+
     #[test]
     fn responses_stream_maps_text_and_usage() {
         let events = vec![
@@ -982,19 +1007,10 @@ mod tests {
 
     #[test]
     fn into_open_ai_response_builds_complete_payload() {
-        let tool_call_id = LanguageModelToolUseId::from("call-42");
-        let tool_input = json!({ "city": "Boston" });
-        let tool_arguments = serde_json::to_string(&tool_input).unwrap();
-        let tool_use = LanguageModelToolUse {
-            id: tool_call_id.clone(),
-            name: Arc::from("get_weather"),
-            raw_input: tool_arguments.clone(),
-            input: tool_input,
-            is_input_complete: true,
-            thought_signature: None,
-        };
+        let (tool_use, tool_arguments) =
+            make_tool_use("call-42", "get_weather", json!({ "city": "Boston" }));
         let tool_result = LanguageModelToolResult {
-            tool_use_id: tool_call_id,
+            tool_use_id: tool_use.id.clone(),
             tool_name: Arc::from("get_weather"),
             is_error: false,
             content: vec![LanguageModelToolResultContent::Text(Arc::from("Sunny"))],
@@ -1685,24 +1701,8 @@ mod tests {
     fn into_open_ai_interleaved_reasoning_thinking_only_before_tool_use() {
         // Kimi k2.6 often responds with ONLY thinking + tool_calls, no text content.
         // This tests that reasoning_content is correctly attached even without a Text block.
-        let tool_use_id = LanguageModelToolUseId::from("call-1");
-        let tool_input = json!({"query": "foo"});
-        let tool_arguments = serde_json::to_string(&tool_input).unwrap();
-        let tool_use = LanguageModelToolUse {
-            id: tool_use_id.clone(),
-            name: Arc::from("search"),
-            raw_input: tool_arguments.clone(),
-            input: tool_input.clone(),
-            is_input_complete: true,
-            thought_signature: None,
-        };
-        let tool_result = LanguageModelToolResult {
-            tool_use_id: tool_use_id.clone(),
-            tool_name: Arc::from("search"),
-            is_error: false,
-            content: vec![LanguageModelToolResultContent::Text(Arc::from("result"))],
-            output: None,
-        };
+        let (tool_use, tool_arguments) = make_tool_use("call-1", "search", json!({"query": "foo"}));
+        let tool_result = make_tool_result("call-1", "search", "result");
 
         // Single-turn: User → Assistant [Thinking, ToolUse] → ToolResult
         let request = LanguageModelRequest {
@@ -1744,7 +1744,7 @@ mod tests {
             speed: None,
         };
 
-        let result = into_open_ai(request.clone(), "model", false, false, None, None, true);
+        let result = into_open_ai(request, "model", false, false, None, None, true);
         assert_eq!(
             serde_json::to_value(&result).unwrap()["messages"],
             json!([
@@ -1761,24 +1761,9 @@ mod tests {
 
         // Multi-turn: add a second tool call turn after the first completes.
         // Both assistant messages must have reasoning_content.
-        let tool_use_id2 = LanguageModelToolUseId::from("call-2");
-        let tool_input2 = json!({"query": "bar"});
-        let tool_arguments2 = serde_json::to_string(&tool_input2).unwrap();
-        let tool_use2 = LanguageModelToolUse {
-            id: tool_use_id2.clone(),
-            name: Arc::from("search"),
-            raw_input: tool_arguments2.clone(),
-            input: tool_input2,
-            is_input_complete: true,
-            thought_signature: None,
-        };
-        let tool_result2 = LanguageModelToolResult {
-            tool_use_id: tool_use_id2.clone(),
-            tool_name: Arc::from("search"),
-            is_error: false,
-            content: vec![LanguageModelToolResultContent::Text(Arc::from("result2"))],
-            output: None,
-        };
+        let (tool_use2, tool_arguments2) =
+            make_tool_use("call-2", "search", json!({"query": "bar"}));
+        let tool_result2 = make_tool_result("call-2", "search", "result2");
 
         let multi_turn_request = LanguageModelRequest {
             thread_id: None,
@@ -1799,14 +1784,14 @@ mod tests {
                             text: "I should search first".into(),
                             signature: None,
                         },
-                        MessageContent::ToolUse(tool_use.clone()),
+                        MessageContent::ToolUse(tool_use),
                     ],
                     cache: false,
                     reasoning_details: None,
                 },
                 LanguageModelRequestMessage {
                     role: Role::User,
-                    content: vec![MessageContent::ToolResult(tool_result.clone())],
+                    content: vec![MessageContent::ToolResult(tool_result)],
                     cache: false,
                     reasoning_details: None,
                 },
@@ -1818,14 +1803,14 @@ mod tests {
                             text: "I should search again".into(),
                             signature: None,
                         },
-                        MessageContent::ToolUse(tool_use2.clone()),
+                        MessageContent::ToolUse(tool_use2),
                     ],
                     cache: false,
                     reasoning_details: None,
                 },
                 LanguageModelRequestMessage {
                     role: Role::User,
-                    content: vec![MessageContent::ToolResult(tool_result2.clone())],
+                    content: vec![MessageContent::ToolResult(tool_result2)],
                     cache: false,
                     reasoning_details: None,
                 },
@@ -1864,24 +1849,8 @@ mod tests {
 
     #[test]
     fn into_open_ai_interleaved_reasoning() {
-        let tool_use_id = LanguageModelToolUseId::from("call-1");
-        let tool_input = json!({"query": "foo"});
-        let tool_arguments = serde_json::to_string(&tool_input).unwrap();
-        let tool_use = LanguageModelToolUse {
-            id: tool_use_id.clone(),
-            name: Arc::from("search"),
-            raw_input: tool_arguments.clone(),
-            input: tool_input,
-            is_input_complete: true,
-            thought_signature: None,
-        };
-        let tool_result = LanguageModelToolResult {
-            tool_use_id: tool_use_id,
-            tool_name: Arc::from("search"),
-            is_error: false,
-            content: vec![LanguageModelToolResultContent::Text(Arc::from("result"))],
-            output: None,
-        };
+        let (tool_use, tool_arguments) = make_tool_use("call-1", "search", json!({"query": "foo"}));
+        let tool_result = make_tool_result("call-1", "search", "result");
         let request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
