@@ -7,9 +7,10 @@ use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::{AsyncBody, HttpClient, http};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, RateLimiter, env_var,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    ReasoningEffort, env_var,
 };
 use opencode::{ApiProtocol, OPENCODE_API_URL, OpenCodeSubscription};
 pub use settings::OpenCodeAvailableModel as AvailableModel;
@@ -28,6 +29,27 @@ use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{
     OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
 };
+
+fn normalize_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
+    match effort.trim().to_ascii_lowercase().as_str() {
+        "minimal" => Some(ReasoningEffort::Minimal),
+        "low" => Some(ReasoningEffort::Low),
+        "medium" => Some(ReasoningEffort::Medium),
+        "high" => Some(ReasoningEffort::High),
+        "max" | "xhigh" => Some(ReasoningEffort::XHigh),
+        _ => None,
+    }
+}
+
+fn reasoning_effort_display(effort: ReasoningEffort) -> (&'static str, &'static str) {
+    match effort {
+        ReasoningEffort::Minimal => ("Minimal", "minimal"),
+        ReasoningEffort::Low => ("Low", "low"),
+        ReasoningEffort::Medium => ("Medium", "medium"),
+        ReasoningEffort::High => ("High", "high"),
+        ReasoningEffort::XHigh => ("Max", "max"),
+    }
+}
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("opencode");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenCode");
@@ -254,6 +276,7 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
                 max_tokens: model.max_tokens,
                 max_output_tokens: model.max_output_tokens,
                 protocol,
+                reasoning_effort_levels: model.reasoning_effort_levels.clone(),
                 custom_model_api_url: model.custom_model_api_url.clone(),
             };
             let key = format!("{}/{}", subscription.id_prefix(), model.name);
@@ -522,6 +545,36 @@ impl LanguageModel for OpenCodeLanguageModel {
         self.model.supports_images()
     }
 
+    fn supports_thinking(&self) -> bool {
+        self.model
+            .supported_reasoning_effort_levels()
+            .is_some_and(|levels| !levels.is_empty())
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        self.model
+            .supported_reasoning_effort_levels()
+            .map(|levels| {
+                if levels.is_empty() {
+                    return Vec::new();
+                }
+                let default_index = levels.len() - 1;
+                levels
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, effort)| {
+                        let (name, value) = reasoning_effort_display(effort);
+                        LanguageModelEffortLevel {
+                            name: name.into(),
+                            value: value.into(),
+                            is_default: i == default_index,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => true,
@@ -576,12 +629,17 @@ impl LanguageModel for OpenCodeLanguageModel {
 
         match self.model.protocol(self.subscription) {
             ApiProtocol::Anthropic => {
+                let mode = if self.supports_thinking() && request.thinking_allowed {
+                    anthropic::AnthropicModelMode::AdaptiveThinking
+                } else {
+                    anthropic::AnthropicModelMode::Default
+                };
                 let anthropic_request = into_anthropic(
                     request,
                     self.model.id().to_string(),
                     1.0,
                     self.model.max_output_tokens().unwrap_or(8192),
-                    anthropic::AnthropicModelMode::Default,
+                    mode,
                 );
                 let stream = self.stream_anthropic(anthropic_request, http_client, cx);
                 async move {
@@ -591,13 +649,21 @@ impl LanguageModel for OpenCodeLanguageModel {
                 .boxed()
             }
             ApiProtocol::OpenAiChat => {
+                let reasoning_effort = if request.thinking_allowed {
+                    request
+                        .thinking_effort
+                        .as_deref()
+                        .and_then(normalize_reasoning_effort)
+                } else {
+                    None
+                };
                 let openai_request = into_open_ai(
                     request,
                     self.model.id(),
                     false,
                     false,
                     self.model.max_output_tokens(),
-                    None,
+                    reasoning_effort,
                     false,
                 );
                 let stream = self.stream_openai_chat(openai_request, http_client, cx);
@@ -608,13 +674,21 @@ impl LanguageModel for OpenCodeLanguageModel {
                 .boxed()
             }
             ApiProtocol::OpenAiResponses => {
+                let reasoning_effort = if request.thinking_allowed {
+                    request
+                        .thinking_effort
+                        .as_deref()
+                        .and_then(normalize_reasoning_effort)
+                } else {
+                    None
+                };
                 let response_request = into_open_ai_response(
                     request,
                     self.model.id(),
                     false,
                     false,
                     self.model.max_output_tokens(),
-                    None,
+                    reasoning_effort,
                 );
                 let stream = self.stream_openai_response(response_request, http_client, cx);
                 async move {

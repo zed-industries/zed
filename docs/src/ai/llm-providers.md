@@ -242,7 +242,7 @@ Zed will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#deepseek-custom-models}
 
-The Zed agent comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner).
+The Zed agent comes pre-configured to use DeepSeek V4 Flash and DeepSeek V4 Pro.
 If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
 ```json [settings]
@@ -252,15 +252,16 @@ If you wish to use alternate models or customize the API endpoint, you can do so
       "api_url": "https://api.deepseek.com",
       "available_models": [
         {
-          "name": "deepseek-chat",
-          "display_name": "DeepSeek Chat",
-          "max_tokens": 64000
+          "name": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash",
+          "max_tokens": 1000000,
+          "max_output_tokens": 384000
         },
         {
-          "name": "deepseek-reasoner",
-          "display_name": "DeepSeek Reasoner",
-          "max_tokens": 64000,
-          "max_output_tokens": 4096
+          "name": "deepseek-v4-pro",
+          "display_name": "DeepSeek V4 Pro",
+          "max_tokens": 1000000,
+          "max_output_tokens": 384000
         }
       ]
     }
@@ -662,6 +663,7 @@ The Zed agent comes pre-configured with OpenCode models. If you wish to use newe
           "max_tokens": 123456,
           "max_output_tokens": 98765,
           "protocol": "openai_chat",
+          "reasoning_effort_levels": ["low", "medium", "high"],
           "subscription": "go",
           "custom_model_api_url": "https://example.com/zen"
         }
@@ -678,6 +680,7 @@ The available configuration options for custom models are:
 - `max_tokens` (required): maximum model context window size, for example `1000000`
 - `max_output_tokens` (optional): maximum tokens the model can generate, for example `64000`
 - `protocol` (required): model API protocol, one of `"anthropic"`, `"openai_responses"`, `"openai_chat"`, or `"google"`
+- `reasoning_effort_levels` (optional): list of supported reasoning effort levels, for example `["low", "medium", "high"]`. The latest value in the list is used as the default
 - `subscription` (optional): `"zen"`, `"go"`, or `"free"` (defaults to `"zen"`)
 - `custom_model_api_url` (optional): custom API base URL to use instead of the default OpenCode API
 
