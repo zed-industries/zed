@@ -922,6 +922,9 @@ pub struct PlanStats<'a> {
     pub in_progress_entry: Option<&'a PlanEntry>,
     pub pending: u32,
     pub completed: u32,
+    /// Steps marked skipped are excluded from both pending and completed counts
+    /// so they do not block plan completion detection.
+    pub skipped: u32,
 }
 
 impl Plan {
@@ -934,6 +937,7 @@ impl Plan {
             in_progress_entry: None,
             pending: 0,
             completed: 0,
+            skipped: 0,
         };
 
         for entry in &self.entries {
@@ -948,7 +952,10 @@ impl Plan {
                 acp::PlanEntryStatus::Completed => {
                     stats.completed += 1;
                 }
-                _ => {}
+                _ => {
+                    // Unknown or Skipped variants: not pending, not completed.
+                    stats.skipped += 1;
+                }
             }
         }
 
