@@ -857,7 +857,6 @@ impl LspButton {
         let mut updated = false;
 
         // TODO `LspStore` is global and reports status from all language servers, even from the other windows.
-        // Also, we do not get "LSP removed" events so LSPs are never removed.
         match e {
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
@@ -944,6 +943,19 @@ impl LspButton {
                     if worktree.is_some() {
                         entry.worktree = worktree;
                     }
+                });
+                updated = true;
+            }
+            LspStoreEvent::LanguageServerRemoved(server_id) => {
+                self.server_state.update(cx, |state, _| {
+                    state.language_servers.health_statuses.remove(server_id);
+                    state
+                        .language_servers
+                        .servers_per_buffer_abs_path
+                        .retain(|_, servers_for_path| {
+                            servers_for_path.servers.remove(server_id);
+                            !servers_for_path.servers.is_empty()
+                        });
                 });
                 updated = true;
             }
