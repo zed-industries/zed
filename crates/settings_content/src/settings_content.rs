@@ -675,6 +675,12 @@ pub struct GitPanelSettingsContent {
     /// Default: false
     pub starts_open: Option<bool>,
 
+    /// Whether opening a file from the git panel should automatically expand
+    /// the diff hunks.
+    ///
+    /// Default: true
+    pub open_file_with_diff: Option<bool>,
+
     /// Maximum length of the commit message title before a warning is shown.
     /// Set to 0 to disable.
     ///

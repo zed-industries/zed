@@ -1338,6 +1338,7 @@ impl GitPanel {
                 })
                 .ok()?;
 
+            let open_file_with_diff = GitPanelSettings::get_global(cx).open_file_with_diff;
             let workspace = self.workspace.clone();
             cx.spawn_in(window, async move |_, mut cx| {
                 let item = open_task
@@ -1351,22 +1352,24 @@ impl GitPanel {
                         diff_task.await;
                     }
 
-                    cx.update(|window, cx| {
-                        active_editor.update(cx, |editor, cx| {
-                            editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
+                    if open_file_with_diff {
+                        cx.update(|window, cx| {
+                            active_editor.update(cx, |editor, cx| {
+                                editor.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
 
-                            let snapshot = editor.snapshot(window, cx);
-                            editor.go_to_hunk_before_or_after_position(
-                                &snapshot,
-                                language::Point::new(0, 0),
-                                Direction::Next,
-                                true,
-                                window,
-                                cx,
-                            );
+                                let snapshot = editor.snapshot(window, cx);
+                                editor.go_to_hunk_before_or_after_position(
+                                    &snapshot,
+                                    language::Point::new(0, 0),
+                                    Direction::Next,
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            })
                         })
-                    })
-                    .log_err();
+                        .log_err();
+                    }
                 }
 
                 anyhow::Ok(())
