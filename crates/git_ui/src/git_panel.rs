@@ -4546,7 +4546,6 @@ impl GitPanel {
                                 panel_icon_button("expand-commit-editor", IconName::MaximizeAlt)
                                     .icon_size(IconSize::Small)
                                     .tooltip({
-                                        let editor_focus_handle = editor_focus_handle.clone();
                                         move |_window, cx| {
                                             Tooltip::for_action_in(
                                                 "Open Commit Modal",
@@ -4576,7 +4575,6 @@ impl GitPanel {
                                 panel_icon_button("fill-commit-editor", icon)
                                     .icon_size(IconSize::Small)
                                     .tooltip({
-                                        let focus_handle = focus_handle.clone();
                                         move |_window, cx| {
                                             Tooltip::for_action_in(
                                                 label,
