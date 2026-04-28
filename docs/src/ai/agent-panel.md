@@ -51,7 +51,7 @@ You can run multiple agent threads at once, each working independently with its 
 
 Threads you're no longer working on can be archived by hovering over them in the sidebar and clicking the archive icon, or selecting them and pressing {#kb agent::ArchiveSelectedThread}. The Thread History holds all your threads across all projects, sorted chronologically, and you can restore them at any time.
 
-If two threads might edit the same files, you can isolate one in a new Git worktree. Use the worktree picker in the title bar to pick which worktree the agent runs in, or create a new one. See [Worktree Isolation](./parallel-agents.md#worktree-isolation) for agent-specific details, or [Git Worktrees](../git.md#git-worktrees) for the general Git workflow.
+If two threads might edit the same files, you can isolate one in a new Git worktree. Use the worktree picker in the title bar to pick which worktree the agent runs in, or create a new one. See [Worktree Isolation](./parallel-agents.md#worktree-isolation) for details.
 
 For more details on the Threads Sidebar and managing multiple projects, see [Parallel Agents](./parallel-agents.md).
 
