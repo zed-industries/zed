@@ -191,6 +191,14 @@ impl FileStatus {
         }
     }
 
+    pub fn is_renamed(self) -> bool {
+        let FileStatus::Tracked(tracked) = self else {
+            return false;
+        };
+        tracked.index_status == StatusCode::Renamed
+            || tracked.worktree_status == StatusCode::Renamed
+    }
+
     pub fn is_deleted(self) -> bool {
         let FileStatus::Tracked(tracked) = self else {
             return false;
@@ -430,34 +438,68 @@ impl std::ops::Sub for GitSummary {
 #[derive(Clone, Debug)]
 pub struct GitStatus {
     pub entries: Arc<[(RepoPath, FileStatus)]>,
+    pub renamed_paths: HashMap<RepoPath, RepoPath>,
 }
 
 impl FromStr for GitStatus {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let mut entries = s
-            .split('\0')
-            .filter_map(|entry| {
-                let sep = entry.get(2..3)?;
-                if sep != " " {
-                    return None;
-                };
-                let path = &entry[3..];
-                // The git status output includes untracked directories as well as untracked files.
-                // We do our own processing to compute the "summary" status of each directory,
-                // so just skip any directories in the output, since they'll otherwise interfere
-                // with our handling of nested repositories.
-                if path.ends_with('/') {
-                    return None;
+        let mut entries = Vec::new();
+        let mut renamed_paths = HashMap::default();
+        let mut parts = s.split('\0').peekable();
+
+        while let Some(entry) = parts.next() {
+            if entry.is_empty() {
+                continue;
+            }
+
+            if !matches!(entry.get(2..3), Some(" ")) {
+                continue;
+            }
+
+            let Ok(status_bytes) = entry.as_bytes()[0..2].try_into() else {
+                continue;
+            };
+
+            let Some(status) = FileStatus::from_bytes(status_bytes).log_err() else {
+                continue;
+            };
+
+            let path_str = &entry[3..];
+
+            if path_str.ends_with('/') {
+                continue;
+            }
+
+            let is_rename = matches!(
+                status,
+                FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Renamed | StatusCode::Copied,
+                    ..
+                }) | FileStatus::Tracked(TrackedStatus {
+                    worktree_status: StatusCode::Renamed | StatusCode::Copied,
+                    ..
+                })
+            );
+
+            if is_rename {
+                if let Some(old_path_str) = parts.next() {
+                    if let (Some(new_path_rel), Some(old_path_rel)) = (
+                        RelPath::unix(path_str).log_err(),
+                        RelPath::unix(old_path_str).log_err(),
+                    ) {
+                        let old_path = RepoPath::from_rel_path(old_path_rel);
+                        let new_path = RepoPath::from_rel_path(new_path_rel);
+                        entries.push((new_path.clone(), status));
+                        renamed_paths.insert(new_path, old_path);
+                    }
                 }
-                let status = entry.as_bytes()[0..2].try_into().unwrap();
-                let status = FileStatus::from_bytes(status).log_err()?;
-                // git-status outputs `/`-delimited repo paths, even on Windows.
-                let path = RepoPath::from_rel_path(RelPath::unix(path).log_err()?);
-                Some((path, status))
-            })
-            .collect::<Vec<_>>();
+            } else if let Some(path_rel) = RelPath::unix(path_str).log_err() {
+                let path = RepoPath::from_rel_path(path_rel);
+                entries.push((path, status));
+            }
+        }
         entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
         // When a file exists in HEAD, is deleted in the index, and exists again in the working copy,
         // git produces two lines for it, one reading `D ` (deleted in index, unmodified in working copy)
@@ -486,6 +528,7 @@ impl FromStr for GitStatus {
         });
         Ok(Self {
             entries: entries.into(),
+            renamed_paths,
         })
     }
 }
@@ -494,6 +537,7 @@ impl Default for GitStatus {
     fn default() -> Self {
         Self {
             entries: Arc::new([]),
+            renamed_paths: HashMap::default(),
         }
     }
 }

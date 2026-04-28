@@ -300,6 +300,7 @@ pub enum CommitDataState {
 pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
+    pub renamed_paths: HashMap<RepoPath, RepoPath>,
     pub work_directory_abs_path: Arc<Path>,
     /// The working directory of the original repository. For a normal
     /// checkout this equals `work_directory_abs_path`. For a git worktree
@@ -3932,6 +3933,7 @@ impl RepositorySnapshot {
         Self {
             id,
             statuses_by_path: Default::default(),
+            renamed_paths: Default::default(),
             original_repo_abs_path: original_repo_abs_path
                 .unwrap_or_else(|| work_directory_abs_path.clone()),
             work_directory_abs_path,
@@ -3977,6 +3979,11 @@ impl RepositorySnapshot {
                 .entries
                 .iter()
                 .map(stash_to_proto)
+                .collect(),
+            renamed_paths: self
+                .renamed_paths
+                .iter()
+                .map(|(new_path, old_path)| (new_path.to_proto(), old_path.to_proto()))
                 .collect(),
             remote_upstream_url: self.remote_upstream_url.clone(),
             remote_origin_url: self.remote_origin_url.clone(),
@@ -4059,6 +4066,11 @@ impl RepositorySnapshot {
                 .entries
                 .iter()
                 .map(stash_to_proto)
+                .collect(),
+            renamed_paths: self
+                .renamed_paths
+                .iter()
+                .map(|(new_path, old_path)| (new_path.to_proto(), old_path.to_proto()))
                 .collect(),
             remote_upstream_url: self.remote_upstream_url.clone(),
             remote_origin_url: self.remote_origin_url.clone(),
@@ -4429,6 +4441,12 @@ impl Repository {
                                 let file = File::from_dyn(buffer.read(cx).file())?;
                                 let abs_path = file.worktree.read(cx).absolutize(&file.path);
                                 let repo_path = this.abs_path_to_repo_path(&abs_path)?;
+                                let head_path = this
+                                    .snapshot
+                                    .renamed_paths
+                                    .get(&repo_path)
+                                    .cloned()
+                                    .unwrap_or_else(|| repo_path.clone());
                                 log::debug!(
                                     "start reload diff bases for repo path {}",
                                     repo_path.as_unix_str()
@@ -4446,6 +4464,7 @@ impl Repository {
                                     Some((
                                         buffer,
                                         repo_path,
+                                        head_path,
                                         has_unstaged_diff.then(|| diff_state.index_text.clone()),
                                         has_uncommitted_diff.then(|| diff_state.head_text.clone()),
                                     ))
@@ -4458,7 +4477,7 @@ impl Repository {
                 let buffer_diff_base_changes = cx
                     .background_spawn(async move {
                         let mut changes = Vec::new();
-                        for (buffer, repo_path, current_index_text, current_head_text) in
+                        for (buffer, repo_path, head_path, current_index_text, current_head_text) in
                             &repo_diff_state_updates
                         {
                             let index_text = if current_index_text.is_some() {
@@ -4467,7 +4486,7 @@ impl Repository {
                                 None
                             };
                             let head_text = if current_head_text.is_some() {
-                                backend.load_committed_text(repo_path.clone()).await
+                                backend.load_committed_text(head_path.clone()).await
                             } else {
                                 None
                             };
@@ -5494,7 +5513,15 @@ impl Repository {
         entries: Vec<RepoPath>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
-        self.stage_or_unstage_entries(false, entries, cx)
+        let mut all_paths = entries.clone();
+        for path in &entries {
+            if let Some(old_path) = self.snapshot.renamed_paths.get(path) {
+                if !all_paths.contains(old_path) {
+                    all_paths.push(old_path.clone());
+                }
+            }
+        }
+        self.stage_or_unstage_entries(false, all_paths, cx)
     }
 
     fn stage_or_unstage_entries(
@@ -5720,7 +5747,7 @@ impl Repository {
         let snapshot = self.snapshot.clone();
         let pending_ops = self.pending_ops.clone();
         let to_unstage = cx.background_spawn(async move {
-            snapshot
+            let mut to_unstage: Vec<RepoPath> = snapshot
                 .status()
                 .filter_map(|entry| {
                     if let Some(ops) = pending_ops
@@ -5738,7 +5765,18 @@ impl Repository {
                         Some(entry.repo_path)
                     }
                 })
-                .collect()
+                .collect();
+            let mut extra_paths = Vec::new();
+            for path in &to_unstage {
+                if let Some(old_path) = snapshot.renamed_paths.get(path) {
+                    let old_path = old_path.clone();
+                    if !to_unstage.contains(&old_path) {
+                        extra_paths.push(old_path);
+                    }
+                }
+            }
+            to_unstage.extend(extra_paths);
+            to_unstage
         });
 
         cx.spawn(async move |this, cx| {
@@ -7206,6 +7244,16 @@ impl Repository {
             cx.emit(RepositoryEvent::StashEntriesChanged)
         }
         self.snapshot.stash_entries = new_stash_entries;
+        self.snapshot.renamed_paths = update
+            .renamed_paths
+            .into_iter()
+            .filter_map(|(new_path_str, old_path_str)| {
+                Some((
+                    RepoPath::from_proto(&new_path_str).log_err()?,
+                    RepoPath::from_proto(&old_path_str).log_err()?,
+                ))
+            })
+            .collect();
         let new_linked_worktrees: Arc<[GitWorktree]> = update
             .linked_worktrees
             .iter()
@@ -7472,10 +7520,12 @@ impl Repository {
         repo_path: RepoPath,
         cx: &App,
     ) -> Task<Result<DiffBasesChange>> {
+        let old_path = self.snapshot.renamed_paths.get(&repo_path).cloned();
         let rx = self.send_job(None, move |state, _| async move {
             match state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    let committed_text = backend.load_committed_text(repo_path.clone()).await;
+                    let head_path = old_path.as_ref().unwrap_or(&repo_path);
+                    let committed_text = backend.load_committed_text(head_path.clone()).await;
                     let staged_text = backend.load_index_text(repo_path).await;
                     let diff_bases_change = if committed_text == staged_text {
                         DiffBasesChange::SetBoth(committed_text)
@@ -8692,6 +8742,7 @@ async fn compute_snapshot(
         this.snapshot.merge = merge_details;
         this.snapshot.statuses_by_path = statuses_by_path;
         this.snapshot.stash_entries = stash_entries;
+        this.snapshot.renamed_paths = statuses.renamed_paths;
 
         this.snapshot.clone()
     }))
