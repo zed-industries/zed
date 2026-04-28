@@ -2321,7 +2321,7 @@ mod tests {
             .filter(|m| *m.folder_paths() == project_a_paths)
             .collect();
         assert_eq!(project_a_entries.len(), 7);
-        project_a_entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        project_a_entries.sort_by_key(|entry| std::cmp::Reverse(entry.updated_at));
 
         for entry in &project_a_entries[..5] {
             assert!(
