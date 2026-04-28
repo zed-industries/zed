@@ -15,6 +15,10 @@ pub enum PlanEntryStatus {
     InProgress,
     /// The task has been successfully completed.
     Completed,
+    /// The task was intentionally skipped or became irrelevant.
+    /// Use this when a planned step no longer applies due to a scope change
+    /// or a preceding step that made this one unnecessary.
+    Skipped,
 }
 
 impl From<PlanEntryStatus> for acp::PlanEntryStatus {
@@ -23,6 +27,7 @@ impl From<PlanEntryStatus> for acp::PlanEntryStatus {
             PlanEntryStatus::Pending => acp::PlanEntryStatus::Pending,
             PlanEntryStatus::InProgress => acp::PlanEntryStatus::InProgress,
             PlanEntryStatus::Completed => acp::PlanEntryStatus::Completed,
+            PlanEntryStatus::Skipped => acp::PlanEntryStatus::Pending,
         }
     }
 }
