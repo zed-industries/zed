@@ -1176,7 +1176,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     Some((
                         source.clone(),
                         DockerComposeVolume {
-                            name: source.clone(),
+                            name: Some(source.clone()),
                         },
                     ))
                 } else {
@@ -4145,7 +4145,7 @@ ENV DOCKER_BUILDKIT=1
             volumes: HashMap::from([(
                 "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
                 DockerComposeVolume {
-                    name: "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
+                    name: Some("dind-var-lib-docker-42dad4b4ca7b8ced".to_string()),
                 },
             )]),
         };
