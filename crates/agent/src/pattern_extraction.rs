@@ -253,7 +253,7 @@ mod tests {
         );
         assert_eq!(
             extract_terminal_pattern("PAGER='less -R' git log"),
-            Some("^PAGER='less \\-R'\\s+git\\s+log(\\s|$)".to_string())
+            Some("^PAGER='less -R'\\s+git\\s+log(\\s|$)".to_string())
         );
 
         // Path-like commands are rejected
