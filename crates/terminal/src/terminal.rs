@@ -3336,6 +3336,7 @@ mod tests {
         use super::init_terminal_test_with_window;
         use crate::*;
         use alacritty_terminal::index::{Column, Line, Point as AlacPoint};
+        use context::HyperlinkVisualTestContext;
         use gpui::{
             Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
             Point, TestAppContext, VisualContext, bounds, point, size,
@@ -3434,124 +3435,119 @@ mod tests {
             }
         }
 
-        fn check_hovered_word(
-            terminal: &mut Terminal,
-            expected_hovered_word: Option<&HoveredWord>,
-            source_location: String,
-        ) {
-            assert_eq!(
-                terminal.last_content().last_hovered_word.as_ref(),
-                expected_hovered_word,
-                "Mismatched hovered word at {}",
-                source_location
-            );
-        }
+        mod context {
+            use super::*;
+            use crate::{AlacPoint, FIND_HYPERLINK_THROTTLE_MS, HoveredWord};
+            use alacritty_terminal::index::{Column, Line};
+            use gpui::{Modifiers, Pixels, Point};
+            use std::time::Instant;
 
-        fn check_visible_lines_match(
-            terminal: &mut Terminal,
-            expected_lines: impl IntoIterator<Item = (i32, &'static str)>,
-            source_location: String,
-        ) {
-            let lines = visible_lines(terminal);
-            let mut expected_lines = expected_lines.into_iter();
-            for (line, text) in &lines {
-                let Some((expected_line, expected_text)) = expected_lines.next() else {
-                    // More actual lines than expected lines, ignore
-                    return;
-                };
-                assert_eq!(
-                    *line, expected_line,
-                    "Mismatched line at line {line} at {}",
-                    source_location
-                );
-                assert_eq!(
-                    *text, expected_text,
-                    "Mismatched text at line {line} at {}",
-                    source_location
-                );
+            pub struct HyperlinkVisualTestContext<'a, 'b> {
+                terminal: &'a mut Terminal,
+                window: &'a mut Window,
+                cx: &'a mut Context<'b, Terminal>,
             }
 
-            assert!(
-                expected_lines.next().is_none(),
-                "Extra expected lines at {}",
-                source_location
-            )
-        }
+            impl<'a, 'b> HyperlinkVisualTestContext<'a, 'b> {
+                pub fn new(
+                    terminal: &'a mut Terminal,
+                    window: &'a mut Window,
+                    cx: &'a mut Context<'b, Terminal>,
+                ) -> Self {
+                    Self {
+                        terminal,
+                        window,
+                        cx,
+                    }
+                }
 
-        fn visible_lines(terminal: &mut Terminal) -> Vec<(i32, String)> {
-            let term = terminal.term.lock_unfair();
-            let grid = term.grid();
-            let columns = grid.columns();
-            // From Grid::display_iter()
-            let start_line = Line(-(grid.display_offset() as i32));
-            let end_line = min(start_line + grid.screen_lines(), grid.bottommost_line());
-            (start_line.0..end_line.0)
-                .map(|line| {
-                    (
-                        line,
-                        term.bounds_to_string(
-                            AlacPoint::new(Line(line), Column(0)),
-                            AlacPoint::new(Line(line), Column(columns)),
-                        ),
-                    )
-                })
-                .collect()
-        }
+                #[track_caller]
+                pub fn assert_visible_lines_match(
+                    &self,
+                    expected_lines: impl IntoIterator<Item = (i32, &'static str)>,
+                ) {
+                    fn visible_lines(terminal: &Terminal) -> Vec<(i32, String)> {
+                        let term = terminal.term.lock_unfair();
+                        let grid = term.grid();
+                        let columns = grid.columns();
+                        // From Grid::display_iter()
+                        let start_line = Line(-(grid.display_offset() as i32));
+                        let end_line =
+                            min(start_line + grid.screen_lines(), grid.bottommost_line());
+                        (start_line.0..end_line.0)
+                            .map(|line| {
+                                (
+                                    line,
+                                    term.bounds_to_string(
+                                        AlacPoint::new(Line(line), Column(0)),
+                                        AlacPoint::new(Line(line), Column(columns)),
+                                    ),
+                                )
+                            })
+                            .collect()
+                    }
 
-        fn unthrottle(terminal: &mut Terminal) {
-            // Suppress hyperlink throttling for testing
-            terminal.last_mouse_move_time = Instant::now() - FIND_HYPERLINK_THROTTLE_MS * 2;
-        }
+                    let lines = visible_lines(self.terminal);
+                    let mut expected_lines = expected_lines.into_iter();
+                    for (line, text) in &lines {
+                        let Some((expected_line, expected_text)) = expected_lines.next() else {
+                            // More actual lines than expected lines, ignore
+                            return;
+                        };
+                        assert_eq!(*line, expected_line, "Mismatched line at line {line}");
+                        assert_eq!(*text, expected_text, "Mismatched text at line {line}");
+                    }
 
-        fn ctrl_mouse_move_to_and_sync(
-            position: Point<Pixels>,
-            terminal: &mut Terminal,
-            window: &mut Window,
-            cx: &mut Context<Terminal>,
-        ) {
-            unthrottle(terminal);
-            ctrl_mouse_move_to(position, terminal, window, cx);
-            unthrottle(terminal);
-            terminal.sync(window, cx);
-        }
+                    assert!(expected_lines.next().is_none(), "Extra expected lines")
+                }
 
-        fn try_modifiers_change_and_sync(
-            modifiers: &Modifiers,
-            terminal: &mut Terminal,
-            window: &mut Window,
-            cx: &mut Context<Terminal>,
-        ) {
-            unthrottle(terminal);
-            terminal.try_modifiers_change(modifiers, window, cx);
-            unthrottle(terminal);
-            terminal.sync(window, cx);
-        }
+                #[track_caller]
+                pub fn assert_hovered_word(&self, expected_hovered_word: Option<&HoveredWord>) {
+                    assert_eq!(
+                        self.terminal.last_content().last_hovered_word.as_ref(),
+                        expected_hovered_word,
+                        "Mismatched hovered word"
+                    );
+                }
 
-        fn output_lines_and_sync(
-            output: &str,
-            repeat: usize,
-            terminal: &mut Terminal,
-            window: &mut Window,
-            cx: &mut Context<Terminal>,
-        ) {
-            for _ in 0..repeat {
-                terminal.write_output(output.as_bytes(), cx);
-                terminal.write_output(b"\n", cx);
+                pub fn ctrl_mouse_move_to_and_sync(&mut self, position: Point<Pixels>) {
+                    self.unthrottle();
+                    ctrl_mouse_move_to(position, self.terminal, self.window, self.cx);
+                    self.sync();
+                }
+
+                pub fn try_modifiers_change_and_sync(&mut self, modifiers: Modifiers) {
+                    self.unthrottle();
+                    self.terminal
+                        .try_modifiers_change(&modifiers, self.window, self.cx);
+                    self.sync();
+                }
+
+                pub fn write_output_lines_and_sync(&mut self, output: &str, repeat: usize) {
+                    for _ in 0..repeat {
+                        self.terminal.write_output(output.as_bytes(), self.cx);
+                        self.terminal.write_output(b"\n", self.cx);
+                    }
+                    self.sync();
+                }
+
+                pub fn scroll_up_by_and_sync(&mut self, lines: usize) {
+                    self.unthrottle();
+                    self.terminal.scroll_up_by(lines);
+                    self.sync();
+                }
+
+                fn unthrottle(&mut self) {
+                    // Suppress hyperlink throttling for testing
+                    self.terminal.last_mouse_move_time =
+                        Instant::now() - FIND_HYPERLINK_THROTTLE_MS * 2;
+                }
+
+                fn sync(&mut self) {
+                    self.unthrottle();
+                    self.terminal.sync(self.window, self.cx);
+                }
             }
-            unthrottle(terminal);
-            terminal.sync(window, cx);
-        }
-
-        fn scroll_up_by_and_sync(
-            lines: usize,
-            terminal: &mut Terminal,
-            window: &mut Window,
-            cx: &mut Context<Terminal>,
-        ) {
-            unthrottle(terminal);
-            terminal.scroll_up_by(lines);
-            unthrottle(terminal);
-            terminal.sync(window, cx);
         }
 
         fn ctrl_mouse_down_at(
@@ -3679,68 +3675,34 @@ mod tests {
             });
         }
 
+        const OUTPUT: &str = "Visit https://zed.dev/ for more";
+        const ZED_DEV_STR: &str = "https://zed.dev/";
+        const ZED_DEV_PT: Point<Pixels> = point(px(30.0), px(2.5));
+
         #[gpui::test]
         async fn test_ctrl_hover_with_changing_content(cx: &mut TestAppContext) {
             let (terminal, cx) = init_terminal_test_with_window(cx, b"").await;
             cx.update_window_entity(&terminal, |terminal, window, cx| {
-                macro_rules! ctrl_mouse_move_to_and_sync {
-                    ($position:expr) => {
-                        ctrl_mouse_move_to_and_sync($position, terminal, window, cx)
-                    };
-                }
-
-                macro_rules! write_output_lines_and_sync {
-                    ($output:expr, $repeat:expr) => {
-                        output_lines_and_sync($output, $repeat, terminal, window, cx)
-                    };
-                }
-
-                macro_rules! scroll_up_by_and_sync {
-                    ($lines:expr) => {
-                        scroll_up_by_and_sync($lines, terminal, window, cx)
-                    };
-                }
-
-                macro_rules! source_location {
-                    () => {
-                        format!("{}:{}", std::file!(), std::line!())
-                    };
-                }
-
-                macro_rules! check_visible_lines_match {
-                    ($expected_lines:expr) => {
-                        check_visible_lines_match(terminal, $expected_lines, source_location!())
-                    };
-                }
-
-                macro_rules! check_hovered_word {
-                    ($expected_hovered_word:expr) => {
-                        check_hovered_word(terminal, $expected_hovered_word, source_location!())
-                    };
-                }
-
-                const OUTPUT: &str = "Visit https://zed.dev/ for more";
-                const ZED_DEV_STR: &str = "https://zed.dev/";
-                const ZED_DEV_PT: Point<Pixels> = point(px(30.0), px(2.5));
+                let mut cx = HyperlinkVisualTestContext::new(terminal, window, cx);
 
                 // Set initial expected hovered word
                 let mut expected_hovered_word: HoveredWord =
                     (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
-                write_output_lines_and_sync!(OUTPUT, 1);
-                check_visible_lines_match!(vec![(0, OUTPUT)]);
-                ctrl_mouse_move_to_and_sync!(ZED_DEV_PT);
-                check_hovered_word!(Some(&expected_hovered_word));
+                cx.write_output_lines_and_sync(OUTPUT, 1);
+                cx.assert_visible_lines_match(vec![(0, OUTPUT)]);
+                cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
+                cx.assert_hovered_word(Some(&expected_hovered_word));
 
                 // Existing hovered_word IS reused when viewport is static
-                write_output_lines_and_sync!(OUTPUT, 1);
-                check_visible_lines_match!(vec![(0, OUTPUT), (1, OUTPUT)]);
-                check_hovered_word!(Some(&expected_hovered_word));
+                cx.write_output_lines_and_sync(OUTPUT, 1);
+                cx.assert_visible_lines_match(vec![(0, OUTPUT), (1, OUTPUT)]);
+                cx.assert_hovered_word(Some(&expected_hovered_word));
 
                 // Existing hovered_word IS NOT reused when viewport is changing (total lines changed,
                 // but display offset did not have a corresponding change) AND new hovered_word is set
                 // if secondary is held.
-                write_output_lines_and_sync!(OUTPUT, 8);
-                check_visible_lines_match!(vec![
+                cx.write_output_lines_and_sync(OUTPUT, 8);
+                cx.assert_visible_lines_match(vec![
                     (0, OUTPUT),
                     (1, OUTPUT),
                     (2, OUTPUT),
@@ -3748,12 +3710,12 @@ mod tests {
                     (4, OUTPUT),
                 ]);
                 expected_hovered_word = expected_hovered_word.with_id(expected_hovered_word.id + 1);
-                check_hovered_word!(Some(&expected_hovered_word));
+                cx.assert_hovered_word(Some(&expected_hovered_word));
 
                 // Existing hovered word IS NOT reused when scrolling
-                scroll_up_by_and_sync!(2);
-                ctrl_mouse_move_to_and_sync!(ZED_DEV_PT);
-                check_visible_lines_match!(vec![
+                cx.scroll_up_by_and_sync(2);
+                cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
+                cx.assert_visible_lines_match(vec![
                     (-2, OUTPUT),
                     (-1, OUTPUT),
                     (0, OUTPUT),
@@ -3763,11 +3725,11 @@ mod tests {
                 ]);
                 expected_hovered_word =
                     expected_hovered_word.with_line_and_id(-2, expected_hovered_word.id + 2);
-                check_hovered_word!(Some(&expected_hovered_word));
+                cx.assert_hovered_word(Some(&expected_hovered_word));
 
                 // Existing hovered word IS reused when total lines changed, but visible lines unchanged
-                write_output_lines_and_sync!(OUTPUT, 3);
-                check_visible_lines_match!(vec![
+                cx.write_output_lines_and_sync(OUTPUT, 3);
+                cx.assert_visible_lines_match(vec![
                     (-5, OUTPUT),
                     (-4, OUTPUT),
                     (-3, OUTPUT),
@@ -3776,7 +3738,7 @@ mod tests {
                     (0, OUTPUT),
                 ]);
                 expected_hovered_word = expected_hovered_word.with_line(-5);
-                check_hovered_word!(Some(&expected_hovered_word));
+                cx.assert_hovered_word(Some(&expected_hovered_word));
             });
         }
 
@@ -3784,64 +3746,26 @@ mod tests {
         async fn test_ctrl_hover_with_modifier_change_only(cx: &mut TestAppContext) {
             let (terminal, cx) = init_terminal_test_with_window(cx, b"").await;
             cx.update_window_entity(&terminal, |terminal, window, cx| {
-                macro_rules! ctrl_mouse_move_to_and_sync {
-                    ($position:expr) => {
-                        ctrl_mouse_move_to_and_sync($position, terminal, window, cx)
-                    };
-                }
-
-                macro_rules! try_modifiers_change_and_sync {
-                    ($modifiers:expr) => {
-                        try_modifiers_change_and_sync(&$modifiers, terminal, window, cx)
-                    };
-                }
-
-                macro_rules! write_output_lines_and_sync {
-                    ($output:expr, $repeat:expr) => {
-                        output_lines_and_sync($output, $repeat, terminal, window, cx)
-                    };
-                }
-
-                macro_rules! source_location {
-                    () => {
-                        format!("{}:{}", std::file!(), std::line!())
-                    };
-                }
-
-                macro_rules! check_visible_lines_match {
-                    ($expected_lines:expr) => {
-                        check_visible_lines_match(terminal, $expected_lines, source_location!())
-                    };
-                }
-
-                macro_rules! check_hovered_word {
-                    ($expected_hovered_word:expr) => {
-                        check_hovered_word(terminal, $expected_hovered_word, source_location!())
-                    };
-                }
-
-                const OUTPUT: &str = "Visit https://zed.dev/ for more";
-                const ZED_DEV_STR: &str = "https://zed.dev/";
-                const ZED_DEV_PT: Point<Pixels> = point(px(30.0), px(2.5));
+                let mut cx = HyperlinkVisualTestContext::new(terminal, window, cx);
 
                 // Set initial expected hovered word
                 let mut expected_hovered_word: HoveredWord =
                     (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
-                write_output_lines_and_sync!(OUTPUT, 1);
-                check_visible_lines_match!(vec![(0, OUTPUT)]);
-                ctrl_mouse_move_to_and_sync!(ZED_DEV_PT);
-                check_hovered_word!(Some(&expected_hovered_word));
+                cx.write_output_lines_and_sync(OUTPUT, 1);
+                cx.assert_visible_lines_match(vec![(0, OUTPUT)]);
+                cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
+                cx.assert_hovered_word(Some(&expected_hovered_word));
 
                 for _ in 0..10 {
                     // Existing hovered_word cleared when secondary not held
-                    try_modifiers_change_and_sync!(default());
-                    check_hovered_word!(None);
+                    cx.try_modifiers_change_and_sync(default());
+                    cx.assert_hovered_word(None);
 
                     // Existing hovered_word set when secondary is held
-                    try_modifiers_change_and_sync!(Modifiers::secondary_key());
+                    cx.try_modifiers_change_and_sync(Modifiers::secondary_key());
                     expected_hovered_word =
                         expected_hovered_word.with_id(expected_hovered_word.id + 1);
-                    check_hovered_word!(Some(&expected_hovered_word));
+                    cx.assert_hovered_word(Some(&expected_hovered_word));
                 }
             });
         }
