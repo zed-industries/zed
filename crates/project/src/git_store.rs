@@ -5236,6 +5236,16 @@ impl Repository {
         result_tx: smol::channel::Sender<(Oid, CommitData)>,
         background_executor: BackgroundExecutor,
     ) {
+        async fn receive_commit_data_request(
+            request_rx: &smol::channel::Receiver<Oid>,
+        ) -> Option<Oid> {
+            if request_rx.is_closed() && request_rx.is_empty() {
+                future::pending().await
+            } else {
+                request_rx.recv().await.ok()
+            }
+        }
+
         let reader = match backend.commit_data_reader() {
             Ok(reader) => reader,
             Err(error) => {
@@ -5244,19 +5254,38 @@ impl Repository {
             }
         };
 
+        let read_commit_data = |sha| reader.read(sha).map(move |result| (sha, result));
+        let mut read_futures = FuturesUnordered::new();
+
         loop {
-            let timeout = background_executor.timer(std::time::Duration::from_secs(10));
+            if read_futures.is_empty() {
+                let timeout = background_executor.timer(Duration::from_secs(10));
+
+                futures::select_biased! {
+                    sha = futures::FutureExt::fuse(receive_commit_data_request(&request_rx)) => {
+                        if let Some(sha) = sha {
+                            read_futures.push(read_commit_data(sha));
+                        }
+                    }
+                    _ = futures::FutureExt::fuse(timeout) => {
+                        break;
+                    }
+                }
+            }
+
+            let next_read = read_futures.next().fuse();
+            futures::pin_mut!(next_read);
 
             futures::select_biased! {
-                sha = futures::FutureExt::fuse(request_rx.recv()) => {
-                    let Ok(sha) = sha else {
-                        break;
+                result = next_read => {
+                    let Some((sha, result)) = result else {
+                        continue;
                     };
 
-                    match reader.read(sha).await {
+                    match result {
                         Ok(commit_data) => {
                             if result_tx.send((sha, commit_data)).await.is_err() {
-                                break;
+                                return;
                             }
                         }
                         Err(error) => {
@@ -5264,8 +5293,10 @@ impl Repository {
                         }
                     }
                 }
-                _ = futures::FutureExt::fuse(timeout) => {
-                    break;
+                sha = futures::FutureExt::fuse(receive_commit_data_request(&request_rx)) => {
+                    if let Some(sha) = sha {
+                        read_futures.push(read_commit_data(sha));
+                    }
                 }
             }
         }

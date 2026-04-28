@@ -208,7 +208,7 @@ pub enum SplitSide {
 }
 
 impl EditorElement {
-    pub(crate) const SCROLLBAR_WIDTH: Pixels = px(15.);
+    pub(crate) const SCROLLBAR_WIDTH: Pixels = ui::EDITOR_SCROLLBAR_WIDTH;
 
     pub fn new(editor: &Entity<Editor>, style: EditorStyle) -> Self {
         Self {
