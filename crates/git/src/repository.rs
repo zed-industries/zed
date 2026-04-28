@@ -378,7 +378,9 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
             // Ignore other lines: detached, locked, prunable, etc.
         }
 
-        if let (Some(path), Some(sha)) = (path, sha) {
+        if let Some(path) = path
+            && let Some(sha) = sha.or_else(|| is_bare.then(String::new))
+        {
             worktrees.push(Worktree {
                 path: PathBuf::from(path),
                 ref_name: ref_name.map(Into::into),
@@ -1116,6 +1118,21 @@ impl RealGitRepository {
         ))
     }
 
+    fn git_binary_for_worktree_list(&self) -> Result<GitBinary> {
+        let repository = self.repository.lock();
+        let working_directory = repository
+            .workdir()
+            .unwrap_or_else(|| repository.path())
+            .to_path_buf();
+        Ok(GitBinary::new(
+            self.any_git_binary_path.clone(),
+            working_directory,
+            repository.path().to_path_buf(),
+            self.executor.clone(),
+            self.is_trusted(),
+        ))
+    }
+
     fn edit_ref(&self, edit: RefEdit) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary();
         self.executor
@@ -1830,7 +1847,7 @@ impl GitRepository for RealGitRepository {
     }
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
-        let git_binary = self.git_binary();
+        let git_binary = self.git_binary_for_worktree_list();
         self.executor
             .spawn(async move {
                 let git = git_binary?;
@@ -3662,7 +3679,7 @@ fn checkpoint_author_envs() -> HashMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, process::Command};
 
     use super::*;
     use gpui::TestAppContext;
@@ -3672,6 +3689,21 @@ mod tests {
             std::env::set_var("GIT_CONFIG_GLOBAL", "");
             std::env::set_var("GIT_CONFIG_SYSTEM", "");
         }
+    }
+
+    fn run_git(cwd: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .expect("git command should run");
+        assert!(
+            output.status.success(),
+            "git {:?} failed\nstdout: {}\nstderr: {}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[gpui::test]
@@ -4201,6 +4233,19 @@ mod tests {
         assert!(!result[1].is_main);
         assert!(!result[1].is_bare);
 
+        // Bare repo entry without HEAD (as emitted by `git worktree list --porcelain`)
+        let input = "worktree /home/user/bare.git\nbare\n\n\
+                      worktree /home/user/project\nHEAD def456\nbranch refs/heads/main\n\n";
+        let result = parse_worktrees_from_str(input);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].path, PathBuf::from("/home/user/bare.git"));
+        assert!(result[0].is_main);
+        assert!(result[0].is_bare);
+        assert_eq!(result[1].path, PathBuf::from("/home/user/project"));
+        assert_eq!(result[1].ref_name, Some("refs/heads/main".into()));
+        assert!(!result[1].is_main);
+        assert!(!result[1].is_bare);
+
         // Extra porcelain lines (locked, prunable) should be ignored
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
                       worktree /home/user/locked-wt\nHEAD def456\nbranch refs/heads/locked-branch\nlocked\n\n\
@@ -4312,6 +4357,89 @@ mod tests {
             new_worktree.path.canonicalize().unwrap(),
             worktree_path.canonicalize().unwrap(),
         );
+    }
+
+    #[gpui::test]
+    async fn test_list_worktrees_from_bare_repository_gitfile(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let seed_dir = temp_dir.path().join("seed");
+        let repo_root = temp_dir.path().join("repo-root");
+        let bare_dir = repo_root.join(".bare");
+        fs::create_dir_all(&repo_root).unwrap();
+
+        run_git(temp_dir.path(), &["init", "-b", "main", "seed"]);
+        fs::write(seed_dir.join("README.md"), "content").unwrap();
+        run_git(&seed_dir, &["add", "README.md"]);
+        run_git(
+            &seed_dir,
+            &[
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "user.name=Test",
+                "commit",
+                "-m",
+                "Initial commit",
+            ],
+        );
+
+        run_git(
+            &repo_root,
+            &[
+                "clone",
+                "--bare",
+                seed_dir.to_str().unwrap(),
+                bare_dir.to_str().unwrap(),
+            ],
+        );
+        fs::write(repo_root.join(".git"), "gitdir: ./.bare\n").unwrap();
+
+        for branch in ["feature-a", "feature-b"] {
+            run_git(
+                &repo_root,
+                &["--git-dir=.bare", "branch", branch, "main"],
+            );
+        }
+        for name in ["main", "feature-a", "feature-b"] {
+            run_git(
+                &repo_root,
+                &["--git-dir=.bare", "worktree", "add", name, name],
+            );
+        }
+
+        let repo = RealGitRepository::new(
+            &repo_root.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let worktrees = repo.worktrees().await.unwrap();
+        assert_eq!(worktrees.len(), 4);
+
+        let bare = worktrees
+            .iter()
+            .find(|w| w.is_bare)
+            .expect("bare worktree entry");
+        assert!(bare.is_main);
+        assert_eq!(bare.path, bare_dir);
+
+        for name in ["main", "feature-a", "feature-b"] {
+            let worktree = worktrees
+                .iter()
+                .find(|w| w.path == repo_root.join(name))
+                .unwrap_or_else(|| panic!("missing worktree {name}"));
+            assert_eq!(
+                worktree.ref_name.as_ref().map(|r| r.as_ref()),
+                Some(format!("refs/heads/{name}").as_str())
+            );
+            assert!(!worktree.is_main);
+            assert!(!worktree.is_bare);
+        }
     }
 
     #[gpui::test]
