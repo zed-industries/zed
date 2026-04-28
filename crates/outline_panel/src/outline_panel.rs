@@ -46,12 +46,12 @@ use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use smol::channel;
 use theme::SyntaxTheme;
 use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, FluentBuilder, HighlightedLabel, IconButton, IconButtonShape, IndentGuideColors,
-    IndentGuideLayout, ListItem, ScrollAxes, Scrollbars, Tab, Tooltip, WithScrollbar, prelude::*,
+    IndentGuideLayout, KeyBinding, ListItem, ScrollAxes, Scrollbars, Tab, Tooltip, WithScrollbar,
+    prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, debug_panic, rel_path::RelPath};
 use workspace::{
@@ -155,7 +155,7 @@ struct SearchState {
     kind: SearchKind,
     query: String,
     matches: Vec<(Range<editor::Anchor>, Arc<OnceLock<SearchData>>)>,
-    highlight_search_match_tx: channel::Sender<HighlightArguments>,
+    highlight_search_match_tx: async_channel::Sender<HighlightArguments>,
     _search_match_highlighter: Task<()>,
     _search_match_notify: Task<()>,
 }
@@ -176,8 +176,8 @@ impl SearchState {
         window: &mut Window,
         cx: &mut Context<OutlinePanel>,
     ) -> Self {
-        let (highlight_search_match_tx, highlight_search_match_rx) = channel::unbounded();
-        let (notify_tx, notify_rx) = channel::unbounded::<()>();
+        let (highlight_search_match_tx, highlight_search_match_rx) = async_channel::unbounded();
+        let (notify_tx, notify_rx) = async_channel::unbounded::<()>();
         Self {
             kind,
             query,
@@ -4561,18 +4561,30 @@ impl OutlinePanel {
                             .child(Label::new(query)),
                     )
                 })
-                .child(h_flex().justify_center().child({
-                    let keystroke = match self.position(window, cx) {
-                        DockPosition::Left => window.keystroke_text_for(&workspace::ToggleLeftDock),
-                        DockPosition::Bottom => {
-                            window.keystroke_text_for(&workspace::ToggleBottomDock)
-                        }
-                        DockPosition::Right => {
-                            window.keystroke_text_for(&workspace::ToggleRightDock)
-                        }
-                    };
-                    Label::new(format!("Toggle Panel With {keystroke}")).color(Color::Muted)
-                }))
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .justify_center()
+                        .child(Label::new("Toggle Panel With").color(Color::Muted))
+                        .child({
+                            let key_binding = match self.position(window, cx) {
+                                DockPosition::Left => {
+                                    KeyBinding::for_action(&workspace::ToggleLeftDock, cx)
+                                        .into_any_element()
+                                }
+                                DockPosition::Bottom => {
+                                    KeyBinding::for_action(&workspace::ToggleBottomDock, cx)
+                                        .into_any_element()
+                                }
+                                DockPosition::Right => {
+                                    KeyBinding::for_action(&workspace::ToggleRightDock, cx)
+                                        .into_any_element()
+                                }
+                            };
+
+                            key_binding
+                        }),
+                )
         } else {
             let list_contents = {
                 let items_len = self.cached_entries.len();
@@ -4712,7 +4724,7 @@ impl OutlinePanel {
             deferred(
                 anchored()
                     .position(*position)
-                    .anchor(gpui::Corner::TopLeft)
+                    .anchor(gpui::Anchor::TopLeft)
                     .child(menu.clone()),
             )
             .with_priority(1)
@@ -4722,10 +4734,10 @@ impl OutlinePanel {
     }
 
     fn render_filter_footer(&mut self, pinned: bool, cx: &mut Context<Self>) -> Div {
-        let (icon, icon_tooltip) = if pinned {
-            (IconName::Unpin, "Unpin Outline")
+        let (pin_button_id, icon, icon_tooltip) = if pinned {
+            ("unpin_button", IconName::Unpin, "Unpin Outline")
         } else {
-            (IconName::Pin, "Pin Active Outline")
+            ("pin_button", IconName::Pin, "Pin Active Outline")
         };
 
         let has_query = self.query(cx).is_some();
@@ -4763,7 +4775,7 @@ impl OutlinePanel {
                         )
                     })
                     .child(
-                        IconButton::new("pin_button", icon)
+                        IconButton::new(pin_button_id, icon)
                             .tooltip(Tooltip::text(icon_tooltip))
                             .shape(IconButtonShape::Square)
                             .on_click(cx.listener(|outline_panel, _, window, cx| {
@@ -5236,6 +5248,7 @@ impl GenerationState {
 #[cfg(test)]
 mod tests {
     use db::indoc;
+    use futures::stream::StreamExt as _;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle};
     use language::{self, FakeLspAdapter, markdown_lang, rust_lang};
     use pretty_assertions::assert_eq;
@@ -5245,7 +5258,6 @@ mod tests {
         project_search::{self, perform_project_search},
     };
     use serde_json::json;
-    use smol::stream::StreamExt as _;
     use util::path;
     use workspace::{MultiWorkspace, OpenOptions, OpenVisible, ToolbarItemView};
 

@@ -192,6 +192,12 @@ pub struct EditorSettingsContent {
     /// Default: FindAllReferences
     pub go_to_definition_fallback: Option<GoToDefinitionFallback>,
 
+    /// How to scroll the target into view when navigating to a definition or reference
+    /// (e.g. Go to Definition, Go to Type Definition, Find All References).
+    ///
+    /// Default: center
+    pub go_to_definition_scroll_strategy: Option<GoToDefinitionScrollStrategy>,
+
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
 
@@ -214,6 +220,11 @@ pub struct EditorSettingsContent {
 
     /// Drag and drop related settings
     pub drag_and_drop_selection: Option<DragAndDropSelectionContent>,
+
+    /// Whether and how to display code lenses from language servers.
+    ///
+    /// Default: "off"
+    pub code_lens: Option<CodeLens>,
 
     /// How to render LSP `textDocument/documentColor` colors in the editor.
     ///
@@ -451,13 +462,17 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub breakpoints: Option<bool>,
+    /// Whether to show bookmarks in the gutter.
+    ///
+    /// Default: true
+    pub bookmarks: Option<bool>,
     /// Whether to show fold buttons in the gutter.
     ///
     /// Default: true
     pub folds: Option<bool>,
 }
 
-/// How to render LSP `textDocument/documentColor` colors in the editor.
+/// Whether to display code lenses from language servers above code elements.
 #[derive(
     Copy,
     Clone,
@@ -469,6 +484,46 @@ pub struct GutterContent {
     Eq,
     JsonSchema,
     MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeLens {
+    /// Do not query and display code lenses.
+    #[default]
+    Off,
+    /// Display code lenses from language servers above code elements.
+    On,
+    /// Display code lenses in the code action menu.
+    Menu,
+}
+
+impl CodeLens {
+    pub fn enabled(&self) -> bool {
+        self != &Self::Off
+    }
+
+    pub fn inline(&self) -> bool {
+        *self == Self::On
+    }
+
+    pub fn show_in_menu(&self) -> bool {
+        *self == Self::Menu
+    }
+}
+
+/// How to render LSP `textDocument/documentColor` colors in the editor.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
     strum::VariantArray,
     strum::VariantNames,
 )]
@@ -748,6 +803,34 @@ pub enum GoToDefinitionFallback {
     /// Looks up references of the same symbol instead.
     #[default]
     FindAllReferences,
+}
+
+/// How to scroll the target into view when navigating to a definition or reference.
+///
+/// Default: center
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GoToDefinitionScrollStrategy {
+    /// Vertically center the target in the viewport.
+    #[default]
+    Center,
+    /// Scroll the minimum amount needed to make the target visible.
+    Minimum,
+    /// Scroll so the target appears near the top of the viewport.
+    Top,
 }
 
 /// Determines when the mouse cursor should be hidden in an editor or input box.

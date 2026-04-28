@@ -24,8 +24,9 @@ extend-exclude = [
     "crates/livekit_api/",
     # Vim makes heavy use of partial typing tables.
     "crates/vim/",
-    # Editor and file finder rely on partial typing and custom in-string syntax.
+    # Editor, file finder, and fuzzy matching rely on partial typing and custom in-string syntax.
     "crates/file_finder/src/file_finder_tests.rs",
+    "crates/fuzzy_nucleo/src/strings.rs",
     "crates/editor/src/editor_tests.rs",
     "crates/editor/src/edit_prediction_tests.rs",
     # There are some names in the test data that are incorrectly flagged as typos.
@@ -63,6 +64,7 @@ extend-exclude = [
     "crates/gpui_macos/src/dispatcher.rs",
     # Tests contain partially incomplete words (by design)
     "crates/edit_prediction_cli/src/split_commit.rs",
+    "crates/edit_prediction_metrics/src/kept_rate.rs",
     # Eval examples contain intentionally partial words (e.g. "secur" for "secure")
     "crates/edit_prediction_cli/evals/",
     # Tests contain `baˇr` that cause `"ba" should be "by" or "be".`-like false-positives
@@ -94,6 +96,8 @@ extend-ignore-re = [
     # "noet" is a vim variable (ideally to ignore locally)
     "noet",
     # Yarn Plug'n'Play
-    "PnP"
+    "PnP",
+    # `image` crate method: Delay::from_numer_denom_ms
+    "numer"
 ]
 check-filename = true
