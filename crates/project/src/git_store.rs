@@ -5236,6 +5236,16 @@ impl Repository {
         result_tx: smol::channel::Sender<(Oid, CommitData)>,
         background_executor: BackgroundExecutor,
     ) {
+        async fn receive_commit_data_request(
+            request_rx: &smol::channel::Receiver<Oid>,
+        ) -> Option<Oid> {
+            if request_rx.is_closed() && request_rx.is_empty() {
+                future::pending().await
+            } else {
+                request_rx.recv().await.ok()
+            }
+        }
+
         let reader = match backend.commit_data_reader() {
             Ok(reader) => reader,
             Err(error) => {
@@ -5244,45 +5254,47 @@ impl Repository {
             }
         };
 
+        let mut read_futures = FuturesUnordered::new();
+
         loop {
-            let timeout = background_executor.timer(Duration::from_secs(10));
-            let first_sha = futures::select_biased! {
-                sha = futures::FutureExt::fuse(request_rx.recv()) => {
-                    let Ok(sha) = sha else {
+            let next_sha = if read_futures.is_empty() {
+                let timeout = background_executor.timer(Duration::from_secs(10));
+
+                futures::select_biased! {
+                    sha = futures::FutureExt::fuse(receive_commit_data_request(&request_rx)) => sha,
+                    _ = futures::FutureExt::fuse(timeout) => {
                         break;
-                    };
-                    sha
+                    }
                 }
-                _ = futures::FutureExt::fuse(timeout) => {
-                    break;
+            } else {
+                let next_read = read_futures.next().fuse();
+                futures::pin_mut!(next_read);
+
+                futures::select_biased! {
+                    result = next_read => {
+                        let Some((sha, result)) = result else {
+                            continue;
+                        };
+
+                        match result {
+                            Ok(commit_data) => {
+                                if result_tx.send((sha, commit_data)).await.is_err() {
+                                    return;
+                                }
+                            }
+                            Err(error) => {
+                                log::error!("failed to read commit data for {sha}: {error:?}");
+                            }
+                        }
+
+                        None
+                    }
+                    sha = futures::FutureExt::fuse(receive_commit_data_request(&request_rx)) => sha,
                 }
             };
 
-            let mut queued_shas = Vec::with_capacity(64);
-            queued_shas.push(first_sha);
-
-            while queued_shas.len() < 64 {
-                match request_rx.try_recv() {
-                    Ok(sha) => queued_shas.push(sha),
-                    Err(_) => break,
-                }
-            }
-
-            match reader.read(queued_shas).await {
-                Ok(commit_data_batch) => {
-                    for commit_data in commit_data_batch {
-                        if result_tx
-                            .send((commit_data.sha, commit_data))
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                }
-                Err(error) => {
-                    log::error!("failed to read commit data batch for [{first_sha}]: {error:?}");
-                }
+            if let Some(sha) = next_sha {
+                read_futures.push(reader.read(sha).map(move |result| (sha, result)));
             }
         }
 
