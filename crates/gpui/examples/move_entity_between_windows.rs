@@ -38,7 +38,7 @@ impl HelloWorld {
                 let result = this.update_in(cx, |this, window, _cx| {
                     this.tick_count += 1;
                     println!(
-                        "tick #{} re-entered window {} (the one captured at spawn time)",
+                        "tick #{} fired in entity's current window {}",
                         this.tick_count,
                         window.window_handle().window_id().as_u64(),
                     );
@@ -56,8 +56,7 @@ impl HelloWorld {
             move |this, _emitter, _event, window, cx| {
                 let entered_window_id = window.window_handle().window_id().as_u64();
                 println!(
-                    "MoveToNewWindow handler fired in window {entered_window_id} \
-                     (captured at subscribe time)",
+                    "MoveToNewWindow handler fired in entity's current window {entered_window_id}",
                 );
 
                 this.move_count += 1;
