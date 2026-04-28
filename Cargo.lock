@@ -11240,14 +11240,19 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "command_palette_hooks",
  "editor",
  "futures 0.3.32",
  "gpui",
  "log",
  "parking_lot",
  "project",
+ "serde_json",
  "settings",
  "smol",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
