@@ -2491,6 +2491,20 @@
     // Set to 0 to disable output width limits.
     "output_max_width_columns": 0,
   },
+  // Clojure nREPL settings.
+  "nrepl": {
+    // Whether the nREPL feature is enabled.
+    "enabled": true,
+    // Default host to use when connecting to an nREPL server.
+    "default_host": "localhost",
+    // Whether to automatically connect to a discovered nREPL server on
+    // workspace open.
+    "auto_connect": true,
+    // File name (relative to the workspace root) used for auto-discovering
+    // a running nREPL server. Common build tools (Leiningen, deps.edn,
+    // shadow-cljs, babashka) write `.nrepl-port` by default.
+    "port_file": ".nrepl-port",
+  },
   // Vim settings
   "vim": {
     "default_mode": "normal",

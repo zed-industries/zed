@@ -55,6 +55,7 @@ pub struct EditorSettings {
     pub go_to_definition_fallback: GoToDefinitionFallback,
     pub go_to_definition_scroll_strategy: GoToDefinitionScrollStrategy,
     pub jupyter: Jupyter,
+    pub nrepl_enabled: bool,
     pub hide_mouse: Option<HideMouseMode>,
     pub snippet_sort_order: SnippetSortOrder,
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
@@ -189,6 +190,10 @@ impl EditorSettings {
     pub fn jupyter_enabled(cx: &App) -> bool {
         EditorSettings::get_global(cx).jupyter.enabled
     }
+
+    pub fn nrepl_enabled(cx: &App) -> bool {
+        EditorSettings::get_global(cx).nrepl_enabled
+    }
 }
 
 impl Settings for EditorSettings {
@@ -291,6 +296,7 @@ impl Settings for EditorSettings {
             jupyter: Jupyter {
                 enabled: editor.jupyter.unwrap().enabled.unwrap(),
             },
+            nrepl_enabled: content.nrepl.as_ref().unwrap().enabled.unwrap(),
             hide_mouse: editor.hide_mouse,
             snippet_sort_order: editor.snippet_sort_order.unwrap(),
             diagnostics_max_severity: editor.diagnostics_max_severity.map(Into::into),

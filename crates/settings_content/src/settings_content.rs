@@ -151,6 +151,8 @@ pub struct SettingsContent {
 
     pub repl: Option<ReplSettingsContent>,
 
+    pub nrepl: Option<NreplSettingsContent>,
+
     /// Whether or not to enable Helix mode.
     ///
     /// Default: false
@@ -1193,6 +1195,30 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 0
     pub output_max_height_lines: Option<usize>,
+}
+
+/// Settings for configuring the Clojure nREPL client.
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct NreplSettingsContent {
+    /// Whether the nREPL feature is enabled.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+    /// Default host to use when connecting to an nREPL server.
+    ///
+    /// Default: "localhost"
+    pub default_host: Option<String>,
+    /// Whether to automatically connect to a discovered nREPL server on
+    /// workspace open.
+    ///
+    /// Default: true
+    pub auto_connect: Option<bool>,
+    /// File name (relative to the workspace root) used for auto-discovering
+    /// a running nREPL server.
+    ///
+    /// Default: ".nrepl-port"
+    pub port_file: Option<String>,
 }
 
 /// Settings for configuring the which-key popup behaviour.

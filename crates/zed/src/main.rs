@@ -682,6 +682,7 @@ fn main() {
         );
 
         repl::init(app_state.fs.clone(), cx);
+        nrepl::init(cx);
         recent_projects::init(cx);
         dev_container::init(cx);
 

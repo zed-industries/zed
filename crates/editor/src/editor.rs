@@ -2884,6 +2884,10 @@ impl Editor {
             key_context.add("jupyter");
         }
 
+        if EditorSettings::nrepl_enabled(cx) {
+            key_context.add("nrepl");
+        }
+
         key_context.set("mode", mode);
         if self.pending_rename.is_some() {
             key_context.add("renaming");

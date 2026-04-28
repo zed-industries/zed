@@ -11235,6 +11235,16 @@ version = "2.0.0"
 source = "git+https://github.com/zed-industries/notify.git?rev=ce58c24cad542c28e04ced02e20325a4ec28a31d#ce58c24cad542c28e04ced02e20325a4ec28a31d"
 
 [[package]]
+name = "nrepl"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "gpui",
+ "project",
+ "settings",
+]
+
+[[package]]
 name = "ntapi"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22456,6 +22466,7 @@ dependencies = [
  "nc",
  "node_runtime",
  "notifications",
+ "nrepl",
  "onboarding",
  "outline",
  "outline_panel",
