@@ -4539,20 +4539,44 @@ impl GitPanel {
                             .absolute()
                             .top_2()
                             .right_2()
-                            .opacity(0.5)
-                            .hover(|this| this.opacity(1.0))
+                            .gap_px()
+                            .opacity(0.6)
+                            .hover(|s| s.opacity(1.0))
+                            .child(
+                                panel_icon_button("expand-commit-editor", IconName::MaximizeAlt)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip({
+                                        let editor_focus_handle = editor_focus_handle.clone();
+                                        move |_window, cx| {
+                                            Tooltip::for_action_in(
+                                                "Open Commit Modal",
+                                                &git::ExpandCommitEditor,
+                                                &editor_focus_handle,
+                                                cx,
+                                            )
+                                        }
+                                    })
+                                    .on_click(cx.listener({
+                                        move |_, _, window, cx| {
+                                            window.dispatch_action(
+                                                git::ExpandCommitEditor.boxed_clone(),
+                                                cx,
+                                            )
+                                        }
+                                    })),
+                            )
                             .child({
                                 let (icon, label) = if self.commit_editor_expanded {
-                                    (IconName::ExpandDown, "Collapse Commit Editor")
+                                    (IconName::Minimize, "Collapse Commit Editor")
                                 } else {
-                                    (IconName::ExpandUp, "Fill Commit Editor")
+                                    (IconName::Maximize, "Expand Commit Editor")
                                 };
+                                let focus_handle = self.focus_handle.clone();
 
                                 panel_icon_button("fill-commit-editor", icon)
                                     .icon_size(IconSize::Small)
-                                    .size(ui::ButtonSize::Default)
                                     .tooltip({
-                                        let focus_handle = editor_focus_handle.clone();
+                                        let focus_handle = focus_handle.clone();
                                         move |_window, cx| {
                                             Tooltip::for_action_in(
                                                 label,
@@ -4570,28 +4594,7 @@ impl GitPanel {
                                             )
                                         }
                                     }))
-                            })
-                            .child(
-                                panel_icon_button("expand-commit-editor", IconName::Maximize)
-                                    .icon_size(IconSize::Small)
-                                    .size(ui::ButtonSize::Default)
-                                    .tooltip(move |_window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Open Commit Modal",
-                                            &git::ExpandCommitEditor,
-                                            &editor_focus_handle,
-                                            cx,
-                                        )
-                                    })
-                                    .on_click(cx.listener({
-                                        move |_, _, window, cx| {
-                                            window.dispatch_action(
-                                                git::ExpandCommitEditor.boxed_clone(),
-                                                cx,
-                                            )
-                                        }
-                                    })),
-                            ),
+                            }),
                     ),
             );
 
