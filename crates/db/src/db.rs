@@ -9,17 +9,18 @@ use gpui::{App, AppContext, Global};
 pub use indoc::indoc;
 pub use inventory;
 pub use paths::database_dir;
-pub use smol;
 pub use sqlez;
 pub use sqlez_macros;
 pub use uuid;
 
 pub use release_channel::RELEASE_CHANNEL;
+use release_channel::ReleaseChannel;
 use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
+use std::fs::create_dir_all;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{LazyLock, atomic::Ordering};
 use util::{ResultExt, maybe};
@@ -61,8 +62,7 @@ impl AppDatabase {
     /// migrations in dependency order.
     pub fn new() -> Self {
         let db_dir = database_dir();
-        let scope = RELEASE_CHANNEL.dev_name();
-        let connection = smol::block_on(open_db::<AppMigrator>(db_dir, scope));
+        let connection = gpui::block_on(open_db::<AppMigrator>(db_dir, *RELEASE_CHANNEL));
         Self(connection)
     }
 
@@ -71,7 +71,7 @@ impl AppDatabase {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_new() -> Self {
         let name = format!("test-db-{}", uuid::Uuid::new_v4());
-        let connection = smol::block_on(open_test_db::<AppMigrator>(&name));
+        let connection = gpui::block_on(open_test_db::<AppMigrator>(&name));
         Self(connection)
     }
 
@@ -139,23 +139,54 @@ const DB_FILE_NAME: &str = "db.sqlite";
 
 pub static ALL_FILE_DB_FAILED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
+/// A type that can be used as a database scope for path construction.
+pub trait DbScope {
+    fn scope_name(&self) -> &str;
+}
+
+impl DbScope for ReleaseChannel {
+    fn scope_name(&self) -> &str {
+        self.dev_name()
+    }
+}
+
+/// A database scope shared across all release channels.
+pub struct GlobalDbScope;
+
+impl DbScope for GlobalDbScope {
+    fn scope_name(&self) -> &str {
+        "global"
+    }
+}
+
+/// Returns the path to the `AppDatabase` SQLite file for the given scope
+/// under `db_dir`.
+pub fn db_path(db_dir: &Path, scope: impl DbScope) -> PathBuf {
+    db_dir
+        .join(format!("0-{}", scope.scope_name()))
+        .join(DB_FILE_NAME)
+}
+
 /// Open or create a database at the given directory path.
 /// This will retry a couple times if there are failures. If opening fails once, the db directory
 /// is moved to a backup folder and a new one is created. If that fails, a shared in memory db is created.
 /// In either case, static variables are set so that the user can be notified.
-pub async fn open_db<M: Migrator + 'static>(db_dir: &Path, scope: &str) -> ThreadSafeConnection {
+pub async fn open_db<M: Migrator + 'static>(
+    db_dir: &Path,
+    scope: impl DbScope,
+) -> ThreadSafeConnection {
     if *ZED_STATELESS {
         return open_fallback_db::<M>().await;
     }
 
-    let main_db_dir = db_dir.join(format!("0-{}", scope));
+    let db_path = db_path(db_dir, scope);
 
     let connection = maybe!(async {
-        smol::fs::create_dir_all(&main_db_dir)
-            .await
-            .context("Could not create db directory")
-            .log_err()?;
-        let db_path = main_db_dir.join(Path::new(DB_FILE_NAME));
+        if let Some(parent) = db_path.parent() {
+            create_dir_all(parent)
+                .context("Could not create db directory")
+                .log_err()?;
+        }
         open_main_db::<M>(&db_path).await
     })
     .await;
@@ -289,11 +320,7 @@ mod tests {
             .prefix("DbTests")
             .tempdir()
             .unwrap();
-        let _bad_db = open_db::<BadDB>(
-            tempdir.path(),
-            release_channel::ReleaseChannel::Dev.dev_name(),
-        )
-        .await;
+        let _bad_db = open_db::<BadDB>(tempdir.path(), release_channel::ReleaseChannel::Dev).await;
     }
 
     /// Test that DB exists but corrupted (causing recreate)
@@ -320,19 +347,12 @@ mod tests {
             .tempdir()
             .unwrap();
         {
-            let corrupt_db = open_db::<CorruptedDB>(
-                tempdir.path(),
-                release_channel::ReleaseChannel::Dev.dev_name(),
-            )
-            .await;
+            let corrupt_db =
+                open_db::<CorruptedDB>(tempdir.path(), release_channel::ReleaseChannel::Dev).await;
             assert!(corrupt_db.persistent());
         }
 
-        let good_db = open_db::<GoodDB>(
-            tempdir.path(),
-            release_channel::ReleaseChannel::Dev.dev_name(),
-        )
-        .await;
+        let good_db = open_db::<GoodDB>(tempdir.path(), release_channel::ReleaseChannel::Dev).await;
         assert!(
             good_db.select_row::<usize>("SELECT * FROM test2").unwrap()()
                 .unwrap()
@@ -366,11 +386,8 @@ mod tests {
             .unwrap();
         {
             // Setup the bad database
-            let corrupt_db = open_db::<CorruptedDB>(
-                tempdir.path(),
-                release_channel::ReleaseChannel::Dev.dev_name(),
-            )
-            .await;
+            let corrupt_db =
+                open_db::<CorruptedDB>(tempdir.path(), release_channel::ReleaseChannel::Dev).await;
             assert!(corrupt_db.persistent());
         }
 
@@ -379,9 +396,9 @@ mod tests {
         for _ in 0..10 {
             let tmp_path = tempdir.path().to_path_buf();
             let guard = thread::spawn(move || {
-                let good_db = smol::block_on(open_db::<GoodDB>(
+                let good_db = gpui::block_on(open_db::<GoodDB>(
                     tmp_path.as_path(),
-                    release_channel::ReleaseChannel::Dev.dev_name(),
+                    release_channel::ReleaseChannel::Dev,
                 ));
                 assert!(
                     good_db.select_row::<usize>("SELECT * FROM test2").unwrap()()

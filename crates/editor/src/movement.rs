@@ -738,7 +738,8 @@ pub fn find_boundary_point(
             && is_boundary(prev_ch, ch)
         {
             if return_point_before_boundary {
-                return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
+                let point = prev_offset.to_point(map.buffer_snapshot());
+                return map.clip_point(map.point_to_display_point(point, Bias::Right), Bias::Right);
             } else {
                 break;
             }
@@ -747,7 +748,8 @@ pub fn find_boundary_point(
         offset += ch.len_utf8();
         prev_ch = Some(ch);
     }
-    map.clip_point(offset.to_display_point(map), Bias::Right)
+    let point = offset.to_point(map.buffer_snapshot());
+    map.clip_point(map.point_to_display_point(point, Bias::Right), Bias::Right)
 }
 
 pub fn find_preceding_boundary_trail(
@@ -836,13 +838,15 @@ pub fn find_boundary_trail(
         prev_ch = Some(ch);
     }
 
-    let trail = trail_offset
-        .map(|trail_offset| map.clip_point(trail_offset.to_display_point(map), Bias::Right));
+    let trail = trail_offset.map(|trail_offset| {
+        let point = trail_offset.to_point(map.buffer_snapshot());
+        map.clip_point(map.point_to_display_point(point, Bias::Right), Bias::Right)
+    });
 
-    (
-        trail,
-        map.clip_point(offset.to_display_point(map), Bias::Right),
-    )
+    (trail, {
+        let point = offset.to_point(map.buffer_snapshot());
+        map.clip_point(map.point_to_display_point(point, Bias::Right), Bias::Right)
+    })
 }
 
 pub fn find_boundary(
@@ -1404,6 +1408,96 @@ mod tests {
                 ),
             );
         });
+    }
+
+    #[gpui::test]
+    fn test_word_movement_over_folds(cx: &mut gpui::App) {
+        use crate::display_map::Crease;
+
+        init_test(cx);
+
+        // Simulate a mention: `hello [@file.txt](file:///path) world`
+        // The fold covers `[@file.txt](file:///path)` and is replaced by "⋯".
+        // Display text: `hello ⋯ world`
+        let buffer_text = "hello [@file.txt](file:///path) world";
+        let buffer = MultiBuffer::build_simple(buffer_text, cx);
+        let font = font("Helvetica");
+        let display_map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font,
+                px(14.0),
+                None,
+                0,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        display_map.update(cx, |map, cx| {
+            // Fold the `[@file.txt](file:///path)` range (bytes 6..31)
+            map.fold(
+                vec![Crease::simple(
+                    Point::new(0, 6)..Point::new(0, 31),
+                    FoldPlaceholder::test(),
+                )],
+                cx,
+            );
+        });
+        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        // "hello " (6 bytes) + "⋯" (3 bytes) + " world" (6 bytes) = "hello ⋯ world"
+        assert_eq!(snapshot.text(), "hello ⋯ world");
+
+        // Ctrl+Right from before fold ("hello |⋯ world") should skip past the fold.
+        // Cursor at column 6 = start of fold.
+        let before_fold = DisplayPoint::new(DisplayRow(0), 6);
+        let after_fold = next_word_end(&snapshot, before_fold);
+        // Should land past the fold, not get stuck at fold start.
+        assert!(
+            after_fold > before_fold,
+            "next_word_end should move past the fold: got {:?}, started at {:?}",
+            after_fold,
+            before_fold
+        );
+
+        // Ctrl+Right from "hello" should jump past "hello" to the fold or past it.
+        let at_start = DisplayPoint::new(DisplayRow(0), 0);
+        let after_hello = next_word_end(&snapshot, at_start);
+        assert_eq!(
+            after_hello,
+            DisplayPoint::new(DisplayRow(0), 5),
+            "next_word_end from start should land at end of 'hello'"
+        );
+
+        // Ctrl+Left from after fold should move to before the fold.
+        // "⋯" ends at column 9. " world" starts at 9. Column 15 = end of "world".
+        let after_world = DisplayPoint::new(DisplayRow(0), 15);
+        let before_world = previous_word_start(&snapshot, after_world);
+        assert_eq!(
+            before_world,
+            DisplayPoint::new(DisplayRow(0), 10),
+            "previous_word_start from end should land at start of 'world'"
+        );
+
+        // Ctrl+Left from start of "world" should land before fold.
+        let start_of_world = DisplayPoint::new(DisplayRow(0), 10);
+        let landed = previous_word_start(&snapshot, start_of_world);
+        // The fold acts as a word, so we should land at the fold start (column 6).
+        assert_eq!(
+            landed,
+            DisplayPoint::new(DisplayRow(0), 6),
+            "previous_word_start from 'world' should land at fold start"
+        );
+
+        // End key from start should go to end of line (column 15), not fold start.
+        let end_pos = line_end(&snapshot, at_start, false);
+        assert_eq!(
+            end_pos,
+            DisplayPoint::new(DisplayRow(0), 15),
+            "line_end should go to actual end of line, not fold start"
+        );
     }
 
     fn init_test(cx: &mut gpui::App) {

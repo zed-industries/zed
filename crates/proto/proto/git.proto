@@ -127,6 +127,7 @@ message UpdateRepository {
   optional string remote_origin_url = 15;
   optional string original_repo_abs_path = 16;
   repeated Worktree linked_worktrees = 17;
+  repeated Branch branch_list = 18;
 }
 
 message RemoveRepository {
@@ -308,29 +309,6 @@ message GitCheckoutFiles {
   uint64 repository_id = 3;
   string commit = 4;
   repeated string paths = 5;
-}
-
-message GitFileHistory {
-  uint64 project_id = 1;
-  reserved 2;
-  uint64 repository_id = 3;
-  string path = 4;
-  uint64 skip = 5;
-  optional uint64 limit = 6;
-}
-
-message GitFileHistoryResponse {
-  repeated FileHistoryEntry entries = 1;
-  string path = 2;
-}
-
-message FileHistoryEntry {
-  string sha = 1;
-  string subject = 2;
-  string message = 3;
-  int64 commit_timestamp = 4;
-  string author_name = 5;
-  string author_email = 6;
 }
 
 // Move to `git.proto` once collab's min version is >=0.171.0.
@@ -577,6 +555,22 @@ message GitGetHeadShaResponse {
   optional string sha = 1;
 }
 
+message GitEditRef {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string ref_name = 3;
+  oneof action {
+    string update_to_commit = 4;
+    DeleteRef delete = 5;
+  }
+  message DeleteRef {}
+}
+
+message GitRepairWorktrees {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
 message GitWorktreesResponse {
   repeated Worktree worktrees = 1;
 }
@@ -586,6 +580,7 @@ message Worktree {
   string ref_name = 2;
   string sha = 3;
   bool is_main = 4;
+  bool is_bare = 5;
 }
 
 message GitCreateWorktree {
@@ -606,10 +601,27 @@ message GitCreateCheckpointResponse {
   bytes commit_sha = 1;
 }
 
+message GitCreateArchiveCheckpoint {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message GitCreateArchiveCheckpointResponse {
+  string staged_commit_sha = 1;
+  string unstaged_commit_sha = 2;
+}
+
 message GitRestoreCheckpoint {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   bytes commit_sha = 3;
+}
+
+message GitRestoreArchiveCheckpoint {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string staged_commit_sha = 3;
+  string unstaged_commit_sha = 4;
 }
 
 message GitCompareCheckpoints {
@@ -657,4 +669,24 @@ message RunGitHook {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   GitHook hook = 3;
+}
+
+message GetCommitData {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  repeated string shas = 3;
+}
+
+message CommitData {
+  string sha = 1;
+  repeated string parents = 2;
+  string author_name = 3;
+  string author_email = 4;
+  int64 commit_timestamp = 5;
+  string subject = 6;
+  string message = 7;
+}
+
+message GetCommitDataResponse {
+  repeated CommitData commits = 1;
 }

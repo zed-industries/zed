@@ -9,11 +9,7 @@ use gpui::{
 use language::{Buffer, BufferRow, Runnable};
 use lsp::LanguageServerName;
 use multi_buffer::{Anchor, BufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
-use project::{
-    Location, Project, TaskSourceKind,
-    debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
-    project_settings::ProjectSettings,
-};
+use project::{Location, Project, TaskSourceKind, project_settings::ProjectSettings};
 use settings::Settings as _;
 use smallvec::SmallVec;
 use task::{ResolvedTask, RunnableTag, TaskContext, TaskTemplate, TaskVariables, VariableName};
@@ -122,11 +118,14 @@ impl Editor {
             return;
         }
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-            let buffer_id = buffer.read(cx).remote_id();
+            let buffer_read = buffer.read(cx);
+            if buffer_read.file().is_none() {
+                self.clear_runnables(None);
+                return;
+            }
+            let buffer_id = buffer_read.remote_id();
             if invalidate_buffer_data != Some(buffer_id)
-                && self
-                    .runnables
-                    .has_cached(buffer_id, &buffer.read(cx).version())
+                && self.runnables.has_cached(buffer_id, &buffer_read.version())
             {
                 return;
             }
@@ -519,12 +518,11 @@ impl Editor {
         &self,
         _style: &EditorStyle,
         is_active: bool,
+        active_breakpoint: Option<Anchor>,
         row: DisplayRow,
-        breakpoint: Option<(Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         cx: &mut Context<Self>,
     ) -> IconButton {
         let color = Color::Muted;
-        let position = breakpoint.as_ref().map(|(anchor, _, _)| *anchor);
 
         IconButton::new(
             ("run_indicator", row.0 as usize),
@@ -551,7 +549,7 @@ impl Editor {
             );
         }))
         .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-            editor.set_breakpoint_context_menu(row, position, event.position(), window, cx);
+            editor.set_gutter_context_menu(row, active_breakpoint, event.position(), window, cx);
         }))
     }
 
@@ -716,13 +714,16 @@ mod tests {
     use lsp::LanguageServerName;
     use multi_buffer::{MultiBuffer, PathKey};
     use project::{
-        FakeFs, Project,
-        lsp_store::lsp_ext_command::{CargoRunnableArgs, Runnable, RunnableArgs, RunnableKind},
+        FakeFs, Project, ProjectPath,
+        lsp_store::lsp_ext_command::{
+            CargoRunnableArgs, Runnable, RunnableArgs, ShellRunnableArgs,
+        },
     };
     use serde_json::json;
     use task::{TaskTemplate, TaskTemplates};
     use text::Point;
     use util::path;
+    use util::rel_path::rel_path;
 
     use crate::{
         Editor, UPDATE_DEBOUNCE, editor_tests::init_test, scroll::scroll_amount::ScrollAmount,
@@ -1029,7 +1030,6 @@ mod tests {
                             lsp::Position::new(3, 1),
                         ),
                     }),
-                    kind: RunnableKind::Cargo,
                     args: RunnableArgs::Cargo(CargoRunnableArgs {
                         environment: Default::default(),
                         cwd: path!("/project").into(),
@@ -1082,6 +1082,249 @@ mod tests {
             labels,
             Vec::<(text::BufferId, language::BufferRow, Vec<String>)>::new(),
             "Runnables should be removed after #[test] is deleted and LSP returns empty"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_runnables_for_unsaved_buffer(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({})).await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang_with_task_context());
+
+        let rust_language = language_registry.language_for_name("Rust").await.unwrap();
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(
+                indoc! {"
+                    fn main() {
+                        println!(\"hello\");
+                    }
+
+                    #[test]
+                    fn test_one() {
+                        assert!(true);
+                    }
+                "},
+                cx,
+            );
+            buffer.set_language(Some(rust_language), cx);
+            buffer
+        });
+
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+        let editor = cx.add_window(|window, cx| {
+            build_editor_with_project(project.clone(), multi_buffer, window, cx)
+        });
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.refresh_runnables(None, window, cx);
+            })
+            .expect("editor update");
+        cx.executor().advance_clock(UPDATE_DEBOUNCE);
+        cx.executor().run_until_parked();
+
+        let labels = editor
+            .update(cx, |editor, _, _| collect_runnable_labels(editor))
+            .expect("editor update");
+        assert_eq!(
+            labels,
+            Vec::<(text::BufferId, language::BufferRow, Vec<String>)>::new(),
+            "No runnables should appear for an unsaved buffer without a file on disk"
+        );
+
+        let worktree_id = project.update(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("worktree")
+                .read(cx)
+                .id()
+        });
+        project
+            .update(cx, |project, cx| {
+                project.save_buffer_as(
+                    buffer.clone(),
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path("main.rs").into(),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .expect("save buffer as");
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.refresh_runnables(None, window, cx);
+            })
+            .expect("editor update");
+        cx.executor().advance_clock(UPDATE_DEBOUNCE);
+        cx.executor().run_until_parked();
+
+        let labels = editor
+            .update(cx, |editor, _, _| collect_runnable_labels(editor))
+            .expect("editor update");
+        assert!(
+            !labels.is_empty(),
+            "Runnables should appear after the buffer is saved to disk"
+        );
+    }
+
+    // Verifies that a shell runnable from rust-analyzer produces
+    // a task template that uses the shell program and args.
+    #[gpui::test]
+    async fn test_shell_runnable_produces_correct_task_template(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "main.rs": indoc! {"
+                    #[test]
+                    fn test_one() {
+                        assert!(true);
+                    }
+                "},
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang_with_lsp_task_context());
+
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: FAKE_LSP_NAME,
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+        let editor = cx.add_window(|window, cx| {
+            build_editor_with_project(project.clone(), multi_buffer, window, cx)
+        });
+
+        let fake_server = fake_servers.next().await.expect("fake LSP server");
+
+        use project::lsp_store::lsp_ext_command::Runnables;
+        fake_server.set_request_handler::<Runnables, _, _>(move |params, _| async move {
+            let text = params.text_document.uri.path().to_string();
+            if text.contains("main.rs") {
+                let uri = lsp::Uri::from_file_path(path!("/project/main.rs")).expect("valid uri");
+                Ok(vec![Runnable {
+                    label: "nextest test_one".into(),
+                    location: Some(lsp::LocationLink {
+                        origin_selection_range: None,
+                        target_uri: uri,
+                        target_range: lsp::Range::new(
+                            lsp::Position::new(0, 0),
+                            lsp::Position::new(3, 1),
+                        ),
+                        target_selection_range: lsp::Range::new(
+                            lsp::Position::new(0, 0),
+                            lsp::Position::new(3, 1),
+                        ),
+                    }),
+                    args: RunnableArgs::Shell(ShellRunnableArgs {
+                        environment: Default::default(),
+                        cwd: path!("/project").into(),
+                        program: "cargo".into(),
+                        args: vec![
+                            "nextest".into(),
+                            "run".into(),
+                            "--package".into(),
+                            "my-crate".into(),
+                            "--lib".into(),
+                            "--".into(),
+                            "test_one".into(),
+                            "--exact".into(),
+                        ],
+                    }),
+                }])
+            } else {
+                Ok(Vec::new())
+            }
+        });
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.refresh_runnables(None, window, cx);
+            })
+            .expect("editor update");
+        cx.executor().advance_clock(UPDATE_DEBOUNCE);
+        cx.executor().run_until_parked();
+
+        let labels = editor
+            .update(cx, |editor, _, _| collect_runnable_labels(editor))
+            .expect("editor update");
+        assert_eq!(
+            labels,
+            vec![(buffer_id, 0, vec!["nextest test_one".to_string()])],
+            "shell runnable should appear for #[test] fn"
+        );
+
+        let templates = editor
+            .update(cx, |editor, _, _| {
+                editor
+                    .runnables
+                    .runnables
+                    .iter()
+                    .flat_map(|(_, (_, tasks))| {
+                        tasks.iter().flat_map(|(_, runnable_tasks)| {
+                            runnable_tasks
+                                .templates
+                                .iter()
+                                .map(|(_, template)| {
+                                    (
+                                        template.label.clone(),
+                                        template.command.clone(),
+                                        template.args.clone(),
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .expect("editor update");
+
+        let (label, command, args) = templates
+            .iter()
+            .find(|(label, _, _)| label == "nextest test_one")
+            .expect("shell runnable task template should exist");
+        assert_eq!(label, "nextest test_one");
+        assert_eq!(command, "cargo");
+        assert_eq!(
+            args,
+            &[
+                "nextest",
+                "run",
+                "--package",
+                "my-crate",
+                "--lib",
+                "--",
+                "test_one",
+                "--exact",
+            ],
+            "shell runnable should preserve program args"
         );
     }
 }

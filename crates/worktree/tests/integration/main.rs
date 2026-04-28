@@ -2,7 +2,7 @@ mod worktree_settings;
 
 use anyhow::Result;
 use encoding_rs;
-use fs::{FakeFs, Fs, RealFs, RemoveOptions};
+use fs::{FakeFs, Fs, PathEventKind, RealFs, RemoveOptions};
 use git::{DOT_GIT, GITIGNORE, REPO_EXCLUDE};
 use gpui::{AppContext as _, BackgroundExecutor, BorrowAppContext, Context, Task, TestAppContext};
 use parking_lot::Mutex;
@@ -199,6 +199,9 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
                 "src": {
                     "e.rs": "",
                     "f.rs": "",
+                    "nested": {
+                        "deep.rs": ""
+                    }
                 },
             }
         }),
@@ -212,6 +215,18 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     fs.create_symlink("/root/dir1/deps/dep-dir3".as_ref(), "../../dir3".into())
         .await
         .unwrap();
+    fs.create_symlink(
+        "/root/dir1/deps/dep-dir3-alias".as_ref(),
+        "../../dir3".into(),
+    )
+    .await
+    .unwrap();
+    fs.create_symlink(
+        "/root/dir1/deps/dep-dir3-nested".as_ref(),
+        "../../dir3/src/nested".into(),
+    )
+    .await
+    .unwrap();
 
     let tree = Worktree::local(
         Path::new("/root/dir1"),
@@ -254,6 +269,8 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
                 (rel_path("deps"), false),
                 (rel_path("deps/dep-dir2"), true),
                 (rel_path("deps/dep-dir3"), true),
+                (rel_path("deps/dep-dir3-alias"), true),
+                (rel_path("deps/dep-dir3-nested"), true),
                 (rel_path("src"), false),
                 (rel_path("src/a.rs"), false),
                 (rel_path("src/b.rs"), false),
@@ -289,6 +306,8 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
                 (rel_path("deps/dep-dir3"), true),
                 (rel_path("deps/dep-dir3/deps"), true),
                 (rel_path("deps/dep-dir3/src"), true),
+                (rel_path("deps/dep-dir3-alias"), true),
+                (rel_path("deps/dep-dir3-nested"), true),
                 (rel_path("src"), false),
                 (rel_path("src/a.rs"), false),
                 (rel_path("src/b.rs"), false),
@@ -328,6 +347,9 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
                 (rel_path("deps/dep-dir3/src"), true),
                 (rel_path("deps/dep-dir3/src/e.rs"), true),
                 (rel_path("deps/dep-dir3/src/f.rs"), true),
+                (rel_path("deps/dep-dir3/src/nested"), true),
+                (rel_path("deps/dep-dir3-alias"), true),
+                (rel_path("deps/dep-dir3-nested"), true),
                 (rel_path("src"), false),
                 (rel_path("src/a.rs"), false),
                 (rel_path("src/b.rs"), false),
@@ -346,9 +368,220 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
             (
                 rel_path("deps/dep-dir3/src/f.rs").into(),
                 PathChange::Loaded
+            ),
+            (
+                rel_path("deps/dep-dir3/src/nested").into(),
+                PathChange::Loaded
             )
         ]
     );
+
+    // After an external symlink subtree is loaded, changes in the target should be reflected.
+    fs.insert_file(Path::new("/root/dir3/src/new.rs"), b"".to_vec())
+        .await;
+
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("deps/dep-dir3/src/new.rs"))
+                .is_some()
+        })
+    })
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("deps/dep-dir3/src/new.rs"))
+                .is_some()
+        );
+    });
+
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("deps/dep-dir3-alias").into()])
+    })
+    .recv()
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("deps/dep-dir3-alias/src").into()])
+    })
+    .recv()
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .refresh_entries_for_paths(vec![rel_path("deps/dep-dir3-nested").into()])
+    })
+    .recv()
+    .await;
+    // Create a file in the shared target subtree. Because dep-dir3 and dep-dir3-alias both
+    // point to the same target, both logical paths should observe the new file.
+    fs.insert_file(Path::new("/root/dir3/src/shared-new.rs"), b"".to_vec())
+        .await;
+
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("deps/dep-dir3/src/shared-new.rs"))
+                .is_some()
+                && tree
+                    .entry_for_path(rel_path("deps/dep-dir3-alias/src/shared-new.rs"))
+                    .is_some()
+        })
+    })
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("deps/dep-dir3/src/shared-new.rs"))
+                .is_some()
+        );
+        assert!(
+            tree.entry_for_path(rel_path("deps/dep-dir3-alias/src/shared-new.rs"))
+                .is_some()
+        );
+    });
+
+    // Create a file under the more specific nested target. Longest-prefix matching means this should appear under dep-dir3-nested
+    fs.insert_file(
+        Path::new("/root/dir3/src/nested/longest-prefix.rs"),
+        b"".to_vec(),
+    )
+    .await;
+
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("deps/dep-dir3-nested/longest-prefix.rs"))
+                .is_some()
+        })
+    })
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("deps/dep-dir3-nested/longest-prefix.rs"))
+                .is_some()
+        );
+        assert!(
+            tree.entry_for_path(rel_path("deps/dep-dir3/src/nested/longest-prefix.rs"))
+                .is_none()
+        );
+        assert!(
+            tree.entry_for_path(rel_path("deps/dep-dir3-alias/src/nested/longest-prefix.rs"))
+                .is_none()
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+
+    fs.insert_tree(
+        "/root",
+        json!({
+            "project": {
+                "real-dir": {
+                    "existing.rs": "",
+                    "nested": {
+                        "deep.rs": ""
+                    }
+                },
+                "links": {}
+            }
+        }),
+    )
+    .await;
+
+    fs.create_symlink(
+        "/root/project/links/internal".as_ref(),
+        "../real-dir".into(),
+    )
+    .await
+    .unwrap();
+
+    let tree = Worktree::local(
+        Path::new("/root/project"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| (entry.path.as_ref(), entry.is_external))
+                .collect::<Vec<_>>(),
+            vec![
+                (rel_path(""), false),
+                (rel_path("links"), false),
+                (rel_path("links/internal"), false),
+                (rel_path("links/internal/existing.rs"), false),
+                (rel_path("links/internal/nested"), false),
+                (rel_path("links/internal/nested/deep.rs"), false),
+                (rel_path("real-dir"), false),
+                (rel_path("real-dir/existing.rs"), false),
+                (rel_path("real-dir/nested"), false),
+                (rel_path("real-dir/nested/deep.rs"), false),
+            ]
+        );
+
+        assert_eq!(
+            tree.entry_for_path(rel_path("links/internal"))
+                .unwrap()
+                .kind,
+            EntryKind::Dir
+        );
+    });
+
+    fs.insert_file(Path::new("/root/project/real-dir/new.txt"), b"".to_vec())
+        .await;
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("links/internal/new.txt"))
+                .is_some()
+        })
+    })
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("links/internal/new.txt"))
+                .is_some()
+        );
+    });
+
+    fs.insert_file(
+        Path::new("/root/project/real-dir/nested/inner.txt"),
+        b"".to_vec(),
+    )
+    .await;
+    wait_for_condition(cx, |cx| {
+        tree.read_with(cx, |tree, _| {
+            tree.entry_for_path(rel_path("links/internal/nested/inner.txt"))
+                .is_some()
+        })
+    })
+    .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("links/internal/nested/inner.txt"))
+                .is_some()
+        );
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -2769,6 +3002,7 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
             ref_name: Some("refs/heads/feature".into()),
             sha: "abc123".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -2871,6 +3105,7 @@ async fn test_linked_worktree_git_file_event_does_not_panic(
             ref_name: Some("refs/heads/feature".into()),
             sha: "abc123".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -2911,6 +3146,198 @@ async fn test_linked_worktree_git_file_event_does_not_panic(
     });
 }
 
+#[gpui::test]
+async fn test_linked_worktree_event_in_unregistered_common_git_dir_does_not_panic(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // Regression test: a rescan event on a linked worktree's commondir
+    // must not panic when the worktree's repository has already been
+    // unregistered from `git_repositories`.
+    init_test(cx);
+
+    use git::repository::Worktree as GitWorktree;
+
+    let fs = FakeFs::new(executor);
+
+    fs.insert_tree(
+        path!("/main_repo"),
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/main_repo/.git")),
+        false,
+        GitWorktree {
+            path: PathBuf::from(path!("/linked_worktree")),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    fs.write(
+        path!("/linked_worktree/file.txt").as_ref(),
+        "content".as_bytes(),
+    )
+    .await
+    .unwrap();
+
+    let tree = Worktree::local(
+        path!("/linked_worktree").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    // Unregister the linked worktree's repository by removing its gitfile.
+    fs.remove_file(
+        Path::new(path!("/linked_worktree/.git")),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    tree.flush_fs_events(cx).await;
+
+    // Deliver the kind of Rescan event `FsWatcher` emits when the kernel
+    // signals `need_rescan` for the commondir.
+    fs.emit_fs_event(path!("/main_repo/.git"), Some(fs::PathEventKind::Rescan));
+    cx.run_until_parked();
+    tree.flush_fs_events(cx).await;
+}
+
+#[gpui::test]
+async fn test_dot_git_dir_event_does_not_suppress_children(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // On Windows, modifying a file inside .git causes ReadDirectoryChangesW to also emit
+    // a Modify event for the .git directory itself (because its last-write timestamp changes).
+    // When these events arrive in the same batch, a naive ancestor-based dedup would collapse
+    // all child events into the .git directory event, losing the information about which
+    // specific files changed. This test verifies that the git-related event processing happens
+    // before the dedup, so that meaningful .git child events still trigger UpdatedGitRepositories.
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    let project_dir = Path::new(path!("/project"));
+    fs.insert_tree(
+        project_dir,
+        json!({
+            ".git": {},
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        project_dir,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let dot_git = project_dir.join(DOT_GIT);
+
+    // Case 1: Events for .git AND .git/index.lock should NOT emit UpdatedGitRepositories
+    // (index.lock is in the skipped files list)
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
+        fs.emit_fs_event(dot_git.join("index.lock"), Some(PathEventKind::Created));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            !got_git_update,
+            "should NOT emit UpdatedGitRepositories when .git batch only contains index.lock"
+        );
+    }
+
+    // Case 2: Event for just .git (bare directory event) should NOT emit UpdatedGitRepositories
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            !got_git_update,
+            "should NOT emit UpdatedGitRepositories for a bare .git directory event"
+        );
+    }
+
+    // Case 3: Events for .git AND .git/index should emit UpdatedGitRepositories
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Changed));
+        fs.emit_fs_event(dot_git.join("index"), Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            got_git_update,
+            "should emit UpdatedGitRepositories when .git batch contains index"
+        );
+    }
+
+    // Case 4: Event for .git/index only should emit UpdatedGitRepositories
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git.join("index"), Some(PathEventKind::Changed));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            got_git_update,
+            "should emit UpdatedGitRepositories for a .git/index event"
+        );
+    }
+}
+
+fn drain_git_repo_updates(events: &mut futures::channel::mpsc::UnboundedReceiver<Event>) -> bool {
+    let mut found = false;
+    while let Ok(event) = events.try_recv() {
+        if matches!(event, Event::UpdatedGitRepositories(_)) {
+            found = true;
+        }
+    }
+    found
+}
+
 fn init_test(cx: &mut gpui::TestAppContext) {
     zlog::init_test();
 
@@ -2918,6 +3345,22 @@ fn init_test(cx: &mut gpui::TestAppContext) {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
     });
+}
+
+async fn wait_for_condition(
+    cx: &mut TestAppContext,
+    mut condition: impl FnMut(&mut TestAppContext) -> bool,
+) {
+    for _ in 0..50 {
+        if condition(cx) {
+            return;
+        }
+        cx.executor().run_until_parked();
+        cx.background_executor
+            .timer(std::time::Duration::from_millis(10))
+            .await;
+    }
+    panic!("timed out waiting for test condition");
 }
 
 #[gpui::test]
