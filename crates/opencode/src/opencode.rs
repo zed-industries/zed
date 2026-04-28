@@ -437,7 +437,7 @@ impl Model {
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => 204_800,
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 204_800,
-            Self::Glm5 | Self::Glm5_1 => 204_800,
+            Self::Glm5 | Self::Glm5_1 => 202_725,
             Self::KimiK2_6 | Self::KimiK2_5 => 262_144,
             Self::MimoV2_5Pro | Self::MimoV2Pro => 1_048_576,
             Self::MimoV2_5 => 1_000_000,
@@ -493,7 +493,7 @@ impl Model {
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => Some(131_072),
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(131_072),
-            Self::Glm5 | Self::Glm5_1 => Some(131_072),
+            Self::Glm5 | Self::Glm5_1 => Some(32_768),
             Self::BigPickle => Some(128_000),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => Some(65_536),
