@@ -318,7 +318,15 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
     )
 }
 
+/// Returns an invisible cursor.
+///
+/// # Safety
+///
+/// This function is not thread safe. Callers must ensure this is called on the AppKit main
+/// thread because it reads and writes the cached cursor and sends messages to AppKit objects.
 unsafe fn transparent_cursor() -> id {
+    // SAFETY: The caller guarantees AppKit main-thread access, so reads and writes to the
+    // cached cursor are serialized. The cursor is retained for the lifetime of the process.
     unsafe {
         if TRANSPARENT_CURSOR.is_null() {
             let image: id = msg_send![class!(NSImage), alloc];
@@ -333,7 +341,15 @@ unsafe fn transparent_cursor() -> id {
     }
 }
 
+/// Returns the `NSCursor` corresponding to the given GPUI cursor style.
+///
+/// # Safety
+///
+/// This function is not thread safe. Callers must ensure this is called on the AppKit main
+/// thread because it sends messages to AppKit classes and may initialize the transparent cursor.
 pub(crate) unsafe fn cursor_for_style(style: CursorStyle) -> id {
+    // SAFETY: The caller guarantees AppKit main-thread access. The selectors below are known
+    // cursor constructors, and the transparent cursor helper has the same precondition.
     unsafe {
         match style {
             CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
@@ -374,7 +390,16 @@ pub(crate) unsafe fn cursor_for_style(style: CursorStyle) -> id {
     }
 }
 
+/// Stores the cursor style on the active GPUI window and invalidates its cursor rects.
+///
+/// # Safety
+///
+/// This function is not thread safe. Callers must ensure this is called on the AppKit main
+/// thread because it reads the active AppKit window and updates GPUI window state associated
+/// with Objective-C objects.
 pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
+    // SAFETY: The caller guarantees AppKit main-thread access. The class check ensures the
+    // window has our WINDOW_STATE_IVAR before reading it.
     unsafe {
         let app = NSApplication::sharedApplication(nil);
         let main_window: id = msg_send![app, mainWindow];
@@ -1851,6 +1876,9 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
 }
 
 extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
+    // SAFETY: AppKit invokes cursor-rect updates on the main thread for GPUIView instances,
+    // whose WINDOW_STATE_IVAR is initialized when the view is created. The cursor registered
+    // below is a valid NSCursor.
     unsafe {
         let _: () = msg_send![super(this, class!(NSView)), resetCursorRects];
 
