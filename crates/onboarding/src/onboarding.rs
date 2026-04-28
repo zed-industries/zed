@@ -241,13 +241,15 @@ impl Onboarding {
                 _ => "free",
             }
         };
+        let agents_installed = basics_page::FEATURED_AGENT_IDS
+            .iter()
+            .filter(|id| installed_agents.contains_key(**id))
+            .copied()
+            .collect::<Vec<_>>();
         telemetry::event!(
             "Welcome Agent Setup Viewed",
             zed_agent = zed_agent_state,
-            claude_installed = installed_agents.contains_key("claude-acp"),
-            codex_installed = installed_agents.contains_key("codex-acp"),
-            github_copilot_installed = installed_agents.contains_key("github-copilot-cli"),
-            cursor_installed = installed_agents.contains_key("cursor"),
+            agents_installed = agents_installed,
         );
 
         cx.new(|cx| {

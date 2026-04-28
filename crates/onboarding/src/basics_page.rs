@@ -528,7 +528,7 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl I
         .child(h_flex().gap_1().child(vscode).child(cursor))
 }
 
-const FEATURED_AGENT_IDS: &[&str] = &["claude-acp", "codex-acp", "github-copilot-cli", "cursor"];
+pub(crate) const FEATURED_AGENT_IDS: &[&str] = &["claude-acp", "codex-acp", "github-copilot-cli", "cursor"];
 
 fn render_registry_agent_button(
     agent: &RegistryAgent,
