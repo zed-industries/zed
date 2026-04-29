@@ -2,6 +2,9 @@ mod matcher;
 mod paths;
 mod strings;
 
+use fuzzy::CharBag;
+use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
+
 pub use paths::{
     PathMatch, PathMatchCandidate, PathMatchCandidateSet, match_fixed_path_set, match_path_sets,
 };
@@ -43,6 +46,74 @@ impl LengthPenalty {
     pub fn is_on(self) -> bool {
         matches!(self, Self::On)
     }
+}
+
+// Matching is always case-insensitive at the nucleo level — using
+// `CaseMatching::Smart` there would *reject* candidates whose capitalization
+// doesn't match the query, breaking pickers like the command palette
+// (`"Editor: Backspace"` against the action named `"editor: backspace"`).
+// `Case::Smart` is honored as a *scoring hint* instead: when the query
+// contains uppercase, candidates whose matched characters disagree in case
+// are downranked by a per-mismatch penalty rather than dropped.
+pub(crate) struct Query {
+    pub(crate) pattern: Pattern,
+    /// Non-whitespace query chars in input order, populated only when a smart-case
+    /// penalty will actually be charged. Aligns 1:1 with the indices appended by
+    /// `Pattern::indices` (atom-order, needle-order within each atom).
+    pub(crate) query_chars: Option<Vec<char>>,
+    pub(crate) char_bag: CharBag,
+}
+
+impl Query {
+    pub(crate) fn build(query: &str, case: Case) -> Option<Self> {
+        if query.chars().all(char::is_whitespace) {
+            return None;
+        }
+        let pattern = Pattern::new(
+            query,
+            CaseMatching::Ignore,
+            Normalization::Smart,
+            AtomKind::Fuzzy,
+        );
+        if pattern.atoms.is_empty() {
+            return None;
+        }
+        let wants_case_penalty = case.is_smart() && query.chars().any(|c| c.is_uppercase());
+        let query_chars = wants_case_penalty
+            .then(|| query.chars().filter(|c| !c.is_whitespace()).collect());
+        Some(Query {
+            pattern,
+            query_chars,
+            char_bag: CharBag::from(query),
+        })
+    }
+}
+
+#[inline]
+pub(crate) fn count_case_mismatches(
+    query_chars: Option<&[char]>,
+    matched_chars: &[u32],
+    candidate: &str,
+    candidate_chars: &mut Vec<char>,
+) -> u32 {
+    let Some(query_chars) = query_chars else {
+        return 0;
+    };
+    if query_chars.len() != matched_chars.len() {
+        return 0;
+    }
+    candidate_chars.clear();
+    candidate_chars.extend(candidate.chars());
+    let mut mismatches: u32 = 0;
+    for (&query_char, &pos) in query_chars.iter().zip(matched_chars) {
+        if let Some(&candidate_char) = candidate_chars.get(pos as usize)
+            && candidate_char != query_char
+            && candidate_char.eq_ignore_ascii_case(&query_char)
+        {
+            mismatches += 1;
+        }
+    }
+    mismatches
 }
 
 /// Reconstruct byte-offset match positions from a list of matched char offsets

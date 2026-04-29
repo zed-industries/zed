@@ -8,57 +8,15 @@ use std::{
 
 use gpui::{BackgroundExecutor, SharedString};
 use nucleo::Utf32Str;
-use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 
 use crate::{
-    Cancelled, Case, LengthPenalty,
+    Cancelled, Case, LengthPenalty, Query, count_case_mismatches,
     matcher::{self, LENGTH_PENALTY},
     positions_from_sorted,
 };
 use fuzzy::CharBag;
 
-// String matching is always case-insensitive at the nucleo level — using
-// `CaseMatching::Smart` there would reject queries whose capitalization
-// doesn't match the candidate, breaking pickers like the command palette
-// (`"Editor: Backspace"` against the action named `"editor: backspace"`).
-// `Case::Smart` is still honored as a *scoring hint*: when the query
-// contains uppercase, candidates whose matched characters disagree in case
-// are downranked rather than dropped.
 const SMART_CASE_PENALTY_PER_MISMATCH: f64 = 0.9;
-
-struct Query {
-    pattern: Pattern,
-    /// Non-whitespace query chars in input order, populated only when a smart-case
-    /// penalty will actually be charged. Aligns 1:1 with the indices appended by
-    /// `Pattern::indices` (atom-order, needle-order within each atom).
-    query_chars: Option<Vec<char>>,
-    char_bag: CharBag,
-}
-
-impl Query {
-    fn build(query: &str, case: Case) -> Option<Self> {
-        if query.chars().all(char::is_whitespace) {
-            return None;
-        }
-        let pattern = Pattern::new(
-            query,
-            CaseMatching::Ignore,
-            Normalization::Smart,
-            AtomKind::Fuzzy,
-        );
-        if pattern.atoms.is_empty() {
-            return None;
-        }
-        let wants_case_penalty = case.is_smart() && query.chars().any(|c| c.is_uppercase());
-        let query_chars = wants_case_penalty
-            .then(|| query.chars().filter(|c| !c.is_whitespace()).collect());
-        Some(Query {
-            pattern,
-            query_chars,
-            char_bag: CharBag::from(query),
-        })
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct StringMatchCandidate {
@@ -293,7 +251,7 @@ where
             continue;
         }
 
-        let haystack: Utf32Str = Utf32Str::new(&borrowed.string, &mut buf);
+        let haystack: Utf32Str = Utf32Str::new(borrowed.string.as_ref(), &mut buf);
 
         let Some(score) = query.pattern.indices(haystack, matcher, &mut matched_chars) else {
             continue;
@@ -302,7 +260,7 @@ where
         let case_mismatches = count_case_mismatches(
             query.query_chars.as_deref(),
             &matched_chars,
-            &borrowed.string,
+            borrowed.string.as_ref(),
             &mut candidate_chars,
         );
 
@@ -322,33 +280,6 @@ where
         });
     }
     Ok(())
-}
-
-#[inline]
-fn count_case_mismatches(
-    query_chars: Option<&[char]>,
-    matched_chars: &[u32],
-    candidate: &str,
-    candidate_chars: &mut Vec<char>,
-) -> u32 {
-    let Some(query_chars) = query_chars else {
-        return 0;
-    };
-    if query_chars.len() != matched_chars.len() {
-        return 0;
-    }
-    candidate_chars.clear();
-    candidate_chars.extend(candidate.chars());
-    let mut mismatches: u32 = 0;
-    for (&query_char, &pos) in query_chars.iter().zip(matched_chars) {
-        if let Some(&candidate_char) = candidate_chars.get(pos as usize)
-            && candidate_char != query_char
-            && candidate_char.eq_ignore_ascii_case(&query_char)
-        {
-            mismatches += 1;
-        }
-    }
-    mismatches
 }
 
 #[inline]
