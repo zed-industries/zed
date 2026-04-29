@@ -228,6 +228,7 @@ struct TerminalEntry {
     title: SharedString,
     workspace: Entity<Workspace>,
     updated_at: DateTime<Utc>,
+    notified: bool,
     highlight_positions: Vec<usize>,
 }
 
@@ -1397,10 +1398,12 @@ impl Sidebar {
 
                 let mut matched_terminals: Vec<TerminalEntry> = Vec::new();
                 for mut terminal in terminals {
+                    let mut terminal_matched = false;
                     if let Some(positions) = fuzzy_match_positions(&query, &terminal.title) {
                         terminal.highlight_positions = positions;
+                        terminal_matched = true;
                     }
-                    if workspace_matched || !terminal.highlight_positions.is_empty() {
+                    if workspace_matched || terminal_matched {
                         matched_terminals.push(terminal);
                     }
                 }
@@ -4185,6 +4188,7 @@ impl Sidebar {
             .base_bg(sidebar_bg)
             .icon(IconName::Terminal)
             .timestamp(timestamp)
+            .notified(terminal.notified)
             .highlight_positions(terminal.highlight_positions.clone())
             .selected(is_selected)
             .focused(is_focused)
@@ -5258,6 +5262,7 @@ fn terminal_entries_for_workspace(
                 title: terminal.title,
                 workspace: workspace.clone(),
                 updated_at: terminal.updated_at,
+                notified: terminal.notified,
                 highlight_positions: Vec::new(),
             });
 

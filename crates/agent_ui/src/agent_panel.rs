@@ -122,6 +122,7 @@ pub struct AgentPanelTerminalInfo {
     pub title: SharedString,
     pub working_directory: Option<PathBuf>,
     pub updated_at: DateTime<Utc>,
+    pub notified: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -646,6 +647,7 @@ struct AgentTerminal {
     last_known_title: String,
     custom_title: Option<String>,
     updated_at: DateTime<Utc>,
+    notified: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1339,8 +1341,8 @@ impl AgentPanel {
                 TerminalEvent::TitleChanged | TerminalEvent::BreadcrumbsChanged => {
                     this.refresh_terminal_metadata(terminal_id, cx);
                 }
-                TerminalEvent::Bell
-                | TerminalEvent::Wakeup
+                TerminalEvent::Bell => this.notify_terminal(terminal_id, window, cx),
+                TerminalEvent::Wakeup
                 | TerminalEvent::BlinkChanged(_)
                 | TerminalEvent::SelectionsChanged
                 | TerminalEvent::NewNavigationTarget(_)
@@ -1355,6 +1357,7 @@ impl AgentPanel {
             last_known_title: String::new(),
             custom_title: None,
             updated_at: Utc::now(),
+            notified: false,
             _subscriptions: vec![item_subscription, terminal_subscription],
         };
         terminal.refresh_metadata(cx);
@@ -1376,9 +1379,10 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.terminals.contains_key(&terminal_id) {
+        let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
-        }
+        };
+        terminal.notified = false;
         self.set_base_view(BaseView::Terminal { terminal_id }, focus, window, cx);
     }
 
@@ -1388,9 +1392,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(mut terminal) = self.terminals.remove(&terminal_id) {
-            terminal.refresh_metadata(cx);
-        }
+        self.terminals.remove(&terminal_id);
         self.terminal_order.retain(|id| *id != terminal_id);
 
         let was_active = self.active_terminal_id() == Some(terminal_id);
@@ -1408,16 +1410,37 @@ impl AgentPanel {
                 self.base_view = BaseView::Uninitialized;
                 self.activate_draft(true, "agent_panel", window, cx);
             }
-        } else {
-            cx.emit(AgentPanelEvent::TerminalsChanged);
-            cx.notify();
         }
+
+        cx.emit(AgentPanelEvent::TerminalsChanged);
+        cx.notify();
     }
 
     fn refresh_terminal_metadata(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
         if let Some(terminal) = self.terminals.get_mut(&terminal_id)
             && terminal.refresh_metadata(cx)
         {
+            cx.emit(AgentPanelEvent::TerminalsChanged);
+            cx.notify();
+        }
+    }
+
+    fn notify_terminal(
+        &mut self,
+        terminal_id: TerminalId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let is_active = self.active_terminal_id() == Some(terminal_id);
+        let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
+            return;
+        };
+        if is_active && terminal.view.focus_handle(cx).contains_focused(window, cx) {
+            return;
+        }
+        if !terminal.notified {
+            terminal.notified = true;
+            terminal.updated_at = Utc::now();
             cx.emit(AgentPanelEvent::TerminalsChanged);
             cx.notify();
         }
@@ -1584,6 +1607,7 @@ impl AgentPanel {
                     title: terminal.display_title(cx),
                     working_directory: terminal.working_directory(cx),
                     updated_at: terminal.updated_at,
+                    notified: terminal.notified,
                 })
             })
             .collect()
@@ -2394,12 +2418,19 @@ impl AgentPanel {
             BaseView::Terminal { terminal_id } => {
                 self._thread_view_subscription = None;
                 if let Some(terminal) = self.terminals.get(terminal_id) {
+                    let terminal_id = *terminal_id;
                     let focus_handle = terminal.view.focus_handle(cx);
                     self._active_thread_focus_subscription =
-                        Some(cx.on_focus_in(&focus_handle, window, |_this, _window, cx| {
-                            cx.emit(AgentPanelEvent::TerminalFocused);
-                            cx.notify();
-                        }));
+                        Some(
+                            cx.on_focus_in(&focus_handle, window, move |this, _window, cx| {
+                                if let Some(terminal) = this.terminals.get_mut(&terminal_id) {
+                                    terminal.notified = false;
+                                }
+                                cx.emit(AgentPanelEvent::TerminalFocused);
+                                cx.emit(AgentPanelEvent::TerminalsChanged);
+                                cx.notify();
+                            }),
+                        );
                     None
                 } else {
                     self._active_thread_focus_subscription = None;
