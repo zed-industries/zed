@@ -436,6 +436,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitRemoveRemote>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetWorktrees>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetHeadSha>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetCommitData>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateWorktree>)
             .add_request_handler(disallow_guest_request::<proto::GitRemoveWorktree>)
             .add_request_handler(disallow_guest_request::<proto::GitRenameWorktree>)
@@ -944,10 +945,6 @@ impl Server {
                         connection_id,
                         build_initial_contacts_update(contacts, &pool),
                     )?;
-                }
-
-                if should_auto_subscribe_to_channels(&zed_version) {
-                    subscribe_user_to_channels(user.id, session).await?;
                 }
 
                 if let Some(incoming_call) =
@@ -2745,10 +2742,6 @@ async fn remove_contact(
 
     response.send(proto::Ack {})?;
     Ok(())
-}
-
-fn should_auto_subscribe_to_channels(version: &ZedVersion) -> bool {
-    version.0.minor < 139
 }
 
 async fn subscribe_to_channels(

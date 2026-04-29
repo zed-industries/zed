@@ -64,38 +64,6 @@ pub async fn stream_generate_content(
     }
 }
 
-pub async fn count_tokens(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
-    request: CountTokensRequest,
-) -> Result<CountTokensResponse> {
-    validate_generate_content_request(&request.generate_content_request)?;
-
-    let uri = format!(
-        "{api_url}/v1beta/models/{model_id}:countTokens?key={api_key}",
-        model_id = &request.generate_content_request.model.model_id,
-    );
-
-    let request = serde_json::to_string(&request)?;
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(&uri)
-        .header("Content-Type", "application/json");
-    let http_request = request_builder.body(AsyncBody::from(request))?;
-
-    let mut response = client.send(http_request).await?;
-    let mut text = String::new();
-    response.body_mut().read_to_string(&mut text).await?;
-    anyhow::ensure!(
-        response.status().is_success(),
-        "error during countTokens, status code: {:?}, body: {}",
-        response.status(),
-        text
-    );
-    Ok(serde_json::from_str::<CountTokensResponse>(&text)?)
-}
-
 pub fn validate_generate_content_request(request: &GenerateContentRequest) -> Result<()> {
     if request.model.is_empty() {
         bail!("Model must be specified");
@@ -123,8 +91,6 @@ pub enum Task {
     GenerateContent,
     #[serde(rename = "streamGenerateContent")]
     StreamGenerateContent,
-    #[serde(rename = "countTokens")]
-    CountTokens,
     #[serde(rename = "embedContent")]
     EmbedContent,
     #[serde(rename = "batchEmbedContents")]
@@ -380,18 +346,6 @@ pub enum HarmProbability {
 pub struct SafetyRating {
     pub category: HarmCategory,
     pub probability: HarmProbability,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CountTokensRequest {
-    pub generate_content_request: GenerateContentRequest,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CountTokensResponse {
-    pub total_tokens: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

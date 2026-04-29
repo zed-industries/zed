@@ -2,7 +2,7 @@ mod thread_switcher;
 
 use acp_thread::ThreadStatus;
 use action_log::DiffStats;
-use agent_client_protocol::{self as acp};
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use agent_ui::thread_metadata_store::{
     ThreadMetadata, ThreadMetadataStore, WorktreePaths, worktree_info_from_thread_paths,
@@ -381,14 +381,17 @@ fn workspace_menu_worktree_labels(
                 .iter()
                 .find(|snapshot| snapshot.work_directory_abs_path.as_ref() == root_path);
 
-            if let Some(snapshot) = repository_snapshot
-                && snapshot.is_linked_worktree()
-            {
-                let worktree_name = project::linked_worktree_short_name(
-                    snapshot.original_repo_abs_path.as_ref(),
-                    root_path,
-                )
-                .unwrap_or_else(|| folder_name.clone());
+            if let Some(snapshot) = repository_snapshot {
+                let worktree_name = if snapshot.is_linked_worktree() {
+                    snapshot
+                        .main_worktree_abs_path()
+                        .and_then(|main_worktree_path| {
+                            project::linked_worktree_short_name(main_worktree_path, root_path)
+                        })
+                        .unwrap_or_else(|| folder_name.clone())
+                } else {
+                    "main".into()
+                };
 
                 if show_folder_name {
                     WorkspaceMenuWorktreeLabel {
@@ -1932,7 +1935,7 @@ impl Sidebar {
                         let menu = if open_workspaces.is_empty() {
                             menu
                         } else {
-                            let mut menu = menu.separator().header("Open Workspaces");
+                            let mut menu = menu.separator().header("Open Worktrees");
 
                             for (
                                 workspace_index,
@@ -3405,7 +3408,7 @@ impl Sidebar {
         thread_id: Option<agent_ui::ThreadId>,
         neighbor: Option<&ThreadMetadata>,
         thread_folder_paths: Option<&PathList>,
-        in_flight_archive: Option<(Task<()>, smol::channel::Sender<()>)>,
+        in_flight_archive: Option<(Task<()>, async_channel::Sender<()>)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3496,12 +3499,12 @@ impl Sidebar {
         thread_id: ThreadId,
         roots: Vec<thread_worktree_archive::RootPlan>,
         cx: &mut Context<Self>,
-    ) -> Option<(Task<()>, smol::channel::Sender<()>)> {
+    ) -> Option<(Task<()>, async_channel::Sender<()>)> {
         if roots.is_empty() {
             return None;
         }
 
-        let (cancel_tx, cancel_rx) = smol::channel::bounded::<()>(1);
+        let (cancel_tx, cancel_rx) = async_channel::bounded::<()>(1);
         let task = cx.spawn(async move |_this, cx| {
             match Self::archive_worktree_roots(roots, cancel_rx, cx).await {
                 Ok(ArchiveWorktreeOutcome::Success) => {
@@ -3528,7 +3531,7 @@ impl Sidebar {
 
     async fn archive_worktree_roots(
         roots: Vec<thread_worktree_archive::RootPlan>,
-        cancel_rx: smol::channel::Receiver<()>,
+        cancel_rx: async_channel::Receiver<()>,
         cx: &mut gpui::AsyncApp,
     ) -> anyhow::Result<ArchiveWorktreeOutcome> {
         let mut completed_persists: Vec<(i64, thread_worktree_archive::RootPlan)> = Vec::new();
@@ -4180,6 +4183,9 @@ impl Sidebar {
             .and_then(|mw| mw.read(cx).last_active_workspace_for_group(key, cx))
             .or_else(|| self.workspace_for_group(key, cx));
         if let Some(workspace) = workspace {
+            if self.is_active_workspace(&workspace, cx) {
+                return;
+            }
             self.activate_workspace(&workspace, window, cx);
         } else {
             self.open_workspace_for_group(key, window, cx);
@@ -5010,8 +5016,7 @@ impl Render for Sidebar {
                                     .when_some(sticky_header, |this, header| this.child(header))
                                     .custom_scrollbars(
                                         Scrollbars::new(ScrollAxes::Vertical)
-                                            .tracked_scroll_handle(&self.list_state)
-                                            .width_sm(),
+                                            .tracked_scroll_handle(&self.list_state),
                                         window,
                                         cx,
                                     ),
@@ -5242,7 +5247,7 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
             .find(|snapshot| abs_path.starts_with(&*snapshot.work_directory_abs_path));
 
         let is_linked = repo_info.map(|s| s.is_linked_worktree()).unwrap_or(false);
-        let original_repo_path = repo_info.map(|s| &s.original_repo_abs_path);
+        let main_worktree_path = repo_info.and_then(|s| s.main_worktree_abs_path());
         let branch = repo_info.and_then(|s| s.branch.as_ref().map(|b| b.ref_name.clone()));
 
         write!(output, "  - {}", abs_path.display()).ok();
@@ -5253,8 +5258,13 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
             write!(output, " [branch: {branch}]").ok();
         }
         if is_linked {
-            if let Some(original) = original_repo_path {
-                write!(output, " [linked worktree -> {}]", original.display()).ok();
+            if let Some(main_worktree_path) = main_worktree_path {
+                write!(
+                    output,
+                    " [linked worktree -> {}]",
+                    main_worktree_path.display()
+                )
+                .ok();
             } else {
                 write!(output, " [linked worktree]").ok();
             }

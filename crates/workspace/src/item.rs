@@ -953,24 +953,23 @@ impl<T: Item> ItemHandle for Entity<T> {
                             return;
                         }
 
-                        let vim_mode = vim_mode_setting::VimModeSetting::is_enabled(cx);
-                        let helix_mode = vim_mode_setting::HelixModeSetting::is_enabled(cx);
+                        // Add the item to a deferred save list. The actual save will happen when
+                        // focus lands on a pane or panel (via handle_pane_focused or
+                        // handle_panel_focused), or when the window deactivates.
+                        // This avoids saving when opening modals and skips saving if focus
+                        // returns to the same item.
+                        workspace.deferred_save_items.push(item.downgrade_item());
 
-                        if vim_mode || helix_mode {
-                            // We use the command palette for executing commands in Vim and Helix modes (e.g., `:w`), so
-                            // in those cases we don't want to trigger auto-save if the focus has just been transferred
-                            // to the command palette.
-                            //
-                            // This isn't totally perfect, as you could still switch files indirectly via the command
-                            // palette (such as by opening up the tab switcher from it and then switching tabs that
-                            // way).
-                            if workspace.is_active_modal_command_palette(cx) {
-                                return;
+                        // Defer the flush to ensure all focus events are processed first.
+                        // This is needed because on_focus_out fires before handle_pane_focused
+                        // when switching items.
+                        cx.defer_in(window, |workspace, window, cx| {
+                            // Don't flush if a modal is active - the user might return
+                            // to the original item when the modal is dismissed.
+                            if !workspace.has_active_modal(window, cx) {
+                                workspace.flush_deferred_saves(window, cx);
                             }
-                        }
-
-                        Pane::autosave_item(&item, workspace.project.clone(), window, cx)
-                            .detach_and_log_err(cx);
+                        });
                     }
                 },
             )
