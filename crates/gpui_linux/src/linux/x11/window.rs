@@ -702,7 +702,7 @@ impl X11WindowState {
 
             xcb_flush(xcb);
 
-            let renderer = {
+            let mut renderer = {
                 let raw_window = RawWindow {
                     connection: as_raw_xcb_connection::AsRawXcbConnection::as_raw_xcb_connection(
                         xcb,
@@ -724,6 +724,15 @@ impl X11WindowState {
                 };
                 WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
             };
+
+            if let Some(client_rc) = client.0.upgrade() {
+                let client_state = client_rc.borrow();
+                let is_bgr = client_state
+                    ._resource_database
+                    .get_string("Xft.rgba", "Xft.Rgba")
+                    .is_some_and(|v| v.eq_ignore_ascii_case("bgr"));
+                renderer.set_subpixel_layout(is_bgr);
+            }
 
             // Set max window size hints based on the GPU's maximum texture dimension.
             // This prevents the window from being resized larger than what the GPU can render.
