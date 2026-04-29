@@ -4398,8 +4398,7 @@ mod tests {
                 let mut expected_longest_rows_in_range = vec![];
                 let mut longest_line_len_in_range = 0;
 
-                let mut row = start_row as u32;
-                for line in &expected_lines[start_row..end_row] {
+                for (row, line) in (start_row as u32..).zip(&expected_lines[start_row..end_row]) {
                     let line_char_count = line.chars().count() as isize;
                     match line_char_count.cmp(&longest_line_len_in_range) {
                         Ordering::Less => {}
@@ -4410,7 +4409,6 @@ mod tests {
                             expected_longest_rows_in_range.push(row);
                         }
                     }
-                    row += 1;
                 }
 
                 let longest_row_in_range = blocks_snapshot

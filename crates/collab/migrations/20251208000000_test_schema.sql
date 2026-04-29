@@ -308,7 +308,9 @@ CREATE TABLE public.project_repositories (
     merge_message character varying,
     remote_upstream_url character varying,
     remote_origin_url character varying,
-    linked_worktrees text
+    linked_worktrees text,
+    repository_dir_abs_path character varying,
+    common_dir_abs_path character varying
 );
 
 CREATE TABLE public.project_repository_statuses (
@@ -333,7 +335,7 @@ CREATE TABLE public.projects (
     host_connection_id integer,
     host_connection_server_id integer,
     windows_paths boolean DEFAULT false,
-    features text NOT NULL DEFAULT ''
+    features text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.projects_id_seq
