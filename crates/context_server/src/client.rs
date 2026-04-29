@@ -474,6 +474,13 @@ impl Client {
         Ok(())
     }
 
+    /// Notify the underlying transport of the negotiated MCP protocol version
+    /// so it can stamp subsequent requests (e.g. HTTP's `MCP-Protocol-Version`
+    /// header required from 2025-06-18 onward).
+    pub(crate) fn set_protocol_version(&self, version: &str) {
+        self.transport.set_protocol_version(version);
+    }
+
     #[must_use]
     pub fn on_notification(
         &self,
