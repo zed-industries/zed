@@ -798,7 +798,7 @@ pub fn eval_form_at_cursor(
         let buffer = multibuffer
             .read(cx)
             .as_singleton()
-            .context("nREPL eval requires a single-buffer editor")?;
+            .context("nREPL eval needs a single-buffer view (this looks like a multi-buffer)")?;
         let buffer_snapshot = buffer.read(cx).snapshot();
         let multibuffer_snapshot = multibuffer.read(cx).snapshot(cx);
         let head = editor.selections.newest_anchor().head();
@@ -807,8 +807,10 @@ pub fn eval_form_at_cursor(
         // buffer-internal `usize` offsets, so we unwrap the newtype here
         // and re-wrap the resulting range below for the multibuffer side.
         let MultiBufferOffset(offset) = head.to_offset(&multibuffer_snapshot);
-        let form: TopLevelForm = top_level_form_at_offset(&buffer_snapshot, offset)
-            .context("no top-level form under cursor")?;
+        let form: TopLevelForm = top_level_form_at_offset(&buffer_snapshot, offset).context(
+            "no top-level form under cursor — place the cursor inside a form, \
+             or use `nrepl: eval selection`",
+        )?;
         let anchor_range = multibuffer_snapshot.anchor_before(MultiBufferOffset(form.range.start))
             ..multibuffer_snapshot.anchor_after(MultiBufferOffset(form.range.end));
         Ok((form.text, anchor_range))
@@ -833,6 +835,15 @@ pub fn eval_selection(
         .ok_or_else(|| anyhow!("editor has no associated workspace"))?;
     let editor_entity = editor.upgrade().context("editor was dropped")?;
 
+    enum SelectionPrep {
+        Empty,
+        Whitespace,
+        Ready {
+            text: String,
+            anchor_range: Range<Anchor>,
+        },
+    }
+
     let prepared = editor_entity.update(cx, |editor, cx| {
         let multibuffer = editor.buffer().clone();
         let display_snapshot = editor.display_snapshot(cx);
@@ -840,22 +851,31 @@ pub fn eval_selection(
             .selections
             .newest::<MultiBufferOffset>(&display_snapshot);
         if selection.start == selection.end {
-            return None;
+            return SelectionPrep::Empty;
         }
         let buffer_snapshot = multibuffer.read(cx).snapshot(cx);
         let text: String = buffer_snapshot
             .text_for_range(selection.start..selection.end)
             .collect();
         if text.trim().is_empty() {
-            return None;
+            return SelectionPrep::Whitespace;
         }
         let range = buffer_snapshot.anchor_before(selection.start)
             ..buffer_snapshot.anchor_after(selection.end);
-        Some((text, range))
+        SelectionPrep::Ready {
+            text,
+            anchor_range: range,
+        }
     });
 
-    let Some((text, anchor_range)) = prepared else {
-        return Ok(());
+    let (text, anchor_range) = match prepared {
+        SelectionPrep::Empty => {
+            anyhow::bail!("no selection — select a region first, or use `nrepl: eval`");
+        }
+        SelectionPrep::Whitespace => {
+            anyhow::bail!("selection is empty whitespace");
+        }
+        SelectionPrep::Ready { text, anchor_range } => (text, anchor_range),
     };
 
     session.update(cx, |session, cx| {
@@ -948,9 +968,18 @@ pub fn interrupt(editor: WeakEntity<Editor>, cx: &mut App) -> Result<()> {
         return Ok(());
     }
     let Some(session) = editor_session(&editor, false, cx) else {
-        return Ok(());
+        // No session has been created for this editor yet, so there's
+        // definitely nothing in flight. Tell the user rather than
+        // silently no-oping — they expected something to happen.
+        anyhow::bail!("nothing to interrupt — no eval has run in this editor yet");
     };
-    session.update(cx, |session, cx| session.interrupt(cx))?;
+    let had_in_flight = session.update(cx, |session, cx| {
+        let was_running = session.last_in_flight.is_some();
+        session.interrupt(cx).map(|_| was_running)
+    })?;
+    if !had_in_flight {
+        anyhow::bail!("nothing to interrupt — no eval is currently running");
+    }
     Ok(())
 }
 
@@ -979,6 +1008,18 @@ pub fn clear_outputs(editor: WeakEntity<Editor>, cx: &mut App) {
 /// to stop the action with an `Err` (which would log-and-forget).
 fn toast(session: &Entity<NreplEditorSession>, message: impl Into<SharedString>, cx: &mut App) {
     let workspace = session.read(cx).workspace().clone();
+    toast_workspace(&workspace, message, cx);
+}
+
+/// Same as [`toast`] but takes the workspace handle directly. Used by
+/// action wrappers that want to surface a user-facing error before any
+/// per-editor session has been resolved (e.g. "no top-level form under
+/// cursor", "not connected; run `nrepl::Connect` first").
+pub fn toast_workspace(
+    workspace: &WeakEntity<Workspace>,
+    message: impl Into<SharedString>,
+    cx: &mut App,
+) {
     let message = message.into().to_string();
     workspace
         .update(cx, |workspace, cx| {
@@ -986,6 +1027,20 @@ fn toast(session: &Entity<NreplEditorSession>, message: impl Into<SharedString>,
             workspace.show_toast(Toast::new(id, message).autohide(), cx);
         })
         .log_err();
+}
+
+/// Resolves the workspace associated with `editor`, if any. Used by
+/// action wrappers to route a user-facing toast for failures that
+/// happen before a [`NreplEditorSession`] exists.
+pub fn workspace_for_editor(
+    editor: &WeakEntity<Editor>,
+    cx: &App,
+) -> Option<WeakEntity<Workspace>> {
+    editor
+        .upgrade()?
+        .read(cx)
+        .workspace()
+        .map(|ws| ws.downgrade())
 }
 
 struct NreplEditorToast;

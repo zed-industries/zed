@@ -11,7 +11,7 @@ use gpui::{
     prelude::*,
 };
 use ui::{ButtonLike, KeyBinding, prelude::*};
-use util::ResultExt as _;
+
 use workspace::item::ItemEvent;
 use workspace::{Toast, Workspace, item::Item, notifications::NotificationId};
 
@@ -117,8 +117,11 @@ pub fn init(cx: &mut App) {
                 .register_action({
                     let editor_handle = editor_handle.clone();
                     move |_: &Eval, window, cx| {
-                        editor_session::eval_form_at_cursor(editor_handle.clone(), window, cx)
-                            .log_err();
+                        report(
+                            &editor_handle,
+                            editor_session::eval_form_at_cursor(editor_handle.clone(), window, cx),
+                            cx,
+                        );
                     }
                 })
                 .detach();
@@ -127,7 +130,11 @@ pub fn init(cx: &mut App) {
                 .register_action({
                     let editor_handle = editor_handle.clone();
                     move |_: &EvalSelection, window, cx| {
-                        editor_session::eval_selection(editor_handle.clone(), window, cx).log_err();
+                        report(
+                            &editor_handle,
+                            editor_session::eval_selection(editor_handle.clone(), window, cx),
+                            cx,
+                        );
                     }
                 })
                 .detach();
@@ -136,7 +143,11 @@ pub fn init(cx: &mut App) {
                 .register_action({
                     let editor_handle = editor_handle.clone();
                     move |_: &EvalBuffer, window, cx| {
-                        editor_session::load_file(editor_handle.clone(), window, cx).log_err();
+                        report(
+                            &editor_handle,
+                            editor_session::load_file(editor_handle.clone(), window, cx),
+                            cx,
+                        );
                     }
                 })
                 .detach();
@@ -145,7 +156,11 @@ pub fn init(cx: &mut App) {
                 .register_action({
                     let editor_handle = editor_handle.clone();
                     move |_: &LoadFile, window, cx| {
-                        editor_session::load_file(editor_handle.clone(), window, cx).log_err();
+                        report(
+                            &editor_handle,
+                            editor_session::load_file(editor_handle.clone(), window, cx),
+                            cx,
+                        );
                     }
                 })
                 .detach();
@@ -154,7 +169,11 @@ pub fn init(cx: &mut App) {
                 .register_action({
                     let editor_handle = editor_handle.clone();
                     move |_: &Interrupt, _window, cx| {
-                        editor_session::interrupt(editor_handle.clone(), cx).log_err();
+                        report(
+                            &editor_handle,
+                            editor_session::interrupt(editor_handle.clone(), cx),
+                            cx,
+                        );
                     }
                 })
                 .detach();
@@ -163,13 +182,37 @@ pub fn init(cx: &mut App) {
                 .register_action({
                     let editor_handle = editor_handle;
                     move |_: &SwitchNamespace, _window, cx| {
-                        editor_session::switch_namespace(editor_handle.clone(), cx).log_err();
+                        report(
+                            &editor_handle,
+                            editor_session::switch_namespace(editor_handle.clone(), cx),
+                            cx,
+                        );
                     }
                 })
                 .detach();
         },
     )
     .detach();
+}
+
+/// Surfaces an action result. `Ok` is a no-op; `Err` becomes a toast on
+/// the editor's workspace (so the user actually sees "no top-level form
+/// under cursor", "not connected; run `nrepl::Connect` first", etc.)
+/// rather than a silent log entry.
+///
+/// Falls back to `log_err` if we can't find a workspace to attach the
+/// toast to — that path is only hit for editors without a workspace
+/// (popups, mini-buffers), which the action wiring already filters out.
+fn report(editor: &gpui::WeakEntity<Editor>, result: anyhow::Result<()>, cx: &mut App) {
+    let Err(err) = result else {
+        return;
+    };
+    let message = format!("nREPL: {err:#}");
+    if let Some(workspace) = editor_session::workspace_for_editor(editor, cx) {
+        editor_session::toast_workspace(&workspace, message, cx);
+    } else {
+        log::warn!("{message}");
+    }
 }
 
 /// Marker type for the "nothing to disconnect" toast id.
