@@ -781,7 +781,7 @@ pub(crate) fn check_scripts() -> NamedJob {
 
     fn check_xtask_workflows() -> Step<Run> {
         named::bash(indoc::indoc! {r#"
-            cargo xtask workflows
+            cargo xtask workflows --cleanup
             if ! git diff --exit-code .github; then
               echo "Error: .github directory has uncommitted changes after running 'cargo xtask workflows'"
               echo "Please run 'cargo xtask workflows' locally and commit the changes"
