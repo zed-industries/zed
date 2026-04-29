@@ -22,6 +22,7 @@
 .venv
 .vscode
 .wrangler
+.tmp-astro/
 .perf-runs
 /assets/*licenses.*
 /crates/collab/seed.json

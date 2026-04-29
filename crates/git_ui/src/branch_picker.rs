@@ -171,6 +171,9 @@ impl BranchList {
         let mut subscriptions = Vec::new();
 
         if let Some(repo) = &repository {
+            let refresh_task = repo.update(cx, |repo, cx| repo.refresh_branches_in_snapshot(cx));
+            refresh_task.detach_and_log_err(cx);
+
             subscriptions.push(cx.subscribe_in(
                 repo,
                 window,

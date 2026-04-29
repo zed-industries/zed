@@ -6467,6 +6467,32 @@ impl Repository {
         })
     }
 
+    pub fn refresh_branches_in_snapshot(&mut self, cx: &App) -> Task<Result<()>> {
+        let this = self.this.clone();
+        let rx = self.branches();
+        cx.spawn(|mut cx| async move {
+            let branches = rx.await??;
+            let new_branch = branches.iter().find(|branch| branch.is_head).cloned();
+            let new_branch_list: Arc<[Branch]> = branches.into();
+
+            if let Some(this) = this.upgrade() {
+                this.update(&mut cx, |this, cx| {
+                    if this.snapshot.branch != new_branch {
+                        cx.emit(RepositoryEvent::HeadChanged);
+                    }
+                    if *this.snapshot.branch_list != *new_branch_list {
+                        cx.emit(RepositoryEvent::BranchListChanged);
+                    }
+
+                    this.snapshot.branch = new_branch;
+                    this.snapshot.branch_list = new_branch_list;
+                })?;
+            }
+
+            Ok(())
+        })
+    }
+
     /// If this is a linked worktree (*NOT* the main checkout of a repository),
     /// returns the pathed for the linked worktree.
     ///

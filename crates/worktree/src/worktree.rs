@@ -4365,9 +4365,7 @@ impl BackgroundScanner {
                         OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
                     }) || skipped_dirs_in_dot_git
                         .iter()
-                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir))
-                        || path_in_git_dir == Path::new("")
-                            && self.fs.is_dir(&dot_git_abs_path).await;
+                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir));
                     if skip {
                         log::debug!(
                             "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"

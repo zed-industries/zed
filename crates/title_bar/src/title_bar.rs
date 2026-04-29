@@ -1019,6 +1019,12 @@ impl TitleBar {
             ActiveCall::global(cx)
                 .update(cx, |call, cx| call.set_location(Some(&self.project), cx))
                 .detach_and_log_err(cx);
+
+            if let Some(repository) = self.project.read(cx).active_repository(cx) {
+                repository
+                    .update(cx, |repository, cx| repository.refresh_branches_in_snapshot(cx))
+                    .detach_and_log_err(cx);
+            }
         } else if cx.active_window().is_none() {
             ActiveCall::global(cx)
                 .update(cx, |call, cx| call.set_location(None, cx))
