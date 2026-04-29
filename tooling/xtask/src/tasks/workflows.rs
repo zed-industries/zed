@@ -3,6 +3,7 @@ use clap::Parser;
 use gh_workflow::Workflow;
 use std::fs;
 use std::path::{Path, PathBuf};
+use strum::IntoEnumIterator;
 
 use crate::tasks::workflow_checks::{self};
 
@@ -87,6 +88,11 @@ pub(crate) struct GenerateWorkflowArgs {
     #[arg(value_parser = parse_ref)]
     /// The Git SHA to use when invoking this
     pub(crate) sha: Option<GitSha>,
+
+    #[arg(long)]
+    /// Whether to cleanup all generated workflow files first.
+    /// Useful to ensure that workflow files do not become stale.
+    cleanup: bool,
 }
 
 enum WorkflowSource {
@@ -167,14 +173,17 @@ pub enum WorkflowType {
 }
 
 impl WorkflowType {
+    const PREAMBLE: &str = "# Generated from xtask::workflows::";
+
     fn disclaimer(&self, workflow_name: &str) -> String {
         format!(
             concat!(
-                "# Generated from xtask::workflows::{}{}\n",
+                "{preamble}{workflow_name}{external_disclaimer}\n",
                 "# Rebuild with `cargo xtask workflows`.",
             ),
-            workflow_name,
-            (*self != WorkflowType::Zed)
+            preamble = Self::PREAMBLE,
+            workflow_name = workflow_name,
+            external_disclaimer = (*self != WorkflowType::Zed)
                 .then_some(" within the Zed repository.")
                 .unwrap_or_default(),
         )
@@ -187,11 +196,35 @@ impl WorkflowType {
             WorkflowType::ExtensionsShared => PathBuf::from("extensions/workflows/shared"),
         }
     }
+
+    fn remove_generated_workflows() -> Result<()> {
+        for workflow_type in Self::iter() {
+            for path in fs::read_dir(workflow_type.folder_path())? {
+                let entry = path?;
+                if !entry.file_type().is_ok_and(|file_type| file_type.is_file()) {
+                    continue;
+                }
+
+                let path = entry.path();
+                if fs::read_to_string(&path)
+                    .is_ok_and(|content| content.starts_with(Self::PREAMBLE))
+                {
+                    fs::remove_file(path)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
     if !Path::new("crates/zed/").is_dir() {
         anyhow::bail!("xtask workflows must be ran from the project root");
+    }
+
+    if args.cleanup {
+        WorkflowType::remove_generated_workflows()?;
     }
 
     let workflows = [
