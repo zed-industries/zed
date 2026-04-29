@@ -277,33 +277,28 @@ async fn copy_extension_resources(
         .context("failed to copy icons")?;
     }
 
-    futures::future::try_join_all(
-        manifest
-            .agent_servers
-            .iter()
-            .filter_map(|(_, agent_entry)| {
-                let icon_path = agent_entry.icon.as_ref()?;
-                let fs = fs.clone();
-                let source_icon = extension_path.join(icon_path);
-                let dest_icon = output_dir.join(icon_path);
-                let icon_path = icon_path.as_str();
-                Some(async move {
-                    if let Some(parent) = dest_icon.parent() {
-                        fs.create_dir(parent).await?;
-                    }
-                    fs.copy_file(
-                        &source_icon,
-                        &dest_icon,
-                        CopyOptions {
-                            overwrite: true,
-                            ignore_if_exists: false,
-                        },
-                    )
-                    .await
-                    .with_context(|| format!("failed to copy agent server icon '{}'", icon_path))
-                })
-            }),
-    )
+    futures::future::try_join_all(manifest.agent_servers.values().filter_map(|agent_entry| {
+        let icon_path = agent_entry.icon.as_ref()?;
+        let fs = fs.clone();
+        let source_icon = extension_path.join(icon_path);
+        let dest_icon = output_dir.join(icon_path);
+        let icon_path = icon_path.as_str();
+        Some(async move {
+            if let Some(parent) = dest_icon.parent() {
+                fs.create_dir(parent).await?;
+            }
+            fs.copy_file(
+                &source_icon,
+                &dest_icon,
+                CopyOptions {
+                    overwrite: true,
+                    ignore_if_exists: false,
+                },
+            )
+            .await
+            .with_context(|| format!("failed to copy agent server icon '{}'", icon_path))
+        })
+    }))
     .await?;
 
     if !manifest.languages.is_empty() {

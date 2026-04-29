@@ -19,7 +19,6 @@ collections.workspace = true
 dap.workspace = true
 fs.workspace = true
 futures.workspace = true
-futures-util.workspace = true
 gpui.workspace = true
 heck.workspace = true
 http_client.workspace = true
