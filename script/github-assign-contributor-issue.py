@@ -87,6 +87,13 @@ def fetch_tally_contributors(api_key, form_id):
 
         questions = {q["id"]: q for q in data.get("questions", [])}
 
+        if page == 1:
+            print(
+                f"Tally question titles: {[q.get('title') for q in data.get('questions', [])]}"
+            )
+            print(f"Tally field titles: {list(field_titles.values())}")
+            print(f"Submissions on page 1: {len(data.get('submissions', []))}")
+
         for submission in data.get("submissions", []):
             record = parse_submission(submission, questions, field_titles)
             if record:
