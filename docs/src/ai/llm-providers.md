@@ -34,7 +34,6 @@ Zed supports these providers with your own API keys:
 - [OpenCode](#opencode)
 - [OpenRouter](#openrouter)
 - [Vercel AI Gateway](#vercel-ai-gateway)
-- [Vercel](#vercel-v0)
 - [xAI](#xai)
 
 ### Amazon Bedrock {#amazon-bedrock}
@@ -829,18 +828,6 @@ You can also set a custom endpoint for Vercel AI Gateway in your settings file:
   }
 }
 ```
-
-### Vercel v0 {#vercel-v0}
-
-[Vercel v0](https://v0.app/docs/api/model) is a model for generating full-stack apps, with framework-aware completions for stacks like Next.js and Vercel.
-It supports text and image inputs and provides fast streaming responses.
-
-The v0 models are [OpenAI-compatible models](#openai-api-compatible), and Vercel appears as a dedicated provider in the panel's settings view.
-
-To start using it with Zed, ensure you have first created a [v0 API key](https://v0.dev/chat/settings/keys).
-Once you have it, paste it directly into the Vercel provider section in the panel's settings view.
-
-You should then find it as `v0-1.5-md` in the model dropdown in the Agent Panel.
 
 ### xAI {#xai}
 
