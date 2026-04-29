@@ -46,6 +46,9 @@ pub struct PredictEditsV3Response {
     pub editable_range: Range<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_version: Option<String>,
+    /// Predicted cursor offset within `output`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_offset: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

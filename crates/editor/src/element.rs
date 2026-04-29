@@ -208,7 +208,7 @@ pub enum SplitSide {
 }
 
 impl EditorElement {
-    pub(crate) const SCROLLBAR_WIDTH: Pixels = px(15.);
+    pub(crate) const SCROLLBAR_WIDTH: Pixels = ui::EDITOR_SCROLLBAR_WIDTH;
 
     pub fn new(editor: &Entity<Editor>, style: EditorStyle) -> Self {
         Self {
@@ -6814,7 +6814,9 @@ impl EditorElement {
                             .display_snapshot
                             .display_point_to_anchor(point_for_position.nearest_valid, Bias::Left);
                         editor.change_selections(
-                            SelectionEffects::scroll(Autoscroll::top_relative(line_index)),
+                            SelectionEffects::scroll(Autoscroll::top_relative(
+                                line_index as ScrollOffset,
+                            )),
                             window,
                             cx,
                             |selections| {
