@@ -511,7 +511,7 @@ fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut 
             .is_some();
 
     if !already_backfilled {
-        if !is_new_install {
+        if !is_new_install && !DisableAiSettings::get_global(cx).disable_ai {
             AgentSettings::backfill_editor_layout(fs, cx);
         }
 
