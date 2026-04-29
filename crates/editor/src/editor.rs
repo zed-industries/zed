@@ -2931,15 +2931,15 @@ impl Editor {
         }
 
         if let Some(singleton_buffer) = self.buffer.read(cx).as_singleton() {
-            if let Some(extension) = singleton_buffer.read(cx).file().and_then(|file| {
-                Some(
-                    file.full_path(cx)
-                        .extension()?
-                        .to_string_lossy()
-                        .to_lowercase(),
-                )
+            if let Some((extension, path)) = singleton_buffer.read(cx).file().and_then(|file| {
+                let full = file.full_path(cx);
+                Some((
+                    full.extension()?.to_string_lossy().to_lowercase(),
+                    full.to_string_lossy().into_owned(),
+                ))
             }) {
                 key_context.set("extension", extension);
+                key_context.set("path", path);
             }
         } else {
             key_context.add("multibuffer");
