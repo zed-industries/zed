@@ -3,12 +3,14 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr as _;
 use std::sync::Arc;
 
 use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
 use anyhow::{Context as _, Result, anyhow, bail};
 use clap::Parser;
 use cloud_api_types::ExtensionProvides;
+use extension::build_debug_adapter_schema_path;
 use extension::extension_builder::CompilationConcurrency;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
@@ -97,6 +99,7 @@ async fn main() -> Result<()> {
     test_languages(&manifest, &extension_path, &grammars)?;
     test_themes(&manifest, &extension_path, fs.clone()).await?;
     test_snippets(&manifest, &extension_path, fs.clone()).await?;
+    test_debug_adapter_schemas(&manifest, &extension_path, fs.clone()).await?;
 
     let archive_dir = output_dir.join("archive");
     fs::remove_dir_all(&archive_dir).ok();
@@ -492,6 +495,40 @@ async fn test_snippets(
                 }
             }),
     )
+    .await
+    .map(|_| ())
+}
+
+async fn test_debug_adapter_schemas(
+    manifest: &ExtensionManifest,
+    extension_path: &Path,
+    fs: Arc<dyn Fs>,
+) -> Result<()> {
+    futures::future::try_join_all(manifest.debug_adapters.iter().map(
+        |(debug_adapter_name, meta)| {
+            let fs = fs.clone();
+            async move {
+                let debug_adapter_schema_path =
+                    extension_path.join(build_debug_adapter_schema_path(debug_adapter_name, meta)?);
+
+                let debug_adapter_schema =
+                    fs.load(&debug_adapter_schema_path).await.with_context(|| {
+                        anyhow::anyhow!(
+                            "failed to read debug adapter schema for \
+                        `{debug_adapter_name}` from `{debug_adapter_schema_path:?}`"
+                        )
+                    })?;
+                _ = serde_json::Value::from_str(&debug_adapter_schema).with_context(|| {
+                    anyhow::anyhow!(
+                        "Debug adapter schema for `{debug_adapter_name}`\
+                        (path: `{debug_adapter_schema_path:?}`) is not a valid JSON"
+                    )
+                })?;
+
+                Ok(())
+            }
+        },
+    ))
     .await
     .map(|_| ())
 }

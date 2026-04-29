@@ -1,6 +1,5 @@
 use crate::{
-    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, build_debug_adapter_schema_path,
-    parse_wasm_extension_version,
+    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, parse_wasm_extension_version,
 };
 use ::fs::Fs;
 use anyhow::{Context as _, Result, bail};
@@ -19,7 +18,6 @@ use std::{
     num::NonZeroUsize,
     ops::Not,
     path::{Path, PathBuf},
-    str::FromStr,
     sync::Arc,
 };
 use util::{ResultExt, command::Stdio, rel_path::PathExt};
@@ -149,37 +147,6 @@ impl ExtensionBuilder {
                 .boxed()
             });
 
-        let debug_adapter_validation_tasks =
-            extension_manifest
-                .debug_adapters
-                .iter()
-                .map(|(debug_adapter_name, meta)| {
-                    let fs = fs.clone();
-                    async move {
-                        let debug_adapter_schema_path = extension_dir
-                            .join(build_debug_adapter_schema_path(debug_adapter_name, meta)?);
-
-                        let debug_adapter_schema =
-                            fs.load(&debug_adapter_schema_path).await.with_context(|| {
-                                anyhow::anyhow!(
-                                    "failed to read debug adapter schema for \
-                                `{debug_adapter_name}` from `{debug_adapter_schema_path:?}`"
-                                )
-                            })?;
-                        _ = serde_json::Value::from_str(&debug_adapter_schema).with_context(
-                            || {
-                                anyhow::anyhow!(
-                                    "Debug adapter schema for `{debug_adapter_name}`\
-                                (path: `{debug_adapter_schema_path:?}`) is not a valid JSON"
-                                )
-                            },
-                        )?;
-
-                        Ok(())
-                    }
-                    .boxed()
-                });
-
         let grammar_compilation_tasks = extension_manifest
             .grammars
             .iter()
@@ -223,7 +190,6 @@ impl ExtensionBuilder {
 
         let tasks = rust_compilation_task
             .into_iter()
-            .chain(debug_adapter_validation_tasks)
             .chain(grammar_compilation_tasks)
             .collect::<Vec<_>>();
 
