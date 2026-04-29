@@ -62,7 +62,7 @@ pub enum CompilationConcurrency {
     Bounded(NonZeroUsize),
 }
 
-const DEFAULT_COMPILATION_CONCURRENCY: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(3) };
+const DEFAULT_COMPILATION_CONCURRENCY: NonZeroUsize = NonZeroUsize::new(3).unwrap();
 
 pub struct CompileExtensionOptions {
     pub release: bool,
