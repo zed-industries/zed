@@ -1622,6 +1622,7 @@ async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
         "screenshot_server",
         vec![context_server::types::Tool {
             name: "screenshot".into(),
+            title: None,
             description: None,
             input_schema: json!({"type": "object", "properties": {}}),
             output_schema: None,
