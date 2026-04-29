@@ -395,6 +395,13 @@
     },
   },
   {
+    "context": "MessageEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-backspace": "agent::DeleteToBeginningOfMessageEditorVisualLine",
+    },
+  },
+  {
     "context": "AcpThread > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {

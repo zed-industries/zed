@@ -1,7 +1,6 @@
-use crate::DEFAULT_THREAD_TITLE;
-use crate::SendImmediately;
 use crate::{
-    ChatWithFollow,
+    ChatWithFollow, DEFAULT_THREAD_TITLE, DeleteToBeginningOfMessageEditorVisualLine,
+    SendImmediately,
     completion_provider::{
         PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextAction,
         PromptContextType, SlashCommandCompletion,
@@ -14,9 +13,11 @@ use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
-    EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
+    EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, SelectionEffects,
+    ToOffset,
     actions::{Copy, Paste},
     code_context_menus::CodeContextMenu,
+    movement,
     scroll::Autoscroll,
 };
 use futures::{FutureExt as _, future::join_all};
@@ -24,7 +25,7 @@ use gpui::{
     AppContext, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
     Focusable, ImageFormat, KeyContext, SharedString, Subscription, Task, TextStyle, WeakEntity,
 };
-use language::{Buffer, language_settings::InlayHintKind};
+use language::{Buffer, SelectionGoal, language_settings::InlayHintKind};
 use parking_lot::RwLock;
 use project::AgentId;
 use project::{
@@ -919,6 +920,57 @@ impl MessageEditor {
         .detach();
     }
 
+    fn delete_to_beginning_of_visual_line(
+        &mut self,
+        _: &DeleteToBeginningOfMessageEditorVisualLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            if editor.read_only(cx) {
+                return;
+            }
+
+            let replacement =
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    let snapshot = selections.display_snapshot();
+                    let display_selections = selections.all_display(&snapshot);
+                    let mut preserve_display_row = false;
+
+                    selections.move_with(&mut |map, selection| {
+                        if !selection.is_empty() {
+                            return;
+                        }
+
+                        let head = selection.head();
+                        if head.column() == 0 {
+                            return;
+                        }
+
+                        let line_start = movement::line_beginning(map, head, false);
+                        let soft_line_start = movement::line_beginning(map, head, true);
+                        let line_end = movement::line_end(map, head, false);
+
+                        // Deleting the final soft-wrapped row would otherwise remove that display
+                        // row entirely, moving the caret up instead of leaving it on the cleared row.
+                        if soft_line_start != line_start
+                            && head == line_end
+                            && head.column() == map.line_len(head.row())
+                            && display_selections.len() == 1
+                        {
+                            preserve_display_row = true;
+                        }
+
+                        selection.set_head(soft_line_start, SelectionGoal::None);
+                    });
+
+                    if preserve_display_row { "\n" } else { "" }
+                });
+
+            editor.insert(replacement, window, cx);
+        });
+    }
+
     fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
         self.send(cx);
     }
@@ -1779,6 +1831,7 @@ impl Render for MessageEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("MessageEditor")
+            .on_action(cx.listener(Self::delete_to_beginning_of_visual_line))
             .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::send_immediately))
             .on_action(cx.listener(Self::chat_with_follow))
@@ -1912,9 +1965,10 @@ mod tests {
     use agent::{ThreadStore, outline};
     use agent_client_protocol::schema as acp;
     use base64::Engine as _;
+    use editor::test::assert_text_with_selections;
     use editor::{
-        AnchorRangeExt as _, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
-        actions::Paste,
+        AnchorRangeExt as _, DisplayPoint, Editor, EditorMode, MultiBufferOffset, SelectionEffects,
+        actions::Paste, display_map::DisplayRow,
     };
 
     use fs::FakeFs;
@@ -1936,6 +1990,7 @@ mod tests {
 
     use crate::completion_provider::PromptContextType;
     use crate::{
+        DeleteToBeginningOfMessageEditorVisualLine,
         conversation_view::tests::init_test,
         mention_set::insert_crease_for_mention,
         message_editor::{Mention, MessageEditor, SessionCapabilities, parse_mention_links},
@@ -4565,6 +4620,64 @@ mod tests {
 
         cx.run_until_parked();
         (message_editor, cx)
+    }
+
+    #[gpui::test]
+    async fn test_delete_to_beginning_of_message_editor_soft_wrapped_line(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (message_editor, cx) = setup_message_editor(cx).await;
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            message_editor.editor.update(cx, |editor, cx| {
+                editor.set_text("thequickbrownfox\njumpedoverthelazydogs", window, cx);
+                editor.set_wrap_width(Some(140.0.into()), cx);
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    let line_end = "jumpedoverthelaz".len() as u32;
+                    s.select_display_ranges([DisplayPoint::new(DisplayRow(1), line_end)
+                        ..DisplayPoint::new(DisplayRow(1), line_end)]);
+                });
+            });
+
+            message_editor.delete_to_beginning_of_visual_line(
+                &DeleteToBeginningOfMessageEditorVisualLine,
+                window,
+                cx,
+            );
+
+            message_editor.editor.update(cx, |editor, cx| {
+                assert_text_with_selections(editor, "thequickbrownfox\nˇydogs", cx);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_delete_to_beginning_of_message_editor_last_soft_wrapped_line_preserves_row(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let (message_editor, cx) = setup_message_editor(cx).await;
+
+        message_editor.update_in(cx, |message_editor, window, cx| {
+            message_editor.editor.update(cx, |editor, cx| {
+                editor.set_text("thequickbrownfox\njumpedoverthelazydogs", window, cx);
+                editor.set_wrap_width(Some(140.0.into()), cx);
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    let line_end = "ydogs".len() as u32;
+                    s.select_display_ranges([DisplayPoint::new(DisplayRow(2), line_end)
+                        ..DisplayPoint::new(DisplayRow(2), line_end)]);
+                });
+            });
+
+            message_editor.delete_to_beginning_of_visual_line(
+                &DeleteToBeginningOfMessageEditorVisualLine,
+                window,
+                cx,
+            );
+
+            message_editor.editor.update(cx, |editor, cx| {
+                assert_text_with_selections(editor, "thequickbrownfox\njumpedoverthelaz\nˇ", cx);
+            });
+        });
     }
 
     #[gpui::test]

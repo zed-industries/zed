@@ -95,6 +95,8 @@ actions!(
         CycleFavoriteModels,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
+        /// Deletes to the beginning of the current visual line in the message editor.
+        DeleteToBeginningOfMessageEditorVisualLine,
         /// Adds a context server to the configuration.
         AddContextServer,
         /// Archives the currently selected thread.
