@@ -7,8 +7,6 @@ use futures::{FutureExt, Stream, pin_mut};
 use gpui::SharedString;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use smol::io::{AsyncReadExt, BufReader};
-use smol::stream::StreamExt;
 use std::ffi::OsString;
 use std::path::Path;
 use std::{str::FromStr, sync::Arc};
@@ -730,9 +728,9 @@ async fn untracked_path_diff_stat(
         return Ok(None);
     }
 
-    let file = smol::fs::File::open(&absolute_path).await?;
-    let bytes = BufReader::new(file).bytes();
-    match dbg!(utf8_line_count_for_stream(bytes).await) {
+    let reader = smol::fs::File::open(&absolute_path).await?;
+    let reader = smol::io::BufReader::new(reader);
+    match utf8_line_count(reader).await {
         Ok(count) => Ok(Some(DiffStat {
             added: count,
             deleted: 0,
@@ -750,59 +748,86 @@ enum LineCountErr {
     ReadError(std::io::Error),
 }
 
-async fn utf8_line_count_for_stream(
-    bytes: impl Stream<Item = Result<u8, std::io::Error>>,
-) -> Result<u32, LineCountErr> {
-    fn is_utf8(bytes: &[u8]) -> bool {
-        fn are_cnt_bytes<const N: usize>(bytes: [u8; N]) -> bool {
-            bytes.iter().all(|b| b & 0b1100_0000 == 0b1000_0000)
-        }
-
-        match bytes {
-            [b1] => b1 & 0b1000_0000 == 0b0000_0000,
-            [b1, b2] => {
-                std::hint::cold_path();
-                b1 & 0b1110_0000 == 0b1100_0000 && are_cnt_bytes([*b2])
-            }
-            [b1, b2, b3] => {
-                std::hint::cold_path();
-                b1 & 0b1111_0000 == 0b1110_0000 && are_cnt_bytes([*b2, *b3])
-            }
-            [b1, b2, b3, b4] => {
-                std::hint::cold_path();
-                b1 & 0b1111_1000 == 0b1111_0000 && are_cnt_bytes([*b2, *b3, *b4])
-            }
-            _ => unreachable!("only slices of length 1 to 4 are passed in"),
-        }
-    }
-    fn is_linefeed(bytes: &[u8]) -> bool {
-        matches!(bytes, [b'\r', b'\n', ..] | [b'\n', ..])
-    }
-
+// Line feeds are not multi byte utf8 characters so we can safely ignore those.
+// We also do not need to be sure the text is valid utf8, a high probability is
+// enough. We use this to speed things up by ignoring characters split between
+// buffers instead (we strip the first and last bytes that match the utf8
+// continuation pattern instead).
+async fn utf8_line_count(reader: impl smol::io::AsyncRead) -> Result<u32, LineCountErr> {
+    use smol::io::AsyncReadExt;
+    let mut buff = [0u8; 20_000];
+    let mut prev_n_read = 0;
     let mut count = 0;
-    let mut has_trailing_characters = false;
-    let mut maybe_utf8 = heapless::Vec::<u8, 4>::new();
 
-    pin_mut!(bytes);
-    while let Some(byte) = bytes.next().await {
-        let byte = byte.map_err(LineCountErr::ReadError)?;
-        maybe_utf8.push(byte).expect("cleared before out of space");
-        if is_utf8(&maybe_utf8) {
-            if is_linefeed(&maybe_utf8) {
-                count += 1;
-                has_trailing_characters = false;
-            } else {
-                has_trailing_characters = true;
-            }
-            maybe_utf8.clear();
+    pin_mut!(reader);
+    let last_read = loop {
+        let n_read = reader
+            .read(&mut buff)
+            .await
+            .map_err(LineCountErr::ReadError)?;
+        if n_read == 0 {
+            break &buff[..prev_n_read];
         }
-        dbg!(&maybe_utf8);
-        if maybe_utf8.is_full() {
-            return Err(LineCountErr::NotUtf8);
-        }
+
+        prev_n_read = n_read;
+        let read = &buff[..n_read];
+        let read = trim_broken_utf8(&read);
+
+        str::from_utf8(read).map_err(|_| LineCountErr::NotUtf8)?;
+        count += buff.iter().filter(|b| **b == b'\n').count() as u32;
+    };
+
+    // will be wrong if the buffer
+    let has_trailing_chars = last_read.last().is_some_and(|b| *b != b'\n');
+    Ok(count + dbg!(has_trailing_chars) as u32)
+}
+
+fn trim_broken_utf8(s: &[u8]) -> &[u8] {
+    #[inline(always)]
+    fn all_utf8_cnt<const N: usize>(bytes: [u8; N]) -> bool {
+        bytes.iter().all(|b| b & 0b1100_0000 == 0b1000_0000)
+    }
+    #[inline(always)]
+    fn utf8_len1_start(byte: u8) -> bool {
+        byte & 0b1000_0000 == 0b0000_0000
+    }
+    #[inline(always)]
+    fn utf8_len2_start(byte: u8) -> bool {
+        byte & 0b1110_0000 == 0b1100_0000
+    }
+    #[inline(always)]
+    fn utf8_len3_start(byte: u8) -> bool {
+        byte & 0b1111_0000 == 0b1110_0000
     }
 
-    Ok(count + has_trailing_characters as u32)
+    let s = match s {
+        [b1, b2, b3, ..] if all_utf8_cnt([*b1, *b2, *b3]) => &s[3..],
+        [b1, b2, ..] if all_utf8_cnt([*b1, *b2]) => &s[2..],
+        [b1, ..] if all_utf8_cnt([*b1]) => &s[1..],
+        _ => s,
+    };
+
+    let s = match s {
+        [.., b0, b1, b2, b3] if all_utf8_cnt([*b1, *b2, *b3]) => s,
+        [.., b0, b1, b2] if all_utf8_cnt([*b1, *b2]) => {
+            if utf8_len3_start(*b0) {
+                s
+            } else {
+                &s[..s.len() - 3]
+            }
+        }
+        [.., b0, b1] if all_utf8_cnt([*b1]) => {
+            if utf8_len2_start(*b0) {
+                s
+            } else {
+                &s[..s.len() - 2]
+            }
+        }
+        [.., b0] if !utf8_len1_start(*b0) => &s[..s.len() - 1],
+        [..] => s,
+    };
+
+    s
 }
 
 #[cfg(test)]
@@ -951,14 +976,13 @@ mod tests {
     }
 
     #[test]
-    fn test_utf8_line_count_for_stream() {
-        use super::utf8_line_count_for_stream;
-        use futures::stream;
+    fn test_utf8_line_count() {
+        use super::utf8_line_count;
 
         #[track_caller]
-        fn assert_utf8_line_count(input: &str, expected: u32) {
-            let byte_stream = stream::iter(input.bytes().map(Ok::<u8, std::io::Error>));
-            let count = smol::block_on(utf8_line_count_for_stream(byte_stream)).unwrap();
+        fn assert_count(input: &str, expected: u32) {
+            let cursor = smol::io::Cursor::new(input.as_bytes().to_vec());
+            let count = smol::block_on(utf8_line_count(cursor)).unwrap();
             assert_eq!(count, expected, "input: {input:?}");
         }
 
@@ -972,52 +996,25 @@ mod tests {
         assert_eq!('🦀'.len_utf8(), 4);
         assert_eq!('🌈'.len_utf8(), 4);
 
-        assert_utf8_line_count("A\n¢\r\n❤😀\n🦀☃\n", 4);
-        assert_utf8_line_count("A\n¢\r\n❤😀\n🦀☃\nñ🌈", 5);
-        assert_utf8_line_count("", 0);
-        assert_utf8_line_count("❤🦀😀☃¢ñ🌈", 1);
-        assert_utf8_line_count("🦀\n\n\n😀", 4);
-        assert_utf8_line_count("🌈\r\n☃", 2);
-    }
+        assert_count("A\n¢\r\n❤😀\n🦀☃\n", 4);
+        assert_count("A\n¢\r\n❤😀\n🦀☃\nñ🌈", 5);
+        assert_count("", 0);
+        assert_count("❤🦀😀☃¢ñ🌈", 1);
+        assert_count("🦀\n\n\n😀", 4);
+        assert_count("🌈\r\n☃", 2);
 
-    mod perf {
-        use super::super::utf8_line_count_for_stream;
-        use futures::stream;
-        use util_macros::perf;
+        // 3-byte characters (e.g. em-dash U+2014) mixed with other widths
+        assert_eq!('—'.len_utf8(), 3);
+        assert_count("hello — world\n", 1);
+        assert_count("—\n—\n—", 3);
+        assert_count("ñoño — ❤🌈\n", 1);
 
-        fn make_test_input(line_count: usize) -> String {
-            let line = "The quick brown 🦀 jumps over the lazy ☃ — ñoño! ❤🌈\n";
-            line.repeat(line_count)
-        }
-
-        #[perf]
-        fn bench_utf8_line_count_for_stream_small() {
-            let input = make_test_input(100);
-            let byte_stream = stream::iter(input.bytes().map(Ok::<u8, std::io::Error>));
-            let count = smol::block_on(utf8_line_count_for_stream(byte_stream)).unwrap();
-            assert_eq!(count, 100);
-        }
-
-        #[perf]
-        fn bench_utf8_line_count_for_stream_large() {
-            let input = make_test_input(10_000);
-            let byte_stream = stream::iter(input.bytes().map(Ok::<u8, std::io::Error>));
-            let count = smol::block_on(utf8_line_count_for_stream(byte_stream)).unwrap();
-            assert_eq!(count, 10_000);
-        }
-
-        #[perf]
-        fn bench_lines_count_small() {
-            let input = make_test_input(100);
-            let count = input.lines().count();
-            assert_eq!(count, 100);
-        }
-
-        #[perf]
-        fn bench_lines_count_large() {
-            let input = make_test_input(10_000);
-            let count = input.lines().count();
-            assert_eq!(count, 10_000);
-        }
+        // Invalid UTF-8 should return an error
+        let invalid: Vec<u8> = vec![0xFF, 0xFE, 0xFD, 0xFC];
+        let cursor = smol::io::Cursor::new(invalid);
+        assert!(
+            smol::block_on(utf8_line_count(cursor)).is_err(),
+            "expected error on invalid UTF-8"
+        );
     }
 }

@@ -180,6 +180,8 @@ impl PerfArgs {
 ///     // Test goes here.
 /// }
 /// ```
+///
+/// Run with: cargo perf-test
 #[proc_macro_attribute]
 #[warn(clippy::all, clippy::pedantic)]
 pub fn perf(our_attr: TokenStream, input: TokenStream) -> TokenStream {
