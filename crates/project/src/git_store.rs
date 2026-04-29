@@ -20,7 +20,7 @@ use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
 use fs::{Fs, RemoveOptions};
 use futures::{
-    FutureExt, Stream, StreamExt,
+    FutureExt, SinkExt, Stream, StreamExt,
     channel::{
         mpsc,
         oneshot::{self, Canceled},
@@ -2661,6 +2661,8 @@ impl GitStore {
         mut cx: AsyncApp,
     ) -> Result<impl Stream<Item = Result<proto::SearchCommitsResponse>>> {
         const RESPONSE_TARGET_BYTES: usize = 4 * 1024;
+        const REQUEST_BUFFER_CAPACITY: usize = 1024;
+        const RESPONSE_BUFFER_CAPACITY: usize = 16;
 
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
@@ -2675,12 +2677,12 @@ impl GitStore {
             case_sensitive: envelope.payload.case_sensitive,
         };
 
-        let (request_tx, request_rx) = async_channel::unbounded::<Oid>();
+        let (request_tx, request_rx) = async_channel::bounded::<Oid>(REQUEST_BUFFER_CAPACITY);
         repository_handle.update(&mut cx, |repository, cx| {
             repository.search_commits(log_source, search_args, request_tx, cx);
         });
 
-        let (response_tx, response_rx) = mpsc::unbounded();
+        let (mut response_tx, response_rx) = mpsc::channel(RESPONSE_BUFFER_CAPACITY);
         cx.background_spawn(async move {
             let mut shas = Vec::new();
             let mut byte_size = 0;
@@ -2692,9 +2694,10 @@ impl GitStore {
 
                 if byte_size >= RESPONSE_TARGET_BYTES {
                     if response_tx
-                        .unbounded_send(Ok(proto::SearchCommitsResponse {
+                        .send(Ok(proto::SearchCommitsResponse {
                             shas: mem::take(&mut shas),
                         }))
+                        .await
                         .is_err()
                     {
                         return;
@@ -2705,7 +2708,8 @@ impl GitStore {
 
             if !shas.is_empty() {
                 response_tx
-                    .unbounded_send(Ok(proto::SearchCommitsResponse { shas }))
+                    .send(Ok(proto::SearchCommitsResponse { shas }))
+                    .await
                     .ok();
             }
         })
