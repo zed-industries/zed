@@ -197,13 +197,22 @@ impl Render for TitleBar {
                 .map(|name| SharedString::from(name.to_string()));
             if let Some(repo) = &repository {
                 let repo = repo.read(cx);
-                linked_worktree_name = linked_worktree_short_name(
-                    repo.original_repo_abs_path.as_ref(),
-                    repo.work_directory_abs_path.as_ref(),
-                );
+                linked_worktree_name = repo
+                    .main_worktree_abs_path()
+                    .and_then(|main_worktree_path| {
+                        linked_worktree_short_name(
+                            main_worktree_path,
+                            repo.work_directory_abs_path.as_ref(),
+                        )
+                    })
+                    .or_else(|| {
+                        repo.is_linked_worktree()
+                            .then_some(project_name.clone())
+                            .flatten()
+                    });
                 if let Some(name) = repo
-                    .original_repo_abs_path
-                    .file_name()
+                    .main_worktree_abs_path()
+                    .and_then(|main_worktree_path| main_worktree_path.file_name())
                     .and_then(|name| name.to_str())
                 {
                     project_name = Some(SharedString::from(name.to_string()));

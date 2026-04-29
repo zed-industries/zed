@@ -893,7 +893,8 @@ impl Database {
                         stash_entries: Vec::new(),
                         remote_upstream_url: db_repository_entry.remote_upstream_url.clone(),
                         remote_origin_url: db_repository_entry.remote_origin_url.clone(),
-                        original_repo_abs_path: Some(db_repository_entry.abs_path),
+                        repository_dir_abs_path: Some(db_repository_entry.abs_path.clone()),
+                        common_dir_abs_path: Some(db_repository_entry.abs_path),
                         linked_worktrees: db_repository_entry
                             .linked_worktrees
                             .as_deref()
