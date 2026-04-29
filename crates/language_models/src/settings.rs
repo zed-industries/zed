@@ -7,8 +7,9 @@ use crate::provider::{
     anthropic::AnthropicSettings, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings,
     deepseek::DeepSeekSettings, google::GoogleSettings, lmstudio::LmStudioSettings,
     mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
-    open_ai_compatible::OpenAiCompatibleSettings, open_router::OpenRouterSettings,
-    opencode::OpenCodeSettings, vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
+    open_ai_codex::OpenAiCodexSettings, open_ai_compatible::OpenAiCompatibleSettings,
+    open_router::OpenRouterSettings, opencode::OpenCodeSettings,
+    vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
 };
 
 #[derive(Debug, RegisterSetting)]
@@ -23,6 +24,7 @@ pub struct AllLanguageModelSettings {
     pub opencode: OpenCodeSettings,
     pub open_router: OpenRouterSettings,
     pub openai: OpenAiSettings,
+    pub openai_codex: OpenAiCodexSettings,
     pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettings>,
     pub vercel_ai_gateway: VercelAiGatewaySettings,
     pub x_ai: XAiSettings,
@@ -44,6 +46,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let opencode = language_models.opencode.unwrap();
         let open_router = language_models.open_router.unwrap();
         let openai = language_models.openai.unwrap();
+        let openai_codex = language_models.openai_codex.unwrap();
         let openai_compatible = language_models.openai_compatible.unwrap();
         let vercel_ai_gateway = language_models.vercel_ai_gateway.unwrap();
         let x_ai = language_models.x_ai.unwrap();
@@ -99,6 +102,9 @@ impl settings::Settings for AllLanguageModelSettings {
             openai: OpenAiSettings {
                 api_url: openai.api_url.unwrap(),
                 available_models: openai.available_models.unwrap_or_default(),
+            },
+            openai_codex: OpenAiCodexSettings {
+                available_models: openai_codex.available_models.unwrap_or_default(),
             },
             openai_compatible: openai_compatible
                 .into_iter()

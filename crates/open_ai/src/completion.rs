@@ -212,6 +212,8 @@ pub fn into_open_ai_response(
 
     ResponseRequest {
         model: model_id.into(),
+        store: None,
+        instructions: None,
         input: input_items,
         stream,
         temperature,
@@ -237,6 +239,8 @@ pub fn into_open_ai_response(
             effort,
             summary: Some(crate::responses::ReasoningSummaryMode::Auto),
         }),
+        include: Vec::new(),
+        text: None,
     }
 }
 

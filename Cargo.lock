@@ -11811,6 +11811,7 @@ name = "open_ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "collections",
  "futures 0.3.32",
  "http_client",
@@ -11821,8 +11822,10 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "sha2",
  "strum 0.27.2",
  "thiserror 2.0.17",
+ "url",
 ]
 
 [[package]]

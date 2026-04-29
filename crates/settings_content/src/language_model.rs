@@ -20,6 +20,7 @@ pub struct AllLanguageModelSettingsContent {
     pub opencode: Option<OpenCodeSettingsContent>,
     pub open_router: Option<OpenRouterSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
+    pub openai_codex: Option<OpenAiCodexSettingsContent>,
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
     pub vercel_ai_gateway: Option<VercelAiGatewaySettingsContent>,
     pub x_ai: Option<XAiSettingsContent>,
@@ -242,6 +243,25 @@ pub struct MistralAvailableModel {
 pub struct OpenAiSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenAiAvailableModel>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct OpenAiCodexSettingsContent {
+    pub available_models: Option<Vec<OpenAiCodexAvailableModel>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct OpenAiCodexAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
+    pub reasoning_effort: language_model_core::ReasoningEffort,
+    #[serde(default = "default_true")]
+    pub supports_images: bool,
 }
 
 #[with_fallible_options]

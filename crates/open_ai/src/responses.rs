@@ -9,6 +9,10 @@ use crate::{ReasoningEffort, RequestError, Role, ToolChoice};
 #[derive(Serialize, Debug)]
 pub struct Request {
     pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<ResponseInputItem>,
     #[serde(default)]
@@ -29,6 +33,72 @@ pub struct Request {
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<ReasoningConfig>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<ResponseTextConfig>,
+}
+
+#[derive(Serialize, Debug)]
+struct CodexRequest {
+    model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    store: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instructions: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    input: Vec<ResponseInputItem>,
+    #[serde(default)]
+    stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parallel_tool_calls: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<ToolDefinition>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    prompt_cache_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<ReasoningConfig>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    include: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<ResponseTextConfig>,
+}
+
+impl From<Request> for CodexRequest {
+    fn from(request: Request) -> Self {
+        Self {
+            model: request.model,
+            store: request.store,
+            instructions: request.instructions,
+            input: request.input,
+            stream: request.stream,
+            temperature: request.temperature,
+            parallel_tool_calls: request.parallel_tool_calls,
+            tool_choice: request.tool_choice,
+            tools: request.tools,
+            prompt_cache_key: request.prompt_cache_key,
+            reasoning: request.reasoning,
+            include: request.include,
+            text: request.text,
+        }
+    }
+}
+
+#[derive(Serialize, Debug)]
+pub struct ResponseTextConfig {
+    pub verbosity: ResponseTextVerbosity,
+}
+
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ResponseTextVerbosity {
+    Low,
+    Medium,
+    High,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -333,35 +403,7 @@ pub async fn stream_response(
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         if is_streaming {
-            let reader = BufReader::new(response.into_body());
-            Ok(reader
-                .lines()
-                .filter_map(|line| async move {
-                    match line {
-                        Ok(line) => {
-                            let line = line
-                                .strip_prefix("data: ")
-                                .or_else(|| line.strip_prefix("data:"))?;
-                            if line == "[DONE]" || line.is_empty() {
-                                None
-                            } else {
-                                match serde_json::from_str::<StreamEvent>(line) {
-                                    Ok(event) => Some(Ok(event)),
-                                    Err(error) => {
-                                        log::error!(
-                                            "Failed to parse OpenAI responses stream event: `{}`\nResponse: `{}`",
-                                            error,
-                                            line,
-                                        );
-                                        Some(Err(anyhow!(error)))
-                                    }
-                                }
-                            }
-                        }
-                        Err(error) => Some(Err(anyhow!(error))),
-                    }
-                })
-                .boxed())
+            Ok(stream_events_from_body(response.into_body()))
         } else {
             let mut body = String::new();
             response
@@ -471,5 +513,146 @@ pub async fn stream_response(
             body,
             headers: response.headers().clone(),
         })
+    }
+}
+
+pub async fn stream_codex_response(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    api_url: &str,
+    access_token: &str,
+    account_id: &str,
+    user_agent: &str,
+    request: Request,
+) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
+    let uri = format!("{}/codex/responses", api_url.trim_end_matches('/'));
+    if request.max_output_tokens.is_some() {
+        log::debug!("OpenAI Codex API does not support max_output_tokens; omitting it");
+    }
+    if request.top_p.is_some() {
+        log::debug!("OpenAI Codex API does not support top_p; omitting it");
+    }
+
+    let mut request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .header("Accept", "text/event-stream")
+        .header("OpenAI-Beta", "responses=experimental")
+        .header("Authorization", format!("Bearer {}", access_token.trim()))
+        .header("chatgpt-account-id", account_id)
+        .header("originator", "zed")
+        .header("User-Agent", user_agent);
+
+    if let Some(prompt_cache_key) = request.prompt_cache_key.as_deref() {
+        request_builder = request_builder
+            .header("session_id", prompt_cache_key)
+            .header("x-client-request-id", prompt_cache_key);
+    }
+
+    let is_streaming = request.stream;
+    let request = CodexRequest::from(request);
+    let request = request_builder
+        .body(AsyncBody::from(
+            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
+        ))
+        .map_err(|e| RequestError::Other(e.into()))?;
+
+    let mut response = client.send(request).await?;
+    if response.status().is_success() {
+        if is_streaming {
+            Ok(stream_events_from_body(response.into_body()))
+        } else {
+            Err(RequestError::Other(anyhow!(
+                "{provider_name} only supports streaming responses"
+            )))
+        }
+    } else {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|e| RequestError::Other(e.into()))?;
+
+        Err(RequestError::HttpResponseError {
+            provider: provider_name.to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
+    }
+}
+
+fn stream_events_from_body(body: AsyncBody) -> BoxStream<'static, Result<StreamEvent>> {
+    let reader = BufReader::new(body);
+    reader
+        .lines()
+        .filter_map(|line| async move {
+            match line {
+                Ok(line) => {
+                    let line = line
+                        .strip_prefix("data: ")
+                        .or_else(|| line.strip_prefix("data:"))?;
+                    if line == "[DONE]" || line.is_empty() {
+                        None
+                    } else {
+                        match serde_json::from_str::<StreamEvent>(line) {
+                            Ok(event) => Some(Ok(event)),
+                            Err(error) => {
+                                log::error!(
+                                    "Failed to parse OpenAI responses stream event: `{}`\nResponse: `{}`",
+                                    error,
+                                    line,
+                                );
+                                Some(Err(anyhow!(error)))
+                            }
+                        }
+                    }
+                }
+                Err(error) => Some(Err(anyhow!(error))),
+            }
+        })
+        .boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_request_omits_unsupported_responses_parameters() -> Result<()> {
+        let request = Request {
+            model: "gpt-5-codex".to_string(),
+            store: Some(false),
+            instructions: Some("instructions".to_string()),
+            input: vec![ResponseInputItem::Message(ResponseMessageItem {
+                role: Role::User,
+                content: vec![ResponseInputContent::Text {
+                    text: "prompt".to_string(),
+                }],
+            })],
+            stream: true,
+            temperature: Some(0.1),
+            top_p: Some(0.9),
+            max_output_tokens: Some(128),
+            parallel_tool_calls: Some(true),
+            tool_choice: Some(ToolChoice::Auto),
+            tools: Vec::new(),
+            prompt_cache_key: Some("session-id".to_string()),
+            reasoning: None,
+            include: vec!["reasoning.encrypted_content".to_string()],
+            text: Some(ResponseTextConfig {
+                verbosity: ResponseTextVerbosity::Low,
+            }),
+        };
+
+        let value = serde_json::to_value(CodexRequest::from(request))?;
+
+        assert_eq!(value["model"], "gpt-5-codex");
+        assert_eq!(value["instructions"], "instructions");
+        assert!(value.get("max_output_tokens").is_none());
+        assert!(value.get("top_p").is_none());
+        Ok(())
     }
 }

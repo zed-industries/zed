@@ -25,6 +25,7 @@ use crate::provider::lmstudio::LmStudioLanguageModelProvider;
 pub use crate::provider::mistral::MistralLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
+use crate::provider::open_ai_codex::OpenAiCodexLanguageModelProvider;
 use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
 use crate::provider::open_router::OpenRouterLanguageModelProvider;
 use crate::provider::opencode::OpenCodeLanguageModelProvider;
@@ -243,6 +244,14 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         Arc::new(OpenAiLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
+        cx,
+    );
+    registry.register_provider(
+        Arc::new(OpenAiCodexLanguageModelProvider::new(
             client.http_client(),
             credentials_provider.clone(),
             cx,

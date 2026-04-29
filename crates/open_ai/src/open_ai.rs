@@ -1,4 +1,5 @@
 pub mod batches;
+pub mod codex;
 pub mod completion;
 pub mod responses;
 
@@ -279,6 +280,31 @@ impl Model {
                 ..
             } => !*supports_chat_completions,
             _ => true,
+        }
+    }
+
+    pub fn supports_images(&self) -> bool {
+        match self {
+            Self::FourOmniMini
+            | Self::FourPointOneNano
+            | Self::Five
+            | Self::FiveCodex
+            | Self::FiveMini
+            | Self::FiveNano
+            | Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::FivePointTwoCodex
+            | Self::FivePointThreeCodex
+            | Self::FivePointFour
+            | Self::FivePointFourPro
+            | Self::FivePointFive
+            | Self::FivePointFivePro
+            | Self::O1
+            | Self::O3 => true,
+            Self::ThreePointFiveTurbo | Self::Four | Self::FourTurbo | Self::O3Mini => false,
+            Self::Custom {
+                supports_images, ..
+            } => *supports_images,
         }
     }
 
