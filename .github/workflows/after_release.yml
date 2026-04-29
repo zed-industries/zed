@@ -38,7 +38,7 @@ jobs:
       env:
         VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
   deploy_docs:
-    if: github.repository_owner == 'zed-industries'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     permissions:
       contents: read
     uses: zed-industries/zed/.github/workflows/deploy_docs.yml@main

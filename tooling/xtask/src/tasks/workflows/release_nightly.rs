@@ -1,5 +1,4 @@
 use crate::tasks::workflows::{
-    deploy_docs::deploy_docs_workflow_call,
     nix_build::build_nix,
     release::{
         ReleaseBundleJobs, create_sentry_release, download_workflow_artifacts, notify_on_failure,
@@ -20,7 +19,6 @@ pub fn release_nightly() -> Workflow {
     // run only on windows as that's our fastest platform right now.
     let tests = run_platform_tests_no_filter(Platform::Windows);
     let clippy_job = clippy(Platform::Windows, None);
-    let deploy_docs = deploy_docs_workflow_call("nightly", "${{ github.sha }}");
     let nightly = Some(ReleaseChannel::Nightly);
 
     let bundle = ReleaseBundleJobs {
@@ -59,7 +57,6 @@ pub fn release_nightly() -> Workflow {
         .add_job(style.name, style.job)
         .add_job(tests.name, tests.job)
         .add_job(clippy_job.name, clippy_job.job)
-        .add_job(deploy_docs.name, deploy_docs.job)
         .map(|mut workflow| {
             for job in bundle.into_jobs() {
                 workflow = workflow.add_job(job.name, job.job);

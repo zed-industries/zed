@@ -93,18 +93,6 @@ jobs:
       run: if ($env:RUSTC_WRAPPER) { & $env:RUSTC_WRAPPER --show-stats }; exit 0
       shell: pwsh
     timeout-minutes: 60
-  deploy_docs:
-    if: github.repository_owner == 'zed-industries'
-    permissions:
-      contents: read
-    uses: zed-industries/zed/.github/workflows/deploy_docs.yml@main
-    secrets:
-      DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-    with:
-      channel: nightly
-      checkout_ref: ${{ github.sha }}
   bundle_linux_aarch64:
     needs:
     - check_style

@@ -1,11 +1,11 @@
 use gh_workflow::{
-    Event, Expression, Input, Job, Level, Permissions, Run, Step, Use, UsesJob, Workflow,
+    Event, Expression, Input, Job, Level, Permissions, Push, Run, Step, Use, UsesJob, Workflow,
     WorkflowCall, WorkflowCallSecret, WorkflowDispatch,
 };
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, FluentBuilder as _, NamedJob, named, release_job},
+    steps::{self, CommonJobConditions, FluentBuilder as _, NamedJob, named, release_job},
     vars::{self, StepOutput, WorkflowInput},
 };
 
@@ -254,9 +254,7 @@ pub(crate) fn deploy_docs_workflow_call(
     checkout_ref: impl Into<String>,
 ) -> NamedJob<UsesJob> {
     let job = Job::default()
-        .cond(Expression::new(
-            "github.repository_owner == 'zed-industries'",
-        ))
+        .with_repository_owner_guard()
         .permissions(Permissions::default().contents(Level::Read))
         .uses(
             "zed-industries",
@@ -349,5 +347,14 @@ pub(crate) fn deploy_docs() -> Workflow {
                     ]),
             ),
         )
+        .add_job(deploy_docs.name, deploy_docs.job)
+}
+
+pub(crate) fn deploy_nightly_docs() -> Workflow {
+    let deploy_docs = deploy_docs_workflow_call("nightly", "${{ github.sha }}");
+
+    named::workflow()
+        .name("deploy_nightly_docs")
+        .add_event(Event::default().push(Push::default().add_branch("main")))
         .add_job(deploy_docs.name, deploy_docs.job)
 }
