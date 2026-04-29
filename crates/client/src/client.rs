@@ -1809,7 +1809,7 @@ impl ProtoClient for Client {
             );
             let response = response?.await;
             log::debug!(
-                "rpc stream request finish. client_id:{}. name:{}",
+                "rpc stream request opened. client_id:{}. name:{}",
                 client_id,
                 request_type
             );

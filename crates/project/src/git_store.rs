@@ -5002,7 +5002,7 @@ impl Repository {
                         .log_err();
                 }
                 Ok(RepositoryState::Remote(RemoteRepositoryState { client, project_id })) => {
-                    let mut stream = match client
+                    match client
                         .request_stream(proto::SearchCommits {
                             project_id: project_id.to_proto(),
                             repository_id: repository_id.to_proto(),
@@ -5012,32 +5012,27 @@ impl Repository {
                         })
                         .await
                     {
-                        Ok(stream) => stream,
+                        Ok(mut stream) => {
+                            while let Some(response) = stream.next().await {
+                                let response = match response {
+                                    Ok(response) => response,
+                                    Err(error) => {
+                                        log::error!(
+                                            "failed to receive remote commit search results: {error:?}"
+                                        );
+                                        return;
+                                    }
+                                };
+
+                                for sha in response.shas.iter().filter_map(|sha| Oid::from_str(sha).ok()) {
+                                    if request_tx.send(sha).await.is_err() {
+                                        return;
+                                    }
+                                }
+                            }
+                        }
                         Err(error) => {
                             log::error!("failed to search commits remotely: {error:?}");
-                            return;
-                        }
-                    };
-
-                    while let Some(response) = stream.next().await {
-                        let response = match response {
-                            Ok(response) => response,
-                            Err(error) => {
-                                log::error!(
-                                    "failed to receive remote commit search results: {error:?}"
-                                );
-                                return;
-                            }
-                        };
-
-                        for sha in response.shas {
-                            let Ok(sha) = Oid::from_str(&sha) else {
-                                continue;
-                            };
-
-                            if request_tx.send(sha).await.is_err() {
-                                return;
-                            }
                         }
                     }
                 }
