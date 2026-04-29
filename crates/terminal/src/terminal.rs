@@ -3342,8 +3342,9 @@ mod tests {
         use crate::*;
         use alacritty_terminal::index::{Line, Point as AlacPoint};
         use gpui::{
-            Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-            Point, TestAppContext, VisualContext, bounds, point, size,
+            Context, Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+            Pixels, Point, Subscription, TestAppContext, VisualContext, VisualTestContext, bounds,
+            point, size,
         };
         use util::default;
 
@@ -3521,13 +3522,12 @@ mod tests {
 
         impl WithLineAndId for HoveredWord {
             fn with_line(&self, line: i32) -> Self {
-                (
+                Self::from((
                     self.word.clone(),
                     (line, self.word_match.start().column.0)
                         ..=(line, self.word_match.end().column.0),
                     self.id,
-                )
-                    .into()
+                ))
             }
 
             fn with_id(&self, id: usize) -> Self {
@@ -3539,13 +3539,12 @@ mod tests {
             }
 
             fn with_line_and_id(&self, line: i32, id: usize) -> Self {
-                (
+                Self::from((
                     self.word.clone(),
                     (line, self.word_match.start().column.0)
                         ..=(line, self.word_match.end().column.0),
                     id,
-                )
-                    .into()
+                ))
             }
         }
 
@@ -3620,56 +3619,40 @@ mod tests {
                 );
             }
 
-            fn ctrl_mouse_move_to_and_sync(&mut self, position: Point<Pixels>) {
-                self.unthrottle();
+            fn ctrl_mouse_move_to(&mut self, position: Point<Pixels>) {
                 let modifiers = Modifiers::secondary_key();
                 let move_event = MouseMoveEvent {
                     position,
                     modifiers,
                     ..default()
                 };
-                let original_modifiers = self.window.modifiers();
-                self.window.set_modifiers(modifiers);
                 self.window.simulate_mouse_move(position, self.cx);
+                self.unthrottle();
                 self.terminal.mouse_move(&move_event, self.cx);
-                self.window.set_modifiers(original_modifiers);
-                self.sync();
             }
 
-            fn try_modifiers_change_and_sync(&mut self, modifiers: Modifiers) {
-                self.unthrottle();
+            fn try_modifiers_change(&mut self, modifiers: Modifiers) {
                 self.window.set_modifiers(modifiers);
+                self.unthrottle();
                 self.terminal
                     .try_modifiers_change(&modifiers, self.window, self.cx);
-                self.sync();
             }
 
-            fn write_output_lines_and_sync(&mut self, output: &str, repeat: usize) {
+            fn write_output_lines(&mut self, output: &str, repeat: usize) {
                 for _ in 0..repeat {
                     self.terminal.write_output(output.as_bytes(), self.cx);
                     self.terminal.write_output(b"\n", self.cx);
                 }
-                self.sync();
             }
 
             fn scroll_up_by_and_sync(&mut self, lines: usize) {
-                self.unthrottle();
                 self.terminal.scroll_up_by(lines);
                 self.sync();
             }
 
             fn set_size_and_sync(&mut self, new_bounds: TerminalBounds) {
-                self.unthrottle();
                 self.terminal.set_size(new_bounds);
                 self.sync();
-            }
-
-            fn set_secondary(&mut self) {
-                self.window.set_modifiers(Modifiers::secondary_key());
-            }
-
-            fn clear_secondary(&mut self) {
-                self.window.set_modifiers(default());
             }
 
             fn sync(&mut self) {
@@ -3683,6 +3666,142 @@ mod tests {
             }
         }
 
+        struct TestView {
+            wakeups: usize,
+            notifies: usize,
+            _terminal_subscriptions: Vec<Subscription>,
+        }
+
+        impl TestView {
+            fn new(
+                terminal: &Entity<Terminal>,
+                window: &mut Window,
+                cx: &mut Context<Self>,
+            ) -> Self {
+                Self {
+                    wakeups: 0,
+                    notifies: 0,
+                    _terminal_subscriptions: Self::subscribe_for_terminal_events(
+                        terminal, window, cx,
+                    ),
+                }
+            }
+
+            fn subscribe_for_terminal_events(
+                terminal: &Entity<Terminal>,
+                window: &mut Window,
+                cx: &mut Context<TestView>,
+            ) -> Vec<Subscription> {
+                let terminal_subscription =
+                    cx.observe_in(terminal, window, |test_view, terminal, window, cx| {
+                        test_view.notifies += 1;
+                        cx.update_entity(&terminal, |terminal, cx| {
+                            terminal.suppress_hyperlink_throttle_once = true;
+                            terminal.sync(window, cx)
+                        })
+                    });
+                let terminal_events_subscription = cx.subscribe_in(
+                    terminal,
+                    window,
+                    |test_view, terminal, event, window, cx| match event {
+                        Event::Wakeup => {
+                            test_view.wakeups += 1;
+                            cx.update_entity(terminal, |terminal, cx| {
+                                terminal.suppress_hyperlink_throttle_once = true;
+                                terminal.sync(window, cx)
+                            })
+                        }
+                        _ => {}
+                    },
+                );
+                vec![terminal_subscription, terminal_events_subscription]
+            }
+        }
+
+        fn set_window_secondary_key(window: &mut Window) {
+            window.set_modifiers(Modifiers::secondary_key());
+        }
+
+        fn clear_window_secondary_key(window: &mut Window) {
+            window.set_modifiers(default());
+        }
+
+        struct Wakeups(usize);
+        struct Notifies(usize);
+        struct Expected(Wakeups, Notifies);
+
+        #[track_caller]
+        fn assert_wakeups_and_notifies(
+            Expected(Wakeups(wakeups), Notifies(notifies)): Expected,
+            test_view: &Entity<TestView>,
+            cx: &mut VisualTestContext,
+        ) {
+            let (actual_wakeups, actual_notifies) = cx.update_entity(&test_view, |test_view, _| {
+                (
+                    std::mem::take(&mut test_view.wakeups),
+                    std::mem::take(&mut test_view.notifies),
+                )
+            });
+            assert_eq!(actual_wakeups, wakeups, "Mismatched wakeups");
+            assert_eq!(actual_notifies, notifies, "Mismatced notifies");
+        }
+
+        struct TestEntities {
+            terminal: Entity<Terminal>,
+            test_view: Entity<TestView>,
+        }
+
+        impl TestEntities {
+            fn new(terminal: &Entity<Terminal>, test_view: &Entity<TestView>) -> Self {
+                Self {
+                    terminal: terminal.clone(),
+                    test_view: test_view.clone(),
+                }
+            }
+        }
+
+        #[track_caller]
+        fn update_test_entities(
+            TestEntities {
+                terminal,
+                test_view,
+            }: &TestEntities,
+            cx: &mut VisualTestContext,
+            update: impl FnOnce(&mut HyperlinkVisualTestContext) -> Option<Expected>,
+        ) {
+            if let Some(expected) = cx.update_window_entity(terminal, |terminal, window, cx| {
+                update(&mut HyperlinkVisualTestContext::new(terminal, window, cx))
+            }) {
+                assert_wakeups_and_notifies(expected, test_view, cx)
+            }
+        }
+
+        async fn init_ctrl_hover_hyperlink_test_with_window<'a>(
+            cx: &'a mut TestAppContext,
+        ) -> (TestEntities, HoveredWord, &'a mut VisualTestContext) {
+            let (terminal, cx) = init_terminal_test_with_window(cx, b"").await;
+            let test_view = cx.new_window_entity(|window, cx| TestView::new(&terminal, window, cx));
+            let test_entities = TestEntities::new(&terminal, &test_view);
+            let expected_hovered_word: HoveredWord = (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
+            update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
+                // Set initial expected hovered word
+                cx.write_output_lines(OUTPUT_ZED_DEV, 1);
+                Some(Expected(Wakeups(2), Notifies(0)))
+            });
+            update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
+                cx.assert_display_offset(0);
+                cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV]);
+                set_window_secondary_key(cx.window);
+                cx.ctrl_mouse_move_to(ZED_DEV_PT);
+                Some(Expected(Wakeups(0), Notifies(2)))
+            });
+            update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
+                cx.assert_hovered_word(Some(&expected_hovered_word));
+                None
+            });
+            (test_entities, expected_hovered_word, cx)
+        }
+
         const OUTPUT_ZED_DEV: &str = "Visit https://zed.dev/ for more";
         const OUTPUT_NONE: &str = "None";
         const ZED_DEV_STR: &str = "https://zed.dev/";
@@ -3690,29 +3809,21 @@ mod tests {
 
         #[gpui::test]
         async fn test_ctrl_hover_with_changing_content(cx: &mut TestAppContext) {
-            let (terminal, cx) = init_terminal_test_with_window(cx, b"").await;
-            cx.update_window_entity(&terminal, |terminal, window, cx| {
-                let mut cx = HyperlinkVisualTestContext::new(terminal, window, cx);
-
-                // Set initial expected hovered word
-                let mut expected_hovered_word: HoveredWord =
-                    (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
-                cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
-                cx.assert_display_offset(0);
-                cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV]);
-                cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
-                cx.assert_hovered_word(Some(&expected_hovered_word));
-
-                // Existing hovered_word IS reused when viewport is static
-                cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
+            let (test_entities, mut expected_hovered_word, cx) =
+                init_ctrl_hover_hyperlink_test_with_window(cx).await;
+            update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
+                cx.write_output_lines(OUTPUT_ZED_DEV, 1);
+                Some(Expected(Wakeups(2), Notifies(0)))
+            });
+            update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
                 cx.assert_display_offset(0);
                 cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV, OUTPUT_ZED_DEV]);
+                // Existing hovered_word IS reused when viewport is static
                 cx.assert_hovered_word(Some(&expected_hovered_word));
-
-                // Existing hovered_word IS NOT reused when viewport is changing (total lines changed,
-                // but display offset did not have a corresponding change)
-                cx.set_secondary();
-                cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 8);
+                cx.write_output_lines(OUTPUT_ZED_DEV, 8);
+                // Explicitly sync here, because the next sync will emit a wake up, which will
+                // trigger another sync, and we need to check in-between them.
+                cx.sync();
                 cx.assert_display_offset(0);
                 cx.assert_visible_lines_match(vec![
                     OUTPUT_ZED_DEV,
@@ -3721,40 +3832,59 @@ mod tests {
                     OUTPUT_ZED_DEV,
                     OUTPUT_ZED_DEV,
                 ]);
+                // Existing hovered_word IS NOT reused when viewport is changing (total lines changed,
+                // but display offset did not have a corresponding change)
                 cx.assert_hovered_word(None);
-                cx.clear_secondary();
-
+                Some(Expected(Wakeups(17), Notifies(1)))
+            });
+            update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
+                clear_window_secondary_key(cx.window);
                 // ...AND new hovered_word is set if secondary was held.
-                cx.sync();
                 expected_hovered_word = expected_hovered_word.with_id(expected_hovered_word.id + 1);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
-
-                // And just for good measure
+                set_window_secondary_key(cx.window);
                 for _ in 0..5 {
-                    cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
-                    cx.write_output_lines_and_sync(OUTPUT_NONE, 1);
+                    cx.write_output_lines(OUTPUT_ZED_DEV, 1);
+                    cx.write_output_lines(OUTPUT_NONE, 1);
                 }
-                cx.assert_hovered_word(None);
-
-                cx.set_secondary();
-                for _ in 0..5 {
-                    cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
+                Some(Expected(Wakeups(21), Notifies(1)))
+            });
+            for _ in 0..5 {
+                update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
+                    // Should not have a hovered word from previous iteration
                     cx.assert_hovered_word(None);
+                    cx.write_output_lines(OUTPUT_ZED_DEV, 1);
+                    // Explicitly sync here, because the next sync will emit a wake up, which will
+                    // trigger another sync, and we need to check in-between them.
                     cx.sync();
+                    cx.assert_hovered_word(None);
+                    None
+                });
+                update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
                     expected_hovered_word =
                         expected_hovered_word.with_id(expected_hovered_word.id + 1);
                     cx.assert_hovered_word(Some(&expected_hovered_word));
-
-                    cx.write_output_lines_and_sync(OUTPUT_NONE, 1);
-                    cx.assert_hovered_word(None);
+                    cx.write_output_lines(OUTPUT_NONE, 1);
+                    // Explicitly sync here, because the next sync will emit a wake up, which will
+                    // trigger another sync, and we need to check in-between them.
                     cx.sync();
                     cx.assert_hovered_word(None);
-                }
-                cx.clear_secondary();
-
-                // Existing hovered word IS NOT reused when scrolling
+                    None
+                });
+            }
+            assert_wakeups_and_notifies(
+                Expected(Wakeups(30), Notifies(10)),
+                &test_entities.test_view,
+                cx,
+            );
+            update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
                 cx.scroll_up_by_and_sync(3);
-                cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
+                // Existing hovered word IS NOT reused when scrolling
+                cx.assert_hovered_word(None);
+                cx.ctrl_mouse_move_to(ZED_DEV_PT);
+                Some(Expected(Wakeups(0), Notifies(2)))
+            });
+            update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
                 cx.assert_display_offset(3);
                 cx.assert_visible_lines_match(vec![
                     OUTPUT_ZED_DEV,
@@ -3764,12 +3894,17 @@ mod tests {
                     OUTPUT_ZED_DEV,
                     OUTPUT_NONE,
                 ]);
+                Some(Expected(Wakeups(0), Notifies(0)))
+            });
+            update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
+                // Existing hovered word IS NOT reused when scrolling
                 expected_hovered_word =
-                    expected_hovered_word.with_line_and_id(-3, expected_hovered_word.id + 1);
+                    expected_hovered_word.with_line_and_id(-3, expected_hovered_word.id + 2);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
-
-                // Existing hovered word IS reused when total lines changed, but visible lines unchanged
-                cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 2);
+                cx.write_output_lines(OUTPUT_ZED_DEV, 2);
+                Some(Expected(Wakeups(4), Notifies(0)))
+            });
+            update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
                 cx.assert_display_offset(5);
                 cx.assert_visible_lines_match(vec![
                     OUTPUT_ZED_DEV,
@@ -3779,28 +3914,18 @@ mod tests {
                     OUTPUT_ZED_DEV,
                     OUTPUT_NONE,
                 ]);
+                // Existing hovered word IS reused when total lines changed, but visible lines unchanged
                 expected_hovered_word = expected_hovered_word.with_line(-5);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
+                Some(Expected(Wakeups(0), Notifies(0)))
             });
         }
 
         #[gpui::test]
         async fn test_ctrl_hover_with_changing_bounds(cx: &mut TestAppContext) {
-            let (terminal, cx) = init_terminal_test_with_window(cx, b"").await;
-            cx.update_window_entity(&terminal, |terminal, window, cx| {
-                let mut cx = HyperlinkVisualTestContext::new(terminal, window, cx);
-
-                // Set initial expected hovered word
-                let mut expected_hovered_word: HoveredWord =
-                    (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
-                cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
-                cx.assert_display_offset(0);
-                cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV]);
-                cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
-                cx.assert_hovered_word(Some(&expected_hovered_word));
-
-                // Existing hovered word IS NOT reused when bounds change
-                cx.set_secondary();
+            let (test_entities, mut expected_hovered_word, cx) =
+                init_ctrl_hover_hyperlink_test_with_window(cx).await;
+            update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
                 cx.set_size_and_sync(TerminalBounds::new(
                     px(5.0),
                     px(5.0),
@@ -3814,43 +3939,43 @@ mod tests {
                 ));
                 cx.assert_display_offset(0);
                 cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV]);
+                // Existing hovered word IS NOT reused when bounds change
                 cx.assert_hovered_word(None);
-                cx.clear_secondary();
-
+                Some(Expected(Wakeups(1), Notifies(2)))
+            });
+            update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
+                clear_window_secondary_key(cx.window);
                 // ...AND new hovered_word is set if secondary was held.
-                cx.sync();
                 expected_hovered_word = expected_hovered_word.with_id(expected_hovered_word.id + 1);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
+                None
             });
         }
 
         #[gpui::test]
         async fn test_ctrl_hover_with_modifier_change_only(cx: &mut TestAppContext) {
-            let (terminal, cx) = init_terminal_test_with_window(cx, b"").await;
-            cx.update_window_entity(&terminal, |terminal, window, cx| {
-                let mut cx = HyperlinkVisualTestContext::new(terminal, window, cx);
-
-                // Set initial expected hovered word
-                let mut expected_hovered_word: HoveredWord =
-                    (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
-                cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
-                cx.assert_display_offset(0);
-                cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV]);
-                cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
-                cx.assert_hovered_word(Some(&expected_hovered_word));
-
-                for _ in 0..10 {
+            let (test_entities, mut expected_hovered_word, cx) =
+                init_ctrl_hover_hyperlink_test_with_window(cx).await;
+            for _ in 0..10 {
+                update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
+                    cx.try_modifiers_change(default());
+                    Some(Expected(Wakeups(0), Notifies(0)))
+                });
+                update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
                     // Existing hovered_word cleared when secondary not held
-                    cx.try_modifiers_change_and_sync(default());
                     cx.assert_hovered_word(None);
 
-                    // hovered_word set when secondary is held
-                    cx.try_modifiers_change_and_sync(Modifiers::secondary_key());
+                    cx.try_modifiers_change(Modifiers::secondary_key());
+                    Some(Expected(Wakeups(0), Notifies(2)))
+                });
+                update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
                     expected_hovered_word =
                         expected_hovered_word.with_id(expected_hovered_word.id + 1);
+                    // hovered_word set when secondary is held
                     cx.assert_hovered_word(Some(&expected_hovered_word));
-                }
-            });
+                    None
+                });
+            }
         }
     }
 
