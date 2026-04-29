@@ -7079,7 +7079,7 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn branch_picker_section() -> [SettingsPageItem; 2] {
+    fn branch_picker_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Branch Picker"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7103,6 +7103,32 @@ fn version_control_page() -> SettingsPage {
                             .branch_picker
                             .get_or_insert_default()
                             .show_author_name = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Force Delete",
+                description: "Use force delete ('-D') instead of safe delete ('-d') when deleting branches in the branch picker.",
+                field: Box::new(SettingField {
+                    json_path: Some("git.branch_picker.force_delete"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .branch_picker
+                            .as_ref()?
+                            .force_delete
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .branch_picker
+                            .get_or_insert_default()
+                            .force_delete = value;
                     },
                 }),
                 metadata: None,

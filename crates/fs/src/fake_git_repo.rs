@@ -60,6 +60,7 @@ pub struct FakeGitRepositoryState {
     pub blames: HashMap<RepoPath, Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
+    pub unmerged_branches: HashSet<String>,
     /// List of remotes, keys are names and values are URLs
     pub remotes: HashMap<String, String>,
     pub simulated_index_write_error_message: Option<String>,
@@ -80,6 +81,7 @@ impl FakeGitRepositoryState {
             blames: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
+            unmerged_branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
             simulated_create_worktree_error: Default::default(),
             simulated_graph_error: None,
@@ -882,10 +884,13 @@ impl GitRepository for FakeGitRepository {
     fn delete_branch(
         &self,
         _is_remote: bool,
-        _force: bool,
+        force: bool,
         name: String,
     ) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
+            if !force && state.unmerged_branches.contains(&name) {
+                bail!("error: The branch '{name}' is not fully merged");
+            }
             if !state.branches.remove(&name) {
                 bail!("no such branch: {name}");
             }

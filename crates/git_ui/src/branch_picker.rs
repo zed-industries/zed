@@ -1377,7 +1377,7 @@ mod tests {
     use project::{FakeFs, Project};
     use rand::{Rng, rngs::StdRng};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{BranchPickerSettingsContent, GitSettings, SettingsStore};
     use util::path;
     use workspace::MultiWorkspace;
 
@@ -1725,6 +1725,143 @@ mod tests {
                 assert_eq!(branches, expected_branches);
             })
         });
+    }
+
+    #[gpui::test]
+    async fn test_force_delete_unmerged_branch(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                ".git": {},
+                "file.txt": "buffer_text".to_string()
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            path!("/dir/.git").as_ref(),
+            &[("file.txt", "test".to_string())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/dir/.git").as_ref(),
+            &[("file.txt", "index_text".to_string())],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let repository = cx
+            .read(|cx| project.read(cx).active_repository(cx))
+            .unwrap();
+
+        let branches = create_test_branches();
+        let branch_names = branches
+            .iter()
+            .map(|branch| branch.name().to_string())
+            .collect::<Vec<String>>();
+        let repo = repository.clone();
+        cx.spawn(async move |mut cx| {
+            for branch in branch_names {
+                repo.update(&mut cx, |repo, _| repo.create_branch(branch, None))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            }
+        })
+        .await;
+        cx.run_until_parked();
+
+        let branch_to_delete = "feature-auth".to_string();
+        fs.with_git_state(path!("/dir/.git").as_ref(), false, |state| {
+            state.unmerged_branches.insert(branch_to_delete.clone());
+        })
+        .unwrap();
+
+        let (branch_list, mut ctx) =
+            init_branch_list_test(repository.into(), branches, cx).await;
+        let cx = &mut ctx;
+
+        update_branch_list_matches_with_empty_query(&branch_list, cx).await;
+
+        let branch_idx = branch_list.update(cx, |branch_list, cx| {
+            branch_list.picker.update(cx, |picker, _cx| {
+                picker
+                    .delegate
+                    .matches
+                    .iter()
+                    .position(|e| e.name() == branch_to_delete)
+                    .unwrap()
+            })
+        });
+
+        // Attempt delete without force — should be refused because branch is unmerged
+        branch_list.update_in(cx, |branch_list, window, cx| {
+            branch_list.picker.update(cx, |picker, cx| {
+                picker.delegate.delete_at(branch_idx, window, cx);
+            })
+        });
+        cx.run_until_parked();
+
+        let repo_branches: Vec<_> = branch_list
+            .update(cx, |branch_list, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .repo
+                        .as_ref()
+                        .unwrap()
+                        .update(cx, |repo, _cx| repo.branches())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            repo_branches.iter().any(|b| b.name() == branch_to_delete),
+            "branch should still exist after attempted delete without force"
+        );
+
+        // Enable force_delete and try again — should succeed
+        cx.update(|_window, cx| {
+            cx.update_global::<SettingsStore, _>(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git = Some(GitSettings {
+                        branch_picker: Some(BranchPickerSettingsContent {
+                            force_delete: Some(true),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                });
+            });
+        });
+
+        branch_list.update_in(cx, |branch_list, window, cx| {
+            branch_list.picker.update(cx, |picker, cx| {
+                picker.delegate.delete_at(branch_idx, window, cx);
+            })
+        });
+        cx.run_until_parked();
+
+        let repo_branches: Vec<_> = branch_list
+            .update(cx, |branch_list, cx| {
+                branch_list.picker.update(cx, |picker, cx| {
+                    picker
+                        .delegate
+                        .repo
+                        .as_ref()
+                        .unwrap()
+                        .update(cx, |repo, _cx| repo.branches())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !repo_branches.iter().any(|b| b.name() == branch_to_delete),
+            "branch should be deleted after force delete"
+        );
     }
 
     #[gpui::test]
