@@ -1,17 +1,9 @@
 # GPUI Examples
 
-The examples in `crates/gpui/examples` are the quickest way to see GPUI concepts
-in working code. Run them from the Zed repository root:
+Examples can be run from the Zed repository root:
 
 ```sh
 cargo run -p gpui --example hello_world
-```
-
-Some examples use nested source files and assets. They still run by example name:
-
-```sh
-cargo run -p gpui --example image
-cargo run -p gpui --example svg
 ```
 
 ## Where to start
