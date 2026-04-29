@@ -129,6 +129,7 @@ def parse_submission(submission, questions, field_titles):
             elif "email" in question_title:
                 email = str(answer).strip().lower()
             elif "area" in question_title:
+                print(f"  Raw area answer: {answer!r}")
                 for item in answer if isinstance(answer, list) else [answer]:
                     area = field_titles.get(item, item).strip()
                     if area:
