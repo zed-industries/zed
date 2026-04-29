@@ -4173,3 +4173,183 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
         }
     }
 }
+
+#[gpui::test]
+async fn test_jsdoc_injection_preserved_during_async_reparse(cx: &mut gpui::TestAppContext) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+
+    let javascript = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "JavaScript".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["js".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        )
+        .with_injection_query(
+            r#"
+            ((comment) @injection.content
+              (#set! injection.language "comment"))
+
+            (((comment) @_jsdoc_comment
+              (#match? @_jsdoc_comment "(?s)^/[*][*][^*].*[*]/$")) @injection.content
+              (#set! injection.language "jsdoc"))
+            "#,
+        )
+        .expect("Could not parse JavaScript injection query"),
+    );
+
+    let jsdoc = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "JSDoc".into(),
+                grammar: Some("jsdoc".into()),
+                hidden: true,
+                ..Default::default()
+            },
+            Some(tree_sitter_jsdoc::LANGUAGE.into()),
+        )
+        .with_highlights_query("(tag_name) @keyword.jsdoc")
+        .expect("Could not parse JSDoc highlights query"),
+    );
+
+    registry.add(javascript.clone());
+    registry.add(jsdoc);
+
+    let source = r#"
+        /**
+         * Validates input data.
+         * @param {string} name - The name
+         * @param {number} age - The age
+         * @returns {boolean} Whether valid
+         */
+        function validate(name, age) {
+            return name.length > 0 && age > 0;
+        }
+    "#
+    .unindent();
+
+    let buffer = cx.new(|cx| {
+        let buf = Buffer::local(&source, cx);
+        buf.set_language_registry(registry.clone());
+        buf.with_language(javascript.clone(), cx)
+    });
+
+    cx.executor().run_until_parked();
+
+    let has_jsdoc = |buffer: &Entity<Buffer>, cx: &mut TestAppContext| -> bool {
+        buffer.read_with(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot
+                .syntax_layers()
+                .any(|layer| layer.language.name().as_ref() == "JSDoc")
+        })
+    };
+
+    assert!(
+        has_jsdoc(&buffer, cx),
+        "Expected JSDoc injection layer after initial parse"
+    );
+
+    // Force all subsequent parses through the async path
+    buffer.update(cx, |buffer, _| buffer.set_sync_parse_timeout(None));
+
+    // Single edit inside the comment
+    buffer.update(cx, |buf, cx| {
+        let offset = buf.text().find("The name").expect("text not found");
+        buf.edit([(offset..offset + "The name".len(), "A person's name")], None, cx);
+    });
+    cx.executor().run_until_parked();
+    assert!(
+        has_jsdoc(&buffer, cx),
+        "JSDoc layer lost after single async edit inside comment"
+    );
+
+    // Multiple rapid edits without waiting (exercises reparse.is_some() early return)
+    buffer.update(cx, |buf, cx| {
+        let offset = buf.text().find("The age").expect("text not found");
+        buf.edit([(offset..offset + "The age".len(), "User age value")], None, cx);
+    });
+    buffer.update(cx, |buf, cx| {
+        let offset = buf.text().find("Whether valid").expect("text not found");
+        buf.edit(
+            [(offset..offset + "Whether valid".len(), "True if valid input")],
+            None,
+            cx,
+        );
+    });
+    buffer.update(cx, |buf, cx| {
+        let offset = buf.text().find("Validates input").expect("text not found");
+        buf.edit(
+            [(offset..offset + "Validates input".len(), "Checks input")],
+            None,
+            cx,
+        );
+    });
+    cx.executor().run_until_parked();
+    assert!(
+        has_jsdoc(&buffer, cx),
+        "JSDoc layer lost after multiple rapid async edits inside comment"
+    );
+
+    // Edit before the comment (triggers tree-zeroing in interpolate)
+    buffer.update(cx, |buf, cx| {
+        buf.edit([(0..0, "// header comment\n")], None, cx);
+    });
+    cx.executor().run_until_parked();
+    assert!(
+        has_jsdoc(&buffer, cx),
+        "JSDoc layer lost after edit before the comment"
+    );
+
+    // Mix of edits inside and outside the comment
+    buffer.update(cx, |buf, cx| {
+        let offset = buf.text().find("Checks input").expect("text not found");
+        buf.edit(
+            [(offset..offset + "Checks input".len(), "Validates all input")],
+            None,
+            cx,
+        );
+    });
+    buffer.update(cx, |buf, cx| {
+        let text = buf.text().to_string();
+        let end = text.len();
+        buf.edit([(end..end, "\n// trailing comment\n")], None, cx);
+    });
+    cx.executor().run_until_parked();
+    assert!(
+        has_jsdoc(&buffer, cx),
+        "JSDoc layer lost after mixed edits inside and outside comment"
+    );
+
+    // Verify layer count matches a fresh parse
+    let jsdoc_layer_count = |buffer: &Entity<Buffer>, cx: &mut TestAppContext| -> usize {
+        buffer.read_with(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot
+                .syntax_layers()
+                .filter(|layer| layer.language.name().as_ref() == "JSDoc")
+                .count()
+        })
+    };
+
+    let incremental_count = jsdoc_layer_count(&buffer, cx);
+
+    let fresh_text = buffer.read_with(cx, |buf, _| buf.text().to_string());
+    let fresh_buffer = cx.new(|cx| {
+        let buf = Buffer::local(&fresh_text, cx);
+        buf.set_language_registry(registry.clone());
+        buf.with_language(javascript.clone(), cx)
+    });
+    cx.executor().run_until_parked();
+
+    let fresh_count = jsdoc_layer_count(&fresh_buffer, cx);
+    assert_eq!(
+        incremental_count, fresh_count,
+        "Incremental parse has {incremental_count} JSDoc layers but fresh parse has {fresh_count}"
+    );
+}

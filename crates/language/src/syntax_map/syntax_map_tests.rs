@@ -934,6 +934,315 @@ fn test_comment_triggered_injection_toggle(cx: &mut App) {
     );
 }
 
+fn javascript_lang(include_comment_pattern: bool) -> Language {
+    let injection_query = if include_comment_pattern {
+        r#"
+        ((comment) @injection.content
+          (#set! injection.language "comment"))
+
+        (((comment) @_jsdoc_comment
+          (#match? @_jsdoc_comment "(?s)^/[*][*][^*].*[*]/$")) @injection.content
+          (#set! injection.language "jsdoc"))
+        "#
+    } else {
+        r#"
+        (((comment) @_jsdoc_comment
+          (#match? @_jsdoc_comment "(?s)^/[*][*][^*].*[*]/$")) @injection.content
+          (#set! injection.language "jsdoc"))
+        "#
+    };
+
+    Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["js".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    )
+    .with_injection_query(injection_query)
+    .expect("Could not parse JavaScript injection query")
+}
+
+fn jsdoc_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "JSDoc".into(),
+            grammar: Some("jsdoc".into()),
+            hidden: true,
+            ..Default::default()
+        },
+        Some(tree_sitter_jsdoc::LANGUAGE.into()),
+    )
+    .with_highlights_query("(tag_name) @keyword.jsdoc")
+    .expect("Could not parse JSDoc highlights query")
+}
+
+#[gpui::test]
+fn test_jsdoc_injection_preserved_after_edit_deep_in_comment(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let javascript = Arc::new(javascript_lang(false));
+    registry.add(javascript.clone());
+    registry.add(Arc::new(jsdoc_lang()));
+
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "
+            /**
+             * First line of docs
+             * @param {string} name - The name
+             * @param {number} age - The age
+             * @returns {boolean} Whether valid
+             */
+            function validate(name, age) {}
+        "
+        .unindent(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(javascript.clone(), &buffer);
+
+    let has_jsdoc_layer = |syntax_map: &SyntaxMap, buffer: &Buffer| {
+        syntax_map
+            .layers(buffer)
+            .iter()
+            .any(|layer| layer.language.name().as_ref() == "JSDoc")
+    };
+
+    assert!(
+        has_jsdoc_layer(&syntax_map, &buffer),
+        "Expected JSDoc injection layer after initial parse"
+    );
+
+    let edit_target = buffer
+        .as_rope()
+        .to_string()
+        .find("The age")
+        .expect("text not found");
+    buffer.edit([(
+        edit_target..edit_target + "The age".len(),
+        "The person's age",
+    )]);
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(javascript.clone(), &buffer);
+
+    assert!(
+        has_jsdoc_layer(&syntax_map, &buffer),
+        "JSDoc injection layer should be preserved after editing deep inside the comment"
+    );
+}
+
+#[gpui::test]
+fn test_jsdoc_injection_with_large_file_newline_insert(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let javascript = Arc::new(javascript_lang(true));
+    registry.add(javascript.clone());
+    registry.add(Arc::new(jsdoc_lang()));
+
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        r#"/**
+ * @import { Sprite } from "./sprites.js";
+ * @import { Point, Result } from "./utils.js";
+ */
+
+/**
+ * @typedef {"none" | "floor" | "wall"} TilingGroup
+ */
+
+/**
+ * @typedef {{ type: "left" }} LeftCommand
+ * @typedef {{ type: "right" }} RightCommand
+ * @typedef {{ type: "up" }} UpCommand
+ * @typedef {{ type: "down" }} DownCommand
+ * @typedef {{ type: "rest" }} RestCommand
+ * @typedef {{ type: "escape" }} EscapeCommand
+ * @typedef {EscapeCommand | LeftCommand | RightCommand | UpCommand | DownCommand | RestCommand} Command
+ */
+
+/**
+ * @typedef {{ type: "rest", entity: Entity }} RestAction
+ * @typedef {{ type: "move", entity: Entity, tile: Tile }} MoveAction
+ * @typedef {{ type: "melee", entity: Entity, target: Entity }} MeleeAction
+ * @typedef {{ type: "damage", entity: Entity, target: Entity, amount: number }} DamageAction
+ * @typedef {{ type: "death", entity: Entity }} DeathAction
+ * @typedef {RestAction | MoveAction | MeleeAction | DamageAction | DeathAction } Action
+ */
+
+/**
+ * @typedef {object} TileType
+ * @prop {Sprite[]} sprites
+ * @prop {boolean} walkable
+ * @prop {TilingGroup} group
+ */
+
+/**
+ * @param {object} params
+ * @param {Sprite} params.sprites
+ * @param {TilingGroup} [params.group]
+ * @param {boolean} [params.walkable]
+ * @returns {TileType}
+ */
+
+/**
+ * @typedef {object} Tile
+ * @prop {number} x
+ * @prop {number} y
+ * @prop {number} tiling
+ * @prop {TileType} type
+ * @prop {Entity | undefined} entity
+ */
+
+/**
+ * @typedef {object} Vfx
+ * @prop {number} x
+ * @prop {number} y
+ * @prop {Sprite[]} sprites
+ * @prop {number} duration
+ * @prop {number} elapsed
+ */
+
+/**
+ * @param {object} params
+ * @param {number} params.x
+ * @param {number} params.y
+ * @param {TileType} params.type
+ * @returns {Tile}
+ */
+"#
+        .to_string(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(javascript.clone(), &buffer);
+
+    let jsdoc_layer_count = |syntax_map: &SyntaxMap, buffer: &Buffer| -> usize {
+        syntax_map
+            .layers(buffer)
+            .iter()
+            .filter(|layer| layer.language.name().as_ref() == "JSDoc")
+            .count()
+    };
+
+    let initial_count = jsdoc_layer_count(&syntax_map, &buffer);
+    assert!(
+        initial_count > 0,
+        "Expected JSDoc injection layers after initial parse, got 0"
+    );
+
+    // Try multiple edit positions to find the one that triggers the bug.
+    // The issue reporter says "Move the cursor to the final doc comment (L67). Insert a new line."
+    let text = buffer.as_rope().to_string();
+
+    // Insert a newline right before the closing */ of the last comment
+    let insert_point = text.rfind("\n */").expect("closing not found") + 1;
+    buffer.edit([(insert_point..insert_point, "\n")]);
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(javascript.clone(), &buffer);
+
+    let after_count = jsdoc_layer_count(&syntax_map, &buffer);
+    assert_eq!(
+        initial_count, after_count,
+        "JSDoc layer count changed from {initial_count} to {after_count} after newline insert"
+    );
+
+    let registry2 = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    registry2.add(javascript.clone());
+    registry2.add(Arc::new(jsdoc_lang()));
+    let mut fresh_syntax_map = SyntaxMap::new(&buffer);
+    fresh_syntax_map.set_language_registry(registry2);
+    fresh_syntax_map.reparse(javascript.clone(), &buffer);
+    let fresh_count = jsdoc_layer_count(&fresh_syntax_map, &buffer);
+    assert_eq!(
+        after_count, fresh_count,
+        "Incremental parse has {after_count} JSDoc layers but fresh parse has {fresh_count}"
+    );
+}
+
+#[gpui::test]
+fn test_jsdoc_injection_dedup_across_changed_ranges(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let javascript = Arc::new(javascript_lang(true));
+    registry.add(javascript.clone());
+    registry.add(Arc::new(jsdoc_lang()));
+
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        r#"/**
+ * @param {string} alpha - First param
+ * @param {string} bravo - Second param
+ * @param {string} charlie - Third param
+ * @param {string} delta - Fourth param
+ * @param {string} echo - Fifth param
+ * @param {string} foxtrot - Sixth param
+ * @param {string} golf - Seventh param
+ * @param {string} hotel - Eighth param
+ * @param {string} india - Ninth param
+ * @param {string} juliet - Tenth param
+ */
+function big(alpha, bravo, charlie, delta, echo, foxtrot, golf, hotel, india, juliet) {}
+"#
+        .to_string(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(javascript.clone(), &buffer);
+
+    let jsdoc_layer_count = |syntax_map: &SyntaxMap, buffer: &Buffer| -> usize {
+        syntax_map
+            .layers(buffer)
+            .iter()
+            .filter(|layer| layer.language.name().as_ref() == "JSDoc")
+            .count()
+    };
+
+    let initial_count = jsdoc_layer_count(&syntax_map, &buffer);
+    assert!(
+        initial_count > 0,
+        "Expected JSDoc injection layers after initial parse"
+    );
+
+    // Edit near the top AND near the bottom of the comment simultaneously.
+    // The expanded_ranges (+/- 1 row) should be non-overlapping for a tall enough comment.
+    let text = buffer.as_rope().to_string();
+    let edit1_offset = text.find("First param").expect("text not found");
+    let edit2_offset = text.find("Tenth param").expect("text not found");
+
+    buffer.edit([
+        (edit1_offset..edit1_offset + "First param".len(), "1st parameter"),
+        (edit2_offset..edit2_offset + "Tenth param".len(), "10th parameter"),
+    ]);
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(javascript.clone(), &buffer);
+
+    let after_count = jsdoc_layer_count(&syntax_map, &buffer);
+    assert_eq!(
+        initial_count, after_count,
+        "JSDoc layer count changed from {initial_count} to {after_count} after dual-position edit"
+    );
+
+    let registry2 = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    registry2.add(javascript.clone());
+    registry2.add(Arc::new(jsdoc_lang()));
+    let mut fresh_syntax_map = SyntaxMap::new(&buffer);
+    fresh_syntax_map.set_language_registry(registry2);
+    fresh_syntax_map.reparse(javascript.clone(), &buffer);
+    let fresh_count = jsdoc_layer_count(&fresh_syntax_map, &buffer);
+    assert_eq!(
+        after_count, fresh_count,
+        "Incremental parse has {after_count} JSDoc layers but fresh parse has {fresh_count}"
+    );
+}
+
 #[gpui::test]
 fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     let text = r#"
