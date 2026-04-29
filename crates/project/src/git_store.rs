@@ -20,7 +20,7 @@ use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
 use fs::{Fs, RemoveOptions};
 use futures::{
-    FutureExt, StreamExt,
+    FutureExt, Stream, StreamExt,
     channel::{
         mpsc,
         oneshot::{self, Canceled},
@@ -673,6 +673,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_edit_ref);
         client.add_entity_request_handler(Self::handle_repair_worktrees);
         client.add_entity_request_handler(Self::handle_get_commit_data);
+        client.add_entity_stream_request_handler(Self::handle_search_commits);
     }
 
     pub fn is_local(&self) -> bool {
@@ -2652,6 +2653,65 @@ impl GitStore {
         );
 
         Ok(proto::GetCommitDataResponse { commits })
+    }
+
+    async fn handle_search_commits(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::SearchCommits>,
+        mut cx: AsyncApp,
+    ) -> Result<impl Stream<Item = Result<proto::SearchCommitsResponse>>> {
+        const RESPONSE_TARGET_BYTES: usize = 16 * 1024;
+
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let log_source = log_source_from_proto(
+            envelope
+                .payload
+                .log_source
+                .context("missing search commit log source")?,
+        )?;
+        let search_args = SearchCommitArgs {
+            query: SharedString::from(envelope.payload.query),
+            case_sensitive: envelope.payload.case_sensitive,
+        };
+
+        let (request_tx, request_rx) = async_channel::unbounded::<Oid>();
+        repository_handle.update(&mut cx, |repository, cx| {
+            repository.search_commits(log_source, search_args, request_tx, cx);
+        });
+
+        let (response_tx, response_rx) = mpsc::unbounded();
+        cx.background_spawn(async move {
+            let mut shas = Vec::new();
+            let mut byte_size = 0;
+
+            while let Ok(sha) = request_rx.recv().await {
+                let sha = sha.to_string();
+                byte_size += sha.len();
+                shas.push(sha);
+
+                if byte_size >= RESPONSE_TARGET_BYTES {
+                    if response_tx
+                        .unbounded_send(Ok(proto::SearchCommitsResponse {
+                            shas: mem::take(&mut shas),
+                        }))
+                        .is_err()
+                    {
+                        return;
+                    }
+                    byte_size = 0;
+                }
+            }
+
+            if !shas.is_empty() {
+                response_tx
+                    .unbounded_send(Ok(proto::SearchCommitsResponse { shas }))
+                    .ok();
+            }
+        })
+        .detach();
+
+        Ok(response_rx)
     }
 
     async fn handle_edit_ref(
@@ -4929,6 +4989,7 @@ impl Repository {
         cx: &mut Context<Self>,
     ) {
         let repository_state = self.repository_state.clone();
+        let repository_id = self.id;
 
         cx.background_spawn(async move {
             let repo_state = repository_state.await;
@@ -4940,8 +5001,49 @@ impl Repository {
                         .await
                         .log_err();
                 }
-                Ok(RepositoryState::Remote(_)) => {}
-                Err(_) => {}
+                Ok(RepositoryState::Remote(RemoteRepositoryState { client, project_id })) => {
+                    let mut stream = match client
+                        .request_stream(proto::SearchCommits {
+                            project_id: project_id.to_proto(),
+                            repository_id: repository_id.to_proto(),
+                            log_source: Some(log_source_to_proto(&log_source)),
+                            query: search_args.query.to_string(),
+                            case_sensitive: search_args.case_sensitive,
+                        })
+                        .await
+                    {
+                        Ok(stream) => stream,
+                        Err(error) => {
+                            log::error!("failed to search commits remotely: {error:?}");
+                            return;
+                        }
+                    };
+
+                    while let Some(response) = stream.next().await {
+                        let response = match response {
+                            Ok(response) => response,
+                            Err(error) => {
+                                log::error!(
+                                    "failed to receive remote commit search results: {error:?}"
+                                );
+                                return;
+                            }
+                        };
+
+                        for sha in response.shas {
+                            let Ok(sha) = Oid::from_str(&sha) else {
+                                continue;
+                            };
+
+                            if request_tx.send(sha).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::error!("failed to get repository state for commit search: {error}");
+                }
             };
         })
         .detach();
@@ -8040,6 +8142,31 @@ fn deserialize_blame_buffer_response(
     Some(Blame { entries, messages })
 }
 
+fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
+    proto::GitLogSource {
+        source: Some(match log_source {
+            LogSource::All => proto::git_log_source::Source::All(proto::GitLogSourceAll {}),
+            LogSource::Branch(branch) => proto::git_log_source::Source::Branch(branch.to_string()),
+            LogSource::Sha(sha) => proto::git_log_source::Source::Sha(sha.to_string()),
+            LogSource::File(path) => proto::git_log_source::Source::File(path.to_proto()),
+        }),
+    }
+}
+
+fn log_source_from_proto(log_source: proto::GitLogSource) -> Result<LogSource> {
+    match log_source
+        .source
+        .context("git log source is missing source")?
+    {
+        proto::git_log_source::Source::All(_) => Ok(LogSource::All),
+        proto::git_log_source::Source::Branch(branch) => Ok(LogSource::Branch(branch.into())),
+        proto::git_log_source::Source::Sha(sha) => Ok(LogSource::Sha(Oid::from_str(&sha)?)),
+        proto::git_log_source::Source::File(path) => {
+            Ok(LogSource::File(RepoPath::from_proto(&path)?))
+        }
+    }
+}
+
 fn commit_data_to_proto(commit: &CommitData) -> proto::CommitData {
     proto::CommitData {
         sha: commit.sha.to_string(),
@@ -8367,6 +8494,100 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[gpui::test]
+    async fn test_search_commits_streams_proto_chunks(cx: &mut TestAppContext) {
+        const COMMIT_COUNT: usize = 900;
+        const RESPONSE_TARGET_BYTES: usize = 16 * 1024;
+
+        init_test(cx);
+        let mut rng = StdRng::seed_from_u64(0);
+        let commit_data = (0..COMMIT_COUNT)
+            .map(|index| {
+                let sha = Oid::random(&mut rng);
+                (
+                    CommitData {
+                        sha,
+                        parents: SmallVec::new(),
+                        author_name: SharedString::from("Author"),
+                        author_email: SharedString::from("author@example.com"),
+                        commit_timestamp: index as i64,
+                        subject: SharedString::from(format!("Subject {index}")),
+                        message: SharedString::from(format!("needle commit {index}")),
+                    },
+                    false,
+                )
+            })
+            .collect::<Vec<_>>();
+        let expected_shas = commit_data
+            .iter()
+            .map(|(commit_data, _)| commit_data.sha.to_string())
+            .collect::<HashSet<_>>();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.set_commit_data(Path::new("/project/.git"), commit_data);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let (git_store, repository_id) = project.read_with(cx, |project, cx| {
+            let repository = project
+                .active_repository(cx)
+                .expect("should have a repository");
+            (project.git_store().clone(), repository.read(cx).id)
+        });
+
+        let envelope = TypedEnvelope {
+            sender_id: proto::PeerId { owner_id: 0, id: 0 },
+            original_sender_id: None,
+            message_id: 0,
+            payload: proto::SearchCommits {
+                project_id: 0,
+                repository_id: repository_id.to_proto(),
+                log_source: Some(log_source_to_proto(&LogSource::All)),
+                query: "needle".to_string(),
+                case_sensitive: true,
+            },
+            received_at: Instant::now(),
+        };
+        let mut stream = GitStore::handle_search_commits(git_store, envelope, cx.to_async())
+            .await
+            .unwrap();
+
+        let mut chunks = Vec::new();
+        while let Some(response) = stream.next().await {
+            chunks.push(response.unwrap().shas);
+        }
+
+        assert!(
+            chunks.len() > 1,
+            "expected search results to stream in multiple chunks"
+        );
+        for chunk in chunks.iter().take(chunks.len() - 1) {
+            let chunk_bytes = chunk.iter().map(|sha| sha.len()).sum::<usize>();
+            assert!(
+                chunk_bytes >= RESPONSE_TARGET_BYTES,
+                "non-final chunks should meet the target byte size"
+            );
+            assert!(
+                chunk_bytes < RESPONSE_TARGET_BYTES + 40,
+                "chunks should be flushed as soon as they pass the target byte size"
+            );
+        }
+
+        let actual_shas = chunks.into_iter().flatten().collect::<HashSet<_>>();
+        assert_eq!(actual_shas, expected_shas);
     }
 
     #[gpui::property_test(config = ProptestConfig {

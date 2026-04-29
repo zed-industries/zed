@@ -22,6 +22,7 @@ use futures::{
     },
     future::{BoxFuture, Shared, WeakShared},
     select, select_biased,
+    stream::BoxStream,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
@@ -1418,6 +1419,8 @@ pub trait RemoteConnection: Send + Sync {
 }
 
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
+type StreamResponseChannels =
+    Mutex<HashMap<MessageId, UnboundedSender<(Result<Envelope>, oneshot::Sender<()>)>>>;
 
 struct Signal<T> {
     tx: Mutex<Option<oneshot::Sender<T>>>,
@@ -1455,6 +1458,7 @@ pub(crate) struct ChannelClient {
     outgoing_tx: Mutex<mpsc::UnboundedSender<Envelope>>,
     buffer: Mutex<VecDeque<Envelope>>,
     response_channels: ResponseChannels,
+    stream_response_channels: StreamResponseChannels,
     message_handlers: Mutex<ProtoMessageHandlerSet>,
     max_received: AtomicU32,
     name: &'static str,
@@ -1477,6 +1481,7 @@ impl ChannelClient {
             next_message_id: AtomicU32::new(0),
             max_received: AtomicU32::new(0),
             response_channels: ResponseChannels::default(),
+            stream_response_channels: StreamResponseChannels::default(),
             message_handlers: Default::default(),
             buffer: Mutex::new(VecDeque::new()),
             name,
@@ -1557,6 +1562,30 @@ impl ChannelClient {
                             sender.send((incoming, tx)).ok();
                         }
                         rx.await.ok();
+                    } else {
+                        let terminal_stream_response = matches!(
+                            &incoming.payload,
+                            Some(proto::envelope::Payload::Error(_))
+                                | Some(proto::envelope::Payload::EndStream(_))
+                        );
+                        let sender = if terminal_stream_response {
+                            this.stream_response_channels.lock().remove(&request_id)
+                        } else {
+                            this.stream_response_channels
+                                .lock()
+                                .get(&request_id)
+                                .cloned()
+                        };
+                        if let Some(sender) = sender {
+                            let (tx, rx) = oneshot::channel();
+                            if incoming.payload.is_some()
+                                && sender.unbounded_send((Ok(incoming), tx)).is_err()
+                            {
+                                this.stream_response_channels.lock().remove(&request_id);
+                                continue;
+                            }
+                            rx.await.ok();
+                        }
                     }
                 } else if let Some(envelope) =
                     build_typed_envelope(peer_id, Instant::now(), incoming)
@@ -1721,6 +1750,45 @@ impl ChannelClient {
         }
     }
 
+    fn request_stream_dynamic(
+        &self,
+        mut envelope: proto::Envelope,
+        type_name: &'static str,
+    ) -> impl 'static + Future<Output = Result<BoxStream<'static, Result<proto::Envelope>>>> {
+        envelope.id = self.next_message_id.fetch_add(1, SeqCst);
+        let message_id = MessageId(envelope.id);
+        let (tx, rx) = mpsc::unbounded();
+        self.stream_response_channels.lock().insert(message_id, tx);
+
+        let result = self.send_buffered(envelope);
+        async move {
+            if let Err(error) = &result {
+                log::error!("failed to send message: {error}");
+                anyhow::bail!("failed to send message: {error}");
+            }
+
+            Ok(rx
+                .filter_map(move |(response, _barrier)| {
+                    futures::future::ready(match response {
+                        Ok(response) => {
+                            if let Some(proto::envelope::Payload::Error(error)) = &response.payload
+                            {
+                                Some(Err(RpcError::from_proto(error, type_name)))
+                            } else if let Some(proto::envelope::Payload::EndStream(_)) =
+                                &response.payload
+                            {
+                                None
+                            } else {
+                                Some(Ok(response))
+                            }
+                        }
+                        Err(error) => Some(Err(error)),
+                    })
+                })
+                .boxed())
+        }
+    }
+
     pub fn send_dynamic(&self, mut envelope: proto::Envelope) -> Result<()> {
         envelope.id = self.next_message_id.fetch_add(1, SeqCst);
         self.send_buffered(envelope)
@@ -1749,6 +1817,14 @@ impl ProtoClient for ChannelClient {
         request_type: &'static str,
     ) -> BoxFuture<'static, Result<proto::Envelope>> {
         self.request_dynamic(envelope, request_type, true).boxed()
+    }
+
+    fn request_stream(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::Envelope>>>> {
+        self.request_stream_dynamic(envelope, request_type).boxed()
     }
 
     fn send(&self, envelope: proto::Envelope, _message_type: &'static str) -> Result<()> {
