@@ -3664,6 +3664,14 @@ mod tests {
                 // Suppress hyperlink throttling for testing
                 self.terminal.suppress_hyperlink_throttle_once = true;
             }
+
+            fn set_window_secondary_key(&mut self) {
+                self.window.set_modifiers(Modifiers::secondary_key());
+            }
+
+            fn clear_window_secondary_key(&mut self) {
+                self.window.set_modifiers(default());
+            }
         }
 
         struct TestView {
@@ -3716,14 +3724,6 @@ mod tests {
                 );
                 vec![terminal_subscription, terminal_events_subscription]
             }
-        }
-
-        fn set_window_secondary_key(window: &mut Window) {
-            window.set_modifiers(Modifiers::secondary_key());
-        }
-
-        fn clear_window_secondary_key(window: &mut Window) {
-            window.set_modifiers(default());
         }
 
         struct Wakeups(usize);
@@ -3791,7 +3791,7 @@ mod tests {
             update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
                 cx.assert_display_offset(0);
                 cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV]);
-                set_window_secondary_key(cx.window);
+                cx.set_window_secondary_key();
                 cx.ctrl_mouse_move_to(ZED_DEV_PT);
                 Some(Expected(Wakeups(0), Notifies(2)))
             });
@@ -3838,11 +3838,11 @@ mod tests {
                 Some(Expected(Wakeups(17), Notifies(1)))
             });
             update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
-                clear_window_secondary_key(cx.window);
+                cx.clear_window_secondary_key();
                 // ...AND new hovered_word is set if secondary was held.
                 expected_hovered_word = expected_hovered_word.with_id(expected_hovered_word.id + 1);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
-                set_window_secondary_key(cx.window);
+                cx.set_window_secondary_key();
                 for _ in 0..5 {
                     cx.write_output_lines(OUTPUT_ZED_DEV, 1);
                     cx.write_output_lines(OUTPUT_NONE, 1);
@@ -3944,7 +3944,7 @@ mod tests {
                 Some(Expected(Wakeups(1), Notifies(2)))
             });
             update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
-                clear_window_secondary_key(cx.window);
+                cx.clear_window_secondary_key();
                 // ...AND new hovered_word is set if secondary was held.
                 expected_hovered_word = expected_hovered_word.with_id(expected_hovered_word.id + 1);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
