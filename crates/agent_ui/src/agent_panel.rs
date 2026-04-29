@@ -416,14 +416,10 @@ pub fn init(cx: &mut App) {
                             return;
                         };
 
-                        // Resolution order: currently-focused source -> cached source (if
-                        // its entity is still alive) -> active item. Each successful
-                        // resolution refreshes the cache so the next press captures from
-                        // the same source.
                         let source = AgentContextSource::from_focused(workspace, window, cx);
                         let source = source.or_else(|| {
-                            let cached = agent_panel.read(cx).last_context_source().cloned()?;
-                            cached.is_live(workspace, cx).then_some(cached)
+                            let cached = agent_panel.read(cx).last_context_source.clone()?;
+                            cached.exists(workspace, cx).then_some(cached)
                         });
                         let source =
                             source.or_else(|| AgentContextSource::from_active(workspace, cx));
@@ -436,15 +432,12 @@ pub fn init(cx: &mut App) {
                             return;
                         };
 
-                        agent_panel.update(cx, |panel, _cx| {
-                            panel.set_last_context_source(source);
-                        });
-
                         if !agent_panel.focus_handle(cx).contains_focused(window, cx) {
                             workspace.toggle_panel_focus::<AgentPanel>(window, cx);
                         }
 
-                        agent_panel.update(cx, |_, cx| {
+                        agent_panel.update(cx, |panel, cx| {
+                            panel.last_context_source = Some(source);
                             cx.defer_in(window, move |panel, window, cx| {
                                 if let Some(conversation_view) = panel.active_conversation_view() {
                                     conversation_view.update(cx, |conversation_view, cx| {
@@ -688,22 +681,7 @@ pub struct AgentPanel {
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
     _thread_metadata_store_subscription: Subscription,
-    last_context_source: Option<crate::completion_provider::AgentContextSource>,
-}
-
-impl AgentPanel {
-    pub(crate) fn last_context_source(
-        &self,
-    ) -> Option<&crate::completion_provider::AgentContextSource> {
-        self.last_context_source.as_ref()
-    }
-
-    pub(crate) fn set_last_context_source(
-        &mut self,
-        source: crate::completion_provider::AgentContextSource,
-    ) {
-        self.last_context_source = Some(source);
-    }
+    last_context_source: Option<AgentContextSource>,
 }
 
 impl AgentPanel {

@@ -2728,23 +2728,10 @@ impl ConversationView {
         if let Some(active_thread) = self.active_thread() {
             active_thread.update(cx, |thread, cx| {
                 thread.active_editor(cx).update(cx, |editor, cx| {
-                    editor.insert_selection(selection, window, cx);
+                    editor.insert_selections(selection, window, cx);
                 })
             });
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn insert_selection_from_active(&self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-        let Some(selection) = workspace.update(cx, |workspace, cx| {
-            crate::completion_provider::AgentContextSelection::from_active(workspace, cx)
-        }) else {
-            return;
-        };
-        self.insert_selection(selection, window, cx);
     }
 
     fn current_model_name(&self, cx: &App) -> SharedString {
@@ -2950,6 +2937,7 @@ pub(crate) mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::agent_panel;
+    use crate::completion_provider::AgentContextSource;
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
@@ -5791,7 +5779,14 @@ pub(crate) mod tests {
                     .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
-            view.insert_selection_from_active(window, cx);
+            let workspace = workspace.upgrade().unwrap();
+            let selection = workspace
+                .update(cx, |workspace, cx| {
+                    AgentContextSource::from_active(workspace, cx)?
+                        .read_selection(workspace, false, cx)
+                })
+                .unwrap();
+            view.insert_selection(selection, window, cx);
         });
 
         user_message_editor.read_with(cx, |editor, cx| {
@@ -5854,7 +5849,14 @@ pub(crate) mod tests {
                     .and_then(|active| active.read(cx).editing_message),
                 None
             );
-            view.insert_selection_from_active(window, cx);
+            let workspace = view.workspace.upgrade().unwrap();
+            let selection = workspace
+                .update(cx, |workspace, cx| {
+                    AgentContextSource::from_active(workspace, cx)?
+                        .read_selection(workspace, false, cx)
+                })
+                .unwrap();
+            view.insert_selection(selection, window, cx);
         });
 
         message_editor.read_with(cx, |editor, cx| {
