@@ -4,7 +4,7 @@ mod syntax_map_tests;
 use crate::{
     Grammar, InjectionConfig, Language, LanguageId, LanguageRegistry, QUERY_CURSORS, with_parser,
 };
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::FutureExt;
 use gpui::SharedString;
 use std::{
@@ -1565,7 +1565,7 @@ fn get_injections(
     queue: &mut BinaryHeap<ParseStep>,
 ) {
     let mut query_cursor = QueryCursorHandle::new();
-    let mut prev_match = None;
+    let mut seen_matches = HashSet::default();
 
     // Ensure that a `ParseStep` is created for every combined injection language, even
     // if there currently no matches for that injection.
@@ -1596,15 +1596,9 @@ fn get_injections(
             let content_range =
                 content_ranges.first().unwrap().start_byte..content_ranges.last().unwrap().end_byte;
 
-            // Avoid duplicate matches if two changed ranges intersect the same injection.
-            if let Some((prev_pattern_ix, prev_range)) = &prev_match
-                && mat.pattern_index == *prev_pattern_ix
-                && content_range == *prev_range
-            {
+            if !seen_matches.insert((mat.pattern_index, content_range.clone())) {
                 continue;
             }
-
-            prev_match = Some((mat.pattern_index, content_range.clone()));
             let combined = config.patterns[mat.pattern_index].combined;
 
             let mut step_range = content_range.clone();
