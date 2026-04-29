@@ -81,6 +81,7 @@ use crate::agent_connection_store::{
     AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionStore,
 };
 use crate::agent_diff::AgentDiff;
+use crate::completion_provider::AgentContextSelection;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
@@ -2718,20 +2719,32 @@ impl ConversationView {
 
     /// Inserts the selected text into the message editor or the message being
     /// edited, if any.
-    pub(crate) fn insert_selections(
+    pub(crate) fn insert_selection(
         &self,
-        editor_selections: Vec<(Entity<Buffer>, std::ops::Range<text::Anchor>)>,
-        terminal_selections: Vec<String>,
+        selection: AgentContextSelection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(active_thread) = self.active_thread() {
             active_thread.update(cx, |thread, cx| {
                 thread.active_editor(cx).update(cx, |editor, cx| {
-                    editor.insert_selections(editor_selections, terminal_selections, window, cx);
+                    editor.insert_selection(selection, window, cx);
                 })
             });
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_selection_from_active(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let Some(selection) = workspace.update(cx, |workspace, cx| {
+            crate::completion_provider::AgentContextSelection::from_active(workspace, cx)
+        }) else {
+            return;
+        };
+        self.insert_selection(selection, window, cx);
     }
 
     fn current_model_name(&self, cx: &App) -> SharedString {
@@ -5778,11 +5791,7 @@ pub(crate) mod tests {
                     .and_then(|active| active.read(cx).editing_message),
                 Some(0)
             );
-            let workspace = view.workspace.upgrade().unwrap();
-            let (editor_selections, terminal_selections) = workspace.update(cx, |workspace, cx| {
-                crate::completion_provider::gather_active_content(workspace, cx)
-            });
-            view.insert_selections(editor_selections, terminal_selections, window, cx);
+            view.insert_selection_from_active(window, cx);
         });
 
         user_message_editor.read_with(cx, |editor, cx| {
@@ -5845,11 +5854,7 @@ pub(crate) mod tests {
                     .and_then(|active| active.read(cx).editing_message),
                 None
             );
-            let workspace = view.workspace.upgrade().unwrap();
-            let (editor_selections, terminal_selections) = workspace.update(cx, |workspace, cx| {
-                crate::completion_provider::gather_active_content(workspace, cx)
-            });
-            view.insert_selections(editor_selections, terminal_selections, window, cx);
+            view.insert_selection_from_active(window, cx);
         });
 
         message_editor.read_with(cx, |editor, cx| {

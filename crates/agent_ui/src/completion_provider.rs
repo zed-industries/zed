@@ -24,8 +24,6 @@ use project::{
 };
 use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
-use settings::Settings;
-use terminal::terminal_settings::TerminalSettings;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::{Anchor, ToPoint as _};
 use ui::IconName;
@@ -40,37 +38,97 @@ use crate::AgentPanel;
 use crate::mention_set::MentionSet;
 
 #[derive(Clone)]
-pub(crate) enum FocusedContentSource {
-    Editor(Entity<Editor>),
-    TerminalView(Entity<TerminalView>),
-    TerminalPanel(Entity<TerminalPanel>),
+pub(crate) enum AgentContextSelection {
+    Editor(Vec<(Entity<Buffer>, Range<text::Anchor>)>),
+    Terminal(Vec<String>),
 }
 
-pub(crate) fn focused_content_source(
-    workspace: &Workspace,
-    window: &Window,
-    cx: &App,
-) -> Option<FocusedContentSource> {
-    if let Some(active_item) = workspace.active_item(cx) {
-        if let Some(editor) = active_item.act_as::<Editor>(cx)
-            && editor.focus_handle(cx).is_focused(window)
-        {
-            return Some(FocusedContentSource::Editor(editor));
-        }
-        if let Some(terminal_view) = active_item.act_as::<TerminalView>(cx)
-            && terminal_view.focus_handle(cx).is_focused(window)
-        {
-            return Some(FocusedContentSource::TerminalView(terminal_view));
+impl AgentContextSelection {
+    pub(crate) fn from_active(workspace: &Workspace, cx: &mut App) -> Option<Self> {
+        AgentContextSource::from_active(workspace, cx)?.read_selection(workspace, false, cx)
+    }
+}
+
+#[derive(Clone)]
+pub(crate) enum AgentContextSource {
+    Editor(WeakEntity<Editor>),
+    TerminalView(WeakEntity<TerminalView>),
+    TerminalPanel,
+}
+
+impl AgentContextSource {
+    pub(crate) fn read_selection(
+        &self,
+        workspace: &Workspace,
+        include_current_line: bool,
+        cx: &mut App,
+    ) -> Option<AgentContextSelection> {
+        match self {
+            Self::Editor(handle) => {
+                let editor = handle.upgrade()?;
+                let ranges = editor_selection_ranges(&editor, include_current_line, cx);
+                (!ranges.is_empty()).then_some(AgentContextSelection::Editor(ranges))
+            }
+            Self::TerminalView(handle) => {
+                let terminal_view = handle.upgrade()?;
+                terminal_view_selection(&terminal_view, cx)
+                    .map(|text| AgentContextSelection::Terminal(vec![text]))
+            }
+            Self::TerminalPanel => {
+                let panel = workspace.panel::<TerminalPanel>(cx)?;
+                let selections = panel.read(cx).terminal_selections(cx);
+                (!selections.is_empty()).then_some(AgentContextSelection::Terminal(selections))
+            }
         }
     }
 
-    if let Some(panel) = workspace.panel::<TerminalPanel>(cx)
-        && panel.focus_handle(cx).contains_focused(window, cx)
-    {
-        return Some(FocusedContentSource::TerminalPanel(panel));
+    pub(crate) fn from_focused(workspace: &Workspace, window: &Window, cx: &App) -> Option<Self> {
+        if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
+            && agent_panel.focus_handle(cx).contains_focused(window, cx)
+        {
+            return None;
+        }
+
+        if let Some(active_item) = workspace.active_item(cx) {
+            if let Some(editor) = active_item.act_as::<Editor>(cx)
+                && editor.focus_handle(cx).is_focused(window)
+            {
+                return Some(Self::Editor(editor.downgrade()));
+            }
+            if let Some(terminal_view) = active_item.act_as::<TerminalView>(cx)
+                && terminal_view.focus_handle(cx).is_focused(window)
+            {
+                return Some(Self::TerminalView(terminal_view.downgrade()));
+            }
+        }
+
+        if let Some(panel) = workspace.panel::<TerminalPanel>(cx)
+            && panel.focus_handle(cx).contains_focused(window, cx)
+        {
+            return Some(Self::TerminalPanel);
+        }
+
+        None
     }
 
-    None
+    pub(crate) fn from_active(workspace: &Workspace, cx: &App) -> Option<Self> {
+        let active_item = workspace.active_item(cx)?;
+        if let Some(editor) = active_item.act_as::<Editor>(cx) {
+            return Some(Self::Editor(editor.downgrade()));
+        }
+        if let Some(terminal_view) = active_item.act_as::<TerminalView>(cx) {
+            return Some(Self::TerminalView(terminal_view.downgrade()));
+        }
+        None
+    }
+
+    pub(crate) fn is_live(&self, workspace: &Workspace, cx: &App) -> bool {
+        match self {
+            Self::Editor(handle) => handle.upgrade().is_some(),
+            Self::TerminalView(handle) => handle.upgrade().is_some(),
+            Self::TerminalPanel => workspace.panel::<TerminalPanel>(cx).is_some(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -301,16 +359,10 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 confirm: Some(Arc::new(|_, _, _| true)),
             }),
             PromptContextEntry::Action(action) => {
-                let (editor_selections, terminal_selections) =
-                    workspace.update(cx, |workspace, cx| gather_active_content(workspace, cx));
-                Self::completion_for_action(
-                    action,
-                    source_range,
-                    editor,
-                    mention_set,
-                    editor_selections,
-                    terminal_selections,
-                )
+                let selection = workspace.update(cx, |workspace, cx| {
+                    AgentContextSelection::from_active(workspace, cx)
+                });
+                Self::completion_for_action(action, source_range, editor, mention_set, selection)
             }
         }
     }
@@ -579,124 +631,27 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source_range: Range<Anchor>,
         editor: WeakEntity<Editor>,
         mention_set: WeakEntity<MentionSet>,
-        editor_selections: Vec<(Entity<Buffer>, Range<text::Anchor>)>,
-        terminal_selections: Vec<String>,
+        selection: Option<AgentContextSelection>,
     ) -> Option<Completion> {
         let (new_text, on_action) = match action {
-            PromptContextAction::AddSelections => {
-                const EDITOR_PLACEHOLDER: &str = "selection ";
-                const TERMINAL_PLACEHOLDER: &str = "terminal ";
-
-                let selections = editor_selections
-                    .into_iter()
-                    .enumerate()
-                    .map(|(ix, (buffer, range))| {
-                        (
-                            buffer,
-                            range,
-                            (EDITOR_PLACEHOLDER.len() * ix)
-                                ..(EDITOR_PLACEHOLDER.len() * (ix + 1) - 1),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-
-                let mut new_text: String = EDITOR_PLACEHOLDER.repeat(selections.len());
-
-                // Add terminal placeholders for each terminal selection
-                let terminal_ranges: Vec<(String, std::ops::Range<usize>)> = terminal_selections
-                    .into_iter()
-                    .map(|text| {
-                        let start = new_text.len();
-                        new_text.push_str(TERMINAL_PLACEHOLDER);
-                        (text, start..(new_text.len() - 1))
-                    })
-                    .collect();
-
-                let callback = Arc::new({
-                    let source_range = source_range.clone();
-                    move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
-                        let editor = editor.clone();
-                        let selections = selections.clone();
-                        let mention_set = mention_set.clone();
-                        let source_range = source_range.clone();
-                        let terminal_ranges = terminal_ranges.clone();
-                        window.defer(cx, move |window, cx| {
-                            if let Some(editor) = editor.upgrade() {
-                                // Insert editor selections
-                                if !selections.is_empty() {
-                                    mention_set
-                                        .update(cx, |store, cx| {
-                                            store.confirm_mention_for_selection(
-                                                source_range.clone(),
-                                                selections,
-                                                editor.clone(),
-                                                window,
-                                                cx,
-                                            )
-                                        })
-                                        .ok();
-                                }
-
-                                // Insert terminal selections
-                                for (terminal_text, terminal_range) in terminal_ranges {
-                                    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-                                    let Some(start) =
-                                        snapshot.anchor_in_excerpt(source_range.start)
-                                    else {
-                                        return;
-                                    };
-                                    let offset = start.to_offset(&snapshot);
-
-                                    let line_count = terminal_text.lines().count() as u32;
-                                    let mention_uri = MentionUri::TerminalSelection { line_count };
-                                    let range = snapshot.anchor_after(offset + terminal_range.start)
-                                        ..snapshot.anchor_after(offset + terminal_range.end);
-
-                                    let crease = crate::mention_set::crease_for_mention(
-                                        mention_uri.name().into(),
-                                        mention_uri.icon_path(cx),
-                                        None,
-                                        range,
-                                        editor.downgrade(),
-                                    );
-
-                                    let crease_id = editor.update(cx, |editor, cx| {
-                                        let crease_ids =
-                                            editor.insert_creases(vec![crease.clone()], cx);
-                                        editor.fold_creases(vec![crease], false, window, cx);
-                                        crease_ids.first().copied().unwrap()
-                                    });
-
-                                    mention_set
-                                        .update(cx, |mention_set, _| {
-                                            mention_set.insert_mention(
-                                                crease_id,
-                                                mention_uri.clone(),
-                                                gpui::Task::ready(Ok(
-                                                    crate::mention_set::Mention::Text {
-                                                        content: terminal_text,
-                                                        tracked_buffers: vec![],
-                                                    },
-                                                ))
-                                                .shared(),
-                                            );
-                                        })
-                                        .ok();
-                                }
-                            }
-                        });
-                        false
-                    }
-                });
-
-                (
-                    new_text,
-                    callback
-                        as Arc<
-                            dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync,
-                        >,
-                )
-            }
+            PromptContextAction::AddSelections => match selection? {
+                AgentContextSelection::Editor(editor_selections) => {
+                    completion_text_for_editor_selections(
+                        source_range.clone(),
+                        editor,
+                        mention_set,
+                        editor_selections,
+                    )
+                }
+                AgentContextSelection::Terminal(terminal_selections) => {
+                    completion_text_for_terminal_selections(
+                        source_range.clone(),
+                        editor,
+                        mention_set,
+                        terminal_selections,
+                    )
+                }
+            },
         };
 
         Some(Completion {
@@ -1191,19 +1146,12 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             entries.push(PromptContextEntry::Mode(PromptContextType::Thread));
         }
 
-        let has_editor_selection = workspace
-            .read(cx)
-            .active_item(cx)
-            .and_then(|item| item.downcast::<Editor>())
-            .is_some_and(|editor| {
-                editor.update(cx, |editor, cx| {
-                    editor.has_non_empty_selection(&editor.display_snapshot(cx))
-                })
-            });
-
-        let has_terminal_selection = !terminal_selections(workspace, cx).is_empty();
-
-        if has_editor_selection || has_terminal_selection {
+        if workspace
+            .update(cx, |workspace, cx| {
+                AgentContextSelection::from_active(workspace, cx)
+            })
+            .is_some()
+        {
             entries.push(PromptContextEntry::Action(
                 PromptContextAction::AddSelections,
             ));
@@ -2204,29 +2152,6 @@ fn terminal_view_selection(terminal_view: &Entity<TerminalView>, cx: &App) -> Op
         .filter(|text| !text.is_empty())
 }
 
-fn terminal_selections(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
-    let workspace = workspace.read(cx);
-    let mut selections = Vec::new();
-
-    if let Some(terminal_view) = workspace
-        .active_item(cx)
-        .and_then(|item| item.act_as::<TerminalView>(cx))
-        && let Some(text) = terminal_view_selection(&terminal_view, cx)
-    {
-        selections.push(text);
-    }
-
-    if let Some(panel) = workspace.panel::<TerminalPanel>(cx) {
-        let position = TerminalSettings::get_global(cx).dock.into();
-        let dock_is_open = workspace.dock_at_position(position).read(cx).is_open();
-        if dock_is_open {
-            selections.extend(panel.read(cx).terminal_selections(cx));
-        }
-    }
-
-    selections
-}
-
 fn editor_selection_ranges(
     editor: &Entity<Editor>,
     include_current_line: bool,
@@ -2238,6 +2163,12 @@ fn editor_selection_ranges(
         let buffer = editor.buffer().read(cx);
         let snapshot = buffer.snapshot(cx);
 
+        let non_empty_rows: collections::HashSet<u32> = selections
+            .iter()
+            .filter(|s| !s.is_empty())
+            .flat_map(|s| s.start.row..=s.end.row)
+            .collect();
+
         let mut seen_current_line_rows = collections::HashSet::default();
 
         selections
@@ -2245,6 +2176,9 @@ fn editor_selection_ranges(
             .filter_map(|s| {
                 let (start, end) = if s.is_empty() {
                     if !include_current_line {
+                        return None;
+                    }
+                    if non_empty_rows.contains(&s.start.row) {
                         return None;
                     }
                     if !seen_current_line_rows.insert(s.start.row) {
@@ -2271,45 +2205,137 @@ fn editor_selection_ranges(
     })
 }
 
-pub(crate) fn gather_focused_content(
-    source: FocusedContentSource,
-    cx: &mut App,
-) -> (Vec<(Entity<Buffer>, Range<text::Anchor>)>, Vec<String>) {
-    match source {
-        FocusedContentSource::Editor(editor) => {
-            (editor_selection_ranges(&editor, true, cx), Vec::new())
+type ConfirmCallback = Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync>;
+
+fn completion_text_for_editor_selections(
+    source_range: Range<Anchor>,
+    editor: WeakEntity<Editor>,
+    mention_set: WeakEntity<MentionSet>,
+    editor_selections: Vec<(Entity<Buffer>, Range<text::Anchor>)>,
+) -> (String, ConfirmCallback) {
+    const EDITOR_PLACEHOLDER: &str = "selection ";
+
+    let selections = editor_selections
+        .into_iter()
+        .enumerate()
+        .map(|(ix, (buffer, range))| {
+            (
+                buffer,
+                range,
+                (EDITOR_PLACEHOLDER.len() * ix)..(EDITOR_PLACEHOLDER.len() * (ix + 1) - 1),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let new_text = EDITOR_PLACEHOLDER.repeat(selections.len());
+
+    let callback: ConfirmCallback = Arc::new({
+        move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
+            let editor = editor.clone();
+            let selections = selections.clone();
+            let mention_set = mention_set.clone();
+            let source_range = source_range.clone();
+            window.defer(cx, move |window, cx| {
+                if let Some(editor) = editor.upgrade()
+                    && !selections.is_empty()
+                {
+                    mention_set
+                        .update(cx, |store, cx| {
+                            store.confirm_mention_for_selection(
+                                source_range.clone(),
+                                selections,
+                                editor.clone(),
+                                window,
+                                cx,
+                            )
+                        })
+                        .ok();
+                }
+            });
+            false
         }
-        FocusedContentSource::TerminalView(terminal_view) => (
-            Vec::new(),
-            terminal_view_selection(&terminal_view, cx)
-                .into_iter()
-                .collect(),
-        ),
-        FocusedContentSource::TerminalPanel(panel) => {
-            (Vec::new(), panel.read(cx).terminal_selections(cx))
-        }
-    }
+    });
+
+    (new_text, callback)
 }
 
-pub(crate) fn gather_active_content(
-    workspace: &Workspace,
-    cx: &mut App,
-) -> (Vec<(Entity<Buffer>, Range<text::Anchor>)>, Vec<String>) {
-    let Some(active_item) = workspace.active_item(cx) else {
-        return (Vec::new(), Vec::new());
-    };
-    if let Some(editor) = active_item.act_as::<Editor>(cx) {
-        (editor_selection_ranges(&editor, false, cx), Vec::new())
-    } else if let Some(terminal_view) = active_item.act_as::<TerminalView>(cx) {
-        (
-            Vec::new(),
-            terminal_view_selection(&terminal_view, cx)
-                .into_iter()
-                .collect(),
-        )
-    } else {
-        (Vec::new(), Vec::new())
-    }
+fn completion_text_for_terminal_selections(
+    source_range: Range<Anchor>,
+    editor: WeakEntity<Editor>,
+    mention_set: WeakEntity<MentionSet>,
+    terminal_selections: Vec<String>,
+) -> (String, ConfirmCallback) {
+    const TERMINAL_PLACEHOLDER: &str = "terminal ";
+
+    let mut new_text = String::new();
+    let terminal_ranges: Vec<(String, std::ops::Range<usize>)> = terminal_selections
+        .into_iter()
+        .map(|text| {
+            let start = new_text.len();
+            new_text.push_str(TERMINAL_PLACEHOLDER);
+            (text, start..(new_text.len() - 1))
+        })
+        .collect();
+
+    let callback: ConfirmCallback = Arc::new({
+        move |_: CompletionIntent, window: &mut Window, cx: &mut App| {
+            let editor = editor.clone();
+            let mention_set = mention_set.clone();
+            let source_range = source_range.clone();
+            let terminal_ranges = terminal_ranges.clone();
+            window.defer(cx, move |window, cx| {
+                let Some(editor) = editor.upgrade() else {
+                    return;
+                };
+                for (terminal_text, terminal_range) in terminal_ranges {
+                    let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+                    let Some(start) = snapshot.anchor_in_excerpt(source_range.start) else {
+                        return;
+                    };
+                    let offset = start.to_offset(&snapshot);
+
+                    let line_count = terminal_text.lines().count() as u32;
+                    let mention_uri = MentionUri::TerminalSelection { line_count };
+                    let range = snapshot.anchor_after(offset + terminal_range.start)
+                        ..snapshot.anchor_after(offset + terminal_range.end);
+
+                    let crease = crate::mention_set::crease_for_mention(
+                        mention_uri.name().into(),
+                        mention_uri.icon_path(cx),
+                        None,
+                        range,
+                        editor.downgrade(),
+                    );
+
+                    let Some(crease_id) = editor.update(cx, |editor, cx| {
+                        let crease_ids = editor.insert_creases(vec![crease.clone()], cx);
+                        editor.fold_creases(vec![crease], false, window, cx);
+                        crease_ids.first().copied()
+                    }) else {
+                        log::error!("insert_creases returned no ids for terminal selection");
+                        continue;
+                    };
+
+                    mention_set
+                        .update(cx, |mention_set, _| {
+                            mention_set.insert_mention(
+                                crease_id,
+                                mention_uri.clone(),
+                                gpui::Task::ready(Ok(crate::mention_set::Mention::Text {
+                                    content: terminal_text,
+                                    tracked_buffers: vec![],
+                                }))
+                                .shared(),
+                            );
+                        })
+                        .ok();
+                }
+            });
+            false
+        }
+    });
+
+    (new_text, callback)
 }
 
 #[cfg(test)]
@@ -2720,5 +2746,114 @@ mod tests {
             rel_path("dir1/a.txt"),
             "dir1/a.txt should be second"
         );
+    }
+
+    #[gpui::test]
+    async fn test_editor_selection_ranges_whole_line_fallback(cx: &mut TestAppContext) {
+        use editor::Editor;
+        use text::ToOffset as _;
+
+        crate::conversation_view::tests::init_test(cx);
+
+        let buffer = cx.new(|cx| language::Buffer::local("abc\ndef\nghi", cx));
+        let window =
+            cx.add_window(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        let editor_entity = window.root(cx).unwrap();
+
+        window
+            .update(cx, |editor, window, cx| {
+                editor.change_selections(Default::default(), window, cx, |selections| {
+                    selections.select_ranges([text::Point::new(1, 1)..text::Point::new(1, 1)]);
+                });
+            })
+            .unwrap();
+
+        // With include_current_line = true and the cursor on row 1, expect a
+        // single range covering the whole "def" line.
+        let ranges = cx.update(|cx| editor_selection_ranges(&editor_entity, true, cx));
+
+        assert_eq!(ranges.len(), 1);
+        let (range_buffer, range) = &ranges[0];
+        let snapshot = range_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let start_offset = range.start.to_offset(&snapshot);
+        let end_offset = range.end.to_offset(&snapshot);
+        assert_eq!(&snapshot.text()[start_offset..end_offset], "def");
+
+        // With include_current_line = false and an empty selection, there are
+        // no non-empty selections, so we expect no ranges.
+        let ranges = cx.update(|cx| editor_selection_ranges(&editor_entity, false, cx));
+        assert!(ranges.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_source_read_selection_editor_whole_line(cx: &mut TestAppContext) {
+        use editor::Editor;
+        use project::Project;
+        use serde_json::json;
+        use text::ToOffset as _;
+        use util::path;
+        use workspace::{AppState, MultiWorkspace};
+
+        crate::conversation_view::tests::init_test(cx);
+
+        let app_state = cx.update(|cx| {
+            let state = AppState::test(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            state
+        });
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), json!({ "a.txt": "" }))
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let buffer = cx.new(|cx| language::Buffer::local("abc\ndef\nghi", cx));
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([text::Point::new(1, 1)..text::Point::new(1, 1)]);
+            });
+        });
+
+        let source = AgentContextSource::Editor(editor.downgrade());
+
+        workspace.update(cx, |workspace, cx| {
+            let selection = source
+                .read_selection(workspace, true, cx)
+                .expect("editor source with cursor on a line should yield a selection");
+            assert!(
+                matches!(selection, AgentContextSelection::Editor(_)),
+                "expected Editor variant"
+            );
+            if let AgentContextSelection::Editor(ranges) = selection {
+                assert_eq!(
+                    ranges.len(),
+                    1,
+                    "expected exactly one range for whole-line fallback"
+                );
+                let (range_buffer, range) = &ranges[0];
+                let snapshot = range_buffer.read(cx).snapshot();
+                let start_offset = range.start.to_offset(&snapshot);
+                let end_offset = range.end.to_offset(&snapshot);
+                assert_eq!(
+                    &snapshot.text()[start_offset..end_offset],
+                    "def",
+                    "whole-line fallback should capture the current row"
+                );
+            }
+
+            // With include_current_line = false and no non-empty selection, the
+            // fallback is suppressed and read_selection should return None.
+            assert!(source.read_selection(workspace, false, cx).is_none());
+        });
     }
 }

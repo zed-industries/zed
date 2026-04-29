@@ -3,8 +3,8 @@ use crate::SendImmediately;
 use crate::{
     ChatWithFollow,
     completion_provider::{
-        PromptCompletionProvider, PromptCompletionProviderDelegate, PromptContextAction,
-        PromptContextType, SlashCommandCompletion,
+        AgentContextSelection, PromptCompletionProvider, PromptCompletionProviderDelegate,
+        PromptContextAction, PromptContextType, SlashCommandCompletion,
     },
     mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
 };
@@ -1377,8 +1377,7 @@ impl MessageEditor {
 
     pub fn insert_selections(
         &mut self,
-        editor_selections: Vec<(Entity<Buffer>, Range<text::Anchor>)>,
-        terminal_selections: Vec<String>,
+        selection: AgentContextSelection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1398,8 +1397,7 @@ impl MessageEditor {
                 anchor..anchor,
                 self.editor.downgrade(),
                 self.mention_set.downgrade(),
-                editor_selections,
-                terminal_selections,
+                Some(selection),
             )
         else {
             return;
@@ -1412,6 +1410,24 @@ impl MessageEditor {
         if let Some(confirm) = completion.confirm {
             confirm(CompletionIntent::Complete, window, cx);
         }
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn insert_selection_from_active(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let Some(selection) = workspace.update(cx, |workspace, cx| {
+            AgentContextSelection::from_active(workspace, cx)
+        }) else {
+            return;
+        };
+        self.insert_selection(selection, window, cx);
     }
 
     pub fn add_images_from_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3658,15 +3674,24 @@ mod tests {
             })
         });
 
-        // Now let's insert the selection in the Agent Panel's editor and
-        // confirm that, after the insertion, the cursor is now in the visible
-        // range.
+        // Build the selection from the text.txt editor we opened above. We
+        // skip `insert_selection_from_active` because the MessageEditor item
+        // is the active workspace item, so the resolver would return None.
+        let text_editor_selection = editor.update(&mut cx, |editor, cx| {
+            let multibuffer = editor.buffer().read(cx);
+            let Some(buffer) = multibuffer.as_singleton() else {
+                panic!("expected singleton buffer");
+            };
+            let buffer_snapshot = buffer.read(cx).snapshot();
+            let start = buffer_snapshot.anchor_before(0);
+            let end = buffer_snapshot.anchor_after(5);
+            crate::completion_provider::AgentContextSelection::Editor(vec![(buffer, start..end)])
+        });
+
+        // Now insert the selection into the Agent Panel's editor and confirm
+        // that the cursor is within the visible range.
         message_editor.update_in(&mut cx, |message_editor, window, cx| {
-            let workspace = message_editor.workspace.upgrade().unwrap();
-            let (editor_selections, terminal_selections) = workspace.update(cx, |workspace, cx| {
-                crate::completion_provider::gather_active_content(workspace, cx)
-            });
-            message_editor.insert_selections(editor_selections, terminal_selections, window, cx);
+            message_editor.insert_selection(text_editor_selection, window, cx);
         });
 
         cx.run_until_parked();

@@ -33,9 +33,7 @@ use crate::DEFAULT_THREAD_TITLE;
 use crate::ExpandMessageEditor;
 use crate::ManageProfiles;
 use crate::agent_connection_store::AgentConnectionStore;
-use crate::completion_provider::{
-    focused_content_source, gather_active_content, gather_focused_content,
-};
+use crate::completion_provider::AgentContextSource;
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow,
@@ -414,34 +412,43 @@ pub fn init(cx: &mut App) {
                 )
                 .register_action(
                     |workspace: &mut Workspace, _: &AddSelectionToThread, window, cx| {
-                        let (editor_selections, terminal_selections) =
-                            match focused_content_source(workspace, window, cx) {
-                                Some(source) => gather_focused_content(source, cx),
-                                None => gather_active_content(workspace, cx),
-                            };
-
-                        if editor_selections.is_empty() && terminal_selections.is_empty() {
-                            return;
-                        }
-
-                        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                        let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) else {
                             return;
                         };
 
-                        if !panel.focus_handle(cx).contains_focused(window, cx) {
+                        // Resolution order: currently-focused source -> cached source (if
+                        // its entity is still alive) -> active item. Each successful
+                        // resolution refreshes the cache so the next press captures from
+                        // the same source.
+                        let source = AgentContextSource::from_focused(workspace, window, cx);
+                        let source = source.or_else(|| {
+                            let cached = agent_panel.read(cx).last_context_source().cloned()?;
+                            cached.is_live(workspace, cx).then_some(cached)
+                        });
+                        let source =
+                            source.or_else(|| AgentContextSource::from_active(workspace, cx));
+
+                        let Some(source) = source else {
+                            return;
+                        };
+
+                        let Some(selection) = source.read_selection(workspace, true, cx) else {
+                            return;
+                        };
+
+                        agent_panel.update(cx, |panel, _cx| {
+                            panel.set_last_context_source(source);
+                        });
+
+                        if !agent_panel.focus_handle(cx).contains_focused(window, cx) {
                             workspace.toggle_panel_focus::<AgentPanel>(window, cx);
                         }
 
-                        panel.update(cx, |_, cx| {
+                        agent_panel.update(cx, |_, cx| {
                             cx.defer_in(window, move |panel, window, cx| {
                                 if let Some(conversation_view) = panel.active_conversation_view() {
                                     conversation_view.update(cx, |conversation_view, cx| {
-                                        conversation_view.insert_selections(
-                                            editor_selections,
-                                            terminal_selections,
-                                            window,
-                                            cx,
-                                        );
+                                        conversation_view.insert_selection(selection, window, cx);
                                     });
                                 }
                             });
@@ -681,6 +688,22 @@ pub struct AgentPanel {
     _base_view_observation: Option<Subscription>,
     _draft_editor_observation: Option<Subscription>,
     _thread_metadata_store_subscription: Subscription,
+    last_context_source: Option<crate::completion_provider::AgentContextSource>,
+}
+
+impl AgentPanel {
+    pub(crate) fn last_context_source(
+        &self,
+    ) -> Option<&crate::completion_provider::AgentContextSource> {
+        self.last_context_source.as_ref()
+    }
+
+    pub(crate) fn set_last_context_source(
+        &mut self,
+        source: crate::completion_provider::AgentContextSource,
+    ) {
+        self.last_context_source = Some(source);
+    }
 }
 
 impl AgentPanel {
@@ -1039,6 +1062,7 @@ impl AgentPanel {
             _base_view_observation: None,
             _draft_editor_observation: None,
             _thread_metadata_store_subscription,
+            last_context_source: None,
         };
 
         // Initial sync of agent servers from extensions
