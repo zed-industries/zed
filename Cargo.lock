@@ -9538,6 +9538,7 @@ dependencies = [
  "tree-sitter-embedded-template",
  "tree-sitter-heex",
  "tree-sitter-html",
+ "tree-sitter-jsdoc",
  "tree-sitter-json",
  "tree-sitter-md",
  "tree-sitter-python",
