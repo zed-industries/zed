@@ -1274,8 +1274,15 @@ impl AgentPanel {
     }
 
     pub fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.project.read(cx).supports_terminal(cx) {
+            return;
+        }
         let working_directory = self.default_terminal_working_directory(cx);
         self.spawn_terminal(TerminalId::new(), working_directory, true, window, cx);
+    }
+
+    pub fn supports_terminal(&self, cx: &App) -> bool {
+        self.project.read(cx).supports_terminal(cx)
     }
 
     fn spawn_terminal(
@@ -1294,7 +1301,16 @@ impl AgentPanel {
         let project = self.project.downgrade();
 
         cx.spawn_in(window, async move |this, cx| {
-            let terminal = terminal_task.await?;
+            let terminal = match terminal_task.await {
+                Ok(terminal) => terminal,
+                Err(error) => {
+                    log::error!("failed to spawn agent panel terminal: {error:#}");
+                    workspace
+                        .update(cx, |workspace, cx| workspace.show_error(&error, cx))
+                        .ok();
+                    return anyhow::Ok(());
+                }
+            };
             this.update_in(cx, |this, window, cx| {
                 let terminal_view = cx.new(|cx| {
                     TerminalView::new(terminal, workspace, workspace_id, project, window, cx)
@@ -1307,8 +1323,8 @@ impl AgentPanel {
                     window,
                     cx,
                 );
-                anyhow::Ok(())
-            })?
+            })?;
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }
@@ -1327,7 +1343,7 @@ impl AgentPanel {
             &terminal_view,
             window,
             move |this, _terminal_view, event: &ItemEvent, window, cx| match event {
-                ItemEvent::CloseItem => this.close_terminal(terminal_id, window, cx),
+                ItemEvent::CloseItem => this.close_terminal(terminal_id, true, window, cx),
                 ItemEvent::UpdateTab | ItemEvent::UpdateBreadcrumbs | ItemEvent::Edit => {
                     this.refresh_terminal_metadata(terminal_id, cx);
                 }
@@ -1337,7 +1353,7 @@ impl AgentPanel {
             &terminal_entity,
             window,
             move |this, _terminal, event: &TerminalEvent, window, cx| match event {
-                TerminalEvent::CloseTerminal => this.close_terminal(terminal_id, window, cx),
+                TerminalEvent::CloseTerminal => this.close_terminal(terminal_id, true, window, cx),
                 TerminalEvent::TitleChanged | TerminalEvent::BreadcrumbsChanged => {
                     this.refresh_terminal_metadata(terminal_id, cx);
                 }
@@ -1389,6 +1405,7 @@ impl AgentPanel {
     pub fn close_terminal(
         &mut self,
         terminal_id: TerminalId,
+        focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1402,13 +1419,12 @@ impl AgentPanel {
                     BaseView::Terminal {
                         terminal_id: next_terminal_id,
                     },
-                    true,
+                    focus,
                     window,
                     cx,
                 );
             } else {
-                self.base_view = BaseView::Uninitialized;
-                self.activate_draft(true, "agent_panel", window, cx);
+                self.activate_draft(focus, "agent_panel", window, cx);
             }
         }
 
@@ -3246,6 +3262,7 @@ impl AgentPanel {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
 
         let focus_handle = self.focus_handle(cx);
+        let supports_terminal = self.supports_terminal(cx);
 
         let showing_terminal = matches!(self.visible_surface(), VisibleSurface::Terminal(_));
         let (selected_agent_custom_icon, selected_agent_label) = if showing_terminal {
@@ -3341,27 +3358,29 @@ impl AgentPanel {
                                     }
                                 }),
                         )
-                        .item(
-                            ContextMenuEntry::new("Terminal")
-                                .icon(IconName::Terminal)
-                                .icon_color(Color::Muted)
-                                .handler({
-                                    let workspace = workspace.clone();
-                                    move |window, cx| {
-                                        if let Some(workspace) = workspace.upgrade() {
-                                            workspace.update(cx, |workspace, cx| {
-                                                if let Some(panel) =
-                                                    workspace.panel::<AgentPanel>(cx)
-                                                {
-                                                    panel.update(cx, |panel, cx| {
-                                                        panel.new_terminal(window, cx);
-                                                    });
-                                                }
-                                            });
+                        .when(supports_terminal, |menu| {
+                            menu.item(
+                                ContextMenuEntry::new("Terminal")
+                                    .icon(IconName::Terminal)
+                                    .icon_color(Color::Muted)
+                                    .handler({
+                                        let workspace = workspace.clone();
+                                        move |window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    if let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                    {
+                                                        panel.update(cx, |panel, cx| {
+                                                            panel.new_terminal(window, cx);
+                                                        });
+                                                    }
+                                                });
+                                            }
                                         }
-                                    }
-                                }),
-                        )
+                                    }),
+                            )
+                        })
                         .map(|mut menu| {
                             let agent_server_store = agent_server_store.read(cx);
                             let registry_store = project::AgentRegistryStore::try_global(cx);
@@ -3921,7 +3940,11 @@ impl Render for AgentPanel {
             }))
             .on_action(cx.listener(|this, _: &CloseActiveItem, window, cx| {
                 if let Some(terminal_id) = this.active_terminal_id() {
-                    this.close_terminal(terminal_id, window, cx);
+                    this.close_terminal(terminal_id, true, window, cx);
+                } else {
+                    // Don't swallow the action: let it bubble up to the workspace
+                    // handler so the active center pane's item gets closed.
+                    cx.propagate();
                 }
             }))
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {

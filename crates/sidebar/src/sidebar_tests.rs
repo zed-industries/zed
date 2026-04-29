@@ -9809,8 +9809,11 @@ mod property_test {
         //    a draft, which is represented by the + button's active state
         //    rather than a sidebar row.
         // TODO: Make this check more complete
-        let is_draft = panel.read(cx).active_thread_is_draft(cx)
-            || panel.read(cx).active_conversation_view().is_none();
+        // Active terminals must still match a row, so don't treat the absence
+        // of a conversation view as "draft" when a terminal is active.
+        let is_draft = panel.read(cx).active_terminal_id().is_none()
+            && (panel.read(cx).active_thread_is_draft(cx)
+                || panel.read(cx).active_conversation_view().is_none());
         if is_draft {
             return Ok(());
         }

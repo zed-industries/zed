@@ -1556,8 +1556,10 @@ impl Sidebar {
                         .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
                         .is_some_and(|panel| {
                             let panel = panel.read(cx);
-                            panel.active_thread_is_draft(cx)
-                                || panel.active_conversation_view().is_none()
+                            // An active terminal is its own surface, not a draft.
+                            panel.active_terminal_id().is_none()
+                                && (panel.active_thread_is_draft(cx)
+                                    || panel.active_conversation_view().is_none())
                         });
                 self.project_header_menu_handles.entry(ix).or_default();
                 self.render_project_header(
@@ -2203,7 +2205,10 @@ impl Sidebar {
                 .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
                 .is_some_and(|panel| {
                     let panel = panel.read(cx);
-                    panel.active_thread_is_draft(cx) || panel.active_conversation_view().is_none()
+                    // An active terminal is its own surface, not a draft.
+                    panel.active_terminal_id().is_none()
+                        && (panel.active_thread_is_draft(cx)
+                            || panel.active_conversation_view().is_none())
                 });
         let header_element = self.render_project_header(
             header_idx,
@@ -3176,10 +3181,12 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Closing from the sidebar must not steal focus, since the row's
+        // workspace may not be the active workspace.
         workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.close_terminal(terminal_id, window, cx);
+                    panel.close_terminal(terminal_id, false, window, cx);
                 });
             }
         });
@@ -3896,7 +3903,10 @@ impl Sidebar {
 
         let weak_multi_workspace = self.multi_workspace.clone();
 
-        let original_metadata = match &self.active_entry {
+        // Capture the full active entry so dismissal can restore terminal
+        // entries too, not just threads.
+        let original_active_entry = self.active_entry.clone();
+        let original_metadata = match &original_active_entry {
             Some(ActiveEntry::Thread { thread_id, .. }) => entries
                 .iter()
                 .find(|e| *thread_id == e.metadata.thread_id)
@@ -3962,24 +3972,46 @@ impl Sidebar {
                             });
                         }
                     }
-                    if let Some(metadata) = &original_metadata {
-                        if let Some(original_ws) = &original_workspace {
-                            this.active_entry = Some(ActiveEntry::Thread {
-                                thread_id: metadata.thread_id,
-                                session_id: metadata.session_id.clone(),
-                                workspace: original_ws.clone(),
+                    match &original_active_entry {
+                        Some(ActiveEntry::Thread { .. }) => {
+                            if let (Some(metadata), Some(original_ws)) =
+                                (&original_metadata, &original_workspace)
+                            {
+                                this.active_entry = Some(ActiveEntry::Thread {
+                                    thread_id: metadata.thread_id,
+                                    session_id: metadata.session_id.clone(),
+                                    workspace: original_ws.clone(),
+                                });
+                                this.update_entries(cx);
+                                Self::load_agent_thread_in_workspace(
+                                    original_ws,
+                                    metadata,
+                                    false,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }
+                        Some(ActiveEntry::Terminal {
+                            terminal_id,
+                            workspace,
+                        }) => {
+                            let terminal_id = *terminal_id;
+                            let workspace = workspace.clone();
+                            this.active_entry = Some(ActiveEntry::Terminal {
+                                terminal_id,
+                                workspace: workspace.clone(),
+                            });
+                            this.update_entries(cx);
+                            workspace.update(cx, |workspace, cx| {
+                                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                                    panel.update(cx, |panel, cx| {
+                                        panel.activate_terminal(terminal_id, false, window, cx);
+                                    });
+                                }
                             });
                         }
-                        this.update_entries(cx);
-                        if let Some(original_ws) = &original_workspace {
-                            Self::load_agent_thread_in_workspace(
-                                original_ws,
-                                metadata,
-                                false,
-                                window,
-                                cx,
-                            );
-                        }
+                        None => {}
                     }
                     this.dismiss_thread_switcher(cx);
                 }
@@ -5069,7 +5101,13 @@ impl WorkspaceSidebar for Sidebar {
     }
 
     fn has_notifications(&self, _cx: &App) -> bool {
-        !self.contents.notified_threads.is_empty()
+        if !self.contents.notified_threads.is_empty() {
+            return true;
+        }
+        self.contents
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, ListEntry::Terminal(terminal) if terminal.notified))
     }
 
     fn is_threads_list_view_active(&self) -> bool {
