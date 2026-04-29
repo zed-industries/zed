@@ -6,9 +6,16 @@ use collections::HashSet;
 use git::repository::Branch;
 use gpui::http_client::Url;
 use gpui::{
+<<<<<<< Updated upstream
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
     SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
+=======
+    App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, MouseDownEvent,
+    ParentElement, Point, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window,
+    anchored, deferred, rems,
+>>>>>>> Stashed changes
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::{Repository, RepositoryEvent};
@@ -16,8 +23,13 @@ use project::project_settings::ProjectSettings;
 use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
+<<<<<<< Updated upstream
 use ui::{Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
+=======
+use time_format::format_local_timestamp;
+use ui::{ContextMenu, HighlightedLabel, ListItem, ListItemSpacing, Pixels, Tooltip, prelude::*};
+>>>>>>> Stashed changes
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -113,9 +125,14 @@ enum BranchListStyle {
 pub struct BranchList {
     width: Rems,
     pub picker: Entity<Picker<BranchListDelegate>>,
+<<<<<<< Updated upstream
     picker_focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
     embedded: bool,
+=======
+    _subscription: Subscription,
+    branch_actions_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+>>>>>>> Stashed changes
 }
 
 impl BranchList {
@@ -212,12 +229,29 @@ impl BranchList {
         })
         .detach_and_log_err(cx);
 
+<<<<<<< Updated upstream
+=======
+        let delegate = BranchListDelegate::new(repository, style, cx.weak_entity());
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+
+        let _subscription = cx.subscribe(&picker, |this, _, _: &DismissEvent, cx| {
+            if this.branch_actions_context_menu.is_none() {
+                cx.emit(DismissEvent);
+            }
+        });
+
+>>>>>>> Stashed changes
         Self {
             picker,
             picker_focus_handle,
             width,
+<<<<<<< Updated upstream
             _subscriptions: subscriptions,
             embedded,
+=======
+            _subscription,
+            branch_actions_context_menu: None,
+>>>>>>> Stashed changes
         }
     }
 
@@ -258,6 +292,7 @@ impl BranchList {
             .update(cx, |picker, _| picker.delegate.modifiers = ev.modifiers)
     }
 
+<<<<<<< Updated upstream
     pub fn handle_delete(
         &mut self,
         _: &branch_picker::DeleteBranch,
@@ -283,6 +318,61 @@ impl BranchList {
             picker.refresh_placeholder(window, cx);
             cx.notify();
         });
+=======
+    fn deploy_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        branch: Branch,
+        repo: Option<Entity<Repository>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let branch_list = cx.weak_entity();
+
+        let Some(repo) = repo else {
+            return;
+        };
+
+        let branch_actions_context_menu = ContextMenu::build(window, cx, |menu, _, _| {
+            let branch_name = branch.name().to_string();
+            let switch_handler = move |_window: &mut Window, cx: &mut App| {
+                let repo = repo.clone();
+                let branch_name = branch_name.clone();
+                let branch_list = branch_list.clone();
+                cx.spawn(async move |cx: &mut AsyncApp| -> anyhow::Result<()> {
+                    repo.update(cx, |repo, _| repo.change_branch(branch_name))?
+                        .await??;
+                    branch_list.update(cx, |_, cx| cx.emit(DismissEvent))?;
+                    anyhow::Ok(())
+                })
+                // TODO: show a toast notification to the user when branch switch fails
+                .detach_and_log_err(cx);
+            };
+
+            menu.entry("Switch", None, switch_handler)
+        });
+
+        cx.focus_view(&branch_actions_context_menu, window);
+
+        let subscription = cx.subscribe_in(
+            &branch_actions_context_menu,
+            window,
+            |this, _, _: &DismissEvent, window, cx| {
+                if this
+                    .branch_actions_context_menu
+                    .as_ref()
+                    .is_some_and(|(menu, _, _)| menu.focus_handle(cx).contains_focused(window, cx))
+                {
+                    cx.focus_self(window);
+                }
+                this.branch_actions_context_menu.take();
+                cx.notify();
+            },
+        );
+
+        self.branch_actions_context_menu =
+            Some((branch_actions_context_menu, position, subscription));
+>>>>>>> Stashed changes
     }
 }
 impl ModalView for BranchList {}
@@ -312,6 +402,19 @@ impl Render for BranchList {
                     })
                 })
             })
+            .children(
+                self.branch_actions_context_menu
+                    .as_ref()
+                    .map(|(menu, position, _)| {
+                        deferred(
+                            anchored()
+                                .position(*position)
+                                .anchor(gpui::Corner::TopLeft)
+                                .child(menu.clone()),
+                        )
+                        .with_priority(1)
+                    }),
+            )
     }
 }
 
@@ -388,6 +491,7 @@ pub struct BranchListDelegate {
     selected_index: usize,
     last_query: String,
     modifiers: Modifiers,
+<<<<<<< Updated upstream
     branch_filter: BranchFilter,
     state: PickerState,
     focus_handle: FocusHandle,
@@ -436,14 +540,23 @@ fn process_branches(branches: &Arc<[Branch]>) -> Vec<Branch> {
     });
 
     result
+=======
+    branch_list: WeakEntity<BranchList>,
+>>>>>>> Stashed changes
 }
 
 impl BranchListDelegate {
     fn new(
+<<<<<<< Updated upstream
         workspace: WeakEntity<Workspace>,
         repo: Option<Entity<Repository>>,
         style: BranchListStyle,
         cx: &mut Context<BranchList>,
+=======
+        repo: Option<Entity<Repository>>,
+        style: BranchListStyle,
+        branch_list: WeakEntity<BranchList>,
+>>>>>>> Stashed changes
     ) -> Self {
         Self {
             workspace,
@@ -455,11 +568,15 @@ impl BranchListDelegate {
             selected_index: 0,
             last_query: Default::default(),
             modifiers: Default::default(),
+<<<<<<< Updated upstream
             branch_filter: BranchFilter::All,
             state: PickerState::List,
             focus_handle: cx.focus_handle(),
             restore_selected_branch: None,
             show_footer: false,
+=======
+            branch_list,
+>>>>>>> Stashed changes
         }
     }
 
@@ -979,6 +1096,7 @@ impl PickerDelegate for BranchListDelegate {
             }
         };
 
+<<<<<<< Updated upstream
         let focus_handle = self.focus_handle.clone();
         let is_new_items = matches!(
             entry,
@@ -1022,6 +1140,11 @@ impl PickerDelegate for BranchListDelegate {
                 }))
                 .into_any_element()
         });
+=======
+        let branch_list = self.branch_list.clone();
+        let branch = entry.branch.clone();
+        let repo = self.repo.clone();
+>>>>>>> Stashed changes
 
         Some(
             ListItem::new(format!("vcs-menu-{ix}"))
@@ -1162,6 +1285,7 @@ impl PickerDelegate for BranchListDelegate {
                                 ),
                         ),
                 )
+<<<<<<< Updated upstream
                 .when(!is_new_items && !is_head_branch, |this| {
                     this.end_slot(deleted_branch_icon(ix))
                         .show_end_slot_on_hover()
@@ -1177,6 +1301,24 @@ impl PickerDelegate for BranchListDelegate {
                             .show_end_slot_on_hover()
                     },
                 ),
+=======
+                .on_secondary_mouse_down(cx.listener(
+                    move |_, event: &MouseDownEvent, window, cx| {
+                        branch_list
+                            .update(cx, |branch_list, cx| {
+                                branch_list.deploy_context_menu(
+                                    event.position,
+                                    branch.clone(),
+                                    repo.clone(),
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .log_err();
+                    },
+                ))
+                .end_slot::<IconButton>(icon),
+>>>>>>> Stashed changes
         )
     }
 
