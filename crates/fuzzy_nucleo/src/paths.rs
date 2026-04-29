@@ -14,7 +14,7 @@ use nucleo::pattern::Atom;
 use fuzzy::CharBag;
 
 use crate::matcher::{self, LENGTH_PENALTY};
-use crate::{Cancelled, Case, Query, count_case_mismatches, positions_from_sorted};
+use crate::{Cancelled, Case, Query, case_penalty, count_case_mismatches, positions_from_sorted};
 
 #[derive(Clone, Debug)]
 pub struct PathMatchCandidate<'a> {
@@ -93,16 +93,6 @@ impl Ord for PathMatch {
                     .cmp(&self.distance_to_relative_ancestor)
             })
             .then_with(|| self.path.cmp(&other.path))
-    }
-}
-
-const SMART_CASE_PENALTY_PER_MISMATCH: f64 = 0.9;
-
-fn case_penalty(mismatches: u32) -> f64 {
-    if mismatches == 0 {
-        1.0
-    } else {
-        SMART_CASE_PENALTY_PER_MISMATCH.powi(mismatches as i32)
     }
 }
 

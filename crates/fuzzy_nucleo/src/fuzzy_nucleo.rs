@@ -116,6 +116,17 @@ pub(crate) fn count_case_mismatches(
     mismatches
 }
 
+const SMART_CASE_PENALTY_PER_MISMATCH: f64 = 0.9;
+
+#[inline]
+pub(crate) fn case_penalty(mismatches: u32) -> f64 {
+    if mismatches == 0 {
+        1.0
+    } else {
+        SMART_CASE_PENALTY_PER_MISMATCH.powi(mismatches as i32)
+    }
+}
+
 /// Reconstruct byte-offset match positions from a list of matched char offsets
 /// that is already sorted ascending and deduplicated.
 pub(crate) fn positions_from_sorted(s: &str, sorted_char_indices: &[u32]) -> Vec<usize> {

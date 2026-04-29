@@ -10,13 +10,11 @@ use gpui::{BackgroundExecutor, SharedString};
 use nucleo::Utf32Str;
 
 use crate::{
-    Cancelled, Case, LengthPenalty, Query, count_case_mismatches,
+    Cancelled, Case, LengthPenalty, Query, case_penalty, count_case_mismatches,
     matcher::{self, LENGTH_PENALTY},
     positions_from_sorted,
 };
 use fuzzy::CharBag;
-
-const SMART_CASE_PENALTY_PER_MISMATCH: f64 = 0.9;
 
 #[derive(Clone, Debug)]
 pub struct StringMatchCandidate {
@@ -280,15 +278,6 @@ where
         });
     }
     Ok(())
-}
-
-#[inline]
-fn case_penalty(mismatches: u32) -> f64 {
-    if mismatches == 0 {
-        1.0
-    } else {
-        SMART_CASE_PENALTY_PER_MISMATCH.powi(mismatches as i32)
-    }
 }
 
 #[inline]
