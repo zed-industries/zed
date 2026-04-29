@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use collections::HashSet;
 use fuzzy::StringMatchCandidate;
-use git::repository::Worktree as GitWorktree;
+use git::repository::{Branch, Worktree as GitWorktree};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, PromptLevel,
@@ -91,6 +91,11 @@ impl WorktreePicker {
                 .map(|branch| branch.name().to_string())
         });
 
+        let all_branches = repository
+            .as_ref()
+            .map(|repo| repo.read(cx).branch_list.iter().cloned().collect())
+            .unwrap_or_default();
+
         let all_worktrees_request = repository
             .clone()
             .map(|repository| repository.update(cx, |repository, _| repository.worktrees()));
@@ -104,6 +109,7 @@ impl WorktreePicker {
         let delegate = WorktreePickerDelegate {
             matches: initial_matches,
             all_worktrees: Vec::new(),
+            all_branches,
             project_worktree_paths,
             selected_index: 0,
             project,
@@ -176,8 +182,8 @@ impl WorktreePicker {
             subscriptions.push(cx.subscribe_in(
                 repo,
                 window,
-                move |_this, repo, event: &RepositoryEvent, window, cx| {
-                    if matches!(event, RepositoryEvent::GitWorktreeListChanged) {
+                move |_this, repo, event: &RepositoryEvent, window, cx| match event {
+                    RepositoryEvent::GitWorktreeListChanged => {
                         let worktrees_request = repo.update(cx, |repo, _| repo.worktrees());
                         let picker = picker_entity.clone();
                         cx.spawn_in(window, async move |_, cx| {
@@ -194,6 +200,16 @@ impl WorktreePicker {
                         })
                         .detach_and_log_err(cx);
                     }
+                    RepositoryEvent::BranchListChanged => {
+                        let all_branches = repo.read(cx).branch_list.iter().cloned().collect();
+                        picker_entity
+                            .update(cx, |picker, cx| {
+                                picker.delegate.all_branches = all_branches;
+                                picker.refresh(window, cx);
+                            })
+                            .log_err();
+                    }
+                    _ => {}
                 },
             ));
         }
@@ -273,6 +289,10 @@ enum WorktreeEntry {
         from_branch: Option<RemoteBranchName>,
         disabled_reason: Option<String>,
     },
+    OpenBranchInNewWorktree {
+        branch_name: String,
+        disabled_reason: Option<String>,
+    },
 }
 
 #[derive(Clone)]
@@ -302,6 +322,7 @@ impl RemoteBranchName {
 struct WorktreePickerDelegate {
     matches: Vec<WorktreeEntry>,
     all_worktrees: Vec<GitWorktree>,
+    all_branches: Vec<Branch>,
     project_worktree_paths: HashSet<PathBuf>,
     selected_index: usize,
     project: Entity<Project>,
@@ -463,6 +484,22 @@ impl WorktreePickerDelegate {
 
     fn is_force_delete_hovering_index(&self, index: usize) -> bool {
         self.modifiers.alt && self.hovered_delete_index == Some(index)
+    }
+
+    fn open_branch_disabled_reason(
+        &self,
+        branch_name: &str,
+        has_named_worktree: bool,
+    ) -> Option<String> {
+        if self.has_multiple_repositories {
+            Some("Cannot create a named worktree in a project with multiple repositories".into())
+        } else if branch_checked_out_in_worktree(&self.all_worktrees, branch_name) {
+            Some("This branch is already checked out in a worktree".into())
+        } else if has_named_worktree {
+            Some("A worktree with this name already exists".into())
+        } else {
+            None
+        }
     }
 
     fn delete_worktree(
@@ -651,6 +688,12 @@ impl WorktreePickerDelegate {
         } else if let Some(index) = self
             .matches
             .iter()
+            .position(|entry| matches!(entry, WorktreeEntry::OpenBranchInNewWorktree { .. }))
+        {
+            self.selected_index = index;
+        } else if let Some(index) = self
+            .matches
+            .iter()
             .position(|entry| matches!(entry, WorktreeEntry::CreateNamed { .. }))
         {
             self.selected_index = index;
@@ -701,6 +744,7 @@ impl PickerDelegate for WorktreePickerDelegate {
         let repo_worktrees = self.all_repo_worktrees().to_vec();
 
         let normalized_query = query.replace(' ', "-");
+        let matching_branch = matching_local_branch_name(&self.all_branches, &normalized_query);
         let main_worktree_path = self
             .all_worktrees
             .iter()
@@ -717,9 +761,18 @@ impl PickerDelegate for WorktreePickerDelegate {
             None
         };
 
-        let show_default_branch_create =
-            !self.has_multiple_repositories && self.default_branch.is_some();
         let default_branch = self.default_branch.clone();
+        let show_default_branch_create =
+            !self.has_multiple_repositories && default_branch.is_some();
+        let show_current_branch_create = !show_default_branch_create
+            || default_branch.as_ref().is_some_and(|default| {
+                self.current_branch_name
+                    .as_ref()
+                    .is_none_or(|current| current != &default.branch_name)
+            });
+        let open_branch_disabled_reason = matching_branch.as_deref().and_then(|branch_name| {
+            self.open_branch_disabled_reason(branch_name, has_named_worktree)
+        });
 
         if query.is_empty() {
             let mut matches = self.build_fixed_entries();
@@ -804,6 +857,12 @@ impl PickerDelegate for WorktreePickerDelegate {
                     if !new_matches.is_empty() {
                         new_matches.push(WorktreeEntry::Separator);
                     }
+                    if let Some(branch_name) = matching_branch.clone() {
+                        new_matches.push(WorktreeEntry::OpenBranchInNewWorktree {
+                            branch_name,
+                            disabled_reason: open_branch_disabled_reason.clone(),
+                        });
+                    }
                     if show_default_branch_create {
                         if let Some(ref default_branch) = default_branch {
                             new_matches.push(WorktreeEntry::CreateNamed {
@@ -812,7 +871,8 @@ impl PickerDelegate for WorktreePickerDelegate {
                                 disabled_reason: create_named_disabled_reason.clone(),
                             });
                         }
-                    } else {
+                    }
+                    if show_current_branch_create {
                         new_matches.push(WorktreeEntry::CreateNamed {
                             name: normalized_query.clone(),
                             from_branch: None,
@@ -943,6 +1003,36 @@ impl PickerDelegate for WorktreePickerDelegate {
                 }
             }
             WorktreeEntry::CreateNamed {
+                disabled_reason: Some(_),
+                ..
+            } => {
+                return;
+            }
+            WorktreeEntry::OpenBranchInNewWorktree {
+                branch_name,
+                disabled_reason: None,
+            } => {
+                if self.creation_blocked_reason(cx).is_some() {
+                    return;
+                }
+                if let Some(workspace) = self.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        crate::worktree_service::handle_create_worktree(
+                            workspace,
+                            &CreateWorktree {
+                                worktree_name: Some(branch_name.clone()),
+                                branch_target: NewWorktreeBranchTarget::CheckoutExistingBranch {
+                                    name: branch_name.clone(),
+                                },
+                            },
+                            window,
+                            self.focused_dock,
+                            cx,
+                        );
+                    });
+                }
+            }
+            WorktreeEntry::OpenBranchInNewWorktree {
                 disabled_reason: Some(_),
                 ..
             } => {
@@ -1220,6 +1310,22 @@ impl PickerDelegate for WorktreePickerDelegate {
 
                 Some(item.into_any_element())
             }
+            WorktreeEntry::OpenBranchInNewWorktree {
+                branch_name,
+                disabled_reason,
+            } => {
+                let item = create_new_list_item(
+                    format!("open-branch-in-worktree-{branch_name}").into(),
+                    format!("Open branch \"{branch_name}\" in a new worktree").into(),
+                    disabled_reason
+                        .clone()
+                        .map(SharedString::from)
+                        .or_else(|| self.creation_blocked_reason(cx)),
+                    selected,
+                );
+
+                Some(item.into_any_element())
+            }
         }
     }
 
@@ -1237,8 +1343,18 @@ impl PickerDelegate for WorktreePickerDelegate {
                 WorktreeEntry::CreateFromCurrentBranch
                     | WorktreeEntry::CreateFromDefaultBranch { .. }
                     | WorktreeEntry::CreateNamed { .. }
+                    | WorktreeEntry::OpenBranchInNewWorktree { .. }
             )
         });
+
+        let create_button_label = if matches!(
+            selected_entry,
+            Some(WorktreeEntry::OpenBranchInNewWorktree { .. })
+        ) {
+            "Open"
+        } else {
+            "Create"
+        };
 
         let is_existing_worktree =
             selected_entry.is_some_and(|e| matches!(e, WorktreeEntry::Worktree { .. }));
@@ -1267,7 +1383,7 @@ impl PickerDelegate for WorktreePickerDelegate {
             Some(
                 footer
                     .child(
-                        Button::new("create-worktree", "Create")
+                        Button::new("create-worktree", create_button_label)
                             .key_binding(
                                 KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                     .map(|kb| kb.size(rems_from_px(12.))),
@@ -1335,6 +1451,76 @@ impl PickerDelegate for WorktreePickerDelegate {
         } else {
             None
         }
+    }
+}
+
+fn matching_local_branch_name(branches: &[Branch], query: &str) -> Option<String> {
+    branches
+        .iter()
+        .find(|branch| !branch.is_remote() && branch.name() == query)
+        .map(|branch| branch.name().to_string())
+}
+
+fn branch_checked_out_in_worktree(worktrees: &[GitWorktree], branch_name: &str) -> bool {
+    worktrees
+        .iter()
+        .any(|worktree| worktree.branch_name() == Some(branch_name))
+}
+
+#[cfg(test)]
+mod branch_matching_tests {
+    use super::*;
+
+    fn branch(ref_name: &str) -> Branch {
+        Branch {
+            is_head: false,
+            ref_name: ref_name.into(),
+            upstream: None,
+            most_recent_commit: None,
+        }
+    }
+
+    fn worktree(ref_name: Option<&str>) -> GitWorktree {
+        GitWorktree {
+            path: PathBuf::from("/repo"),
+            ref_name: ref_name.map(Into::into),
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare: false,
+        }
+    }
+
+    #[test]
+    fn test_matching_local_branch_name_matches_exact_local_branch() {
+        let branches = vec![
+            branch("refs/remotes/origin/feat/new-feature-foo"),
+            branch("refs/heads/feat/new-feature-foo"),
+        ];
+
+        assert_eq!(
+            matching_local_branch_name(&branches, "feat/new-feature-foo"),
+            Some("feat/new-feature-foo".to_string())
+        );
+        assert_eq!(matching_local_branch_name(&branches, "feat/new"), None);
+        assert_eq!(
+            matching_local_branch_name(&branches[..1], "origin/feat/new-feature-foo"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_branch_checked_out_in_worktree() {
+        let worktrees = vec![
+            worktree(Some("refs/heads/main")),
+            worktree(Some("refs/heads/feat/new-feature-foo")),
+            worktree(None),
+        ];
+
+        assert!(branch_checked_out_in_worktree(
+            &worktrees,
+            "feat/new-feature-foo"
+        ));
+        assert!(!branch_checked_out_in_worktree(&worktrees, "feat/other"));
     }
 }
 
