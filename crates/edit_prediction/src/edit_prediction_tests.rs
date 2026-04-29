@@ -3315,8 +3315,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
     // Let the worker process the channel message before we start advancing.
     cx.run_until_parked();
 
-    let mut region_a_edit_offset = 5;
-    for _ in 0..3 {
+    for region_a_edit_offset in (5..).take(3) {
         // Edit inside region A (not at the boundary) so `last_edit_at` is
         // updated before the worker's next wake.
         buffer.update(cx, |buffer, cx| {
@@ -3326,7 +3325,6 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
                 cx,
             );
         });
-        region_a_edit_offset += 1;
         cx.run_until_parked();
 
         cx.executor()

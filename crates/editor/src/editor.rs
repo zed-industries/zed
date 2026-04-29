@@ -902,6 +902,16 @@ pub trait Addon: 'static {
         None
     }
 
+    fn extend_buffer_header_context_menu(
+        &self,
+        menu: ui::ContextMenu,
+        _: &language::BufferSnapshot,
+        _: &mut Window,
+        _: &mut App,
+    ) -> ui::ContextMenu {
+        menu
+    }
+
     fn override_status_for_buffer_id(&self, _: BufferId, _: &App) -> Option<FileStatus> {
         None
     }
@@ -24465,8 +24475,8 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
-            .iter()
-            .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
+            .values()
+            .flat_map(|highlighted_rows| highlighted_rows.iter())
             .fold(
                 BTreeMap::<DisplayRow, LineHighlight>::new(),
                 |mut unique_rows, highlight| {
