@@ -3776,9 +3776,9 @@ mod tests {
             }
         }
 
-        async fn init_ctrl_hover_hyperlink_test_with_window<'a>(
-            cx: &'a mut TestAppContext,
-        ) -> (TestEntities, HoveredWord, &'a mut VisualTestContext) {
+        async fn init_ctrl_hover_hyperlink_test_with_window(
+            cx: &mut TestAppContext,
+        ) -> (TestEntities, HoveredWord, &mut VisualTestContext) {
             let (terminal, cx) = init_terminal_test_with_window(cx, b"").await;
             let test_view = cx.new_window_entity(|window, cx| TestView::new(&terminal, window, cx));
             let test_entities = TestEntities::new(&terminal, &test_view);
