@@ -200,7 +200,8 @@ fn path_match_helper<'a>(
         matched_chars.dedup();
 
         let length_penalty = candidate_buf.len() as f64 * LENGTH_PENALTY;
-        let filename_bonus = get_filename_match_bonus(&candidate_buf, &query.pattern.atoms, matcher);
+        let filename_bonus =
+            get_filename_match_bonus(&candidate_buf, &query.pattern.atoms, matcher);
         let positive = (score as f64 + filename_bonus) * case_penalty(case_mismatches);
         let adjusted_score = positive - length_penalty;
         let positions = positions_from_sorted(&candidate_buf, &matched_chars);
@@ -220,11 +221,9 @@ fn path_match_helper<'a>(
                 Arc::clone(path_prefix)
             },
             is_dir: candidate.is_dir,
-            distance_to_relative_ancestor: relative_to
-                .as_ref()
-                .map_or(usize::MAX, |relative_to| {
-                    distance_between_paths(candidate.path, relative_to.as_ref())
-                }),
+            distance_to_relative_ancestor: relative_to.as_ref().map_or(usize::MAX, |relative_to| {
+                distance_between_paths(candidate.path, relative_to.as_ref())
+            }),
         });
     }
     Ok(())

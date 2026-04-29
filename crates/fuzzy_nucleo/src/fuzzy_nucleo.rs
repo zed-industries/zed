@@ -79,8 +79,8 @@ impl Query {
             return None;
         }
         let wants_case_penalty = case.is_smart() && query.chars().any(|c| c.is_uppercase());
-        let query_chars = wants_case_penalty
-            .then(|| query.chars().filter(|c| !c.is_whitespace()).collect());
+        let query_chars =
+            wants_case_penalty.then(|| query.chars().filter(|c| !c.is_whitespace()).collect());
         Some(Query {
             pattern,
             query_chars,
