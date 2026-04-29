@@ -762,7 +762,7 @@ impl MessageEditor {
             self.session_capabilities.read().supports_embedded_context();
 
         cx.spawn(async move |_, cx| {
-            let contents = contents.await?;
+            let mut contents = contents.await?;
             Ok(editor.update(cx, |editor, cx| {
                 let crease_snapshot = editor.display_map.read(cx).crease_snapshot();
                 let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -774,8 +774,8 @@ impl MessageEditor {
                     supports_embedded_context,
                     |crease_id| {
                         contents
-                            .get(crease_id)
-                            .map(|(uri, mention)| (uri.clone(), Some(mention.clone())))
+                            .remove(crease_id)
+                            .map(|(uri, mention)| (uri, Some(mention)))
                     },
                 )
             }))
