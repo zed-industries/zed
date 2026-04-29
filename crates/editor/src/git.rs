@@ -2,13 +2,15 @@ pub(super) mod blame;
 
 use super::*;
 use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
-use buffer_diff::DiffHunkStatus;
+use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
+use ui::PopoverMenu;
 
 pub type RenderDiffHunkControlsFn = Arc<
     dyn Fn(
         u32,
         &DiffHunkStatus,
         Range<Anchor>,
+        bool,
         bool,
         Pixels,
         &Entity<Editor>,
@@ -29,6 +31,7 @@ pub(super) enum DisplayDiffHunk {
         multi_buffer_range: Range<Anchor>,
         status: DiffHunkStatus,
         word_diffs: Vec<Range<MultiBufferOffset>>,
+        staged_lines: Option<Vec<bool>>,
     },
 }
 
@@ -1372,6 +1375,262 @@ impl Editor {
         self.stage_or_unstage_diff_hunks(stage, ranges, cx);
     }
 
+    pub(super) fn toggle_staged_selected_lines(
+        &mut self,
+        _: &::git::ToggleStagedSelectedLines,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let ranges: Vec<_> = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|s| s.range())
+            .collect();
+        let stage = self.has_stageable_lines_in_ranges(&ranges, &snapshot);
+        self.stage_or_unstage_selected_lines(stage, ranges, cx);
+    }
+
+    pub fn has_stageable_lines_in_ranges(
+        &self,
+        ranges: &[Range<Anchor>],
+        snapshot: &MultiBufferSnapshot,
+    ) -> bool {
+        for hunk in self.diff_hunks_in_ranges(ranges, snapshot) {
+            match hunk.status().secondary {
+                DiffHunkSecondaryStatus::HasSecondaryHunk => return true,
+                DiffHunkSecondaryStatus::NoSecondaryHunk => continue,
+                DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
+                    let (staged_addition_lines, staged_deletion_lines) =
+                        match (&hunk.staged_addition_lines, &hunk.staged_deletion_lines) {
+                            (Some(a), Some(d)) => (a, d),
+                            _ => return true,
+                        };
+                    let inverted = snapshot
+                        .diff_for_buffer_id(hunk.buffer_id)
+                        .is_some_and(|diff| diff.buffer_id() != hunk.buffer_id);
+                    let (ghost_section_lines, buffer_section_lines): (&Vec<bool>, &Vec<bool>) =
+                        if inverted {
+                            (staged_addition_lines, staged_deletion_lines)
+                        } else {
+                            (staged_deletion_lines, staged_addition_lines)
+                        };
+                    let hunk_start = hunk.row_range.start.0;
+                    let visible_deletion_lines = (hunk.row_range.end.0 - hunk.row_range.start.0)
+                        .saturating_sub(
+                            hunk.buffer_range_point.end.row - hunk.buffer_range_point.start.row,
+                        );
+                    for range in ranges {
+                        let range_point = range.to_point(snapshot);
+                        let sel_start = range_point.start.row;
+                        let sel_end = range_point.end.row + 1;
+                        let intersect_start = sel_start.max(hunk_start);
+                        let intersect_end = sel_end.min(hunk.row_range.end.0);
+                        for row in intersect_start..intersect_end {
+                            let idx = (row - hunk_start) as usize;
+                            let staged = if idx < visible_deletion_lines as usize {
+                                ghost_section_lines.get(idx).copied()
+                            } else {
+                                buffer_section_lines
+                                    .get(idx - visible_deletion_lines as usize)
+                                    .copied()
+                            };
+                            if staged == Some(false) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn diff_hunks_with_selected_rows(
+        &self,
+        ranges: &[Range<Anchor>],
+        snapshot: &MultiBufferSnapshot,
+    ) -> Vec<(MultiBufferDiffHunk, (Vec<u32>, Vec<u32>))> {
+        let mut result: Vec<(MultiBufferDiffHunk, (Vec<u32>, Vec<u32>))> = Vec::new();
+        let mut index: HashMap<(BufferId, usize, usize, Point, Point), usize> = HashMap::default();
+
+        for range in ranges {
+            let range_point = range.to_point(snapshot);
+            let sel_start = range_point.start.row;
+            let sel_end = range_point.end.row + 1;
+
+            let mut peek_end = range_point.end;
+            if range_point.end.row < snapshot.max_row().0 {
+                peek_end = Point::new(range_point.end.row + 1, 0);
+            }
+
+            for hunk in snapshot.diff_hunks_in_range(range_point.start..peek_end) {
+                let hunk_start = hunk.row_range.start.0;
+                let hunk_end = hunk.row_range.end.0;
+
+                let visible_deletion_lines = (hunk.row_range.end.0 - hunk.row_range.start.0)
+                    - (hunk.buffer_range_point.end.row - hunk.buffer_range_point.start.row);
+
+                let intersect_start = sel_start.max(hunk_start);
+                let intersect_end = sel_end.min(hunk_start + visible_deletion_lines);
+
+                let ghost_section_range =
+                    if visible_deletion_lines > 0 && intersect_start < intersect_end {
+                        let relative_start = intersect_start - hunk_start;
+                        let relative_end = intersect_end - hunk_start;
+
+                        relative_start..relative_end
+                    } else {
+                        0..0
+                    };
+
+                let buffer_section_start = hunk_start + visible_deletion_lines;
+
+                let intersect_start = sel_start.max(buffer_section_start);
+                let intersect_end = sel_end.min(hunk_end);
+
+                let buffer_section_range = if intersect_start < intersect_end {
+                    let relative_start = intersect_start - buffer_section_start;
+                    let relative_end = intersect_end - buffer_section_start;
+
+                    relative_start..relative_end
+                } else {
+                    0..0
+                };
+
+                if buffer_section_range.is_empty() && ghost_section_range.is_empty() {
+                    continue;
+                }
+
+                let inverted = snapshot
+                    .diff_for_buffer_id(hunk.buffer_id)
+                    .is_some_and(|diff| diff.buffer_id() != hunk.buffer_id);
+                let (addition_range, deletion_range) = if inverted {
+                    (ghost_section_range, buffer_section_range)
+                } else {
+                    (buffer_section_range, ghost_section_range)
+                };
+
+                let key = (
+                    hunk.buffer_id,
+                    hunk.diff_base_byte_range.start.0,
+                    hunk.diff_base_byte_range.end.0,
+                    hunk.buffer_range_point.start,
+                    hunk.buffer_range_point.end,
+                );
+                let idx = match index.get(&key) {
+                    Some(&idx) => idx,
+                    None => {
+                        let idx = result.len();
+                        index.insert(key, idx);
+                        result.push((hunk, (Vec::default(), Vec::default())));
+                        idx
+                    }
+                };
+                let (addition_rows, deletion_rows) = &mut result[idx].1;
+                addition_rows.extend(addition_range);
+                deletion_rows.extend(deletion_range);
+            }
+        }
+
+        result
+    }
+
+    fn stage_or_unstage_selected_lines(
+        &mut self,
+        stage: bool,
+        ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let hunks_with_rows = self.diff_hunks_with_selected_rows(&ranges, &snapshot);
+        if hunks_with_rows.is_empty() {
+            return;
+        }
+        if self.delegate_stage_and_restore {
+            cx.emit(EditorEvent::StageOrUnstageSelectedLinesRequested {
+                stage,
+                hunks_with_rows,
+            });
+            return;
+        }
+        self.stage_or_unstage_selected_lines_for_hunks(stage, hunks_with_rows, cx);
+    }
+
+    pub(crate) fn stage_or_unstage_selected_lines_for_hunks(
+        &mut self,
+        stage: bool,
+        mut hunks_with_rows: Vec<(MultiBufferDiffHunk, (Vec<u32>, Vec<u32>))>,
+        cx: &mut Context<Self>,
+    ) {
+        hunks_with_rows.sort_by_key(|(hunk, _)| hunk.buffer_id);
+
+        let ranges: Vec<Range<Anchor>> = hunks_with_rows
+            .iter()
+            .map(|(hunk, _)| hunk.multi_buffer_range.clone())
+            .collect();
+        let task = self.save_buffers_for_ranges_if_needed(&ranges, cx);
+
+        cx.spawn(async move |this, cx| {
+            task.await?;
+            this.update(cx, |this, cx| {
+                let chunk_by = hunks_with_rows.iter().chunk_by(|(hunk, _)| hunk.buffer_id);
+                for (buffer_id, group) in &chunk_by {
+                    let Some(project) = this.project() else {
+                        continue;
+                    };
+                    let Some(buffer_entity) = project.read(cx).buffer_for_id(buffer_id, cx) else {
+                        continue;
+                    };
+                    let Some(diff) = this.buffer.read(cx).diff_for(buffer_id) else {
+                        continue;
+                    };
+                    let buffer_snapshot = buffer_entity.read(cx).snapshot();
+                    let file_exists = buffer_snapshot
+                        .file()
+                        .is_some_and(|f| f.disk_state().exists());
+
+                    let mut diff_hunks: Vec<_> = group
+                        .map(|(hunk, (selected_addition_rows, selected_deletion_rows))| {
+                            (
+                                buffer_diff::DiffHunk {
+                                    buffer_range: hunk.buffer_range.clone(),
+                                    base_word_diffs: Vec::default(),
+                                    buffer_word_diffs: Vec::default(),
+                                    diff_base_byte_range: hunk.diff_base_byte_range.start.0
+                                        ..hunk.diff_base_byte_range.end.0,
+                                    secondary_status: hunk.status.secondary,
+                                    staged_addition_lines: hunk.staged_addition_lines.clone(),
+                                    staged_deletion_lines: hunk.staged_deletion_lines.clone(),
+                                    range: Point::zero()..Point::zero(),
+                                },
+                                selected_addition_rows.clone(),
+                                selected_deletion_rows.clone(),
+                            )
+                        })
+                        .collect();
+                    diff_hunks.sort_by(|(a, _, _), (b, _, _)| {
+                        a.buffer_range
+                            .start
+                            .cmp(&b.buffer_range.start, &buffer_snapshot)
+                    });
+                    diff.update(cx, |diff, cx| {
+                        diff.stage_or_unstage_lines(
+                            stage,
+                            &diff_hunks,
+                            &buffer_snapshot,
+                            file_exists,
+                            cx,
+                        );
+                    });
+                }
+            })
+        })
+        .detach_and_log_err(cx);
+    }
+
     pub(super) fn stage_and_next(
         &mut self,
         _: &::git::StageAndNext,
@@ -1417,6 +1676,8 @@ impl Editor {
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
                         secondary_status: hunk.status.secondary,
+                        staged_addition_lines: hunk.staged_addition_lines.clone(),
+                        staged_deletion_lines: hunk.staged_deletion_lines,
                         range: Point::zero()..Point::zero(), // unused
                     })
                     .collect::<Vec<_>>(),
@@ -2565,6 +2826,15 @@ impl EditorSnapshot {
                         display_row_range: hunk_display_start.row()..end_row,
                         multi_buffer_range,
                         is_created_file,
+                        staged_lines: match (
+                            &hunk.staged_deletion_lines,
+                            &hunk.staged_addition_lines,
+                        ) {
+                            (Some(d), Some(a)) => Some(d.iter().chain(a.iter()).cloned().collect()),
+                            (Some(d), None) => Some(d.clone()),
+                            (None, Some(a)) => Some(a.clone()),
+                            _ => None,
+                        },
                     }
                 };
 
@@ -2618,6 +2888,7 @@ pub(super) fn render_diff_hunk_controls(
     status: &DiffHunkStatus,
     hunk_range: Range<Anchor>,
     is_created_file: bool,
+    cursor_in_hunk: bool,
     line_height: Pixels,
     editor: &Entity<Editor>,
     _window: &mut Window,
@@ -2626,6 +2897,33 @@ pub(super) fn render_diff_hunk_controls(
     let show_stage_restore = ProjectSettings::get_global(cx)
         .git
         .show_stage_restore_buttons;
+
+    let stage = status.has_secondary_hunk();
+    let (label, tooltip_label, id_prefix) = if stage {
+        ("Stage", "Stage Hunk", "stage")
+    } else {
+        ("Unstage", "Unstage Hunk", "unstage")
+    };
+    let alpha = if status.is_pending() { 0.66 } else { 1.0 };
+    let make_click_handler = {
+        let editor = editor.clone();
+        let hunk_range = hunk_range.clone();
+        move |_event: &ClickEvent, _window: &mut Window, cx: &mut App| {
+            editor.update(cx, |editor, cx| {
+                editor.stage_or_unstage_diff_hunks(
+                    stage,
+                    vec![hunk_range.start..hunk_range.start],
+                    cx,
+                );
+            });
+        }
+    };
+    let make_tooltip = {
+        let focus_handle = editor.focus_handle(cx);
+        move |_window: &mut Window, cx: &mut App| {
+            Tooltip::for_action_in(tooltip_label, &::git::ToggleStaged, &focus_handle, cx)
+        }
+    };
 
     h_flex()
         .h(line_height)
@@ -2642,58 +2940,74 @@ pub(super) fn render_diff_hunk_controls(
         .block_mouse_except_scroll()
         .shadow_md()
         .when(show_stage_restore, |el| {
-            el.child(if status.has_secondary_hunk() {
-                Button::new(("stage", row as u64), "Stage")
-                    .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |_window, cx| {
-                            Tooltip::for_action_in(
-                                "Stage Hunk",
-                                &::git::ToggleStaged,
-                                &focus_handle,
-                                cx,
-                            )
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, _window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                editor.stage_or_unstage_diff_hunks(
-                                    true,
-                                    vec![hunk_range.start..hunk_range.start],
-                                    cx,
-                                );
-                            });
-                        }
-                    })
-            } else {
-                Button::new(("unstage", row as u64), "Unstage")
-                    .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                    .tooltip({
-                        let focus_handle = editor.focus_handle(cx);
-                        move |_window, cx| {
-                            Tooltip::for_action_in(
-                                "Unstage Hunk",
-                                &::git::ToggleStaged,
-                                &focus_handle,
-                                cx,
-                            )
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        move |_event, _window, cx| {
-                            editor.update(cx, |editor, cx| {
-                                editor.stage_or_unstage_diff_hunks(
-                                    false,
-                                    vec![hunk_range.start..hunk_range.start],
-                                    cx,
-                                );
-                            });
-                        }
-                    })
+            el.child({
+                let stage_button = Button::new((id_prefix, row as u64), label)
+                    .alpha(alpha)
+                    .tooltip(make_tooltip)
+                    .on_click(make_click_handler);
+                if cursor_in_hunk {
+                    let menu_focus_handle = editor.focus_handle(cx);
+                    let editor = editor.clone();
+                    h_flex()
+                        .child(stage_button)
+                        .child(div().h(relative(0.6)).w_px().bg(cx.theme().colors().border))
+                        .child(
+                            PopoverMenu::new(("hunk-menu", row as u64))
+                                .trigger(
+                                    IconButton::new(
+                                        ("hunk-menu-trigger", row as u64),
+                                        IconName::ChevronDown,
+                                    )
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::XSmall),
+                                )
+                                .menu(move |window, cx| {
+                                    let focus_handle = menu_focus_handle.clone();
+                                    let action_label = editor
+                                        .read_with(cx, |editor, cx| {
+                                            let snapshot = editor.buffer.read(cx).snapshot(cx);
+                                            let ranges: Vec<_> = editor
+                                                .selections
+                                                .disjoint_anchors()
+                                                .iter()
+                                                .map(|s| s.range())
+                                                .collect();
+                                            let mut rows = HashSet::default();
+                                            for range in &ranges {
+                                                let start = range.start.to_point(&snapshot);
+                                                let end = range.end.to_point(&snapshot);
+                                                let last_row =
+                                                    if end.column == 0 && end.row > start.row {
+                                                        end.row - 1
+                                                    } else {
+                                                        end.row
+                                                    };
+                                                for row in start.row..=last_row {
+                                                    rows.insert(row);
+                                                }
+                                            }
+                                            let noun = if rows.len() == 1 { "Line" } else { "Lines" };
+                                            if editor
+                                                .has_stageable_lines_in_ranges(&ranges, &snapshot)
+                                            {
+                                                format!("Stage Selected {noun}")
+                                            } else {
+                                                format!("Unstage Selected {noun}")
+                                            }
+                                        });
+                                    Some(ContextMenu::build(window, cx, |menu, _, _| {
+                                        menu.context(focus_handle).action(
+                                            action_label,
+                                            Box::new(::git::ToggleStagedSelectedLines),
+                                        )
+                                    }))
+                                })
+                                .anchor(gpui::Anchor::TopRight),
+                        )
+                        .into_any_element()
+                } else {
+                    stage_button.into_any_element()
+                }
             })
         })
         .when(show_stage_restore, |el| {

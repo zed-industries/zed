@@ -232,6 +232,7 @@
     "bindings": {
       "cmd-alt-z": "git::Restore",
       "cmd-alt-y": "git::ToggleStaged",
+      "cmd-alt-shift-y": "git::ToggleStagedSelectedLines",
       "cmd-y": "git::StageAndNext",
       "cmd-shift-y": "git::UnstageAndNext",
     },

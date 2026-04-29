@@ -134,6 +134,7 @@ pub struct MultiBufferDiffHunk {
     pub buffer_id: BufferId,
     /// The range of the underlying buffer that this hunk corresponds to.
     pub buffer_range: Range<text::Anchor>,
+    pub buffer_range_point: Range<Point>,
     /// The range within the buffer's diff base that this hunk corresponds to.
     pub diff_base_byte_range: Range<BufferOffset>,
     /// The status of this hunk (added/modified/deleted and secondary status).
@@ -142,6 +143,12 @@ pub struct MultiBufferDiffHunk {
     pub word_diffs: Vec<Range<MultiBufferOffset>>,
     pub excerpt_range: ExcerptRange<text::Anchor>,
     pub multi_buffer_range: Range<Anchor>,
+    /// For hunks that are partially staged, records whether each row of the hunk
+    /// (relative to `row_range.start`) is currently staged in the index.
+    /// `true` means the row matches the index; `false` means it has not yet been staged.
+    /// `None` when the hunk is uniformly staged or unstaged.
+    pub staged_addition_lines: Option<Vec<bool>>,
+    pub staged_deletion_lines: Option<Vec<bool>>,
 }
 
 impl MultiBufferDiffHunk {
@@ -3500,6 +3507,8 @@ impl MultiBufferSnapshot {
             } else {
                 hunk.buffer_range.clone()
             };
+            let buffer_range_point = buffer_range.start.to_point(buffer_snapshot)
+                ..buffer_range.end.to_point(buffer_snapshot);
             let status_kind = if hunk.buffer_range.start == hunk.buffer_range.end {
                 DiffHunkStatusKind::Deleted
             } else if hunk.diff_base_byte_range.is_empty() {
@@ -3513,6 +3522,7 @@ impl MultiBufferSnapshot {
                 row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
                 buffer_id: buffer_snapshot.remote_id(),
                 buffer_range,
+                buffer_range_point,
                 word_diffs,
                 diff_base_byte_range: BufferOffset(hunk.diff_base_byte_range.start)
                     ..BufferOffset(hunk.diff_base_byte_range.end),
@@ -3522,6 +3532,8 @@ impl MultiBufferSnapshot {
                 },
                 excerpt_range: excerpt.range.clone(),
                 multi_buffer_range,
+                staged_addition_lines: hunk.staged_addition_lines,
+                staged_deletion_lines: hunk.staged_deletion_lines,
             })
         })
     }

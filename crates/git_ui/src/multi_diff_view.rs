@@ -229,7 +229,7 @@ impl MultiDiffView {
             editor.disable_diagnostics(cx);
             editor.set_expand_all_diff_hunks(cx);
             editor.set_render_diff_hunk_controls(
-                Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
+                Arc::new(|_, _, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
                 cx,
             );
             editor

@@ -178,6 +178,34 @@ fn translate_lhs_hunks_to_rhs(
     translated
 }
 
+fn translate_lhs_hunks_with_rows_to_rhs(
+    lhs_hunks_with_rows: &[(MultiBufferDiffHunk, (Vec<u32>, Vec<u32>))],
+    splittable: &SplittableEditor,
+    cx: &App,
+) -> Vec<(MultiBufferDiffHunk, (Vec<u32>, Vec<u32>))> {
+    let Some(lhs) = &splittable.lhs else {
+        return Vec::new();
+    };
+    let lhs_snapshot = lhs.multibuffer.read(cx).snapshot(cx);
+    let rhs_snapshot = splittable.rhs_multibuffer.read(cx).snapshot(cx);
+    let rhs_hunks: Vec<MultiBufferDiffHunk> = rhs_snapshot.diff_hunks().collect();
+
+    let mut translated: Vec<(MultiBufferDiffHunk, (Vec<u32>, Vec<u32>))> = Vec::new();
+    for (lhs_hunk, rows) in lhs_hunks_with_rows {
+        let Some(diff) = lhs_snapshot.diff_for_buffer_id(lhs_hunk.buffer_id) else {
+            continue;
+        };
+        let rhs_buffer_id = diff.buffer_id();
+        if let Some(rhs_hunk) = rhs_hunks.iter().find(|rhs_hunk| {
+            rhs_hunk.buffer_id == rhs_buffer_id
+                && rhs_hunk.diff_base_byte_range == lhs_hunk.diff_base_byte_range
+        }) {
+            translated.push((rhs_hunk.clone(), rows.clone()));
+        }
+    }
+    translated
+}
+
 fn patches_for_range<F>(
     source_snapshot: &MultiBufferSnapshot,
     target_snapshot: &MultiBufferSnapshot,
@@ -463,7 +491,7 @@ impl SplittableEditor {
     }
 
     pub fn disable_diff_hunk_controls(&self, cx: &mut Context<Self>) {
-        let empty_controls = Arc::new(|_, _: &_, _, _, _, _: &_, _: &mut _, _: &mut _| {
+        let empty_controls = Arc::new(|_, _: &_, _, _, _, _, _: &_, _: &mut _, _: &mut _| {
             gpui::Empty.into_any_element()
         });
         self.update_editors(cx, |editor, cx| {
@@ -656,6 +684,23 @@ impl SplittableEditor {
                                 for (buffer_id, hunks) in &chunk_by {
                                     editor.do_stage_or_unstage(stage, buffer_id, hunks, cx);
                                 }
+                            });
+                        }
+                    }
+                }
+                EditorEvent::StageOrUnstageSelectedLinesRequested {
+                    stage,
+                    hunks_with_rows,
+                } => {
+                    if this.lhs.is_some() {
+                        let translated =
+                            translate_lhs_hunks_with_rows_to_rhs(hunks_with_rows, this, cx);
+                        if !translated.is_empty() {
+                            let stage = *stage;
+                            this.rhs_editor.update(cx, |editor, cx| {
+                                editor.stage_or_unstage_selected_lines_for_hunks(
+                                    stage, translated, cx,
+                                );
                             });
                         }
                     }

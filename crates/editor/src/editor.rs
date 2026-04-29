@@ -11448,6 +11448,10 @@ pub enum EditorEvent {
         stage: bool,
         hunks: Vec<MultiBufferDiffHunk>,
     },
+    StageOrUnstageSelectedLinesRequested {
+        stage: bool,
+        hunks_with_rows: Vec<(MultiBufferDiffHunk, (Vec<u32>, Vec<u32>))>,
+    },
     OpenExcerptsRequested {
         selections_by_buffer: HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<u32>)>,
         split: bool,

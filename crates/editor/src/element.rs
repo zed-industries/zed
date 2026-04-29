@@ -464,6 +464,7 @@ impl EditorElement {
         register_action(editor, window, Editor::open_git_blame_commit);
         register_action(editor, window, Editor::toggle_selected_diff_hunks);
         register_action(editor, window, Editor::toggle_staged_selected_diff_hunks);
+        register_action(editor, window, Editor::toggle_staged_selected_lines);
         register_action(editor, window, Editor::stage_and_next);
         register_action(editor, window, Editor::unstage_and_next);
         register_action(editor, window, Editor::expand_all_diff_hunks);
@@ -5806,11 +5807,14 @@ impl EditorElement {
                         sticky_top.min(max_y)
                     };
 
+                    let cursor_in_hunk =
+                        newest_cursor_row.is_some_and(|row| display_row_range.contains(&row));
                     let mut element = render_diff_hunk_controls(
                         display_row_range.start.0,
                         status,
                         multi_buffer_range.clone(),
                         *is_created_file,
+                        cursor_in_hunk,
                         line_height,
                         &editor,
                         window,
@@ -6303,7 +6307,7 @@ impl EditorElement {
         window.paint_layer(layout.gutter_hitbox.bounds, |window| {
             for (hunk, hitbox) in &layout.display_hunks {
                 let hunk_to_paint = match hunk {
-                    DisplayDiffHunk::Folded { .. } => {
+                    DisplayDiffHunk::Folded { display_row } => {
                         let hunk_bounds = Self::diff_hunk_bounds(
                             layout.position_map.scroll_position,
                             line_height,
@@ -6311,16 +6315,20 @@ impl EditorElement {
                             hunk,
                             &layout.position_map.snapshot,
                         );
+                        let display_row_range = (*display_row)..(*display_row);
                         Some((
                             hunk_bounds,
                             cx.theme().colors().version_control_modified,
                             Corners::all(px(0.)),
                             DiffHunkStatus::modified_none(),
+                            display_row_range,
+                            None,
                         ))
                     }
                     DisplayDiffHunk::Unfolded {
                         status,
                         display_row_range,
+                        staged_lines,
                         ..
                     } => hitbox.as_ref().map(|hunk_hitbox| {
                         let color = match split_side {
@@ -6350,13 +6358,30 @@ impl EditorElement {
                                 color,
                                 Corners::all(1. * line_height),
                                 *status,
+                                display_row_range.clone(),
+                                staged_lines.clone(),
                             ),
-                            _ => (hunk_hitbox.bounds, color, Corners::all(px(0.)), *status),
+                            _ => (
+                                hunk_hitbox.bounds,
+                                color,
+                                Corners::all(px(0.)),
+                                *status,
+                                display_row_range.clone(),
+                                staged_lines.clone(),
+                            ),
                         }
                     }),
                 };
 
-                if let Some((hunk_bounds, background_color, corner_radii, status)) = hunk_to_paint {
+                if let Some((
+                    hunk_bounds,
+                    background_color,
+                    corner_radii,
+                    status,
+                    display_row_range,
+                    staged_lines,
+                )) = hunk_to_paint
+                {
                     // Flatten the background color with the editor color to prevent
                     // elements below transparent hunks from showing through
                     let flattened_background_color = cx
@@ -6365,7 +6390,62 @@ impl EditorElement {
                         .editor_background
                         .blend(background_color);
 
-                    if !Self::diff_hunk_hollow(status, cx) {
+                    let flattened_unstaged_background_color = cx
+                        .theme()
+                        .colors()
+                        .editor_background
+                        .blend(background_color.opacity(0.3));
+
+                    if let Some(staged_lines) =
+                        staged_lines.filter(|_| !display_row_range.is_empty())
+                    {
+                        let total_lines = display_row_range.len();
+                        let height = hunk_bounds.size.height;
+                        let width = hunk_bounds.size.width;
+
+                        let mut curr_origin = hunk_bounds.origin;
+
+                        let staged_iter = if split_side == Some(SplitSide::Left) {
+                            itertools::Either::Left(staged_lines.iter().take(total_lines))
+                        } else {
+                            itertools::Either::Right(staged_lines.iter().tail(total_lines))
+                        };
+
+                        for (new_height, staged) in
+                            staged_iter.dedup_with_count().map(|(count, staged)| {
+                                let pixel_height: Pixels = height * count / (total_lines as f32);
+                                (pixel_height, staged)
+                            })
+                        {
+                            let new_hunk_bounds = Bounds {
+                                origin: curr_origin,
+                                size: Size {
+                                    width,
+                                    height: new_height,
+                                },
+                            };
+                            if Self::should_hollow(!*staged, cx) {
+                                window.paint_quad(quad(
+                                    new_hunk_bounds,
+                                    corner_radii,
+                                    flattened_unstaged_background_color,
+                                    Edges::all(px(1.0)),
+                                    flattened_background_color,
+                                    BorderStyle::Solid,
+                                ));
+                            } else {
+                                window.paint_quad(quad(
+                                    new_hunk_bounds,
+                                    corner_radii,
+                                    flattened_background_color,
+                                    Edges::default(),
+                                    transparent_black(),
+                                    BorderStyle::default(),
+                                ));
+                            };
+                            curr_origin = new_hunk_bounds.bottom_left();
+                        }
+                    } else if !Self::diff_hunk_hollow(status, cx) {
                         window.paint_quad(quad(
                             hunk_bounds,
                             corner_radii,
@@ -6375,12 +6455,6 @@ impl EditorElement {
                             BorderStyle::default(),
                         ));
                     } else {
-                        let flattened_unstaged_background_color = cx
-                            .theme()
-                            .colors()
-                            .editor_background
-                            .blend(background_color.opacity(0.3));
-
                         window.paint_quad(quad(
                             hunk_bounds,
                             corner_radii,
@@ -7991,11 +8065,14 @@ impl EditorElement {
 
     fn diff_hunk_hollow(status: DiffHunkStatus, cx: &mut App) -> bool {
         let unstaged = status.has_secondary_hunk();
+        Self::should_hollow(unstaged, cx)
+    }
+
+    fn should_hollow(unstaged: bool, cx: &mut App) -> bool {
         let unstaged_hollow = matches!(
             ProjectSettings::get_global(cx).git.hunk_style,
             GitHunkStyleSetting::UnstagedHollow
         );
-
         unstaged == unstaged_hollow
     }
 
