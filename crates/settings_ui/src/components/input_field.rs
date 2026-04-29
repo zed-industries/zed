@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use editor::Editor;
-use gpui::{AnyElement, ElementId, Focusable, TextStyleRefinement};
+use gpui::{AnyElement, ElementId, Entity, Focusable, TextStyleRefinement};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*, rems};
@@ -12,6 +12,7 @@ pub struct SettingsInputField {
     initial_text: Option<String>,
     placeholder: Option<&'static str>,
     confirm: Option<Rc<dyn Fn(Option<String>, &mut Window, &mut App)>>,
+    confirm_with_editor: Option<Rc<dyn Fn(Option<String>, Entity<Editor>, &mut Window, &mut App)>>,
     tab_index: Option<isize>,
     use_buffer_font: bool,
     display_confirm_button: bool,
@@ -28,6 +29,7 @@ impl SettingsInputField {
             initial_text: None,
             placeholder: None,
             confirm: None,
+            confirm_with_editor: None,
             tab_index: None,
             use_buffer_font: false,
             display_confirm_button: false,
@@ -61,6 +63,14 @@ impl SettingsInputField {
         self
     }
 
+    pub fn on_confirm_with_editor(
+        mut self,
+        confirm: impl Fn(Option<String>, Entity<Editor>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.confirm_with_editor = Some(Rc::new(confirm));
+        self
+    }
+
     pub fn display_confirm_button(mut self) -> Self {
         self.display_confirm_button = true;
         self
@@ -68,11 +78,6 @@ impl SettingsInputField {
 
     pub fn display_clear_button(mut self) -> Self {
         self.display_clear_button = true;
-        self
-    }
-
-    pub fn clear_on_confirm(mut self) -> Self {
-        self.clear_on_confirm = true;
         self
     }
 
@@ -219,6 +224,9 @@ impl RenderOnce for SettingsInputField {
         let display_confirm_button = self.display_confirm_button;
         let display_clear_button = self.display_clear_button;
         let confirm_for_button = self.confirm.clone();
+        let confirm_with_editor_for_button = self.confirm_with_editor.clone();
+        let confirm_for_action = self.confirm.clone();
+        let confirm_with_editor_for_action = self.confirm_with_editor.clone();
         let is_editor_empty = editor.read(cx).text(cx).trim().is_empty();
         let is_editor_focused = editor.read(cx).is_focused(window);
 
@@ -275,9 +283,6 @@ impl RenderOnce for SettingsInputField {
                                     .icon_color(Color::Success)
                                     .tooltip(Tooltip::text("Enter to Confirm"))
                                     .on_click(move |_, window, cx| {
-                                        let Some(confirm) = confirm_for_button.as_ref() else {
-                                            return;
-                                        };
                                         let Some(editor) = weak_editor_for_button.upgrade() else {
                                             return;
                                         };
@@ -285,7 +290,13 @@ impl RenderOnce for SettingsInputField {
                                             editor.read_with(cx, |editor, cx| editor.text(cx));
                                         let new_value =
                                             (!new_value.is_empty()).then_some(new_value);
-                                        confirm(new_value, window, cx);
+                                        if let Some(confirm) = confirm_for_button.as_ref() {
+                                            confirm(new_value, window, cx);
+                                        } else if let Some(confirm) =
+                                            confirm_with_editor_for_button.as_ref()
+                                        {
+                                            confirm(new_value, editor.clone(), window, cx);
+                                        }
                                         if clear_on_confirm_for_button {
                                             editor.update(cx, |editor, cx| {
                                                 editor.set_text("", window, cx);
@@ -297,22 +308,29 @@ impl RenderOnce for SettingsInputField {
                     )
                     .when_some(self.action_slot, |this, action| this.child(action)),
             )
-            .when_some(self.confirm, |this, confirm| {
-                this.on_action::<menu::Confirm>({
-                    move |_, window, cx| {
-                        let Some(editor) = weak_editor.upgrade() else {
-                            return;
-                        };
-                        let new_value = editor.read_with(cx, |editor, cx| editor.text(cx));
-                        let new_value = (!new_value.is_empty()).then_some(new_value);
-                        confirm(new_value, window, cx);
-                        if clear_on_confirm {
-                            editor.update(cx, |editor, cx| {
-                                editor.set_text("", window, cx);
-                            });
+            .when(
+                confirm_for_action.is_some() || confirm_with_editor_for_action.is_some(),
+                |this| {
+                    this.on_action::<menu::Confirm>({
+                        move |_, window, cx| {
+                            let Some(editor) = weak_editor.upgrade() else {
+                                return;
+                            };
+                            let new_value = editor.read_with(cx, |editor, cx| editor.text(cx));
+                            let new_value = (!new_value.is_empty()).then_some(new_value);
+                            if let Some(confirm) = confirm_for_action.as_ref() {
+                                confirm(new_value, window, cx);
+                            } else if let Some(confirm) = confirm_with_editor_for_action.as_ref() {
+                                confirm(new_value, editor.clone(), window, cx);
+                            }
+                            if clear_on_confirm {
+                                editor.update(cx, |editor, cx| {
+                                    editor.set_text("", window, cx);
+                                });
+                            }
                         }
-                    }
-                })
-            })
+                    })
+                },
+            )
     }
 }

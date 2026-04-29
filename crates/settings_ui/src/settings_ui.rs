@@ -238,7 +238,8 @@ impl<T: PartialEq + Clone + Send + Sync + 'static> AnySettingField for SettingFi
                 move |settings, app| {
                     (this.write)(settings, value_to_set, app);
                 },
-            );
+            )
+            .detach_and_log_err(cx);
         }));
     }
 
@@ -3927,7 +3928,7 @@ pub(crate) fn update_settings_file(
     window: &mut Window,
     cx: &mut App,
     update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
-) {
+) -> Task<Result<()>> {
     telemetry::event!("Settings Change", setting = file_name, type = file.setting_type());
 
     let settings_window = window.root::<SettingsWindow>().flatten();
@@ -3954,26 +3955,21 @@ pub(crate) fn update_settings_file(
 
     cx.spawn(async move |cx| {
         let result = update_result.await;
-        let Some(settings_window) = settings_window else {
-            if let Err(err) = result {
-                log::error!("Failed to update settings: {err:#}");
-            }
-            return;
-        };
-
-        settings_window.update(cx, |this, cx| match result {
-            Ok(()) => {
-                if this.settings_write_error.take().is_some() {
+        if let Some(settings_window) = settings_window {
+            settings_window.update(cx, |this, cx| match &result {
+                Ok(()) => {
+                    if this.settings_write_error.take().is_some() {
+                        cx.notify();
+                    }
+                }
+                Err(err) => {
+                    this.settings_write_error = Some(format!("{err:#}"));
                     cx.notify();
                 }
-            }
-            Err(err) => {
-                this.settings_write_error = Some(format!("{err:#}"));
-                cx.notify();
-            }
-        });
+            });
+        }
+        result
     })
-    .detach();
 }
 
 struct ProjectSettingsUpdateEntry {
@@ -4174,7 +4170,8 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
                     move |settings, app| {
                         (field.write)(settings, new_text.map(Into::into), app);
                     },
-                );
+                )
+                .detach_and_log_err(cx);
             }
         })
         .into_any_element()
@@ -4204,7 +4201,8 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 let state = *state == ui::ToggleState::Selected;
                 update_settings_file(file.clone(), field.json_path, window, cx, move |settings, app| {
                     (field.write)(settings, Some(state.into()), app);
-                });
+                })
+                .detach_and_log_err(cx);
             }
         })
         .into_any_element()
@@ -4239,7 +4237,8 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
                     move |settings, app| {
                         (field.write)(settings, Some(value), app);
                     },
-                );
+                )
+                .detach_and_log_err(cx);
             }
         })
         .into_any_element()
@@ -4278,7 +4277,8 @@ where
                 move |settings, app| {
                     (field.write)(settings, Some(value), app);
                 },
-            );
+            )
+            .detach_and_log_err(cx);
         }
     })
     .tab_index(0)
@@ -4332,7 +4332,8 @@ fn render_font_picker(
                             move |settings, app| {
                                 (field.write)(settings, Some(font_name.to_string().into()), app);
                             },
-                        );
+                        )
+                        .detach_and_log_err(cx);
                     },
                     window,
                     cx,
@@ -4385,7 +4386,8 @@ fn render_theme_picker(
                                     app,
                                 );
                             },
-                        );
+                        )
+                        .detach_and_log_err(cx);
                     },
                     window,
                     cx,
@@ -4438,7 +4440,8 @@ fn render_icon_theme_picker(
                                     app,
                                 );
                             },
-                        );
+                        )
+                        .detach_and_log_err(cx);
                     },
                     window,
                     cx,
@@ -5256,7 +5259,7 @@ mod project_settings_update_tests {
         cx.update(|cx| <dyn fs::Fs>::set_global(fs, cx));
 
         let (settings_window, window_cx) = cx.add_window_view(SettingsWindow::test);
-        window_cx.update(|window, cx| {
+        let update_task = window_cx.update(|window, cx| {
             update_settings_file(
                 SettingsUiFile::User,
                 Some("tab_size"),
@@ -5266,9 +5269,12 @@ mod project_settings_update_tests {
                     settings.project.all_languages.defaults.tab_size =
                         Some(NonZeroU32::new(4).unwrap());
                 },
-            );
+            )
         });
         window_cx.run_until_parked();
+        update_task
+            .await
+            .expect_err("settings update should fail when user settings are malformed");
 
         settings_window.read_with(&window_cx.cx, |settings_window, _| {
             let error = settings_window

@@ -191,7 +191,8 @@ pub fn render_ollama_model_picker(
                                     app,
                                 );
                             },
-                        );
+                        )
+                        .detach_and_log_err(cx);
                     },
                     cx,
                 );

@@ -168,7 +168,8 @@ impl Render for AudioTestWindow {
                         move |settings, _cx| {
                             settings.audio.get_or_insert_default().input_audio_device = value;
                         },
-                    );
+                    )
+                    .detach_and_log_err(cx);
                 },
                 window,
                 cx,
@@ -196,7 +197,8 @@ impl Render for AudioTestWindow {
                     move |settings, _cx| {
                         settings.audio.get_or_insert_default().output_audio_device = value;
                     },
-                );
+                )
+                .detach_and_log_err(cx);
             },
             window,
             cx,
