@@ -2660,7 +2660,7 @@ impl GitStore {
         envelope: TypedEnvelope<proto::SearchCommits>,
         mut cx: AsyncApp,
     ) -> Result<impl Stream<Item = Result<proto::SearchCommitsResponse>>> {
-        const RESPONSE_TARGET_BYTES: usize = 16 * 1024;
+        const RESPONSE_TARGET_BYTES: usize = 4 * 1024;
 
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
@@ -8499,7 +8499,7 @@ mod tests {
     #[gpui::test]
     async fn test_search_commits_streams_proto_chunks(cx: &mut TestAppContext) {
         const COMMIT_COUNT: usize = 900;
-        const RESPONSE_TARGET_BYTES: usize = 16 * 1024;
+        const RESPONSE_TARGET_BYTES: usize = 4 * 1024;
 
         init_test(cx);
         let mut rng = StdRng::seed_from_u64(0);
