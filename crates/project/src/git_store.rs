@@ -5030,11 +5030,10 @@ impl Repository {
                             }
                         };
 
-                        for sha in response
-                            .shas
-                            .iter()
-                            .filter_map(|sha| Oid::from_str(sha).ok())
-                        {
+                        for sha in &response.shas {
+                            let Some(oid) = Oid::from_str(sha) else {
+                                return;
+                            };
                             if request_tx.send(sha).await.is_err() {
                                 return;
                             }
