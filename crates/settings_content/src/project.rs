@@ -127,7 +127,7 @@ pub struct WorktreeSettingsContent {
     ///   "**/*.key",
     ///   "**/*.{cert,crt}",
     ///   "**/*.tfstate",
-    ///   "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}",
+    ///   "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}", // secrets.tfvars and similar files
     ///   "**/id_{dsa,ecdsa,ed25519,rsa}*",
     /// ]
     pub private_files: Option<ExtendingVec<String>>,

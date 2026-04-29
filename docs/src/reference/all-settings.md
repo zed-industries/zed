@@ -616,7 +616,7 @@ For the case of "open", regular selection behavior can be achieved by holding `a
       "**/*.key",
       "**/*.pem",
       "**/*.tfstate",
-      "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}",
+      "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}", // secrets.tfvars and similar files
       "**/id_{dsa,ecdsa,ed25519,rsa}*",
       "**/.zed/settings.json", // zed project settings
       "/**/zed/settings.json", // zed user settings
@@ -3368,7 +3368,7 @@ Examples:
     "**/*.key",
     "**/*.pem",
     "**/*.tfstate",
-    "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}",
+    "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}", // secrets.tfvars and similar files
     "**/id_{dsa,ecdsa,ed25519,rsa}*",
   ]
 ```
