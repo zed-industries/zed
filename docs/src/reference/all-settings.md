@@ -2466,6 +2466,15 @@ Example:
 }
 ```
 
+4. Preserve the cursor's vertical position within the viewport, falling back to
+   `center` when the cursor is offscreen.
+
+```json [settings]
+{
+  "go_to_definition_scroll_strategy": "preserve"
+}
+```
+
 ## Hard Tabs
 
 - Description: Whether to indent lines using tab characters or multiple spaces.
