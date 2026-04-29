@@ -3820,7 +3820,8 @@ mod tests {
             parse_html: true,
             ..Default::default()
         };
-        let rendered = render_markdown_with_options("para one\n\nfirst<br>second", None, options, cx);
+        let rendered =
+            render_markdown_with_options("para one\n\nfirst<br>second", None, options, cx);
         let all_text: String = rendered
             .lines
             .iter()
