@@ -1409,7 +1409,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let is_local = key.host().is_none();
                 let has_multiple_groups = self.window_project_groups.len() >= 2;
                 let secondary_actions = h_flex()
-                    .gap_1()
+                    .gap_0p5()
                     .when(is_local && has_multiple_groups, |this| {
                         this.child(
                             IconButton::new("move_to_new_window", IconName::ArrowUpRight)
@@ -1455,12 +1455,13 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                 Some(
                     ListItem::new(ix)
-                        .toggle_state(selected)
                         .inset(true)
+                        .toggle_state(selected)
                         .spacing(ListItemSpacing::Sparse)
                         .child(
                             h_flex()
                                 .id("open_project_info_container")
+                                .w_full()
                                 .gap_2p5()
                                 .when(self.has_any_non_local_projects, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
