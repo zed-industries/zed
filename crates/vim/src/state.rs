@@ -1411,7 +1411,7 @@ impl RegistersView {
                 })
             }
         });
-        matches.sort_by(|a, b| a.name.cmp(&b.name));
+        matches.sort_by_key(|m| m.name);
         let delegate = RegistersViewDelegate {
             selected_index: 0,
             matches,

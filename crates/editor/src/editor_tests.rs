@@ -49,9 +49,9 @@ use project::{
 use serde_json::{self, json};
 use settings::{
     AllLanguageSettingsContent, DelayMs, EditorSettingsContent, GlobalLspSettingsContent,
-    IndentGuideBackgroundColoring, IndentGuideColoring, InlayHintSettingsContent,
-    ProjectSettingsContent, ScrollBeyondLastLine, SearchSettingsContent, SettingsContent,
-    SettingsStore,
+    GoToDefinitionScrollStrategy, IndentGuideBackgroundColoring, IndentGuideColoring,
+    InlayHintSettingsContent, ProjectSettingsContent, ScrollBeyondLastLine, SearchSettingsContent,
+    SettingsContent, SettingsStore,
 };
 use std::{borrow::Cow, sync::Arc};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -2958,6 +2958,102 @@ async fn test_autoscroll(cx: &mut TestAppContext) {
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 1.0)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_relative(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor.set_vertical_scroll_margin(0, cx);
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+
+    // Resize the window such that only 6 lines of text fit on screen.
+    cx.simulate_window_resize(window, size(px(1000.), 6. * line_height));
+
+    cx.set_state(
+        r#"ˇone
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+            nine
+            ten
+            eleven
+            twelve
+            thirteen
+            fourteen
+            fifteen
+        "#,
+    );
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
+
+    // Placing the cursor at row 7 with a top-relative autoscroll of 2 display
+    // rows, should land the scroll position's y coordinate at 5.0 (7 - 2).
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(
+            SelectionEffects::scroll(Autoscroll::top_relative(2.0)),
+            window,
+            cx,
+            |selections| selections.select_ranges([Point::new(7, 0)..Point::new(7, 0)]),
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 5.0)
+        );
+    });
+
+    // Seeing as fractional offsets are supported, with the cursor at row 10 and
+    // a top-relative autoscroll of 2.5 display rows, the scroll position's y
+    // coordinate lands at 7.5 (10 - 2.5).
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(
+            SelectionEffects::scroll(Autoscroll::top_relative(2.5)),
+            window,
+            cx,
+            |selections| selections.select_ranges([Point::new(10, 0)..Point::new(10, 0)]),
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 7.5)
+        );
+    });
+
+    // When the requested offset would scroll past the top of the buffer,
+    // `scroll_position.y` is clamped to 0 rather than going negative.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(
+            SelectionEffects::scroll(Autoscroll::top_relative(4.0)),
+            window,
+            cx,
+            |selections| selections.select_ranges([Point::new(1, 0)..Point::new(1, 0)]),
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
         );
     });
 }
@@ -26369,6 +26465,142 @@ async fn test_goto_definition_contained_ranges(cx: &mut TestAppContext) {
         .await
         .expect("Failed to navigate to definitions");
     assert_eq!(navigated, Navigated::Yes);
+}
+
+#[gpui::test]
+async fn test_goto_definition_preserve_scroll_strategy(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.go_to_definition_scroll_strategy = Some(GoToDefinitionScrollStrategy::Preserve);
+        settings.vertical_scroll_margin = Some(0.0);
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let window = cx.window;
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    cx.simulate_window_resize(window, size(px(1000.), 8. * line_height));
+
+    // Build a buffer where `target` is defined on row 10 and called from
+    // row 20, with the cursor placed on the call site.
+    let buffer = indoc! { "
+            // 0
+            // 1
+            // 2
+            // 3
+            // 4
+            // 5
+            // 6
+            // 7
+            // 8
+            // 9
+            fn target() // 10
+            // 11
+            // 12
+            // 13
+            // 14
+            // 15
+            // 16
+            // 17
+            // 18
+            // 19
+            fn caller() { ˇtarget(); } // 20
+            // 21
+            // 22
+            // 23
+            // 24
+            // 25
+            // 26
+            // 27
+            // 28
+            // 29
+            // 30
+        "};
+
+    // Mock the response from the LSP server when requesting to go to a
+    // definition so as to always jump to the `target` function.
+    cx.set_request_handler::<lsp::request::GotoDefinition, _, _>(|url, _, _| async move {
+        Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+            uri: url.clone(),
+            range: lsp::Range::new(lsp::Position::new(10, 3), lsp::Position::new(10, 9)),
+        })))
+    });
+
+    let caller_row = 20.0;
+    let target_row = 10.0;
+    let offset = 1.5;
+    let center_offset = cx.update_editor(|editor, _, _| {
+        editor
+            .visible_line_count()
+            .map(|count| ((count - 1.0) / 2.0).floor())
+            .expect("Visible line count should be available")
+    });
+
+    // When the cursor is visible inside the viewport, going to a definition
+    // should preserve that same offset value.
+    // In this case, with the cursor set at row 20 and the scroll position set
+    // to 18.5 (20 - 1.5), when going to the definition of `target` in row 10,
+    // the scroll position should end up at 8.5 (10 - 1.5), so as to preserve
+    // that same offset of 1.5.
+    cx.set_state(&buffer);
+    cx.update_editor(|editor, window, cx| {
+        editor.set_scroll_position(gpui::Point::new(0.0, caller_row - offset), window, cx);
+    });
+    cx.update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .await
+        .expect("Failed to navigate to definition");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0.0, target_row - offset),
+        );
+    });
+
+    // In the case where the cursor ends up outside of the visible viewport, the
+    // scroll position's offset should be ignored and the center of the viewport
+    // should be used instead.
+    // Since the cursor is jumping to row 10, the scroll position's y coordinate
+    // should end up at 10 minus the offset from the center of the viewport.
+    cx.set_state(&buffer);
+    cx.update_editor(|editor, window, cx| {
+        editor.set_scroll_position(gpui::Point::new(0.0, 0.0), window, cx);
+        let snapshot = editor.display_snapshot(cx);
+        let cursor_row = editor
+            .selections
+            .newest_display(&snapshot)
+            .start
+            .row()
+            .as_f64();
+        let visible_lines = editor
+            .visible_line_count()
+            .expect("Visible line count should be available");
+
+        assert!(cursor_row >= visible_lines, "Cursor should be offscreen");
+    });
+
+    cx.update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .await
+        .expect("Failed to navigate to definition");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0.0, (target_row - center_offset).max(0.0)),
+        );
+    });
 }
 
 #[gpui::test]

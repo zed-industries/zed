@@ -160,7 +160,7 @@ pub fn build_root_plan(
     // Only linked worktrees can be archived to disk via `git worktree remove`.
     // Main worktrees must be left alone — git refuses to remove them.
     let (linked_snapshot, repo) = linked_repo?;
-    let main_repo_path = linked_snapshot.original_repo_abs_path.to_path_buf();
+    let main_repo_path = linked_snapshot.main_worktree_abs_path()?.to_path_buf();
 
     // Only archive worktrees that live inside the Zed-managed worktrees
     // directory (configured via `git.worktree_directory`). Worktrees the

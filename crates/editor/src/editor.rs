@@ -902,6 +902,16 @@ pub trait Addon: 'static {
         None
     }
 
+    fn extend_buffer_header_context_menu(
+        &self,
+        menu: ui::ContextMenu,
+        _: &language::BufferSnapshot,
+        _: &mut Window,
+        _: &mut App,
+    ) -> ui::ContextMenu {
+        menu
+    }
+
     fn override_status_for_buffer_id(&self, _: BufferId, _: &App) -> Option<FileStatus> {
         None
     }
@@ -18344,7 +18354,11 @@ impl Editor {
         };
         let anchor_range = range.to_anchors(&multibuffer.snapshot(cx));
         self.change_selections(
-            SelectionEffects::scroll(Autoscroll::for_go_to_definition(cx)).nav_history(true),
+            SelectionEffects::scroll(Autoscroll::for_go_to_definition(
+                self.cursor_top_offset(cx),
+                cx,
+            ))
+            .nav_history(true),
             window,
             cx,
             |s| s.select_anchor_ranges([anchor_range]),
@@ -19150,8 +19164,11 @@ impl Editor {
                         }
 
                         editor.change_selections(
-                            SelectionEffects::scroll(Autoscroll::for_go_to_definition(cx))
-                                .nav_history(true),
+                            SelectionEffects::scroll(Autoscroll::for_go_to_definition(
+                                editor.cursor_top_offset(cx),
+                                cx,
+                            ))
+                            .nav_history(true),
                             window,
                             cx,
                             |s| s.select_anchor_ranges(target_ranges),
@@ -19167,6 +19184,8 @@ impl Editor {
                             return Navigated::No;
                         };
                         let pane = workspace.read(cx).active_pane().clone();
+                        let offset = editor.cursor_top_offset(cx);
+
                         window.defer(cx, move |window, cx| {
                             let (target_editor, target_pane): (Entity<Self>, Entity<Pane>) =
                                 workspace.update(cx, |workspace, cx| {
@@ -19230,8 +19249,10 @@ impl Editor {
                                 }
 
                                 target_editor.change_selections(
-                                    SelectionEffects::scroll(Autoscroll::for_go_to_definition(cx))
-                                        .nav_history(true),
+                                    SelectionEffects::scroll(Autoscroll::for_go_to_definition(
+                                        offset, cx,
+                                    ))
+                                    .nav_history(true),
                                     window,
                                     cx,
                                     |s| s.select_anchor_ranges(target_ranges),
@@ -19511,7 +19532,10 @@ impl Editor {
             let Range { start, end } = locations[destination_location_index];
 
             editor.update_in(cx, |editor, window, cx| {
-                let effects = SelectionEffects::scroll(Autoscroll::for_go_to_definition(cx));
+                let effects = SelectionEffects::scroll(Autoscroll::for_go_to_definition(
+                    editor.cursor_top_offset(cx),
+                    cx,
+                ));
 
                 editor.unfold_ranges(&[start..end], false, false, cx);
                 editor.change_selections(effects, window, cx, |s| {
@@ -24455,8 +24479,8 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
-            .iter()
-            .flat_map(|(_, highlighted_rows)| highlighted_rows.iter())
+            .values()
+            .flat_map(|highlighted_rows| highlighted_rows.iter())
             .fold(
                 BTreeMap::<DisplayRow, LineHighlight>::new(),
                 |mut unique_rows, highlight| {
@@ -25676,7 +25700,7 @@ impl Editor {
                             }
                             let autoscroll = match scroll_offset {
                                 Some(scroll_offset) => {
-                                    Autoscroll::top_relative(scroll_offset as usize)
+                                    Autoscroll::top_relative(scroll_offset as ScrollOffset)
                                 }
                                 None => Autoscroll::newest(),
                             };
@@ -26749,6 +26773,27 @@ impl Editor {
             self.needs_initial_data_update = false;
             self.update_lsp_data(None, window, cx);
             self.refresh_runnables(None, window, cx);
+        }
+    }
+
+    /// Returns the current cursor's vertical offset, in display rows, from the
+    /// top of the visible viewport.
+    /// Returns `None` if the cursor is not currently on screen.
+    pub fn cursor_top_offset(&self, cx: &mut Context<Self>) -> Option<ScrollOffset> {
+        let visible = self.visible_line_count()?;
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let scroll_top = self.scroll_manager.scroll_position(&display_map, cx).y;
+        let cursor_display_row = self
+            .selections
+            .newest::<Point>(&display_map)
+            .head()
+            .to_display_point(&display_map)
+            .row()
+            .as_f64();
+
+        match cursor_display_row - scroll_top {
+            offset if offset < 0.0 || offset >= visible => None,
+            offset => Some(offset),
         }
     }
 }

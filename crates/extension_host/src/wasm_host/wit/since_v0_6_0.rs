@@ -30,7 +30,6 @@ wasmtime::component::bindgen!({
         "zed:extension/process": latest::zed::extension::process,
         "zed:extension/slash-command": latest::zed::extension::slash_command,
         "zed:extension/context-server": latest::zed::extension::context_server,
-        "zed:extension/dap": latest::zed::extension::dap,
     },
 });
 
@@ -382,5 +381,330 @@ impl ExtensionImports for WasmState {
 
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
         latest::ExtensionImports::make_file_executable(self, path).await
+    }
+}
+
+impl From<dap::TcpArguments> for latest::dap::TcpArguments {
+    fn from(value: dap::TcpArguments) -> Self {
+        let [a, b, c, d] = std::net::Ipv4Addr::from_bits(value.host).octets();
+        Self {
+            host: latest::dap::IpAddress::Ipv4((a, b, c, d)),
+            port: value.port,
+            timeout: value.timeout,
+        }
+    }
+}
+
+impl TryFrom<latest::dap::TcpArguments> for dap::TcpArguments {
+    type Error = anyhow::Error;
+
+    fn try_from(value: latest::dap::TcpArguments) -> Result<Self> {
+        let host = match value.host {
+            latest::dap::IpAddress::Ipv4((a, b, c, d)) => {
+                std::net::Ipv4Addr::new(a, b, c, d).to_bits()
+            }
+            latest::dap::IpAddress::Ipv6((a, b, c, d, e, f, g, h)) => {
+                let addr = std::net::Ipv6Addr::new(a, b, c, d, e, f, g, h);
+                anyhow::bail!(
+                    "DAP returned IPv6 host {addr}, which the v0.6.0 extension API cannot represent; the extension must be updated to v0.8.0 or later"
+                );
+            }
+        };
+        Ok(Self {
+            host,
+            port: value.port,
+            timeout: value.timeout,
+        })
+    }
+}
+
+impl From<dap::TcpArgumentsTemplate> for latest::dap::TcpArgumentsTemplate {
+    fn from(value: dap::TcpArgumentsTemplate) -> Self {
+        Self {
+            host: value.host.map(|host| {
+                let [a, b, c, d] = std::net::Ipv4Addr::from_bits(host).octets();
+                latest::dap::IpAddress::Ipv4((a, b, c, d))
+            }),
+            port: value.port,
+            timeout: value.timeout,
+        }
+    }
+}
+
+impl From<latest::dap::TcpArgumentsTemplate> for dap::TcpArgumentsTemplate {
+    fn from(value: latest::dap::TcpArgumentsTemplate) -> Self {
+        Self {
+            host: value.host.and_then(|host| match host {
+                latest::dap::IpAddress::Ipv4((a, b, c, d)) => {
+                    Some(std::net::Ipv4Addr::new(a, b, c, d).to_bits())
+                }
+                latest::dap::IpAddress::Ipv6((a, b, c, d, e, f, g, h)) => {
+                    let addr = std::net::Ipv6Addr::new(a, b, c, d, e, f, g, h);
+                    log::warn!(
+                        "Dropping IPv6 host {addr} when handing TCP arguments back to a v0.6.0 extension; update the extension to v0.8.0 or later for IPv6 support"
+                    );
+                    None
+                }
+            }),
+            port: value.port,
+            timeout: value.timeout,
+        }
+    }
+}
+
+impl From<dap::LaunchRequest> for latest::dap::LaunchRequest {
+    fn from(value: dap::LaunchRequest) -> Self {
+        Self {
+            program: value.program,
+            cwd: value.cwd,
+            args: value.args,
+            envs: value.envs,
+        }
+    }
+}
+
+impl From<latest::dap::LaunchRequest> for dap::LaunchRequest {
+    fn from(value: latest::dap::LaunchRequest) -> Self {
+        Self {
+            program: value.program,
+            cwd: value.cwd,
+            args: value.args,
+            envs: value.envs,
+        }
+    }
+}
+
+impl From<dap::AttachRequest> for latest::dap::AttachRequest {
+    fn from(value: dap::AttachRequest) -> Self {
+        Self {
+            process_id: value.process_id,
+        }
+    }
+}
+
+impl From<latest::dap::AttachRequest> for dap::AttachRequest {
+    fn from(value: latest::dap::AttachRequest) -> Self {
+        Self {
+            process_id: value.process_id,
+        }
+    }
+}
+
+impl From<DebugRequest> for latest::DebugRequest {
+    fn from(value: DebugRequest) -> Self {
+        match value {
+            DebugRequest::Launch(req) => Self::Launch(req.into()),
+            DebugRequest::Attach(req) => Self::Attach(req.into()),
+        }
+    }
+}
+
+impl From<latest::DebugRequest> for DebugRequest {
+    fn from(value: latest::DebugRequest) -> Self {
+        match value {
+            latest::DebugRequest::Launch(req) => Self::Launch(req.into()),
+            latest::DebugRequest::Attach(req) => Self::Attach(req.into()),
+        }
+    }
+}
+
+impl From<DebugConfig> for latest::DebugConfig {
+    fn from(value: DebugConfig) -> Self {
+        Self {
+            label: value.label,
+            adapter: value.adapter,
+            request: value.request.into(),
+            stop_on_entry: value.stop_on_entry,
+        }
+    }
+}
+
+impl From<latest::DebugConfig> for DebugConfig {
+    fn from(value: latest::DebugConfig) -> Self {
+        Self {
+            label: value.label,
+            adapter: value.adapter,
+            request: value.request.into(),
+            stop_on_entry: value.stop_on_entry,
+        }
+    }
+}
+
+impl From<dap::TaskTemplate> for latest::dap::TaskTemplate {
+    fn from(value: dap::TaskTemplate) -> Self {
+        Self {
+            label: value.label,
+            command: value.command,
+            args: value.args,
+            env: value.env,
+            cwd: value.cwd,
+        }
+    }
+}
+
+impl From<latest::dap::TaskTemplate> for dap::TaskTemplate {
+    fn from(value: latest::dap::TaskTemplate) -> Self {
+        Self {
+            label: value.label,
+            command: value.command,
+            args: value.args,
+            env: value.env,
+            cwd: value.cwd,
+        }
+    }
+}
+
+impl From<dap::BuildTaskDefinition> for latest::dap::BuildTaskDefinition {
+    fn from(value: dap::BuildTaskDefinition) -> Self {
+        match value {
+            dap::BuildTaskDefinition::ByName(name) => Self::ByName(name),
+            dap::BuildTaskDefinition::Template(payload) => {
+                Self::Template(latest::dap::BuildTaskDefinitionTemplatePayload {
+                    locator_name: payload.locator_name,
+                    template: payload.template.into(),
+                })
+            }
+        }
+    }
+}
+
+impl From<latest::dap::BuildTaskDefinition> for dap::BuildTaskDefinition {
+    fn from(value: latest::dap::BuildTaskDefinition) -> Self {
+        match value {
+            latest::dap::BuildTaskDefinition::ByName(name) => Self::ByName(name),
+            latest::dap::BuildTaskDefinition::Template(payload) => {
+                Self::Template(dap::BuildTaskDefinitionTemplatePayload {
+                    locator_name: payload.locator_name,
+                    template: payload.template.into(),
+                })
+            }
+        }
+    }
+}
+
+impl From<DebugScenario> for latest::DebugScenario {
+    fn from(value: DebugScenario) -> Self {
+        Self {
+            label: value.label,
+            adapter: value.adapter,
+            build: value.build.map(Into::into),
+            config: value.config,
+            tcp_connection: value.tcp_connection.map(Into::into),
+        }
+    }
+}
+
+impl From<latest::DebugScenario> for DebugScenario {
+    fn from(value: latest::DebugScenario) -> Self {
+        Self {
+            label: value.label,
+            adapter: value.adapter,
+            build: value.build.map(Into::into),
+            config: value.config,
+            tcp_connection: value.tcp_connection.map(Into::into),
+        }
+    }
+}
+
+impl From<DebugTaskDefinition> for latest::DebugTaskDefinition {
+    fn from(value: DebugTaskDefinition) -> Self {
+        Self {
+            label: value.label,
+            adapter: value.adapter,
+            config: value.config,
+            tcp_connection: value.tcp_connection.map(Into::into),
+        }
+    }
+}
+
+impl From<latest::DebugTaskDefinition> for DebugTaskDefinition {
+    fn from(value: latest::DebugTaskDefinition) -> Self {
+        Self {
+            label: value.label,
+            adapter: value.adapter,
+            config: value.config,
+            tcp_connection: value.tcp_connection.map(Into::into),
+        }
+    }
+}
+
+impl From<dap::StartDebuggingRequestArgumentsRequest>
+    for latest::dap::StartDebuggingRequestArgumentsRequest
+{
+    fn from(value: dap::StartDebuggingRequestArgumentsRequest) -> Self {
+        match value {
+            dap::StartDebuggingRequestArgumentsRequest::Launch => Self::Launch,
+            dap::StartDebuggingRequestArgumentsRequest::Attach => Self::Attach,
+        }
+    }
+}
+
+impl From<latest::dap::StartDebuggingRequestArgumentsRequest>
+    for dap::StartDebuggingRequestArgumentsRequest
+{
+    fn from(value: latest::dap::StartDebuggingRequestArgumentsRequest) -> Self {
+        match value {
+            latest::dap::StartDebuggingRequestArgumentsRequest::Launch => Self::Launch,
+            latest::dap::StartDebuggingRequestArgumentsRequest::Attach => Self::Attach,
+        }
+    }
+}
+
+impl From<dap::StartDebuggingRequestArguments> for latest::dap::StartDebuggingRequestArguments {
+    fn from(value: dap::StartDebuggingRequestArguments) -> Self {
+        Self {
+            configuration: value.configuration,
+            request: value.request.into(),
+        }
+    }
+}
+
+impl From<latest::dap::StartDebuggingRequestArguments> for dap::StartDebuggingRequestArguments {
+    fn from(value: latest::dap::StartDebuggingRequestArguments) -> Self {
+        Self {
+            configuration: value.configuration,
+            request: value.request.into(),
+        }
+    }
+}
+
+impl From<DebugAdapterBinary> for latest::DebugAdapterBinary {
+    fn from(value: DebugAdapterBinary) -> Self {
+        Self {
+            command: value.command,
+            arguments: value.arguments,
+            envs: value.envs,
+            cwd: value.cwd,
+            connection: value.connection.map(Into::into),
+            request_args: value.request_args.into(),
+        }
+    }
+}
+
+impl TryFrom<latest::DebugAdapterBinary> for DebugAdapterBinary {
+    type Error = anyhow::Error;
+
+    fn try_from(value: latest::DebugAdapterBinary) -> Result<Self> {
+        Ok(Self {
+            command: value.command,
+            arguments: value.arguments,
+            envs: value.envs,
+            cwd: value.cwd,
+            connection: value.connection.map(TryInto::try_into).transpose()?,
+            request_args: value.request_args.into(),
+        })
+    }
+}
+
+impl zed::extension::dap::Host for WasmState {
+    async fn resolve_tcp_template(
+        &mut self,
+        template: dap::TcpArgumentsTemplate,
+    ) -> wasmtime::Result<Result<dap::TcpArguments, String>> {
+        let result = latest::dap::Host::resolve_tcp_template(self, template.into()).await?;
+        Ok(
+            result
+                .and_then(|args| dap::TcpArguments::try_from(args).map_err(|err| err.to_string())),
+        )
     }
 }
