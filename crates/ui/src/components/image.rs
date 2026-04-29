@@ -13,13 +13,11 @@ use crate::traits::transformable::Transformable;
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum VectorName {
-    AcpGrid,
-    AcpLogo,
-    AcpLogoSerif,
-    AiGrid,
+    BusinessStamp,
     Grid,
     ProTrialStamp,
     ProUserStamp,
+    StudentStamp,
     ZedLogo,
     ZedXCopilot,
 }

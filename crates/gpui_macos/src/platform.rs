@@ -1,14 +1,15 @@
 use crate::{
     BoolExt, MacDispatcher, MacDisplay, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
     events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
+    set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSSavePanel,
-        NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSControl as _, NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel,
+        NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -297,6 +298,7 @@ impl MacPlatform {
                     action,
                     os_action,
                     checked,
+                    disabled,
                 } => {
                     // Note that this is intentionally using earlier bindings, whereas typically
                     // later ones take display precedence. See the discussion on
@@ -394,13 +396,18 @@ impl MacPlatform {
                     if *checked {
                         item.setState_(NSVisualEffectState::Active);
                     }
+                    item.setEnabled_(if *disabled { NO } else { YES });
 
                     let tag = actions.len() as NSInteger;
                     let _: () = msg_send![item, setTag: tag];
                     actions.push(action.boxed_clone());
                     item
                 }
-                MenuItem::Submenu(Menu { name, items }) => {
+                MenuItem::Submenu(Menu {
+                    name,
+                    items,
+                    disabled,
+                }) => {
                     let item = NSMenuItem::new(nil).autorelease();
                     let submenu = NSMenu::new(nil).autorelease();
                     submenu.setDelegate_(delegate);
@@ -408,6 +415,7 @@ impl MacPlatform {
                         submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
                     }
                     item.setSubmenu_(submenu);
+                    item.setEnabled_(if *disabled { NO } else { YES });
                     item.setTitle_(ns_string(name));
                     item
                 }
@@ -848,6 +856,7 @@ impl Platform for MacPlatform {
             .background_executor
             .spawn(async move {
                 if let Some(mut child) = new_command("open")
+                    .arg("--")
                     .arg(path)
                     .spawn()
                     .context("invoking open command")
@@ -971,52 +980,7 @@ impl Platform for MacPlatform {
     /// in macOS's [NSCursor](https://developer.apple.com/documentation/appkit/nscursor).
     fn set_cursor_style(&self, style: CursorStyle) {
         unsafe {
-            if style == CursorStyle::None {
-                let _: () = msg_send![class!(NSCursor), setHiddenUntilMouseMoves:YES];
-                return;
-            }
-
-            let new_cursor: id = match style {
-                CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
-                CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
-                CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
-                CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
-                CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
-                CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
-                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
-                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
-                CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
-                CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
-                CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
-                CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
-
-                // Undocumented, private class methods:
-                // https://stackoverflow.com/questions/27242353/cocoa-predefined-resize-mouse-cursor
-                CursorStyle::ResizeUpLeftDownRight => {
-                    msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
-                }
-                CursorStyle::ResizeUpRightDownLeft => {
-                    msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
-                }
-
-                CursorStyle::IBeamCursorForVerticalLayout => {
-                    msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
-                }
-                CursorStyle::OperationNotAllowed => {
-                    msg_send![class!(NSCursor), operationNotAllowedCursor]
-                }
-                CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
-                CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
-                CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
-                CursorStyle::None => unreachable!(),
-            };
-
-            let old_cursor: id = msg_send![class!(NSCursor), currentCursor];
-            if new_cursor != old_cursor {
-                let _: () = msg_send![new_cursor, set];
-            }
+            set_active_window_cursor_style(style);
         }
     }
 
@@ -1382,6 +1346,7 @@ unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
     pub(super) fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut Object;
+    pub(super) fn TISCopyCurrentKeyboardInputSource() -> *mut Object;
     pub(super) fn TISGetInputSourceProperty(
         inputSource: *mut Object,
         propertyKey: *const c_void,
@@ -1403,6 +1368,9 @@ unsafe extern "C" {
     pub(super) static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
     pub(super) static kTISPropertyInputSourceID: CFStringRef;
     pub(super) static kTISPropertyLocalizedName: CFStringRef;
+    pub(super) static kTISPropertyInputSourceIsASCIICapable: CFStringRef;
+    pub(super) static kTISPropertyInputSourceType: CFStringRef;
+    pub(super) static kTISTypeKeyboardInputMode: CFStringRef;
 }
 
 mod security {

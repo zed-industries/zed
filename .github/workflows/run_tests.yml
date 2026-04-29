@@ -6,6 +6,7 @@ env:
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
 on:
+  merge_group: {}
   pull_request:
     branches:
     - '**'
@@ -19,7 +20,7 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: ${{ github.ref == 'refs/heads/main' && 2 || 350 }}
@@ -80,7 +81,7 @@ jobs:
 
           # If assets/ changed, add crates that depend on those assets
           if echo "$CHANGED_FILES" | grep -qP '^assets/'; then
-            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "storybook" "assets" | sort -u)
+            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "assets" | sort -u)
           fi
 
           # Combine all changed packages
@@ -106,6 +107,14 @@ jobs:
         check_pattern "run_tests" '^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests))|extensions/)' -qvP
         # Detect changed extension directories (excluding extensions/workflows)
         CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
+        # Filter out deleted extensions
+        EXISTING_EXTENSIONS=""
+        for ext in $CHANGED_EXTENSIONS; do
+            if [ -f "$ext/extension.toml" ]; then
+                EXISTING_EXTENSIONS=$(printf '%s\n%s' "$EXISTING_EXTENSIONS" "$ext")
+            fi
+        done
+        CHANGED_EXTENSIONS=$(echo "$EXISTING_EXTENSIONS" | sed '/^$/d')
         if [ -n "$CHANGED_EXTENSIONS" ]; then
             EXTENSIONS_JSON=$(echo "$CHANGED_EXTENSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
         else
@@ -124,11 +133,11 @@ jobs:
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -167,11 +176,11 @@ jobs:
   clippy_windows:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -204,7 +213,7 @@ jobs:
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -212,7 +221,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -235,11 +244,11 @@ jobs:
   clippy_mac:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -247,7 +256,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -263,14 +272,47 @@ jobs:
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     timeout-minutes: 60
+  clippy_mac_x86_64:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
+    runs-on: namespace-profile-mac-large
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: steps::install_rustup_target
+      run: rustup target add x86_64-apple-darwin
+    - name: steps::setup_sccache
+      run: ./script/setup-sccache
+      env:
+        R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        SCCACHE_BUCKET: sccache-zed
+    - name: steps::clippy
+      run: ./script/clippy --target x86_64-apple-darwin
+    - name: steps::show_sccache_stats
+      run: sccache --show-stats || true
+    timeout-minutes: 60
   run_tests_windows:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -283,7 +325,7 @@ jobs:
       with:
         node-version: '20'
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than.ps1 250
+      run: ./script/clear-target-dir-if-larger-than.ps1 350 200
       shell: pwsh
     - name: steps::setup_sccache
       run: ./script/setup-sccache.ps1
@@ -308,14 +350,14 @@ jobs:
   run_tests_linux:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       CC: clang
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -323,7 +365,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -336,9 +378,9 @@ jobs:
       with:
         node-version: '20'
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 250
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -366,11 +408,11 @@ jobs:
   run_tests_mac:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -378,7 +420,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -387,9 +429,9 @@ jobs:
       with:
         node-version: '20'
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 300
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -409,18 +451,18 @@ jobs:
   doctests:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       CC: clang
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -453,14 +495,14 @@ jobs:
   check_workspace_binaries:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-8x16-ubuntu-2204
     env:
       CC: clang
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -468,7 +510,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -494,14 +536,14 @@ jobs:
       run: |
         rm -rf ./../.cargo
     timeout-minutes: 60
-  check_wasm:
+  build_visual_tests_binary:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
-    runs-on: namespace-profile-8x16-ubuntu-2204
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
+    runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -509,7 +551,32 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: run_tests::build_visual_tests_binary::cargo_build_visual_tests
+      run: cargo build -p zed --bin zed_visual_test_runner --features visual-tests
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+  check_wasm:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
+    runs-on: namespace-profile-8x16-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -523,9 +590,10 @@ jobs:
         R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         SCCACHE_BUCKET: sccache-zed
     - name: run_tests::check_wasm::cargo_check_wasm
-      run: cargo +nightly -Zbuild-std=std,panic_abort check --target wasm32-unknown-unknown -p gpui_platform
+      run: cargo -Zbuild-std=std,panic_abort check --target wasm32-unknown-unknown -p gpui_platform
       env:
         CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals
+        RUSTC_BOOTSTRAP: '1'
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
@@ -536,30 +604,27 @@ jobs:
   check_dependencies:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_tests == 'true'
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-2x4-ubuntu-2404
     env:
       CC: clang
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
     - name: run_tests::check_dependencies::install_cargo_machete
-      uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
+      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
       with:
-        command: install
-        args: cargo-machete@0.7.0
+        tool: cargo-machete@0.7.0
     - name: run_tests::check_dependencies::run_cargo_machete
-      uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
-      with:
-        command: machete
+      run: cargo machete
     - name: run_tests::check_dependencies::check_cargo_lock
       run: cargo update --locked --workspace
     - name: run_tests::check_dependencies::check_vulnerable_dependencies
@@ -571,14 +636,14 @@ jobs:
   check_docs:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_docs == 'true'
+    if: needs.orchestrate.outputs.run_docs == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-8x16-ubuntu-2204
     env:
       CC: clang
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -586,7 +651,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -620,15 +685,15 @@ jobs:
   check_licenses:
     needs:
     - orchestrate
-    if: needs.orchestrate.outputs.run_licenses == 'true'
+    if: needs.orchestrate.outputs.run_licenses == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -640,10 +705,10 @@ jobs:
     needs:
     - orchestrate
     if: needs.orchestrate.outputs.run_action_checks == 'true'
-    runs-on: namespace-profile-2x4-ubuntu-2404
+    runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: run_tests::check_scripts::run_shellcheck
@@ -656,7 +721,7 @@ jobs:
       env:
         ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -681,7 +746,7 @@ jobs:
       GIT_COMMITTER_EMAIL: ci@zed.dev
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: 0
@@ -731,11 +796,13 @@ jobs:
     - clippy_windows
     - clippy_linux
     - clippy_mac
+    - clippy_mac_x86_64
     - run_tests_windows
     - run_tests_linux
     - run_tests_mac
     - doctests
     - check_workspace_binaries
+    - build_visual_tests_binary
     - check_wasm
     - check_dependencies
     - check_docs
@@ -760,11 +827,13 @@ jobs:
         check_result "clippy_windows" "$RESULT_CLIPPY_WINDOWS"
         check_result "clippy_linux" "$RESULT_CLIPPY_LINUX"
         check_result "clippy_mac" "$RESULT_CLIPPY_MAC"
+        check_result "clippy_mac_x86_64" "$RESULT_CLIPPY_MAC_X86_64"
         check_result "run_tests_windows" "$RESULT_RUN_TESTS_WINDOWS"
         check_result "run_tests_linux" "$RESULT_RUN_TESTS_LINUX"
         check_result "run_tests_mac" "$RESULT_RUN_TESTS_MAC"
         check_result "doctests" "$RESULT_DOCTESTS"
         check_result "check_workspace_binaries" "$RESULT_CHECK_WORKSPACE_BINARIES"
+        check_result "build_visual_tests_binary" "$RESULT_BUILD_VISUAL_TESTS_BINARY"
         check_result "check_wasm" "$RESULT_CHECK_WASM"
         check_result "check_dependencies" "$RESULT_CHECK_DEPENDENCIES"
         check_result "check_docs" "$RESULT_CHECK_DOCS"
@@ -779,11 +848,13 @@ jobs:
         RESULT_CLIPPY_WINDOWS: ${{ needs.clippy_windows.result }}
         RESULT_CLIPPY_LINUX: ${{ needs.clippy_linux.result }}
         RESULT_CLIPPY_MAC: ${{ needs.clippy_mac.result }}
+        RESULT_CLIPPY_MAC_X86_64: ${{ needs.clippy_mac_x86_64.result }}
         RESULT_RUN_TESTS_WINDOWS: ${{ needs.run_tests_windows.result }}
         RESULT_RUN_TESTS_LINUX: ${{ needs.run_tests_linux.result }}
         RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}
         RESULT_DOCTESTS: ${{ needs.doctests.result }}
         RESULT_CHECK_WORKSPACE_BINARIES: ${{ needs.check_workspace_binaries.result }}
+        RESULT_BUILD_VISUAL_TESTS_BINARY: ${{ needs.build_visual_tests_binary.result }}
         RESULT_CHECK_WASM: ${{ needs.check_wasm.result }}
         RESULT_CHECK_DEPENDENCIES: ${{ needs.check_dependencies.result }}
         RESULT_CHECK_DOCS: ${{ needs.check_docs.result }}

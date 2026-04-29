@@ -1,3 +1,4 @@
+pub mod diagnostics;
 pub mod participant;
 pub mod room;
 
@@ -16,8 +17,8 @@ use room::Event;
 use settings::Settings;
 use std::sync::Arc;
 use workspace::{
-    ActiveCallEvent, AnyActiveCall, GlobalAnyActiveCall, Pane, RemoteCollaborator, SharedScreen,
-    Workspace,
+    ActiveCallEvent, AnyActiveCall, GlobalAnyActiveCall, MultiWorkspace, MultiWorkspaceEvent, Pane,
+    RemoteCollaborator, SharedScreen, Workspace,
 };
 
 pub use livekit_client::{RemoteVideoTrack, RemoteVideoTrackView, RemoteVideoTrackViewEvent};
@@ -27,6 +28,36 @@ use crate::call_settings::CallSettings;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let active_call = cx.new(|cx| ActiveCall::new(client, user_store, cx));
+    let active_call_handle = active_call.downgrade();
+
+    cx.observe_new(move |_multi_workspace: &mut MultiWorkspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
+
+        let active_call_handle = active_call_handle.clone();
+        cx.subscribe_in(
+            &cx.entity(),
+            window,
+            move |multi_workspace, _, event: &MultiWorkspaceEvent, window, cx| {
+                if !matches!(event, MultiWorkspaceEvent::ActiveWorkspaceChanged { .. })
+                    && window.is_window_active()
+                {
+                    return;
+                }
+
+                let project = multi_workspace.workspace().read(cx).project().clone();
+                if let Ok(task) = active_call_handle.update(cx, |active_call, cx| {
+                    active_call.set_location(Some(&project), cx)
+                }) {
+                    task.detach_and_log_err(cx);
+                }
+            },
+        )
+        .detach();
+    })
+    .detach();
+
     cx.set_global(GlobalAnyActiveCall(Arc::new(ActiveCallEntity(active_call))))
 }
 

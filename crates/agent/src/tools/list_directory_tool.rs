@@ -3,7 +3,7 @@ use super::tool_permissions::{
     resolve_project_path,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, Entity, SharedString, Task};
 use project::{Project, ProjectPath, WorktreeSettings};
@@ -127,8 +127,8 @@ impl AgentTool for ListDirectoryTool {
 
     const NAME: &'static str = "list_directory";
 
-    fn kind() -> ToolKind {
-        ToolKind::Read
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Read
     }
 
     fn initial_title(
@@ -267,7 +267,6 @@ impl AgentTool for ListDirectoryTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::{TestAppContext, UpdateGlobal};
     use indoc::indoc;
@@ -848,7 +847,10 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let result = task.await;
@@ -979,13 +981,11 @@ mod tests {
             "Expected private path validation error, got: {error}"
         );
 
-        let event = event_rx.try_next();
+        let event = event_rx.try_recv();
         assert!(
             !matches!(
                 event,
-                Ok(Some(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(
-                    _
-                ))))
+                Ok(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "No authorization should be requested when validation fails before listing",
         );
@@ -1027,13 +1027,11 @@ mod tests {
             "Normal path should succeed without authorization"
         );
 
-        let event = event_rx.try_next();
+        let event = event_rx.try_recv();
         assert!(
             !matches!(
                 event,
-                Ok(Some(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(
-                    _
-                ))))
+                Ok(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "No authorization should be requested for normal paths",
         );
@@ -1084,13 +1082,11 @@ mod tests {
             "Intra-project symlink should succeed without authorization: {result:?}",
         );
 
-        let event = event_rx.try_next();
+        let event = event_rx.try_recv();
         assert!(
             !matches!(
                 event,
-                Ok(Some(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(
-                    _
-                ))))
+                Ok(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "No authorization should be requested for intra-project symlinks",
         );

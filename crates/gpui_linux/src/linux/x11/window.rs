@@ -60,6 +60,7 @@ x11rb::atom_manager! {
         WM_TRANSIENT_FOR,
         _NET_WM_PID,
         _NET_WM_NAME,
+        _NET_WM_ICON,
         _NET_WM_STATE,
         _NET_WM_STATE_MAXIMIZED_VERT,
         _NET_WM_STATE_MAXIMIZED_HORZ,
@@ -225,6 +226,7 @@ fn find_visuals(xcb: &XCBConnection, screen_index: usize) -> VisualSet {
     set
 }
 
+#[derive(Debug, Clone, Copy)]
 struct RawWindow {
     connection: *mut c_void,
     screen_id: usize,
@@ -249,6 +251,7 @@ pub struct Callbacks {
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
+    button_layout_changed: Option<Box<dyn FnMut()>>,
 }
 
 pub struct X11WindowState {
@@ -275,6 +278,7 @@ pub struct X11WindowState {
     hidden: bool,
     active: bool,
     hovered: bool,
+    pub(crate) force_render_after_recovery: bool,
     fullscreen: bool,
     client_side_decorations_supported: bool,
     decorations: WindowDecorations,
@@ -420,6 +424,7 @@ impl X11WindowState {
         scale_factor: f32,
         appearance: WindowAppearance,
         parent_window: Option<X11WindowStatePtr>,
+        supports_xinput_gestures: bool,
     ) -> anyhow::Result<Self> {
         let x_screen_index = params
             .display_id
@@ -533,12 +538,22 @@ impl X11WindowState {
                 && let Some(title) = titlebar.title
             {
                 check_reply(
-                    || "X11 ChangeProperty8 on window title failed.",
+                    || "X11 ChangeProperty8 on WM_NAME failed.",
                     xcb.change_property8(
                         xproto::PropMode::REPLACE,
                         x_window,
                         xproto::AtomEnum::WM_NAME,
                         xproto::AtomEnum::STRING,
+                        title.as_bytes(),
+                    ),
+                )?;
+                check_reply(
+                    || "X11 ChangeProperty8 on _NET_WM_NAME failed.",
+                    xcb.change_property8(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms._NET_WM_NAME,
+                        atoms.UTF8_STRING,
                         title.as_bytes(),
                     ),
                 )?;
@@ -647,19 +662,27 @@ impl X11WindowState {
                 ),
             )?;
 
+            let mut xi_event_mask = xinput::XIEventMask::MOTION
+                | xinput::XIEventMask::BUTTON_PRESS
+                | xinput::XIEventMask::BUTTON_RELEASE
+                | xinput::XIEventMask::ENTER
+                | xinput::XIEventMask::LEAVE;
+            if supports_xinput_gestures {
+                // x11rb 0.13 doesn't define XIEventMask constants for gesture
+                // events, so we construct them from the event opcodes (each
+                // XInput event type N maps to mask bit N).
+                xi_event_mask |=
+                    xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_BEGIN_EVENT)
+                        | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_UPDATE_EVENT)
+                        | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_END_EVENT);
+            }
             check_reply(
                 || "X11 XiSelectEvents failed.",
                 xcb.xinput_xi_select_events(
                     x_window,
                     &[xinput::EventMask {
                         deviceid: XINPUT_ALL_DEVICE_GROUPS,
-                        mask: vec![
-                            xinput::XIEventMask::MOTION
-                                | xinput::XIEventMask::BUTTON_PRESS
-                                | xinput::XIEventMask::BUTTON_RELEASE
-                                | xinput::XIEventMask::ENTER
-                                | xinput::XIEventMask::LEAVE,
-                        ],
+                        mask: vec![xi_event_mask],
                     }],
                 ),
             )?;
@@ -697,6 +720,7 @@ impl X11WindowState {
                     // If the window appearance changes, then the renderer will get updated
                     // too
                     transparent: false,
+                    preferred_present_mode: None,
                 };
                 WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
             };
@@ -720,6 +744,29 @@ impl X11WindowState {
                 size_hints.set_normal_hints(xcb, x_window),
             )?;
 
+            if let Some(image) = params.icon {
+                // https://specifications.freedesktop.org/wm-spec/1.4/ar01s05.html#id-1.6.13
+                let property_size = 2 + (image.width() * image.height()) as usize;
+                let mut property_data: Vec<u32> = Vec::with_capacity(property_size);
+                property_data.push(image.width());
+                property_data.push(image.height());
+                property_data.extend(image.pixels().map(|px| {
+                    let [r, g, b, a]: [u8; 4] = px.0;
+                    u32::from_le_bytes([b, g, r, a])
+                }));
+
+                check_reply(
+                    || "X11 ChangeProperty32 for _NET_ICON_NAME failed.",
+                    xcb.change_property32(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms._NET_WM_ICON,
+                        xproto::AtomEnum::CARDINAL,
+                        &property_data,
+                    ),
+                )?;
+            }
+
             let display = Rc::new(X11Display::new(xcb, scale_factor, x_screen_index)?);
 
             Ok(Self {
@@ -738,6 +785,7 @@ impl X11WindowState {
                 input_handler: None,
                 active: false,
                 hovered: false,
+                force_render_after_recovery: false,
                 fullscreen: false,
                 maximized_vertical: false,
                 maximized_horizontal: false,
@@ -834,6 +882,7 @@ impl X11Window {
         scale_factor: f32,
         appearance: WindowAppearance,
         parent_window: Option<X11WindowStatePtr>,
+        supports_xinput_gestures: bool,
     ) -> anyhow::Result<Self> {
         let ptr = X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -851,6 +900,7 @@ impl X11Window {
                 scale_factor,
                 appearance,
                 parent_window,
+                supports_xinput_gestures,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb: xcb.clone(),
@@ -1245,6 +1295,14 @@ impl X11WindowStatePtr {
             self.callbacks.borrow_mut().appearance_changed = Some(fun);
         }
     }
+
+    pub fn set_button_layout(&self) {
+        let callback = self.callbacks.borrow_mut().button_layout_changed.take();
+        if let Some(mut fun) = callback {
+            fun();
+            self.callbacks.borrow_mut().button_layout_changed = Some(fun);
+        }
+    }
 }
 
 impl PlatformWindow for X11Window {
@@ -1591,6 +1649,10 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
+    fn on_button_layout_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
+    }
+
     fn draw(&self, scene: &Scene) {
         let mut inner = self.0.state.borrow_mut();
 
@@ -1603,30 +1665,25 @@ impl PlatformWindow for X11Window {
                 window_id: self.0.x_window,
                 visual_id: inner.visual_id,
             };
-            let display_handle = rwh::HasDisplayHandle::display_handle(&raw_window)
-                .unwrap()
-                .as_raw();
-            let window_handle = rwh::HasWindowHandle::window_handle(&raw_window)
-                .unwrap()
-                .as_raw();
-
-            inner
-                .renderer
-                .recover(display_handle, window_handle)
-                .unwrap_or_else(|err| {
-                    panic!(
-                        "GPU device lost and recovery failed. \
+            inner.renderer.recover(&raw_window).unwrap_or_else(|err| {
+                panic!(
+                    "GPU device lost and recovery failed. \
                         This may happen after system suspend/resume. \
                         Please restart the application.\n\nError: {err}"
-                    )
-                });
+                )
+            });
 
             // The current scene references atlas textures that were cleared during recovery.
             // Skip this frame and let the next frame rebuild the scene with fresh textures.
+            inner.force_render_after_recovery = true;
             return;
         }
 
         inner.renderer.draw(scene);
+
+        if inner.renderer.needs_redraw() {
+            inner.force_render_after_recovery = true;
+        }
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -1821,5 +1878,10 @@ impl PlatformWindow for X11Window {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.0.state.borrow().renderer.gpu_specs().into()
+    }
+
+    fn play_system_bell(&self) {
+        // Volume 0% means don't increase or decrease from system volume
+        let _ = self.0.xcb.bell(0);
     }
 }

@@ -5,10 +5,12 @@ use cloud_api_client::websocket_protocol::MessageToClient;
 use cloud_api_client::{
     GetAuthenticatedUserResponse, KnownOrUnknown, Organization, OrganizationId, Plan, PlanInfo,
 };
+use cloud_api_types::OrganizationConfiguration;
 use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
 use collections::{HashMap, HashSet, hash_map::Entry};
+use db::kvp::KeyValueStore;
 use derive_more::Deref;
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
@@ -24,6 +26,8 @@ use std::{
 };
 use text::ReplicaId;
 use util::{ResultExt, TryFutureExt as _};
+
+const CURRENT_ORGANIZATION_ID_KEY: &str = "current_organization_id";
 
 pub type UserId = u64;
 
@@ -114,6 +118,7 @@ pub struct UserStore {
     current_organization: Option<Arc<Organization>>,
     organizations: Vec<Arc<Organization>>,
     plans_by_organization: HashMap<OrganizationId, Plan>,
+    configuration_by_organization: HashMap<OrganizationId, OrganizationConfiguration>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -190,6 +195,7 @@ impl UserStore {
             current_organization: None,
             organizations: Vec::new(),
             plans_by_organization: HashMap::default(),
+            configuration_by_organization: HashMap::default(),
             plan_info: None,
             edit_prediction_usage: None,
             contacts: Default::default(),
@@ -214,7 +220,7 @@ impl UserStore {
                 let weak = Arc::downgrade(&client);
                 drop(client);
                 while let Some(status) = status.next().await {
-                    // if the client is dropped, the app is shutting down.
+                    // If the client is dropped, the app is shutting down.
                     let Some(client) = weak.upgrade() else {
                         return Ok(());
                     };
@@ -706,9 +712,16 @@ impl UserStore {
             .is_some_and(|current| current.id == organization.id);
 
         if !is_same_organization {
+            let organization_id = organization.id.0.to_string();
             self.current_organization.replace(organization);
             cx.emit(Event::OrganizationChanged);
             cx.notify();
+
+            let kvp = KeyValueStore::global(cx);
+            db::write_and_log(cx, move || async move {
+                kvp.write_kvp(CURRENT_ORGANIZATION_ID_KEY.into(), organization_id)
+                    .await
+            });
         }
     }
 
@@ -718,6 +731,28 @@ impl UserStore {
 
     pub fn plan_for_organization(&self, organization_id: &OrganizationId) -> Option<Plan> {
         self.plans_by_organization.get(organization_id).copied()
+    }
+
+    pub fn current_organization_configuration(&self) -> Option<&OrganizationConfiguration> {
+        let current_organization = self.current_organization.as_ref()?;
+
+        self.configuration_by_organization
+            .get(&current_organization.id)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_current_organization_configuration_for_test(
+        &mut self,
+        organization: Arc<Organization>,
+        configuration: OrganizationConfiguration,
+        cx: &mut Context<Self>,
+    ) {
+        self.current_organization = Some(organization.clone());
+        self.organizations = vec![organization.clone()];
+        self.configuration_by_organization
+            .insert(organization.id.clone(), configuration);
+        cx.emit(Event::OrganizationChanged);
+        cx.notify();
     }
 
     pub fn plan(&self) -> Option<Plan> {
@@ -735,10 +770,8 @@ impl UserStore {
             };
         }
 
-        if let Some(organization) = &self.current_organization
-            && let Some(plan) = self.plan_for_organization(&organization.id)
-        {
-            return Some(plan);
+        if let Some(organization) = &self.current_organization {
+            return self.plan_for_organization(&organization.id);
         }
 
         self.plan_info.as_ref().map(|info| info.plan())
@@ -764,7 +797,16 @@ impl UserStore {
     }
 
     /// Returns whether the user's account is too new to use the service.
+    ///
+    /// This only applies when operating under the user's personal organization,
+    /// not a business organization.
     pub fn account_too_young(&self) -> bool {
+        if let Some(org) = &self.current_organization {
+            if !org.is_personal {
+                return false;
+            }
+        }
+
         self.plan_info
             .as_ref()
             .map(|plan| plan.is_account_too_young)
@@ -816,7 +858,30 @@ impl UserStore {
         }
 
         self.organizations = response.organizations.into_iter().map(Arc::new).collect();
-        self.current_organization = self.organizations.first().cloned();
+        let persisted_org_id = KeyValueStore::global(cx)
+            .read_kvp(CURRENT_ORGANIZATION_ID_KEY)
+            .log_err()
+            .flatten()
+            .map(|id| OrganizationId(Arc::from(id)));
+
+        self.current_organization = persisted_org_id
+            .and_then(|persisted_id| {
+                self.organizations
+                    .iter()
+                    .find(|org| org.id == persisted_id)
+                    .cloned()
+            })
+            .or_else(|| {
+                response
+                    .default_organization_id
+                    .and_then(|default_organization_id| {
+                        self.organizations
+                            .iter()
+                            .find(|organization| organization.id == default_organization_id)
+                            .cloned()
+                    })
+            })
+            .or_else(|| self.organizations.first().cloned());
         self.plans_by_organization = response
             .plans_by_organization
             .into_iter()
@@ -832,6 +897,8 @@ impl UserStore {
                 (organization_id, plan)
             })
             .collect();
+        self.configuration_by_organization =
+            response.configuration_by_organization.into_iter().collect();
 
         self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
             limit: response.plan.usage.edit_predictions.limit,

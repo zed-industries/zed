@@ -1,11 +1,11 @@
 use action_log::ActionLog;
-use agent_client_protocol::{self as acp, ToolCallUpdateFields};
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use indoc::formatdoc;
 use language::Point;
-use language_model::{LanguageModelImage, LanguageModelToolResultContent};
+use language_model::{LanguageModelImage, LanguageModelImageExt, LanguageModelToolResultContent};
 use project::{AgentLocation, ImageItem, Project, WorktreeSettings, image_store};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -200,7 +200,7 @@ impl AgentTool for ReadFileTool {
             let file_path = input.path.clone();
 
             cx.update(|_cx| {
-                event_stream.update_fields(ToolCallUpdateFields::new().locations(vec![
+                event_stream.update_fields(acp::ToolCallUpdateFields::new().locations(vec![
                     acp::ToolCallLocation::new(&abs_path)
                         .line(input.start_line.map(|line| line.saturating_sub(1))),
                 ]));
@@ -228,7 +228,7 @@ impl AgentTool for ReadFileTool {
                     .context("processing image")
                     .map_err(tool_content_err)?;
 
-                event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+                event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
                     acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Image(
                         acp::ImageContent::new(language_model_image.source.clone(), "image/png"),
                     ))),
@@ -333,7 +333,7 @@ impl AgentTool for ReadFileTool {
                         text,
                     }
                     .to_string();
-                    event_stream.update_fields(ToolCallUpdateFields::new().content(vec![
+                    event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
                         acp::ToolCallContent::Content(acp::Content::new(markdown)),
                     ]));
                 }
@@ -347,7 +347,6 @@ impl AgentTool for ReadFileTool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use project::{FakeFs, Project};
@@ -896,7 +895,10 @@ mod test {
         );
         authorization
             .response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let result = read_task.await;
@@ -1185,7 +1187,10 @@ mod test {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let result = task.await;
@@ -1311,13 +1316,11 @@ mod test {
             "Expected private-files validation error, got: {error}"
         );
 
-        let event = event_rx.try_next();
+        let event = event_rx.try_recv();
         assert!(
             !matches!(
                 event,
-                Ok(Some(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(
-                    _
-                ))))
+                Ok(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "No authorization should be requested when validation fails before read",
         );
