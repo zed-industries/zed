@@ -2682,11 +2682,12 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let is_remote = envelope.payload.is_remote;
+        let force = envelope.payload.force;
         let branch_name = envelope.payload.branch_name;
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.delete_branch(is_remote, branch_name)
+                repository_handle.delete_branch(is_remote, force, branch_name)
             })
             .await??;
 
@@ -6605,22 +6606,25 @@ impl Repository {
     pub fn delete_branch(
         &mut self,
         is_remote: bool,
+        force: bool,
         branch_name: String,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
+        let deletion_flag = match (is_remote, force) {
+            (true, false) => "-dr",
+            (true, true) => "-Dr",
+            (false, false) => "-d",
+            (false, true) => "-D",
+        };
         self.send_job(
-            Some(
-                format!(
-                    "git branch {} {}",
-                    if is_remote { "-dr" } else { "-d" },
-                    branch_name
-                )
-                .into(),
-            ),
+            Some(format!("git branch {} {}", deletion_flag, branch_name).into()),
             move |repo, _cx| async move {
                 match repo {
                     RepositoryState::Local(state) => {
-                        state.backend.delete_branch(is_remote, branch_name).await
+                        state
+                            .backend
+                            .delete_branch(is_remote, force, branch_name)
+                            .await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client

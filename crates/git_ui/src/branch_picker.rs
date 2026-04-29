@@ -513,6 +513,9 @@ impl BranchListDelegate {
 
         cx.spawn_in(window, async move |picker, cx| {
             let is_remote;
+            let force = ProjectSettings::get_global(cx)
+                .git_branch_picker
+                .force_delete;
             let result = match &entry {
                 Entry::Branch { branch, .. } => {
                     if branch.is_head {
@@ -521,7 +524,7 @@ impl BranchListDelegate {
 
                     is_remote = branch.is_remote();
                     repo.update(cx, |repo, _| {
-                        repo.delete_branch(is_remote, branch.name().to_string())
+                        repo.delete_branch(is_remote, force, branch.name().to_string())
                     })
                     .await?
                 }

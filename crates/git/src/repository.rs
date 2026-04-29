@@ -779,7 +779,12 @@ pub trait GitRepository: Send + Sync {
     -> BoxFuture<'_, Result<()>>;
     fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
 
-    fn delete_branch(&self, is_remote: bool, name: String) -> BoxFuture<'_, Result<()>>;
+    fn delete_branch(
+        &self,
+        is_remote: bool,
+        force: bool,
+        name: String,
+    ) -> BoxFuture<'_, Result<()>>;
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
 
@@ -2031,14 +2036,24 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn delete_branch(&self, is_remote: bool, name: String) -> BoxFuture<'_, Result<()>> {
+    fn delete_branch(
+        &self,
+        is_remote: bool,
+        force: bool,
+        name: String,
+    ) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary();
+
+        let deletion_flag = match (is_remote, force) {
+            (true, false) => "-dr",
+            (true, true) => "-Dr",
+            (false, false) => "-d",
+            (false, true) => "-D",
+        };
 
         self.executor
             .spawn(async move {
-                git_binary?
-                    .run(&["branch", if is_remote { "-dr" } else { "-d" }, &name])
-                    .await?;
+                git_binary?.run(&["branch", deletion_flag, &name]).await?;
                 anyhow::Ok(())
             })
             .boxed()

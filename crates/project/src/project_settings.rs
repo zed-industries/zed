@@ -542,15 +542,21 @@ impl GitSettings {
 pub struct BranchPickerSettings {
     /// Whether to show author name as part of the commit information.
     ///
-    /// Default: false
+    /// Default: true
     #[serde(default)]
     pub show_author_name: bool,
+    #[serde(default)]
+    // whether branch deletion uses the soft delete ('-d') or hard delete ('-D') flag
+    //
+    /// Default: false
+    pub force_delete: bool,
 }
 
 impl Default for BranchPickerSettings {
     fn default() -> Self {
         Self {
             show_author_name: true,
+            force_delete: false,
         }
     }
 }

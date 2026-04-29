@@ -617,6 +617,7 @@ pub struct BranchPickerSettingsContent {
     ///
     /// Default: false
     pub show_author_name: Option<bool>,
+    pub force_delete: Option<bool>,
 }
 
 #[derive(
