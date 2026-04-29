@@ -1,10 +1,12 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult, GpuSpecs,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptButton, RequestFrameOptions, Size, TestPlatform, TileId, WindowAppearance,
+    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
+    DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
 };
 use collections::HashMap;
+use image::RgbaImage;
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use std::{
@@ -18,8 +20,11 @@ pub(crate) struct TestWindowState {
     display: Rc<dyn PlatformDisplay>,
     pub(crate) title: Option<String>,
     pub(crate) edited: bool,
+    pub(crate) document_path: Option<std::path::PathBuf>,
     platform: Weak<TestPlatform>,
+    // TODO: Replace with `Rc`
     sprite_atlas: Arc<dyn PlatformAtlas>,
+    renderer: Option<Box<dyn PlatformHeadlessRenderer>>,
     pub(crate) should_close_handler: Option<Box<dyn FnMut() -> bool>>,
     hit_test_window_control_callback: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
@@ -56,15 +61,22 @@ impl TestWindow {
         params: WindowParams,
         platform: Weak<TestPlatform>,
         display: Rc<dyn PlatformDisplay>,
+        renderer: Option<Box<dyn PlatformHeadlessRenderer>>,
     ) -> Self {
+        let sprite_atlas: Arc<dyn PlatformAtlas> = match &renderer {
+            Some(r) => r.sprite_atlas(),
+            None => Arc::new(TestAtlas::new()),
+        };
         Self(Rc::new(Mutex::new(TestWindowState {
             bounds: params.bounds,
             display,
             platform,
             handle,
-            sprite_atlas: Arc::new(TestAtlas::new()),
+            sprite_atlas,
+            renderer,
             title: Default::default(),
             edited: false,
+            document_path: None,
             should_close_handler: None,
             hit_test_window_control_callback: None,
             input_callback: None,
@@ -80,10 +92,11 @@ impl TestWindow {
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
         let scale_factor = self.scale_factor();
         let mut lock = self.0.lock();
+        // Always update bounds, even if no callback is registered
+        lock.bounds.size = size;
         let Some(mut callback) = lock.resize_callback.take() else {
             return;
         };
-        lock.bounds.size = size;
         drop(lock);
         callback(size, scale_factor);
         self.0.lock().resize_callback = Some(callback);
@@ -219,6 +232,10 @@ impl PlatformWindow for TestWindow {
         self.0.lock().edited = edited;
     }
 
+    fn set_document_path(&self, path: Option<&std::path::Path>) {
+        self.0.lock().document_path = path.map(|p| p.to_path_buf());
+    }
+
     fn show_character_palette(&self) {
         unimplemented!()
     }
@@ -274,10 +291,23 @@ impl PlatformWindow for TestWindow {
 
     fn on_appearance_changed(&self, _callback: Box<dyn FnMut()>) {}
 
-    fn draw(&self, _scene: &crate::Scene) {}
+    fn draw(&self, _scene: &Scene) {}
 
     fn sprite_atlas(&self) -> sync::Arc<dyn crate::PlatformAtlas> {
         self.0.lock().sprite_atlas.clone()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn render_to_image(&self, scene: &Scene) -> anyhow::Result<RgbaImage> {
+        let mut state = self.0.lock();
+        let size = state.bounds.size;
+        if let Some(renderer) = &mut state.renderer {
+            let scale_factor = 2.0;
+            let device_size: Size<DevicePixels> = size.to_device_pixels(scale_factor);
+            renderer.render_scene_to_image(scene, device_size)
+        } else {
+            anyhow::bail!("render_to_image not available: no HeadlessRenderer configured")
+        }
     }
 
     fn as_test(&mut self) -> Option<&mut TestWindow> {
@@ -329,8 +359,8 @@ impl PlatformAtlas for TestAtlas {
         >,
     ) -> anyhow::Result<Option<crate::AtlasTile>> {
         let mut state = self.0.lock();
-        if let Some(tile) = state.tiles.get(key) {
-            return Ok(Some(tile.clone()));
+        if let Some(&tile) = state.tiles.get(key) {
+            return Ok(Some(tile));
         }
         drop(state);
 
@@ -360,7 +390,7 @@ impl PlatformAtlas for TestAtlas {
             },
         );
 
-        Ok(Some(state.tiles[key].clone()))
+        Ok(Some(state.tiles[key]))
     }
 
     fn remove(&self, key: &AtlasKey) {

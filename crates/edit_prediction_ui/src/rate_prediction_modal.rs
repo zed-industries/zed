@@ -1,7 +1,7 @@
 use buffer_diff::BufferDiff;
 use edit_prediction::{EditPrediction, EditPredictionRating, EditPredictionStore};
-use editor::{Editor, ExcerptRange, Inlay, MultiBuffer};
-use feature_flags::FeatureFlag;
+use editor::{Editor, Inlay, MultiBuffer};
+use feature_flags::{FeatureFlag, PresenceFlag, register_feature_flag};
 use gpui::{
     App, BorderStyle, DismissEvent, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable,
     Length, StyleRefinement, TextStyleRefinement, Window, actions, prelude::*,
@@ -13,8 +13,8 @@ use project::{
 };
 use settings::Settings as _;
 use std::rc::Rc;
-use std::{fmt::Write, sync::Arc, time::Duration};
-use theme::ThemeSettings;
+use std::{fmt::Write, sync::Arc};
+use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, DropdownMenu, KeyBinding, List, ListItem, ListItemSpacing, PopoverMenuHandle,
     Tooltip, prelude::*,
@@ -43,7 +43,9 @@ pub struct PredictEditsRatePredictionsFeatureFlag;
 
 impl FeatureFlag for PredictEditsRatePredictionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";
+    type Value = PresenceFlag;
 }
+register_feature_flag!(PredictEditsRatePredictionsFeatureFlag);
 
 pub struct RatePredictionsModal {
     ep_store: Entity<EditPredictionStore>,
@@ -357,42 +359,26 @@ impl RatePredictionsModal {
                 });
 
                 editor.disable_header_for_buffer(new_buffer_id, cx);
-                let excerpt_id = editor.buffer().update(cx, |multibuffer, cx| {
+                editor.buffer().update(cx, |multibuffer, cx| {
                     multibuffer.clear(cx);
-                    let excerpt_ids = multibuffer.push_excerpts(
-                        new_buffer,
-                        vec![ExcerptRange {
-                            context: start..end,
-                            primary: start..end,
-                        }],
-                        cx,
-                    );
+                    multibuffer.set_excerpts_for_buffer(new_buffer.clone(), [start..end], 0, cx);
                     multibuffer.add_diff(diff, cx);
-                    excerpt_ids.into_iter().next()
                 });
 
-                if let Some((excerpt_id, cursor_position)) =
-                    excerpt_id.zip(prediction.cursor_position.as_ref())
-                {
+                if let Some(cursor_position) = prediction.cursor_position.as_ref() {
                     let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                    if let Some(buffer_snapshot) =
-                        multibuffer_snapshot.buffer_for_excerpt(excerpt_id)
-                    {
-                        let cursor_offset = prediction
-                            .edit_preview
-                            .anchor_to_offset_in_result(cursor_position.anchor)
-                            + cursor_position.offset;
-                        let cursor_anchor = buffer_snapshot.anchor_after(cursor_offset);
+                    let cursor_offset = prediction
+                        .edit_preview
+                        .anchor_to_offset_in_result(cursor_position.anchor)
+                        + cursor_position.offset;
+                    let cursor_anchor = new_buffer.read(cx).snapshot().anchor_after(cursor_offset);
 
-                        if let Some(anchor) =
-                            multibuffer_snapshot.anchor_in_excerpt(excerpt_id, cursor_anchor)
-                        {
-                            editor.splice_inlays(
-                                &[InlayId::EditPrediction(0)],
-                                vec![Inlay::edit_prediction(0, anchor, "▏")],
-                                cx,
-                            );
-                        }
+                    if let Some(anchor) = multibuffer_snapshot.anchor_in_excerpt(cursor_anchor) {
+                        editor.splice_inlays(
+                            &[InlayId::EditPrediction(0)],
+                            vec![Inlay::edit_prediction(0, anchor, "▏")],
+                            cx,
+                        );
                     }
                 }
             });
@@ -409,7 +395,13 @@ impl RatePredictionsModal {
 
             write!(&mut formatted_inputs, "## Related files\n\n").unwrap();
 
-            for included_file in prediction.inputs.related_files.iter() {
+            for included_file in prediction
+                .inputs
+                .related_files
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+            {
                 write!(
                     &mut formatted_inputs,
                     "### {}\n\n",
@@ -449,6 +441,7 @@ impl RatePredictionsModal {
                     editor.set_show_git_diff_gutter(false, cx);
                     editor.set_show_code_actions(false, cx);
                     editor.set_show_runnables(false, cx);
+                    editor.set_show_bookmarks(false, cx);
                     editor.set_show_breakpoints(false, cx);
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_indent_guides(false, cx);
@@ -766,9 +759,7 @@ impl RatePredictionsModal {
                                 .gap_1()
                                 .child(
                                     Button::new("bad", "Bad Prediction")
-                                        .icon(IconName::ThumbsDown)
-                                        .icon_size(IconSize::Small)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(Icon::new(IconName::ThumbsDown).size(IconSize::Small))
                                         .disabled(rated || feedback_empty)
                                         .when(feedback_empty, |this| {
                                             this.tooltip(Tooltip::text(
@@ -792,9 +783,7 @@ impl RatePredictionsModal {
                                 )
                                 .child(
                                     Button::new("good", "Good Prediction")
-                                        .icon(IconName::ThumbsUp)
-                                        .icon_size(IconSize::Small)
-                                        .icon_position(IconPosition::Start)
+                                        .start_icon(Icon::new(IconName::ThumbsUp).size(IconSize::Small))
                                         .disabled(rated)
                                         .key_binding(KeyBinding::for_action_in(
                                             &ThumbsUpActivePrediction,
@@ -855,30 +844,18 @@ impl RatePredictionsModal {
                             .gap_3()
                             .child(Icon::new(icon_name).color(icon_color).size(IconSize::Small))
                             .child(
-                                v_flex()
-                                    .child(
-                                        h_flex()
-                                            .gap_1()
-                                            .child(Label::new(file_name).size(LabelSize::Small))
-                                            .when_some(file_path, |this, p| {
-                                                this.child(
-                                                    Label::new(p)
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted),
-                                                )
-                                            }),
-                                    )
-                                    .child(
-                                        Label::new(format!(
-                                            "{} ago, {:.2?}",
-                                            format_time_ago(
-                                                completion.response_received_at.elapsed()
-                                            ),
-                                            completion.latency()
-                                        ))
-                                        .color(Color::Muted)
-                                        .size(LabelSize::XSmall),
-                                    ),
+                                v_flex().child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(Label::new(file_name).size(LabelSize::Small))
+                                        .when_some(file_path, |this, p| {
+                                            this.child(
+                                                Label::new(p)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                        }),
+                                ),
                             ),
                     )
                     .tooltip(Tooltip::text(tooltip_text))
@@ -982,23 +959,6 @@ impl Focusable for RatePredictionsModal {
 
 impl ModalView for RatePredictionsModal {}
 
-fn format_time_ago(elapsed: Duration) -> String {
-    let seconds = elapsed.as_secs();
-    if seconds < 120 {
-        "1 minute".to_string()
-    } else if seconds < 3600 {
-        format!("{} minutes", seconds / 60)
-    } else if seconds < 7200 {
-        "1 hour".to_string()
-    } else if seconds < 86400 {
-        format!("{} hours", seconds / 3600)
-    } else if seconds < 172800 {
-        "1 day".to_string()
-    } else {
-        format!("{} days", seconds / 86400)
-    }
-}
-
 struct FeedbackCompletionProvider;
 
 impl FeedbackCompletionProvider {
@@ -1025,7 +985,6 @@ impl FeedbackCompletionProvider {
 impl editor::CompletionProvider for FeedbackCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: editor::ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,

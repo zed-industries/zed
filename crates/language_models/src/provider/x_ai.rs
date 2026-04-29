@@ -1,5 +1,6 @@
 use anyhow::Result;
 use collections::BTreeMap;
+use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, Window};
 use http_client::HttpClient;
@@ -8,7 +9,7 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
-    Role, env_var,
+    env_var,
 };
 use open_ai::ResponseStreamEvent;
 pub use settings::XaiAvailableModel as AvailableModel;
@@ -18,7 +19,7 @@ use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use x_ai::{Model, XAI_API_URL};
+use x_ai::XAI_API_URL;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");
@@ -39,6 +40,7 @@ pub struct XAiLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
 }
 
 impl State {
@@ -47,30 +49,51 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = XAiLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = XAiLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
+        self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 }
 
 impl XAiLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                let credentials_provider = this.credentials_provider.clone();
                 let api_url = Self::api_url(cx);
-                this.api_key_state
-                    .handle_url_change(api_url, |this| &mut this.api_key_state, cx);
+                this.api_key_state.handle_url_change(
+                    api_url,
+                    |this| &mut this.api_key_state,
+                    credentials_provider,
+                    cx,
+                );
                 cx.notify();
             })
             .detach();
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                credentials_provider,
             }
         });
 
@@ -257,6 +280,10 @@ impl LanguageModel for XAiLanguageModel {
         self.model.supports_images()
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto
@@ -265,8 +292,7 @@ impl LanguageModel for XAiLanguageModel {
         }
     }
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        let model_id = self.model.id().trim().to_lowercase();
-        if model_id.eq(x_ai::Model::Grok4.id()) || model_id.eq(x_ai::Model::GrokCodeFast1.id()) {
+        if self.model.requires_json_schema_subset() {
             LanguageModelToolSchemaFormat::JsonSchemaSubset
         } else {
             LanguageModelToolSchemaFormat::JsonSchema
@@ -285,12 +311,8 @@ impl LanguageModel for XAiLanguageModel {
         self.model.max_output_tokens()
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        count_xai_tokens(request, self.model.clone(), cx)
+    fn supports_split_token_display(&self) -> bool {
+        true
     }
 
     fn stream_completion(
@@ -314,6 +336,7 @@ impl LanguageModel for XAiLanguageModel {
             self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
             None,
+            false,
         );
         let completions = self.stream_completion(request, cx);
         async move {
@@ -322,37 +345,6 @@ impl LanguageModel for XAiLanguageModel {
         }
         .boxed()
     }
-}
-
-pub fn count_xai_tokens(
-    request: LanguageModelRequest,
-    model: Model,
-    cx: &App,
-) -> BoxFuture<'static, Result<u64>> {
-    cx.background_spawn(async move {
-        let messages = request
-            .messages
-            .into_iter()
-            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                role: match message.role {
-                    Role::User => "user".into(),
-                    Role::Assistant => "assistant".into(),
-                    Role::System => "system".into(),
-                },
-                content: Some(message.string_contents()),
-                name: None,
-                function_call: None,
-            })
-            .collect::<Vec<_>>();
-
-        let model_name = if model.max_token_count() >= 100_000 {
-            "gpt-4o"
-        } else {
-            "gpt-4"
-        };
-        tiktoken_rs::num_tokens_from_messages(model_name, &messages).map(|tokens| tokens as u64)
-    })
-    .boxed()
 }
 
 struct ConfigurationView {

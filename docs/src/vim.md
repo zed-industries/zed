@@ -250,27 +250,28 @@ Below, you'll find tables listing the commands you can use in the command palett
 
 This table shows commands for managing windows, tabs, and panes. As commands don't support arguments currently, you cannot specify a filename when saving or creating a new file.
 
-| Command        | Description                                          |
-| -------------- | ---------------------------------------------------- |
-| `:w[rite][!]`  | Save the current file                                |
-| `:wq[!]`       | Save the file and close the buffer                   |
-| `:q[uit][!]`   | Close the buffer                                     |
-| `:wa[ll][!]`   | Save all open files                                  |
-| `:wqa[ll][!]`  | Save all open files and close all buffers            |
-| `:qa[ll][!]`   | Close all buffers                                    |
-| `:[e]x[it][!]` | Close the buffer                                     |
-| `:up[date]`    | Save the current file                                |
-| `:cq`          | Quit completely (close all running instances of Zed) |
-| `:vs[plit]`    | Split the pane vertically                            |
-| `:sp[lit]`     | Split the pane horizontally                          |
-| `:new`         | Create a new file in a horizontal split              |
-| `:vne[w]`      | Create a new file in a vertical split                |
-| `:tabedit`     | Create a new file in a new tab                       |
-| `:tabnew`      | Create a new file in a new tab                       |
-| `:tabn[ext]`   | Go to the next tab                                   |
-| `:tabp[rev]`   | Go to previous tab                                   |
-| `:tabc[lose]`  | Close the current tab                                |
-| `:ls`          | Show all buffers                                     |
+| Command         | Description                                          |
+| --------------- | ---------------------------------------------------- |
+| `:w[rite][!]`   | Save the current file                                |
+| `:wq[!]`        | Save the file and close the buffer                   |
+| `:q[uit][!]`    | Close the buffer                                     |
+| `:wa[ll][!]`    | Save all open files                                  |
+| `:wqa[ll][!]`   | Save all open files and close all buffers            |
+| `:qa[ll][!]`    | Close all buffers                                    |
+| `:[e]x[it][!]`  | Close the buffer                                     |
+| `:up[date]`     | Save the current file                                |
+| `:cq`           | Quit completely (close all running instances of Zed) |
+| `:bd[elete][!]` | Close the active file in all panes                   |
+| `:vs[plit]`     | Split the pane vertically                            |
+| `:sp[lit]`      | Split the pane horizontally                          |
+| `:new`          | Create a new file in a horizontal split              |
+| `:vne[w]`       | Create a new file in a vertical split                |
+| `:tabedit`      | Create a new file in a new tab                       |
+| `:tabnew`       | Create a new file in a new tab                       |
+| `:tabn[ext]`    | Go to the next tab                                   |
+| `:tabp[rev]`    | Go to previous tab                                   |
+| `:tabc[lose]`   | Close the current tab                                |
+| `:ls`           | Show all buffers                                     |
 
 > **Note:** The `!` character is used to force the command to execute without saving changes or prompting before overwriting a file.
 
@@ -353,14 +354,35 @@ These commands modify editor options locally for the current buffer.
 
 ### Command mnemonics
 
-As any Zed command is available, you may find that it's helpful to remember mnemonics that run the correct command. For example:
+Zed does not ship with any command mnemonics by default, but you can define short aliases for Zed commands using the `command_aliases` setting in your settings file. When you type an alias from this map in the command palette, it resolves to the mapped command.
 
-- `:diffs` for "toggle all hunk diffs"
-- `:cpp` for "copy path to file"
-- `:crp` for "copy relative path"
-- `:reveal` for "reveal in finder"
-- `:zlog` for "open zed log"
-- `:clank` for "cancel language server work"
+#### Example Configuration
+
+To configure command mnemonics, add the `command_aliases` key to your settings file. Here's an example configuration with useful mnemonics:
+
+```json [settings]
+{
+  "command_aliases": {
+    "zlog": "zed::OpenLog",
+    "newf": "workspace::NewFile",
+    "diffs": "editor::ToggleSelectedDiffHunks",
+    "crp": "workspace::CopyRelativePath",
+    "cpp": "workspace::CopyPath",
+    "reveal": "editor::RevealInFileManager",
+    "clank": "editor::CancelLanguageServerWork"
+  }
+}
+```
+
+With this configuration, you can use commands like:
+
+- `:zlog` - Open the Zed log
+- `:newf` - Create a new file
+- `:diffs` - Toggle selected diff hunks
+- `:crp` - Copy the relative path to the current file
+- `:cpp` - Copy the full path to the current file
+- `:reveal` - Reveal the current file in the file manager
+- `:clank` - Cancel language server work
 
 ## Customizing key bindings
 
@@ -447,7 +469,7 @@ Here's a template with useful vim mode contexts to help you customize your vim m
 
 By default, you can navigate between the different files open in the editor with shortcuts like `ctrl+w` followed by one of `hjkl` to move to the left, down, up, or right, respectively.
 
-But you cannot use the same shortcuts to move between all the editor docks (the terminal, project panel, assistant panel, ...). If you want to use the same shortcuts to navigate to the docks, you can add the following key bindings to your user keymap.
+But you cannot use the same shortcuts to move between all the editor docks (the terminal, project panel, agent panel, ...). If you want to use the same shortcuts to navigate to the docks, you can add the following key bindings to your user keymap.
 
 ```json [keymap]
 {
@@ -561,6 +583,7 @@ You can change the following settings to modify vim mode's behavior:
 | use_system_clipboard         | Determines how system clipboard is used:<br><ul><li>"always": use for all operations</li><li>"never": only use when explicitly specified</li><li>"on_yank": use for yank operations</li></ul> | "always"      |
 | use_multiline_find           | deprecated                                                                                                                                                                                    |
 | use_smartcase_find           | If `true`, `f` and `t` motions are case-insensitive when the target letter is lowercase.                                                                                                      | false         |
+| use_regex_search             | If `true`, then vim search will use regex mode                                                                                                                                                | true          |
 | gdefault                     | If `true`, the `:substitute` command replaces all matches in a line by default (as if `g` flag was given). The `g` flag then toggles this, replacing only the first match.                    | false         |
 | toggle_relative_line_numbers | If `true`, line numbers are relative in normal mode and absolute in insert mode, giving you the best of both options.                                                                         | false         |
 | custom_digraphs              | An object that allows you to add custom digraphs. Read below for an example.                                                                                                                  | {}            |
@@ -586,6 +609,7 @@ Here's an example of these settings changed:
     "default_mode": "insert",
     "use_system_clipboard": "never",
     "use_smartcase_find": true,
+    "use_regex_search": true,
     "gdefault": true,
     "toggle_relative_line_numbers": true,
     "highlight_on_yank_duration": 50,

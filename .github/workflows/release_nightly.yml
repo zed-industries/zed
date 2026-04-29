@@ -16,7 +16,7 @@ jobs:
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: 0
@@ -30,7 +30,7 @@ jobs:
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -43,7 +43,7 @@ jobs:
       with:
         node-version: '20'
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than.ps1 250
+      run: ./script/clear-target-dir-if-larger-than.ps1 350 200
       shell: pwsh
     - name: steps::setup_sccache
       run: ./script/setup-sccache.ps1
@@ -70,7 +70,7 @@ jobs:
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -103,9 +103,11 @@ jobs:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      CC: clang-18
+      CXX: clang++-18
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: run_bundling::set_release_channel_to_nightly
@@ -120,8 +122,6 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
@@ -149,9 +149,11 @@ jobs:
       CARGO_INCREMENTAL: 0
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+      CC: clang-18
+      CXX: clang++-18
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: run_bundling::set_release_channel_to_nightly
@@ -166,8 +168,6 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
@@ -202,7 +202,7 @@ jobs:
       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: run_bundling::set_release_channel_to_nightly
@@ -220,7 +220,7 @@ jobs:
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 300
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
     - name: '@actions/upload-artifact Zed-aarch64.dmg'
@@ -253,7 +253,7 @@ jobs:
       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: run_bundling::set_release_channel_to_nightly
@@ -271,7 +271,7 @@ jobs:
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 300
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
     - name: '@actions/upload-artifact Zed-x86_64.dmg'
@@ -308,7 +308,7 @@ jobs:
       TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: run_bundling::set_release_channel_to_nightly
@@ -361,7 +361,7 @@ jobs:
       TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: run_bundling::set_release_channel_to_nightly
@@ -406,11 +406,11 @@ jobs:
       GIT_LFS_SKIP_SMUDGE: '1'
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_nix_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: nix
     - name: nix_build::build_nix::install_nix
@@ -440,11 +440,11 @@ jobs:
       GIT_LFS_SKIP_SMUDGE: '1'
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_nix_store_macos
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         path: ~/nix-cache
     - name: nix_build::build_nix::install_nix
@@ -488,7 +488,7 @@ jobs:
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: 0
@@ -550,11 +550,10 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: release::send_slack_message
-      run: |
-        curl -X POST -H 'Content-type: application/json'\
-         --data '{"text":"❌ ${{ github.workflow }} failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "$SLACK_WEBHOOK"
+      run: 'curl -X POST -H ''Content-type: application/json'' --data "$(jq -n --arg text "$SLACK_MESSAGE" ''{"text": $text}'')" "$SLACK_WEBHOOK"'
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
+        SLACK_MESSAGE: '❌ ${{ github.workflow }} failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
 defaults:
   run:
     shell: bash -euxo pipefail {0}

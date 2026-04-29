@@ -1,9 +1,8 @@
 use super::tool_permissions::{
-    ResolvedProjectPath, SensitiveSettingsKind, authorize_symlink_access,
-    canonicalize_worktree_roots, path_has_symlink_escape, resolve_project_path,
-    sensitive_settings_kind,
+    ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
+    path_has_symlink_escape, resolve_project_path, sensitive_settings_kind,
 };
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use collections::FxHashSet;
 use futures::FutureExt as _;
@@ -17,7 +16,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    authorize_with_sensitive_settings, decide_permission_for_path,
+};
 
 /// Discards unsaved changes in open buffers by reloading file contents from disk.
 ///
@@ -66,25 +68,31 @@ impl AgentTool for RestoreFileFromDiskTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String, String>> {
-        let settings = AgentSettings::get_global(cx).clone();
-
-        // Check for any immediate deny before spawning async work.
-        for path in &input.paths {
-            let path_str = path.to_string_lossy();
-            let decision = decide_permission_for_path(Self::NAME, &path_str, &settings);
-            if let ToolPermissionDecision::Deny(reason) = decision {
-                return Task::ready(Err(reason));
-            }
-        }
-
         let project = self.project.clone();
-        let input_paths = input.paths;
 
         cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+
+            // Check for any immediate deny before doing async work.
+            for path in &input.paths {
+                let path_str = path.to_string_lossy();
+                let decision = cx.update(|cx| {
+                    decide_permission_for_path(Self::NAME, &path_str, AgentSettings::get_global(cx))
+                });
+                if let ToolPermissionDecision::Deny(reason) = decision {
+                    return Err(reason);
+                }
+            }
+
+            let input_paths = input.paths;
+
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
@@ -92,7 +100,9 @@ impl AgentTool for RestoreFileFromDiskTool {
 
             for path in &input_paths {
                 let path_str = path.to_string_lossy();
-                let decision = decide_permission_for_path(Self::NAME, &path_str, &settings);
+                let decision = cx.update(|cx| {
+                    decide_permission_for_path(Self::NAME, &path_str, AgentSettings::get_global(cx))
+                });
                 let symlink_escape = project.read_with(cx, |project, cx| {
                     path_has_symlink_escape(project, path, &canonical_roots, cx)
                 });
@@ -151,13 +161,16 @@ impl AgentTool for RestoreFileFromDiskTool {
                         break;
                     }
                 }
-                let title = match settings_kind {
-                    Some(SensitiveSettingsKind::Local) => format!("{title} (local settings)"),
-                    Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                    None => title,
-                };
                 let context = crate::ToolPermissionContext::new(Self::NAME, confirmation_paths);
-                let authorize = cx.update(|cx| event_stream.authorize(title, context, cx));
+                let authorize = cx.update(|cx| {
+                    authorize_with_sensitive_settings(
+                        settings_kind,
+                        context,
+                        &title,
+                        &event_stream,
+                        cx,
+                    )
+                });
                 authorize.await.map_err(|e| e.to_string())?;
             }
             let mut buffers_to_reload: FxHashSet<Entity<Buffer>> = FxHashSet::default();
@@ -378,12 +391,12 @@ mod tests {
         let output = cx
             .update(|cx| {
                 tool.clone().run(
-                    RestoreFileFromDiskToolInput {
+                    ToolInput::resolved(RestoreFileFromDiskToolInput {
                         paths: vec![
                             PathBuf::from("root/dirty.txt"),
                             PathBuf::from("root/clean.txt"),
                         ],
-                    },
+                    }),
                     ToolCallEventStream::test().0,
                     cx,
                 )
@@ -428,7 +441,7 @@ mod tests {
         let output = cx
             .update(|cx| {
                 tool.clone().run(
-                    RestoreFileFromDiskToolInput { paths: vec![] },
+                    ToolInput::resolved(RestoreFileFromDiskToolInput { paths: vec![] }),
                     ToolCallEventStream::test().0,
                     cx,
                 )
@@ -441,9 +454,9 @@ mod tests {
         let output = cx
             .update(|cx| {
                 tool.clone().run(
-                    RestoreFileFromDiskToolInput {
+                    ToolInput::resolved(RestoreFileFromDiskToolInput {
                         paths: vec![PathBuf::from("nonexistent/path.txt")],
-                    },
+                    }),
                     ToolCallEventStream::test().0,
                     cx,
                 )
@@ -495,9 +508,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                RestoreFileFromDiskToolInput {
+                ToolInput::resolved(RestoreFileFromDiskToolInput {
                     paths: vec![PathBuf::from("project/link.txt")],
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -513,7 +526,10 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let _result = task.await;
@@ -564,9 +580,9 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.clone().run(
-                    RestoreFileFromDiskToolInput {
+                    ToolInput::resolved(RestoreFileFromDiskToolInput {
                         paths: vec![PathBuf::from("project/link.txt")],
-                    },
+                    }),
                     event_stream,
                     cx,
                 )
@@ -576,8 +592,8 @@ mod tests {
         assert!(result.is_err(), "Tool should fail when policy denies");
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Deny policy should not emit symlink authorization prompt",
         );
@@ -623,9 +639,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.clone().run(
-                RestoreFileFromDiskToolInput {
+                ToolInput::resolved(RestoreFileFromDiskToolInput {
                     paths: vec![PathBuf::from("project/link.txt")],
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -641,13 +657,16 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Expected a single authorization prompt",
         );

@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
-use collections::{BTreeMap, HashMap};
+use collections::{HashMap, IndexMap};
+use credentials_provider::CredentialsProvider;
 use deepseek::DEEPSEEK_API_URL;
 
 use futures::Stream;
@@ -8,10 +9,11 @@ use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    StopReason, TokenUsage, env_var,
 };
 pub use settings::DeepseekAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
@@ -22,7 +24,7 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-use crate::provider::util::parse_tool_arguments;
+use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("deepseek");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("DeepSeek");
@@ -49,6 +51,7 @@ pub struct DeepSeekLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
 }
 
 impl State {
@@ -57,30 +60,51 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = DeepSeekLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = DeepSeekLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
+        self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 }
 
 impl DeepSeekLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                let credentials_provider = this.credentials_provider.clone();
                 let api_url = Self::api_url(cx);
-                this.api_key_state
-                    .handle_url_change(api_url, |this| &mut this.api_key_state, cx);
+                this.api_key_state.handle_url_change(
+                    api_url,
+                    |this| &mut this.api_key_state,
+                    credentials_provider,
+                    cx,
+                );
                 cx.notify();
             })
             .detach();
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                credentials_provider,
             }
         });
 
@@ -141,10 +165,10 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models = BTreeMap::default();
+        let mut models = IndexMap::default();
 
-        models.insert("deepseek-chat", deepseek::Model::Chat);
-        models.insert("deepseek-reasoner", deepseek::Model::Reasoner);
+        models.insert("deepseek-v4-flash", deepseek::Model::V4Flash);
+        models.insert("deepseek-v4-pro", deepseek::Model::V4Pro);
 
         for available_model in &Self::settings(cx).available_models {
             models.insert(
@@ -246,6 +270,36 @@ impl LanguageModel for DeepSeekLanguageModel {
         true
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_thinking(&self) -> bool {
+        matches!(
+            self.model,
+            deepseek::Model::V4Flash | deepseek::Model::V4Pro
+        )
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        if !self.supports_thinking() {
+            return Vec::new();
+        }
+
+        vec![
+            LanguageModelEffortLevel {
+                name: "High".into(),
+                value: "high".into(),
+                is_default: true,
+            },
+            LanguageModelEffortLevel {
+                name: "Max".into(),
+                value: "max".into(),
+                is_default: false,
+            },
+        ]
+    }
+
     fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
         true
     }
@@ -264,32 +318,6 @@ impl LanguageModel for DeepSeekLanguageModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        cx.background_spawn(async move {
-            let messages = request
-                .messages
-                .into_iter()
-                .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                    role: match message.role {
-                        Role::User => "user".into(),
-                        Role::Assistant => "assistant".into(),
-                        Role::System => "system".into(),
-                    },
-                    content: Some(message.string_contents()),
-                    name: None,
-                    function_call: None,
-                })
-                .collect::<Vec<_>>();
-
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
-        })
-        .boxed()
     }
 
     fn stream_completion(
@@ -319,7 +347,10 @@ pub fn into_deepseek(
     model: &deepseek::Model,
     max_output_tokens: Option<u64>,
 ) -> deepseek::Request {
-    let is_reasoner = model == &deepseek::Model::Reasoner;
+    let thinking = deepseek_thinking(model, request.thinking_allowed);
+    let thinking_enabled = thinking
+        .as_ref()
+        .is_some_and(|thinking| thinking.kind == deepseek::ThinkingType::Enabled);
 
     let mut messages = Vec::new();
     let mut current_reasoning: Option<String> = None;
@@ -327,15 +358,25 @@ pub fn into_deepseek(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) => messages.push(match message.role {
-                    Role::User => deepseek::RequestMessage::User { content: text },
-                    Role::Assistant => deepseek::RequestMessage::Assistant {
-                        content: Some(text),
-                        tool_calls: Vec::new(),
-                        reasoning_content: current_reasoning.take(),
-                    },
-                    Role::System => deepseek::RequestMessage::System { content: text },
-                }),
+                MessageContent::Text(text) => {
+                    let should_add = if message.role == Role::User {
+                        !text.trim().is_empty()
+                    } else {
+                        !text.is_empty()
+                    };
+
+                    if should_add {
+                        messages.push(match message.role {
+                            Role::User => deepseek::RequestMessage::User { content: text },
+                            Role::Assistant => deepseek::RequestMessage::Assistant {
+                                content: Some(text),
+                                tool_calls: Vec::new(),
+                                reasoning_content: current_reasoning.take(),
+                            },
+                            Role::System => deepseek::RequestMessage::System { content: text },
+                        });
+                    }
+                }
                 MessageContent::Thinking { text, .. } => {
                     // Accumulate reasoning content for next assistant message
                     current_reasoning.get_or_insert_default().push_str(&text);
@@ -367,15 +408,26 @@ pub fn into_deepseek(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            messages.push(deepseek::RequestMessage::Tool {
-                                content: text.to_string(),
-                                tool_call_id: tool_result.tool_use_id.to_string(),
-                            });
+                    let mut text_parts: Vec<String> = Vec::new();
+                    for part in &tool_result.content {
+                        match part {
+                            LanguageModelToolResultContent::Text(text) => {
+                                text_parts.push(text.to_string());
+                            }
+                            LanguageModelToolResultContent::Image(_) => {
+                                text_parts.push("[Tool responded with an image]".to_string());
+                            }
                         }
-                        LanguageModelToolResultContent::Image(_) => {}
+                    }
+                    let content = if text_parts.is_empty() {
+                        "<Tool returned an empty string>".to_string()
+                    } else {
+                        text_parts.join("\n")
                     };
+                    messages.push(deepseek::RequestMessage::Tool {
+                        content,
+                        tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
                 }
             }
         }
@@ -386,10 +438,16 @@ pub fn into_deepseek(
         messages,
         stream: true,
         max_tokens: max_output_tokens,
-        temperature: if is_reasoner {
+        temperature: if thinking_enabled {
             None
         } else {
             request.temperature
+        },
+        thinking,
+        reasoning_effort: if thinking_enabled {
+            into_deepseek_reasoning_effort(request.thinking_effort.as_deref())
+        } else {
+            None
         },
         response_format: None,
         tools: request
@@ -403,6 +461,32 @@ pub fn into_deepseek(
                 },
             })
             .collect(),
+    }
+}
+
+fn deepseek_thinking(
+    model: &deepseek::Model,
+    thinking_allowed: bool,
+) -> Option<deepseek::Thinking> {
+    let kind = match model {
+        deepseek::Model::V4Flash | deepseek::Model::V4Pro => {
+            if thinking_allowed {
+                deepseek::ThinkingType::Enabled
+            } else {
+                deepseek::ThinkingType::Disabled
+            }
+        }
+        deepseek::Model::Custom { .. } => return None,
+    };
+
+    Some(deepseek::Thinking { kind })
+}
+
+fn into_deepseek_reasoning_effort(effort: Option<&str>) -> Option<deepseek::ReasoningEffort> {
+    match effort {
+        Some("high") => Some(deepseek::ReasoningEffort::High),
+        Some("max") => Some(deepseek::ReasoningEffort::Max),
+        _ => None,
     }
 }
 
@@ -441,7 +525,9 @@ impl DeepSeekEventMapper {
         };
 
         let mut events = Vec::new();
-        if let Some(content) = choice.delta.content.clone() {
+        if let Some(content) = choice.delta.content.clone()
+            && !content.is_empty()
+        {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }
 
@@ -467,6 +553,23 @@ impl DeepSeekEventMapper {
 
                     if let Some(arguments) = function.arguments.clone() {
                         entry.arguments.push_str(&arguments);
+                    }
+                }
+
+                if !entry.id.is_empty() && !entry.name.is_empty() {
+                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                        &fix_streamed_json(&entry.arguments),
+                    ) {
+                        events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: entry.id.clone().into(),
+                                name: entry.name.as_str().into(),
+                                is_input_complete: false,
+                                input,
+                                raw_input: entry.arguments.clone(),
+                                thought_signature: None,
+                            },
+                        )));
                     }
                 }
             }

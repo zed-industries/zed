@@ -2,8 +2,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::{borrow::Cow, cell::RefCell};
 
-use agent_client_protocol as acp;
-use agent_settings::AgentSettings;
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, bail};
 use futures::{AsyncReadExt as _, FutureExt as _};
 use gpui::{App, AppContext as _, Task};
@@ -11,13 +10,10 @@ use html_to_markdown::{TagHandler, convert_html_to_markdown, markdown};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
 use ui::SharedString;
 use util::markdown::{MarkdownEscaped, MarkdownInlineCode};
 
-use crate::{
-    AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_from_settings,
-};
+use crate::{AgentTool, ToolCallEventStream, ToolInput};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 enum ContentType {
@@ -141,41 +137,37 @@ impl AgentTool for FetchTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        let settings = AgentSettings::get_global(cx);
-        let decision =
-            decide_permission_from_settings(Self::NAME, std::slice::from_ref(&input.url), settings);
+        let http_client = self.http_client.clone();
+        cx.spawn(async move |cx| {
+            let input: FetchToolInput = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
 
-        let authorize = match decision {
-            ToolPermissionDecision::Allow => None,
-            ToolPermissionDecision::Deny(reason) => {
-                return Task::ready(Err(reason));
-            }
-            ToolPermissionDecision::Confirm => {
+            let authorize = cx.update(|cx| {
                 let context =
                     crate::ToolPermissionContext::new(Self::NAME, vec![input.url.clone()]);
-                Some(event_stream.authorize(
+
+                event_stream.authorize(
                     format!("Fetch {}", MarkdownInlineCode(&input.url)),
                     context,
                     cx,
-                ))
-            }
-        };
+                )
+            });
 
-        let fetch_task = cx.background_spawn({
-            let http_client = self.http_client.clone();
-            async move {
-                if let Some(authorize) = authorize {
+            let fetch_task = cx.background_spawn({
+                let http_client = http_client.clone();
+                let url = input.url.clone();
+                async move {
                     authorize.await?;
+                    Self::build_message(http_client, &url).await
                 }
-                Self::build_message(http_client, &input.url).await
-            }
-        });
+            });
 
-        cx.foreground_executor().spawn(async move {
             let text = futures::select! {
                 result = fetch_task.fuse() => result.map_err(|e| e.to_string())?,
                 _ = event_stream.cancelled_by_user().fuse() => {

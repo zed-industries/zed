@@ -1,16 +1,21 @@
 use gh_workflow::{
-    Concurrency, Container, Event, Expression, Job, Port, PullRequest, Push, Run, Step, Use,
-    Workflow,
+    Container, Event, Expression, Input, Job, Level, MergeGroup, Permissions, Port, PullRequest,
+    Push, Run, Step, Strategy, Use, UsesJob, Workflow,
 };
 use indexmap::IndexMap;
+use indoc::formatdoc;
+use serde_json::json;
 
 use crate::tasks::workflows::{
-    steps::{CommonJobConditions, repository_owner_guard_expression},
+    steps::{
+        CommonJobConditions, cache_rust_dependencies_namespace, repository_owner_guard_expression,
+        use_clang,
+    },
     vars::{self, PathCondition},
 };
 
 use super::{
-    runners::{self, Platform},
+    runners::{self, Arch, Platform},
     steps::{self, FluentBuilder, NamedJob, named, release_job},
 };
 
@@ -20,9 +25,10 @@ pub(crate) fn run_tests() -> Workflow {
     // - script/update_top_ranking_issues/
     // - .github/ISSUE_TEMPLATE/
     // - .github/workflows/  (except .github/workflows/ci.yml)
+    // - extensions/  (these have their own test workflow)
     let should_run_tests = PathCondition::inverted(
         "run_tests",
-        r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests)))",
+        r"^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests))|extensions/)",
     );
     let should_check_docs = PathCondition::new("run_docs", r"^(docs/|crates/.*\.rs)");
     let should_check_scripts = PathCondition::new(
@@ -42,22 +48,55 @@ pub(crate) fn run_tests() -> Workflow {
     let mut jobs = vec![
         orchestrate,
         check_style(),
-        should_run_tests.guard(clippy(Platform::Windows)),
-        should_run_tests.guard(clippy(Platform::Linux)),
-        should_run_tests.guard(clippy(Platform::Mac)),
-        should_run_tests.guard(run_platform_tests(Platform::Windows)),
-        should_run_tests.guard(run_platform_tests(Platform::Linux)),
-        should_run_tests.guard(run_platform_tests(Platform::Mac)),
-        should_run_tests.guard(doctests()),
-        should_run_tests.guard(check_workspace_binaries()),
-        should_run_tests.guard(check_dependencies()), // could be more specific here?
-        should_check_docs.guard(check_docs()),
-        should_check_licences.guard(check_licenses()),
-        should_check_scripts.guard(check_scripts()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Windows, None)),
+        should_run_tests
+            .and_always()
+            .then(clippy(Platform::Linux, None)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Mac, None)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(clippy(Platform::Mac, Some(Arch::X86_64))),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(run_platform_tests(Platform::Windows)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(run_platform_tests(Platform::Linux)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(run_platform_tests(Platform::Mac)),
+        should_run_tests.and_not_in_merge_queue().then(doctests()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(check_workspace_binaries()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(build_visual_tests_binary()),
+        should_run_tests.and_not_in_merge_queue().then(check_wasm()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(check_dependencies()), // could be more specific here?
+        should_check_docs
+            .and_not_in_merge_queue()
+            .then(check_docs()),
+        should_check_licences
+            .and_not_in_merge_queue()
+            .then(check_licenses()),
+        should_check_scripts.and_always().then(check_scripts()),
     ];
-    let tests_pass = tests_pass(&jobs);
+    let ext_tests = extension_tests();
+    let tests_pass = tests_pass(&jobs, &[&ext_tests.name]);
 
-    jobs.push(should_run_tests.guard(check_postgres_and_protobuf_migrations())); // could be more specific here?
+    // TODO: For merge queues, this should fail in the merge queue context
+    jobs.push(
+        should_run_tests
+            .and_always()
+            .then(check_postgres_and_protobuf_migrations()),
+    ); // could be more specific here?
 
     named::workflow()
         .add_event(
@@ -67,16 +106,10 @@ pub(crate) fn run_tests() -> Workflow {
                         .add_branch("main")
                         .add_branch("v[0-9]+.[0-9]+.x"),
                 )
-                .pull_request(PullRequest::default().add_branch("**")),
+                .pull_request(PullRequest::default().add_branch("**"))
+                .merge_group(MergeGroup::default()),
         )
-        .concurrency(
-            Concurrency::default()
-                .group(concat!(
-                    "${{ github.workflow }}-${{ github.ref_name }}-",
-                    "${{ github.ref_name == 'main' && github.sha || 'anysha' }}"
-                ))
-                .cancel_in_progress(true),
-        )
+        .concurrency(vars::one_workflow_per_non_main_branch())
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", 1))
         .add_env(("CARGO_INCREMENTAL", 0))
@@ -86,20 +119,32 @@ pub(crate) fn run_tests() -> Workflow {
             }
             workflow
         })
+        .add_job(ext_tests.name, ext_tests.job)
         .add_job(tests_pass.name, tests_pass.job)
+}
+
+/// Controls which features `orchestrate_impl` includes in the generated script.
+#[derive(PartialEq, Eq)]
+enum OrchestrateTarget {
+    /// For the main Zed repo: includes the cargo package filter and extension
+    /// change detection, but no working-directory scoping.
+    ZedRepo,
+    /// For individual extension repos: scopes changed-file detection to the
+    /// working directory, with no package filter or extension detection.
+    Extension,
 }
 
 // Generates a bash script that checks changed files against regex patterns
 // and sets GitHub output variables accordingly
 pub fn orchestrate(rules: &[&PathCondition]) -> NamedJob {
-    orchestrate_impl(rules, true)
+    orchestrate_impl(rules, OrchestrateTarget::ZedRepo)
 }
 
-pub fn orchestrate_without_package_filter(rules: &[&PathCondition]) -> NamedJob {
-    orchestrate_impl(rules, false)
+pub fn orchestrate_for_extension(rules: &[&PathCondition]) -> NamedJob {
+    orchestrate_impl(rules, OrchestrateTarget::Extension)
 }
 
-fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> NamedJob {
+fn orchestrate_impl(rules: &[&PathCondition], target: OrchestrateTarget) -> NamedJob {
     let name = "orchestrate".to_owned();
     let step_name = "filter".to_owned();
     let mut script = String::new();
@@ -114,8 +159,24 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
           git fetch origin "$GITHUB_BASE_REF" --depth=350
           COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
         fi
-        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" ${{ github.sha }})"
+        CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA")"
 
+    "#});
+
+    if target == OrchestrateTarget::Extension {
+        script.push_str(indoc::indoc! {r#"
+        # When running from a subdirectory, git diff returns repo-root-relative paths.
+        # Filter to only files within the current working directory and strip the prefix.
+        REPO_SUBDIR="$(git rev-parse --show-prefix)"
+        REPO_SUBDIR="${REPO_SUBDIR%/}"
+        if [ -n "$REPO_SUBDIR" ]; then
+            CHANGED_FILES="$(echo "$CHANGED_FILES" | grep "^${REPO_SUBDIR}/" | sed "s|^${REPO_SUBDIR}/||" || true)"
+        fi
+
+    "#});
+    }
+
+    script.push_str(indoc::indoc! {r#"
         check_pattern() {
           local output_name="$1"
           local pattern="$2"
@@ -130,7 +191,7 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
 
     let mut outputs = IndexMap::new();
 
-    if include_package_filter {
+    if target == OrchestrateTarget::ZedRepo {
         script.push_str(indoc::indoc! {r#"
         # Check for changes that require full rebuild (no filter)
         # Direct pushes to main/stable/preview always run full suite
@@ -165,7 +226,7 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
 
           # If assets/ changed, add crates that depend on those assets
           if echo "$CHANGED_FILES" | grep -qP '^assets/'; then
-            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "storybook" "assets" | sort -u)
+            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "assets" | sort -u)
           fi
 
           # Combine all changed packages
@@ -216,6 +277,16 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
         ));
     }
 
+    if target == OrchestrateTarget::ZedRepo {
+        script.push_str(DETECT_CHANGED_EXTENSIONS_SCRIPT);
+        script.push_str("echo \"changed_extensions=$EXTENSIONS_JSON\" >> \"$GITHUB_OUTPUT\"\n");
+
+        outputs.insert(
+            "changed_extensions".to_owned(),
+            format!("${{{{ steps.{}.outputs.changed_extensions }}}}", step_name),
+        );
+    }
+
     let job = Job::default()
         .runs_on(runners::LINUX_SMALL)
         .with_repository_owner_guard()
@@ -226,7 +297,7 @@ fn orchestrate_impl(rules: &[&PathCondition], include_package_filter: bool) -> N
     NamedJob { name, job }
 }
 
-pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
+pub fn tests_pass(jobs: &[NamedJob], extra_job_names: &[&str]) -> NamedJob {
     let mut script = String::from(indoc::indoc! {r#"
         set +x
         EXIT_CODE=0
@@ -238,15 +309,26 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
 
     "#});
 
+    let all_names: Vec<&str> = jobs
+        .iter()
+        .map(|job| job.name.as_str())
+        .chain(extra_job_names.iter().copied())
+        .collect();
+
+    let env_entries: Vec<_> = all_names
+        .iter()
+        .map(|name| {
+            let env_name = format!("RESULT_{}", name.to_uppercase());
+            let env_value = format!("${{{{ needs.{}.result }}}}", name);
+            (env_name, env_value)
+        })
+        .collect();
+
     script.push_str(
-        &jobs
+        &all_names
             .iter()
-            .map(|job| {
-                format!(
-                    "check_result \"{}\" \"${{{{ needs.{}.result }}}}\"",
-                    job.name, job.name
-                )
-            })
+            .zip(env_entries.iter())
+            .map(|(name, (env_name, _))| format!("check_result \"{}\" \"${}\"", name, env_name))
             .collect::<Vec<_>>()
             .join("\n"),
     );
@@ -256,14 +338,68 @@ pub fn tests_pass(jobs: &[NamedJob]) -> NamedJob {
     let job = Job::default()
         .runs_on(runners::LINUX_SMALL)
         .needs(
-            jobs.iter()
-                .map(|j| j.name.to_string())
+            all_names
+                .iter()
+                .map(|name| name.to_string())
                 .collect::<Vec<String>>(),
         )
         .cond(repository_owner_guard_expression(true))
-        .add_step(named::bash(&script));
+        .add_step(
+            env_entries
+                .into_iter()
+                .fold(named::bash(&script), |step, env_item| {
+                    step.add_env(env_item)
+                }),
+        );
 
     named::job(job)
+}
+
+/// Bash script snippet that detects changed extension directories from `$CHANGED_FILES`.
+/// Assumes `$CHANGED_FILES` is already set. Sets `$EXTENSIONS_JSON` to a JSON array of
+/// changed extension paths. Callers are responsible for writing the result to `$GITHUB_OUTPUT`.
+pub(crate) const DETECT_CHANGED_EXTENSIONS_SCRIPT: &str = indoc::indoc! {r#"
+    # Detect changed extension directories (excluding extensions/workflows)
+    CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
+    # Filter out deleted extensions
+    EXISTING_EXTENSIONS=""
+    for ext in $CHANGED_EXTENSIONS; do
+        if [ -f "$ext/extension.toml" ]; then
+            EXISTING_EXTENSIONS=$(printf '%s\n%s' "$EXISTING_EXTENSIONS" "$ext")
+        fi
+    done
+    CHANGED_EXTENSIONS=$(echo "$EXISTING_EXTENSIONS" | sed '/^$/d')
+    if [ -n "$CHANGED_EXTENSIONS" ]; then
+        EXTENSIONS_JSON=$(echo "$CHANGED_EXTENSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+    else
+        EXTENSIONS_JSON="[]"
+    fi
+"#};
+
+const TS_QUERY_LS_FILE: &str = "ts_query_ls-x86_64-unknown-linux-gnu.tar.gz";
+const CI_TS_QUERY_RELEASE: &str = "tags/v3.15.1";
+
+pub(crate) fn fetch_ts_query_ls() -> Step<Use> {
+    named::uses(
+        "dsaltares",
+        "fetch-gh-release-asset",
+        "aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c",
+    ) // v1.1.1
+    .add_with(("repo", "ribru17/ts_query_ls"))
+    .add_with(("version", CI_TS_QUERY_RELEASE))
+    .add_with(("file", TS_QUERY_LS_FILE))
+}
+
+pub(crate) fn run_ts_query_ls() -> Step<Run> {
+    named::bash(formatdoc!(
+        r#"tar -xf "$GITHUB_WORKSPACE/{TS_QUERY_LS_FILE}" -C "$GITHUB_WORKSPACE"
+        "$GITHUB_WORKSPACE/ts_query_ls" format --check . || {{
+            echo "Found unformatted queries, please format them with ts_query_ls."
+            echo "For easy use, install the Tree-sitter query extension:"
+            echo "zed://extension/tree-sitter-query"
+            false
+        }}"#
+    ))
 }
 
 fn check_style() -> NamedJob {
@@ -275,6 +411,7 @@ fn check_style() -> NamedJob {
         ) // v1.40.0
         .with(("config", "./typos.toml"))
     }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_MEDIUM)
@@ -285,28 +422,19 @@ fn check_style() -> NamedJob {
             .add_step(steps::cargo_fmt())
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
-            .add_step(check_for_typos()),
+            .add_step(check_for_typos())
+            .add_step(fetch_ts_query_ls())
+            .add_step(run_ts_query_ls()),
     )
 }
 
 fn check_dependencies() -> NamedJob {
     fn install_cargo_machete() -> Step<Use> {
-        named::uses(
-            "clechasseur",
-            "rs-cargo",
-            "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
-        )
-        .add_with(("command", "install"))
-        .add_with(("args", "cargo-machete@0.7.0"))
+        steps::taiki_install_action("cargo-machete@0.7.0")
     }
 
-    fn run_cargo_machete() -> Step<Use> {
-        named::uses(
-            "clechasseur",
-            "rs-cargo",
-            "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
-        )
-        .add_with(("command", "machete"))
+    fn run_cargo_machete() -> Step<Run> {
+        named::bash("cargo machete")
     }
 
     fn check_cargo_lock() -> Step<Run> {
@@ -323,7 +451,7 @@ fn check_dependencies() -> NamedJob {
         .with(("license-check", false))
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_SMALL)
             .add_step(steps::checkout_repo())
@@ -332,11 +460,44 @@ fn check_dependencies() -> NamedJob {
             .add_step(run_cargo_machete())
             .add_step(check_cargo_lock())
             .add_step(check_vulnerable_dependencies()),
+    ))
+}
+
+fn check_wasm() -> NamedJob {
+    fn install_nightly_wasm_toolchain() -> Step<Run> {
+        named::bash(
+            "rustup toolchain install nightly --component rust-src --target wasm32-unknown-unknown",
+        )
+    }
+
+    fn cargo_check_wasm() -> Step<Run> {
+        named::bash(concat!(
+            "cargo -Zbuild-std=std,panic_abort ",
+            "check --target wasm32-unknown-unknown -p gpui_platform",
+        ))
+        .add_env((
+            "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS",
+            "-C target-feature=+atomics,+bulk-memory,+mutable-globals",
+        ))
+        .add_env(("RUSTC_BOOTSTRAP", "1"))
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_LARGE)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(install_nightly_wasm_toolchain())
+            .add_step(steps::setup_sccache(Platform::Linux))
+            .add_step(cargo_check_wasm())
+            .add_step(steps::show_sccache_stats(Platform::Linux))
+            .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }
 
 fn check_workspace_binaries() -> NamedJob {
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
@@ -348,33 +509,46 @@ fn check_workspace_binaries() -> NamedJob {
             .add_step(steps::script("cargo build --workspace --bins --examples"))
             .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
-    )
+    ))
 }
 
-pub(crate) fn clippy(platform: Platform) -> NamedJob {
+pub(crate) fn clippy(platform: Platform, arch: Option<Arch>) -> NamedJob {
+    let target = arch.map(|arch| match (platform, arch) {
+        (Platform::Mac, Arch::X86_64) => "x86_64-apple-darwin",
+        (Platform::Mac, Arch::AARCH64) => "aarch64-apple-darwin",
+        _ => unimplemented!("cross-arch clippy not supported for {platform}/{arch}"),
+    });
     let runner = match platform {
         Platform::Windows => runners::WINDOWS_DEFAULT,
         Platform::Linux => runners::LINUX_DEFAULT,
         Platform::Mac => runners::MAC_DEFAULT,
     };
-    NamedJob {
-        name: format!("clippy_{platform}"),
-        job: release_job(&[])
-            .runs_on(runner)
-            .add_step(steps::checkout_repo())
-            .add_step(steps::setup_cargo_config(platform))
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-            )
-            .when(
-                platform == Platform::Linux,
-                steps::install_linux_dependencies,
-            )
-            .add_step(steps::setup_sccache(platform))
-            .add_step(steps::clippy(platform))
-            .add_step(steps::show_sccache_stats(platform)),
+    let mut job = release_job(&[])
+        .runs_on(runner)
+        .add_step(steps::checkout_repo())
+        .add_step(steps::setup_cargo_config(platform))
+        .when(
+            platform == Platform::Linux || platform == Platform::Mac,
+            |this| this.add_step(steps::cache_rust_dependencies_namespace()),
+        )
+        .when(
+            platform == Platform::Linux,
+            steps::install_linux_dependencies,
+        )
+        .when_some(target, |this, target| {
+            this.add_step(steps::install_rustup_target(target))
+        })
+        .add_step(steps::setup_sccache(platform))
+        .add_step(steps::clippy(platform, target))
+        .add_step(steps::show_sccache_stats(platform));
+    if platform == Platform::Linux {
+        job = use_clang(job);
     }
+    let name = match arch {
+        Some(arch) => format!("clippy_{platform}_{arch}"),
+        None => format!("clippy_{platform}"),
+    };
+    NamedJob { name, job }
 }
 
 pub(crate) fn run_platform_tests(platform: Platform) -> NamedJob {
@@ -411,10 +585,12 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             })
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(platform))
-            .when(
-                platform == Platform::Linux || platform == Platform::Mac,
-                |this| this.add_step(steps::cache_rust_dependencies_namespace()),
-            )
+            .when(platform == Platform::Mac, |this| {
+                this.add_step(steps::cache_rust_dependencies_namespace())
+            })
+            .when(platform == Platform::Linux, |this| {
+                use_clang(this.add_step(steps::cache_rust_dependencies_namespace()))
+            })
             .when(
                 platform == Platform::Linux,
                 steps::install_linux_dependencies,
@@ -437,6 +613,22 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             .add_step(steps::show_sccache_stats(platform))
             .add_step(steps::cleanup_cargo_config(platform)),
     }
+}
+
+fn build_visual_tests_binary() -> NamedJob {
+    pub fn cargo_build_visual_tests() -> Step<Run> {
+        named::bash("cargo build -p zed --bin zed_visual_test_runner --features visual-tests")
+    }
+
+    named::job(
+        Job::default()
+            .runs_on(runners::MAC_DEFAULT)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Mac))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(cargo_build_visual_tests())
+            .add_step(steps::cleanup_cargo_config(Platform::Mac)),
+    )
 }
 
 pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
@@ -464,6 +656,14 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_with(("against", "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"))
     }
 
+    fn buf_lint() -> Step<Run> {
+        named::bash("buf lint crates/proto/proto")
+    }
+
+    fn check_protobuf_formatting() -> Step<Run> {
+        named::bash("buf format --diff --exit-code crates/proto/proto")
+    }
+
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
@@ -474,7 +674,9 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_step(steps::checkout_repo().with_full_history())
             .add_step(ensure_fresh_merge())
             .add_step(bufbuild_setup_action())
-            .add_step(bufbuild_breaking_action()),
+            .add_step(bufbuild_breaking_action())
+            .add_step(buf_lint())
+            .add_step(check_protobuf_formatting()),
     )
 }
 
@@ -486,7 +688,7 @@ fn doctests() -> NamedJob {
         .id("run_doctests")
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
@@ -497,7 +699,7 @@ fn doctests() -> NamedJob {
             .add_step(run_doctests())
             .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
-    )
+    ))
 }
 
 fn check_licenses() -> NamedJob {
@@ -539,7 +741,7 @@ fn check_docs() -> NamedJob {
         "#})
     }
 
-    named::job(
+    named::job(use_clang(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
@@ -556,7 +758,7 @@ fn check_docs() -> NamedJob {
             .add_step(
                 lychee_link_check("target/deploy/docs"), // check links in generated html
             ),
-    )
+    ))
 }
 
 pub(crate) fn check_scripts() -> NamedJob {
@@ -567,9 +769,10 @@ pub(crate) fn check_scripts() -> NamedJob {
     }
 
     fn run_actionlint() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            ${{ steps.get_actionlint.outputs.executable }} -color
-        "#})
+        named::bash(r#""$ACTIONLINT_BIN" -color"#).add_env((
+            "ACTIONLINT_BIN",
+            "${{ steps.get_actionlint.outputs.executable }}",
+        ))
     }
 
     fn run_shellcheck() -> Step<Run> {
@@ -589,11 +792,35 @@ pub(crate) fn check_scripts() -> NamedJob {
 
     named::job(
         release_job(&[])
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::LINUX_LARGE)
             .add_step(steps::checkout_repo())
             .add_step(run_shellcheck())
             .add_step(download_actionlint().id("get_actionlint"))
             .add_step(run_actionlint())
+            .add_step(cache_rust_dependencies_namespace())
             .add_step(check_xtask_workflows()),
     )
+}
+
+fn extension_tests() -> NamedJob<UsesJob> {
+    let job = Job::default()
+        .needs(vec!["orchestrate".to_owned()])
+        .cond(Expression::new(
+            "needs.orchestrate.outputs.changed_extensions != '[]'",
+        ))
+        .permissions(Permissions::default().contents(Level::Read))
+        .strategy(
+            Strategy::default()
+                .fail_fast(false)
+                // TODO: Remove the limit. We currently need this to workaround the concurrency group issue
+                // where different matrix jobs would be placed in the same concurrency group and thus cancelled.
+                .max_parallel(1u32)
+                .matrix(json!({
+                    "extension": "${{ fromJson(needs.orchestrate.outputs.changed_extensions) }}"
+                })),
+        )
+        .uses_local(".github/workflows/extension_tests.yml")
+        .with(Input::default().add("working-directory", "${{ matrix.extension }}"));
+
+    named::job(job)
 }

@@ -9,6 +9,8 @@ Zed supports many external agents, including CLI-based ones, through the [Agent 
 
 Zed supports [Gemini CLI](https://github.com/google-gemini/gemini-cli) (the reference ACP implementation), [Claude Agent](https://platform.claude.com/docs/en/agent-sdk/overview), [Codex](https://developers.openai.com/codex), [GitHub Copilot](https://github.com/github/copilot-language-server-release), and [additional agents](#add-more-agents) you can configure.
 
+For Zed's built-in agent and the full list of tools it can use natively, see [Agent Tools](./tools.md).
+
 > Note that Zed's interaction with external agents is strictly UI-based; the billing, legal, and terms arrangement is directly between you and the agent provider.
 > Zed does not charge for use of external agents, and our [zero-data retention agreements/privacy guarantees](./ai-improvement.md) are **_only_** applicable for Zed's hosted models.
 
@@ -27,7 +29,10 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 [
   {
     "bindings": {
-      "cmd-alt-g": ["agent::NewExternalAgentThread", { "agent": "gemini" }]
+      "cmd-alt-g": [
+        "agent::NewExternalAgentThread",
+        { "agent": { "custom": { "name": "gemini" } } }
+      ]
     }
   }
 ]
@@ -38,32 +43,14 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 The first time you create a Gemini CLI thread, Zed will install [@google/gemini-cli](https://github.com/google-gemini/gemini-cli).
 This installation is only available to Zed and is kept up to date as you use the agent.
 
-By default, Zed will use this managed version of Gemini CLI even if you have it installed globally.
-However, you can configure it to use a version in your `PATH` by adding this to your settings:
-
-```json [settings]
-{
-  "agent_servers": {
-    "gemini": {
-      "ignore_system_version": false
-    }
-  }
-}
-```
-
 #### Authentication
 
-After you have Gemini CLI running, you'll be prompted to choose your authentication method.
+After you have Gemini CLI running, you'll be prompted to authenticate.
 
-Most users should click the "Log in with Google".
-This will cause a browser window to pop-up and auth directly with Gemini CLI.
+Click the "Login" button to open the Gemini CLI interactively, where you can log in with your Google account or [Vertex AI](https://cloud.google.com/vertex-ai) credentials.
 Zed does not see your OAuth or access tokens in this case.
 
-You can also use the "Gemini API Key".
-If you select this, and have the `GEMINI_API_KEY` set, then we will use that.
-Otherwise Zed will prompt you for an API key which will be stored securely in your keychain, and used to start Gemini CLI from within Zed.
-
-The "Vertex AI" option is for those who are using [Vertex AI](https://cloud.google.com/vertex-ai), and have already configured their environment correctly.
+If the `GEMINI_API_KEY` environment variable (or `GOOGLE_AI_API_KEY`) is already set, or you have configured a Google AI API key in Zed's [language model provider settings](./llm-providers.md#google-ai), it will be passed to Gemini CLI automatically.
 
 For more information, see the [Gemini CLI docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/index.md).
 
@@ -88,7 +75,10 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 [
   {
     "bindings": {
-      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "claude_code" }]
+      "cmd-alt-c": [
+        "agent::NewExternalAgentThread",
+        { "agent": { "custom": { "name": "claude-acp" } } }
+      ]
     }
   }
 ]
@@ -114,7 +104,8 @@ If you want to override the executable used by the adapter, you can set the `CLA
 ```json
 {
   "agent_servers": {
-    "claude": {
+    "claude-acp": {
+      "type": "registry",
       "env": {
         "CLAUDE_CODE_EXECUTABLE": "/path/to/alternate-claude-code-executable"
       }
@@ -159,7 +150,10 @@ If you'd like to bind this to a keyboard shortcut, you can do so by editing your
 [
   {
     "bindings": {
-      "cmd-alt-c": ["agent::NewExternalAgentThread", { "agent": "codex" }]
+      "cmd-alt-c": [
+        "agent::NewExternalAgentThread",
+        { "agent": { "custom": { "name": "codex-acp" } } }
+      ]
     }
   }
 ]
@@ -248,7 +242,7 @@ You can also add agents through your settings file ([how to edit](../configuring
 
 This can be useful if you're in the middle of developing a new agent that speaks the protocol and you want to debug it.
 
-It's also possible to specify a custom path, arguments, or environment for the builtin integrations by using the `claude` and `gemini` names.
+It's also possible to customize environment variables for registry-installed agents like Claude Agent, Codex, and Gemini CLI by using their registry names (`claude-acp`, `codex-acp`, `gemini`) with `"type": "registry"` in your settings.
 
 ## Debugging Agents
 
@@ -259,7 +253,102 @@ This lets you see the messages being sent and received between Zed and the agent
 
 It's helpful to attach data from this view if you're opening issues about problems with external agents like Claude Agent, Codex, OpenCode, etc.
 
-## MCP Servers
+## Configuration Boundaries {#configuration-boundaries}
 
-Note that for external agents, access to MCP servers [installed from Zed](./mcp.md) may vary depending on the ACP implementation.
-For example, Claude Agent and Codex both support it, but Gemini CLI does not yet.
+External agents run as separate processes that communicate with Zed via the [Agent Client Protocol (ACP)](https://agentclientprotocol.com). This creates important boundaries between Zed's configuration and the agent's native configuration.
+
+### What Zed Forwards to External Agents
+
+When you start an external agent thread, Zed sends:
+
+| Setting               | How to Configure                                                      |
+| --------------------- | --------------------------------------------------------------------- |
+| Model selection       | `agent_servers.<agent>.default_model` in settings                     |
+| Mode selection        | `agent_servers.<agent>.default_mode` in settings                      |
+| Environment variables | `agent_servers.<agent>.env` in settings                               |
+| MCP servers           | `context_servers` in settings (see [limitations](#mcp-server-access)) |
+| Working directory     | Automatically set to project root                                     |
+
+**Not forwarded:**
+
+- [Profiles](./agent-panel.md#profiles) — profiles only apply to Zed's first-party agent
+- [Tool permissions](./tool-permissions.md) settings — external agents request permissions at runtime via UI prompts
+- Rules files — Zed's [rules system](./rules.md) only applies to Zed's first-party agent (external agents read their own rules files directly)
+
+### What External Agents Read Directly {#native-config}
+
+External agents run as CLI tools with full filesystem access. They read their own configuration files directly — Zed doesn't forward or block these.
+
+#### Claude Agent
+
+Claude Agent runs Claude Code under the hood, which reads its standard configuration:
+
+| Config                              | Read by Claude Agent?                                             |
+| ----------------------------------- | ----------------------------------------------------------------- |
+| `~/.claude/` directory              | Yes — Claude Code reads its own settings and memory               |
+| CLAUDE.md files                     | Yes — Claude Code reads these directly from the project           |
+| Skills                              | Yes — exposed via the Claude Agent SDK                            |
+| MCP servers from Claude Code config | Yes — but Zed also forwards its own MCP servers via ACP           |
+| Hooks                               | No — [not supported](https://code.claude.com/docs/en/hooks-guide) |
+| Authentication                      | Separate — you must authenticate via `/login` in Zed              |
+
+> **Why separate authentication?** Zed isolates Claude Agent authentication to give you control over which account and billing method you use.
+
+#### Codex
+
+Codex runs the Codex CLI under the hood, which reads its standard configuration:
+
+| Config                        | Read by Codex?                                  |
+| ----------------------------- | ----------------------------------------------- |
+| `~/.codex/config.toml`        | Yes — Codex CLI reads its own config            |
+| MCP servers from Codex config | Yes — but Zed also forwards its own MCP servers |
+| `CODEX_API_KEY` env var       | Yes — inherited from your shell environment     |
+| `OPENAI_API_KEY` env var      | Yes — inherited from your shell environment     |
+| ChatGPT OAuth login           | Separate — you must re-authenticate in Zed      |
+
+You can also pass environment variables through Zed settings:
+
+```json [settings]
+{
+  "agent_servers": {
+    "codex-acp": {
+      "type": "registry",
+      "env": {
+        "CODEX_API_KEY": "your-key",
+        "CUSTOM_PROVIDER_URL": "https://..."
+      }
+    }
+  }
+}
+```
+
+### MCP Server Access {#mcp-server-access}
+
+MCP servers configured in Zed's `context_servers` are forwarded to Claude Agent and Codex via the ACP protocol.
+
+- **Local stdio-based MCP servers:** Work reliably
+- **Remote MCP servers with OAuth:** May have issues ([#54410](https://github.com/zed-industries/zed/issues/54410))
+
+External agents can access MCP servers from two sources: Zed's `context_servers` (forwarded via ACP) and their own native configuration files (`~/.claude/`, `~/.codex/config.toml`).
+
+For more on configuring MCP servers, see [Model Context Protocol](./mcp.md).
+
+### Troubleshooting {#troubleshooting}
+
+**"I enabled MCP tools in Zed but the agent can't see them"**
+
+1. Verify the MCP server is enabled in `context_servers` settings
+2. For remote MCP servers with OAuth, this is a [known issue](https://github.com/zed-industries/zed/issues/54410) — try local stdio-based servers instead
+3. Open `dev: open acp logs` from the Command Palette to debug
+
+**"My existing Claude Code / Codex setup isn't working in Zed"**
+
+External agents read their own config files, but authentication is handled separately:
+
+1. Re-authenticate via `/login` (Claude Agent) or the authentication prompt (Codex)
+2. Your existing MCP servers and settings from `~/.claude/` or `~/.codex/config.toml` should work
+3. You can also configure additional settings via `agent_servers.<agent>.env` in Zed
+
+**"Profiles don't affect my external agent"**
+
+Correct — [profiles](./agent-panel.md#profiles) only apply to Zed's first-party agent. External agents have their own tool sets and don't use Zed's profile system.

@@ -50,7 +50,12 @@ Zed supports ways to spawn (and rerun) commands using its integrated [terminal](
     // Whether to show the task line in the output of the spawned task, defaults to `true`.
     "show_summary": true,
     // Whether to show the command line in the output of the spawned task, defaults to `true`.
-    "show_command": true
+    "show_command": true,
+    // Which edited buffers to save before running the task:
+    // * `all` — save all edited buffers
+    // * `current` — save currently active buffer only
+    // * `none` — don't save any buffers
+    "save": "none"
     // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
     // "tags": []
   }
@@ -89,7 +94,9 @@ These variables allow you to pull information from the current editor and use it
 - `ZED_STEM`: stem (filename without extension) of the currently opened file (e.g. `main`)
 - `ZED_SYMBOL`: currently selected symbol; should match the last symbol shown in a symbol breadcrumb (e.g. `mod tests > fn test_task_contexts`)
 - `ZED_SELECTED_TEXT`: currently selected text
+- `ZED_LANGUAGE`: language of the currently opened buffer (e.g. `Rust`, `Python`, `Shell Script`)
 - `ZED_WORKTREE_ROOT`: absolute path to the root of the current worktree. (e.g. `/Users/my-user/path/to/project`)
+- `ZED_MAIN_GIT_WORKTREE`: absolute path to the main git worktree's working directory. For normal checkouts this equals `ZED_WORKTREE_ROOT`; for linked git worktrees this is the original repository's working directory.
 - `ZED_CUSTOM_RUST_PACKAGE`: (Rust-specific) name of the parent package of $ZED_FILE source file.
 
 To use a variable in a task, prefix it with a dollar sign (`$`):
@@ -223,6 +230,60 @@ This could be useful for launching a terminal application that you want to use i
 }
 ```
 
+## Hooks
+
+In addition to being spawned manually, tasks can be configured to run automatically in response to certain Zed events by adding a hook to the `hooks` field on a task template. A task with a matching hook will be resolved and spawned when that event fires.
+
+The following hooks are currently supported:
+
+- `create_worktree` — runs after Zed creates a new linked Git worktree, either directly through the CLI or from the [worktree picker](./git.md#git-worktrees). The task is spawned with `ZED_WORKTREE_ROOT` pointing at the newly created worktree and `ZED_MAIN_GIT_WORKTREE` pointing at the original repository's working directory, which makes these hooks well-suited to copying untracked files (such as `.env` files) or running per-worktree setup commands.
+
+Hook tasks are resolved from the same global and worktree-local `tasks.json` files as manually spawned tasks, and multiple tasks may register for the same hook; they all run when the hook fires. A hook task still benefits from the usual task configuration fields — `cwd`, `env`, `reveal`, `hide`, and so on — so you can control how much of the terminal UI is shown while it runs.
+
+```json [tasks]
+[
+  {
+    "label": "copy .env into new worktree",
+    "command": "cp",
+    "args": ["$ZED_MAIN_GIT_WORKTREE/.env", "$ZED_WORKTREE_ROOT/.env"],
+    "hooks": ["create_worktree"],
+    "reveal": "no_focus",
+    "hide": "on_success"
+  }
+]
+```
+
+Tasks that define `hooks` are still available from the task modal like any other task, so the same template can be reused for manual runs.
+
+## VS Code Task Format
+
+When importing VS Code tasks from `.vscode/tasks.json`, you can omit the `label` field. Zed automatically generates labels based on the task type:
+
+- **npm tasks**: `npm: <script>` (e.g., `npm: start`)
+- **gulp tasks**: `gulp: <task>` (e.g., `gulp: build`)
+- **shell tasks**: Uses the `command` string directly (e.g., `echo hello`), or `shell` if the command is empty
+- **Tasks without type**: `Untitled Task`
+
+Example task file with auto-generated labels:
+
+```json
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "start"
+    },
+    {
+      "type": "shell",
+      "command": "cargo build --release"
+    }
+  ]
+}
+```
+
+These tasks appear in the task picker as "npm: start" and "cargo build --release". You can override the generated label by providing an explicit `label` field.
+
 ## Binding runnable tags to task templates
 
 Zed supports overriding the default action for inline runnable indicators via workspace-local and global `tasks.json` file with the following precedence hierarchy:
@@ -246,3 +307,48 @@ In doing so, you can change which task is shown in the runnables indicator.
 ## Keybindings to run tasks bound to runnables
 
 When you have a task definition that is bound to the runnable, you can quickly run it using [Code Actions](https://zed.dev/docs/configuring-languages?#code-actions) that you can trigger either via `editor: Toggle Code Actions` command or by the `cmd-.`/`ctrl-.` shortcut. Your task will be the first in the dropdown. The task will run immediately if there are no additional Code Actions for this line.
+
+## Running Bash Scripts
+
+You can run bash scripts directly from Zed. When you open a `.sh` or `.bash` file, Zed automatically detects the script as runnable and makes it available in the task picker.
+
+To run a bash script:
+
+1. Open the command palette with {#kb command_palette::Toggle}
+2. Search for "task" and select **task: spawn**
+3. Select the script from the list
+
+Bash scripts are tagged with `bash-script`, allowing you to filter or reference them in task configurations.
+
+If you need to pass arguments or customize the execution environment, add a task configuration in your `.zed/tasks.json`:
+
+```json
+[
+  {
+    "label": "run my-script.sh with args",
+    "command": "./my-script.sh",
+    "args": ["--verbose", "--output=results.txt"],
+    "tags": ["bash-script"]
+  }
+]
+```
+
+## Shell Initialization
+
+When Zed runs a task, it launches the command in a login shell. This ensures your shell's initialization files (`.bash_profile`, `.zshrc`, etc.) are sourced before the task executes.
+
+This behavior gives tasks access to the same environment variables, aliases, and PATH modifications you've configured in your shell profile. If a task fails to find a command that works in your terminal, verify your shell configuration files are properly set up.
+
+To override the shell used for tasks, configure the `terminal.shell` setting:
+
+```json
+{
+  "terminal": {
+    "shell": {
+      "program": "/bin/zsh"
+    }
+  }
+}
+```
+
+See [Terminal configuration](./terminal.md) for complete shell options.

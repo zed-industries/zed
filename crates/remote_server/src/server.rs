@@ -41,6 +41,7 @@ use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
 use smol::{
+    Timer,
     channel::{Receiver, Sender},
     io::AsyncReadExt,
     stream::StreamExt as _,
@@ -181,7 +182,7 @@ fn init_logging_server(log_file_path: &Path) -> Result<Receiver<Vec<u8>>> {
         .open(log_file_path)
         .context("Failed to open log file in append mode")?;
 
-    let (tx, rx) = smol::channel::unbounded();
+    let (tx, rx) = async_channel::unbounded();
 
     let target = Box::new(MultiWrite {
         file: log_file,
@@ -356,9 +357,18 @@ fn start_server(
 
             let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
             cx.background_spawn(async move {
-                while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
-                    if (stdin_msg_tx.send(msg).await).is_err() {
-                        break;
+                loop {
+                    match read_message(&mut stdin_stream, &mut input_buffer).await {
+                        Ok(msg) => {
+                            if (stdin_msg_tx.send(msg).await).is_err() {
+                                log::info!("stdin message channel closed, stopping stdin reader");
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            log::warn!("stdin read failed: {error:?}");
+                            break;
+                        }
                     }
                 }
             }).detach();
@@ -452,15 +462,21 @@ pub fn execute_run(
     let app = gpui_platform::headless();
     let pid = std::process::id();
     let id = pid.to_string();
-    app.background_executor()
-        .spawn(crashes::init(crashes::InitCrashHandler {
+    crashes::init(
+        crashes::InitCrashHandler {
             session_id: id,
             zed_version: VERSION.to_owned(),
             binary: "zed-remote-server".to_string(),
             release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
             commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
-        }))
-        .detach();
+        },
+        |task| {
+            app.background_executor().spawn(task).detach();
+        },
+        // we are running outside gpui
+        #[allow(clippy::disallowed_methods)]
+        |duration| FutureExt::map(Timer::after(duration), |_| ()),
+    );
     let log_rx = init_logging_server(&log_file)?;
     log::info!(
         "starting up with PID {}:\npid_file: {:?}, log_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
@@ -704,14 +720,21 @@ pub(crate) fn execute_proxy(
     let server_paths = ServerPaths::new(&identifier)?;
 
     let id = std::process::id().to_string();
-    smol::spawn(crashes::init(crashes::InitCrashHandler {
-        session_id: id,
-        zed_version: VERSION.to_owned(),
-        binary: "zed-remote-server".to_string(),
-        release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
-        commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
-    }))
-    .detach();
+    crashes::init(
+        crashes::InitCrashHandler {
+            session_id: id,
+            zed_version: VERSION.to_owned(),
+            binary: "zed-remote-server".to_string(),
+            release_channel: release_channel::RELEASE_CHANNEL_NAME.clone(),
+            commit_sha: option_env!("ZED_COMMIT_SHA").unwrap_or("no_sha").to_owned(),
+        },
+        |task| {
+            smol::spawn(task).detach();
+        },
+        // we are running outside gpui
+        #[allow(clippy::disallowed_methods)]
+        |duration| FutureExt::map(Timer::after(duration), |_| ()),
+    );
 
     log::info!("starting proxy process. PID: {}", std::process::id());
     let server_pid = {
@@ -739,7 +762,7 @@ pub(crate) fn execute_proxy(
                 );
                 kill_running_server(pid, &server_paths)?;
             }
-            smol::block_on(spawn_server(&server_paths)).map_err(ExecuteProxyError::SpawnServer)?;
+            gpui::block_on(spawn_server(&server_paths)).map_err(ExecuteProxyError::SpawnServer)?;
             std::fs::read_to_string(&server_paths.pid_file)
                 .and_then(|contents| {
                     contents.parse::<u32>().map_err(|_| {
@@ -810,7 +833,7 @@ pub(crate) fn execute_proxy(
         }
     });
 
-    if let Err(forwarding_result) = smol::block_on(async move {
+    if let Err(forwarding_result) = gpui::block_on(async move {
         futures::select! {
             result = stdin_task.fuse() => result.map_err(ExecuteProxyError::StdinTask),
             result = stdout_task.fuse() => result.map_err(ExecuteProxyError::StdoutTask),
@@ -818,7 +841,7 @@ pub(crate) fn execute_proxy(
         }
     }) {
         log::error!("encountered error while forwarding messages: {forwarding_result:#}",);
-        if !matches!(smol::block_on(check_server_running(server_pid)), Ok(true)) {
+        if !matches!(gpui::block_on(check_server_running(server_pid)), Ok(true)) {
             log::error!("server exited unexpectedly");
             return Err(ExecuteProxyError::ServerNotRunning(
                 ProxyLaunchError::ServerNotRunning,

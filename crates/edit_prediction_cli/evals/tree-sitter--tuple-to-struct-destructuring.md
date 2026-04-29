@@ -138,7 +138,7 @@ revision = "24007727d42b4caceda3095ac685c463fae1ba1a"
 
      fn language_for_id(&self, id: usize) -> LoaderResult<Language> {
 -        let (path, language, externals) = &self.languages_by_id[id];
-+        let LanguageEntry { path, language, external_files } = &self.languages_by_id[id];
++        let LanguageEntry { path, language, external_files  } = &self.languages_by_id[id];
          language
              .get_or_try_init(|| {
                  let src_path = path.join("src");

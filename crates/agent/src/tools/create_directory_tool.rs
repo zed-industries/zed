@@ -1,8 +1,8 @@
 use super::tool_permissions::{
-    SensitiveSettingsKind, authorize_symlink_access, canonicalize_worktree_roots,
-    detect_symlink_escape, sensitive_settings_kind,
+    authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
+    sensitive_settings_kind,
 };
-use agent_client_protocol::ToolKind;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
@@ -13,7 +13,10 @@ use settings::Settings;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
+    authorize_with_sensitive_settings, decide_permission_for_path,
+};
 use std::path::Path;
 
 /// Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.
@@ -50,8 +53,8 @@ impl AgentTool for CreateDirectoryTool {
 
     const NAME: &'static str = "create_directory";
 
-    fn kind() -> ToolKind {
-        ToolKind::Read
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Read
     }
 
     fn initial_title(
@@ -68,21 +71,26 @@ impl AgentTool for CreateDirectoryTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_for_path(Self::NAME, &input.path, settings);
-
-        if let ToolPermissionDecision::Deny(reason) = decision {
-            return Task::ready(Err(reason));
-        }
-
-        let destination_path: Arc<str> = input.path.as_str().into();
-
         let project = self.project.clone();
         cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let decision = cx.update(|cx| {
+                decide_permission_for_path(Self::NAME, &input.path, AgentSettings::get_global(cx))
+            });
+
+            if let ToolPermissionDecision::Deny(reason) = decision {
+                return Err(reason);
+            }
+
+            let destination_path: Arc<str> = input.path.as_str().into();
+
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
@@ -119,16 +127,15 @@ impl AgentTool for CreateDirectoryTool {
                     ToolPermissionDecision::Allow => None,
                     ToolPermissionDecision::Confirm => Some(cx.update(|cx| {
                         let title = format!("Create directory {}", MarkdownInlineCode(&input.path));
-                        let title = match &sensitive_kind {
-                            Some(SensitiveSettingsKind::Local) => {
-                                format!("{title} (local settings)")
-                            }
-                            Some(SensitiveSettingsKind::Global) => format!("{title} (settings)"),
-                            None => title,
-                        };
                         let context =
                             crate::ToolPermissionContext::new(Self::NAME, vec![input.path.clone()]);
-                        event_stream.authorize(title, context, cx)
+                        authorize_with_sensitive_settings(
+                            sensitive_kind,
+                            context,
+                            &title,
+                            &event_stream,
+                            cx,
+                        )
                     })),
                     ToolPermissionDecision::Deny(_) => None,
                 }
@@ -162,7 +169,6 @@ impl AgentTool for CreateDirectoryTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_client_protocol as acp;
     use fs::Fs as _;
     use gpui::TestAppContext;
     use project::{FakeFs, Project};
@@ -218,9 +224,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.run(
-                CreateDirectoryToolInput {
+                ToolInput::resolved(CreateDirectoryToolInput {
                     path: "project/link_to_external".into(),
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -234,7 +240,10 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let result = task.await;
@@ -277,9 +286,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.run(
-                CreateDirectoryToolInput {
+                ToolInput::resolved(CreateDirectoryToolInput {
                     path: "project/link_to_external".into(),
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -336,9 +345,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.run(
-                CreateDirectoryToolInput {
+                ToolInput::resolved(CreateDirectoryToolInput {
                     path: "project/link_to_external".into(),
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -352,13 +361,16 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Expected a single authorization prompt",
         );
@@ -415,9 +427,9 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.run(
-                    CreateDirectoryToolInput {
+                    ToolInput::resolved(CreateDirectoryToolInput {
                         path: "project/link_to_external".into(),
-                    },
+                    }),
                     event_stream,
                     cx,
                 )
@@ -427,8 +439,8 @@ mod tests {
         assert!(result.is_err(), "Tool should fail when policy denies");
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Deny policy should not emit symlink authorization prompt",
         );

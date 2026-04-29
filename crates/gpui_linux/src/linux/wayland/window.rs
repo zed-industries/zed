@@ -12,7 +12,10 @@ use futures::channel::oneshot::Receiver;
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
-use wayland_client::{Proxy, protocol::wl_surface};
+use wayland_client::{
+    Proxy,
+    protocol::{wl_output, wl_surface},
+};
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
@@ -34,7 +37,7 @@ use gpui::{
     WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
     size,
 };
-use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
@@ -47,8 +50,10 @@ pub(crate) struct Callbacks {
     should_close: Option<Box<dyn FnMut() -> bool>>,
     close: Option<Box<dyn FnOnce()>>,
     appearance_changed: Option<Box<dyn FnMut()>>,
+    button_layout_changed: Option<Box<dyn FnMut()>>,
 }
 
+#[derive(Debug, Clone, Copy)]
 struct RawWindow {
     window: *mut c_void,
     display: *mut c_void,
@@ -111,6 +116,7 @@ pub struct WaylandWindowState {
     handle: AnyWindowHandle,
     active: bool,
     hovered: bool,
+    pub(crate) force_render_after_recovery: bool,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -129,6 +135,7 @@ impl WaylandSurfaceState {
         globals: &Globals,
         params: &WindowParams,
         parent: Option<WaylandWindowStatePtr>,
+        target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<Self> {
         // For layer_shell windows, create a layer surface instead of an xdg surface
         if let WindowKind::LayerShell(options) = &params.kind {
@@ -138,7 +145,7 @@ impl WaylandSurfaceState {
 
             let layer_surface = layer_shell.get_layer_surface(
                 &surface,
-                None,
+                target_output.as_ref(),
                 super::layer_shell::wayland_layer(options.layer),
                 options.namespace.clone(),
                 &globals.qh,
@@ -317,7 +324,8 @@ impl WaylandWindowState {
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
-        gpu_context: &WgpuContext,
+        gpu_context: gpui_wgpu::GpuContext,
+        compositor_gpu: Option<CompositorGpuHint>,
         options: WindowParams,
         parent: Option<WaylandWindowStatePtr>,
     ) -> anyhow::Result<Self> {
@@ -337,14 +345,21 @@ impl WaylandWindowState {
                     height: DevicePixels(f32::from(options.bounds.size.height) as i32),
                 },
                 transparent: true,
+                preferred_present_mode: None,
             };
-            WgpuRenderer::new(gpu_context, &raw_window, config)?
+            WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
         };
 
         if let WaylandSurfaceState::Xdg(ref xdg_state) = surface_state {
             if let Some(title) = options.titlebar.and_then(|titlebar| titlebar.title) {
                 xdg_state.toplevel.set_title(title.to_string());
             }
+            // Set max window size based on the GPU's maximum texture dimension.
+            // This prevents the window from being resized larger than what the GPU can render.
+            let max_texture_size = renderer.max_texture_size() as i32;
+            xdg_state
+                .toplevel
+                .set_max_size(max_texture_size, max_texture_size);
         }
 
         Ok(Self {
@@ -376,6 +391,7 @@ impl WaylandWindowState {
             handle,
             active: false,
             hovered: false,
+            force_render_after_recovery: false,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -481,14 +497,17 @@ impl WaylandWindow {
     pub fn new(
         handle: AnyWindowHandle,
         globals: Globals,
-        gpu_context: &WgpuContext,
+        gpu_context: gpui_wgpu::GpuContext,
+        compositor_gpu: Option<CompositorGpuHint>,
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
         parent: Option<WaylandWindowStatePtr>,
+        target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
-        let surface_state = WaylandSurfaceState::new(&surface, &globals, &params, parent.clone())?;
+        let surface_state =
+            WaylandSurfaceState::new(&surface, &globals, &params, parent.clone(), target_output)?;
 
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
@@ -509,6 +528,7 @@ impl WaylandWindow {
                 client,
                 globals,
                 gpu_context,
+                compositor_gpu,
                 params,
                 parent,
             )?)),
@@ -553,11 +573,16 @@ impl WaylandWindowStatePtr {
         let mut state = self.state.borrow_mut();
         state.surface.frame(&state.globals.qh, state.surface.id());
         state.resize_throttle = false;
+        let force_render = state.force_render_after_recovery;
+        state.force_render_after_recovery = false;
         drop(state);
 
         let mut cb = self.callbacks.borrow_mut();
         if let Some(fun) = cb.request_frame.as_mut() {
-            fun(Default::default());
+            fun(RequestFrameOptions {
+                force_render,
+                ..Default::default()
+            });
         }
     }
 
@@ -585,6 +610,7 @@ impl WaylandWindowStatePtr {
                     state.tiling = configure.tiling;
                     // Limit interactive resizes to once per vblank
                     if configure.resizing && state.resize_throttle {
+                        state.surface_state.ack_configure(serial);
                         return;
                     } else if configure.resizing {
                         state.resize_throttle = true;
@@ -640,19 +666,19 @@ impl WaylandWindowStatePtr {
             match mode {
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ServerSide) => {
                     self.state.borrow_mut().decorations = WindowDecorations::Server;
-                    if let Some(appearance_changed) =
-                        self.callbacks.borrow_mut().appearance_changed.as_mut()
-                    {
-                        appearance_changed();
+                    let callback = self.callbacks.borrow_mut().appearance_changed.take();
+                    if let Some(mut fun) = callback {
+                        fun();
+                        self.callbacks.borrow_mut().appearance_changed = Some(fun);
                     }
                 }
                 WEnum::Value(zxdg_toplevel_decoration_v1::Mode::ClientSide) => {
                     self.state.borrow_mut().decorations = WindowDecorations::Client;
                     // Update background to be transparent
-                    if let Some(appearance_changed) =
-                        self.callbacks.borrow_mut().appearance_changed.as_mut()
-                    {
-                        appearance_changed();
+                    let callback = self.callbacks.borrow_mut().appearance_changed.take();
+                    if let Some(mut fun) = callback {
+                        fun();
+                        self.callbacks.borrow_mut().appearance_changed = Some(fun);
                     }
                 }
                 WEnum::Value(_) => {
@@ -748,7 +774,12 @@ impl WaylandWindowStatePtr {
                 }
             }
             xdg_toplevel::Event::WmCapabilities { capabilities } => {
-                let mut window_controls = WindowControls::default();
+                let mut window_controls = WindowControls {
+                    maximize: false,
+                    minimize: false,
+                    fullscreen: false,
+                    window_menu: false,
+                };
 
                 let states = extract_states::<xdg_toplevel::WmCapabilities>(&capabilities);
 
@@ -924,8 +955,10 @@ impl WaylandWindowStatePtr {
             (state.bounds.size, state.scale)
         };
 
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().resize {
+        let callback = self.callbacks.borrow_mut().resize.take();
+        if let Some(mut fun) = callback {
             fun(size, scale);
+            self.callbacks.borrow_mut().resize = Some(fun);
         }
 
         {
@@ -971,10 +1004,13 @@ impl WaylandWindowStatePtr {
         if self.is_blocked() {
             return;
         }
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().input
-            && !fun(input.clone()).propagate
-        {
-            return;
+        let callback = self.callbacks.borrow_mut().input.take();
+        if let Some(mut fun) = callback {
+            let result = fun(input.clone());
+            self.callbacks.borrow_mut().input = Some(fun);
+            if !result.propagate {
+                return;
+            }
         }
         if let PlatformInput::KeyDown(event) = input
             && event.keystroke.modifiers.is_subset_of(&Modifiers::shift())
@@ -991,23 +1027,36 @@ impl WaylandWindowStatePtr {
 
     pub fn set_focused(&self, focus: bool) {
         self.state.borrow_mut().active = focus;
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().active_status_change {
+        let callback = self.callbacks.borrow_mut().active_status_change.take();
+        if let Some(mut fun) = callback {
             fun(focus);
+            self.callbacks.borrow_mut().active_status_change = Some(fun);
         }
     }
 
     pub fn set_hovered(&self, focus: bool) {
-        if let Some(ref mut fun) = self.callbacks.borrow_mut().hover_status_change {
+        let callback = self.callbacks.borrow_mut().hover_status_change.take();
+        if let Some(mut fun) = callback {
             fun(focus);
+            self.callbacks.borrow_mut().hover_status_change = Some(fun);
         }
     }
 
     pub fn set_appearance(&mut self, appearance: WindowAppearance) {
         self.state.borrow_mut().appearance = appearance;
 
-        let mut callbacks = self.callbacks.borrow_mut();
-        if let Some(ref mut fun) = callbacks.appearance_changed {
-            (fun)()
+        let callback = self.callbacks.borrow_mut().appearance_changed.take();
+        if let Some(mut fun) = callback {
+            fun();
+            self.callbacks.borrow_mut().appearance_changed = Some(fun);
+        }
+    }
+
+    pub fn set_button_layout(&self) {
+        let callback = self.callbacks.borrow_mut().button_layout_changed.take();
+        if let Some(mut fun) = callback {
+            fun();
+            self.callbacks.borrow_mut().button_layout_changed = Some(fun);
         }
     }
 
@@ -1230,7 +1279,11 @@ impl PlatformWindow for WaylandWindow {
     fn is_subpixel_rendering_supported(&self) -> bool {
         let client = self.borrow().client.get_client();
         let state = client.borrow();
-        state.gpu_context.supports_dual_source_blending()
+        state
+            .gpu_context
+            .borrow()
+            .as_ref()
+            .is_some_and(|ctx| ctx.supports_dual_source_blending())
     }
 
     fn minimize(&self) {
@@ -1304,9 +1357,43 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().appearance_changed = Some(callback);
     }
 
+    fn on_button_layout_changed(&self, callback: Box<dyn FnMut()>) {
+        self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
+    }
+
     fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
+
+        if state.renderer.device_lost() {
+            let raw_window = RawWindow {
+                window: state.surface.id().as_ptr().cast::<std::ffi::c_void>(),
+                display: state
+                    .surface
+                    .backend()
+                    .upgrade()
+                    .unwrap()
+                    .display_ptr()
+                    .cast::<std::ffi::c_void>(),
+            };
+            state.renderer.recover(&raw_window).unwrap_or_else(|err| {
+                panic!(
+                    "GPU device lost and recovery failed. \
+                        This may happen after system suspend/resume. \
+                        Please restart the application.\n\nError: {err}"
+                )
+            });
+
+            // The current scene references atlas textures that were cleared during recovery.
+            // Skip this frame and let the next frame rebuild the scene with fresh textures.
+            state.force_render_after_recovery = true;
+            return;
+        }
+
         state.renderer.draw(scene);
+
+        if state.renderer.needs_redraw() {
+            state.force_render_after_recovery = true;
+        }
     }
 
     fn completed_frame(&self) {
@@ -1400,6 +1487,18 @@ impl PlatformWindow for WaylandWindow {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.borrow().renderer.gpu_specs().into()
+    }
+
+    fn play_system_bell(&self) {
+        let state = self.borrow();
+        let surface = if state.surface_state.toplevel().is_some() {
+            Some(&state.surface)
+        } else {
+            None
+        };
+        if let Some(bell) = state.globals.system_bell.as_ref() {
+            bell.ring(surface);
+        }
     }
 }
 

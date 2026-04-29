@@ -14,11 +14,13 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
+async-channel.workspace = true
 collections.workspace = true
 db.workspace = true
 editor.workspace = true
 file_icons.workspace = true
 fuzzy.workspace = true
+futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
@@ -31,8 +33,8 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smallvec.workspace = true
-smol.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true

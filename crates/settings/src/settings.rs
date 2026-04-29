@@ -44,9 +44,9 @@ pub use keymap_file::{
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LSP_SETTINGS_SCHEMA_URL_PREFIX, LocalSettingsKind, LocalSettingsPath,
-    MigrationStatus, Settings, SettingsFile, SettingsJsonSchemaParams, SettingsKey,
-    SettingsLocation, SettingsParseResult, SettingsStore,
+    DefaultSemanticTokenRules, InvalidSettingsError, LSP_SETTINGS_SCHEMA_URL_PREFIX,
+    LocalSettingsKind, LocalSettingsPath, MigrationStatus, Settings, SettingsFile,
+    SettingsJsonSchemaParams, SettingsKey, SettingsLocation, SettingsParseResult, SettingsStore,
 };
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
@@ -59,13 +59,13 @@ pub struct ActiveSettingsProfileName(pub String);
 impl Global for ActiveSettingsProfileName {}
 
 pub trait UserSettingsContentExt {
-    fn for_profile(&self, cx: &App) -> Option<&SettingsContent>;
+    fn for_profile(&self, cx: &App) -> Option<&SettingsProfile>;
     fn for_release_channel(&self) -> Option<&SettingsContent>;
     fn for_os(&self) -> Option<&SettingsContent>;
 }
 
 impl UserSettingsContentExt for UserSettingsContent {
-    fn for_profile(&self, cx: &App) -> Option<&SettingsContent> {
+    fn for_profile(&self, cx: &App) -> Option<&SettingsProfile> {
         let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() else {
             return None;
         };

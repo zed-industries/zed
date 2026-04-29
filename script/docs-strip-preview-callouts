@@ -117,8 +117,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
     exit 0
 fi
 
-# Check for clean working state
-if [[ -n "$(git status --porcelain docs/)" ]]; then
+# Check for clean working state (ignore untracked files)
+if [[ -n "$(git status --porcelain docs/ | grep -v '^??' || true)" ]]; then
     error "docs/ directory has uncommitted changes. Please commit or stash first."
 fi
 
@@ -213,8 +213,11 @@ And:
 > **Changed in Preview (v0.XXX).** See [release notes](/releases#0.XXX).
 \`\`\`
 
-These features are now in Stable, so the callouts are no longer needed." \
-    --label "documentation"
+These features are now in Stable, so the callouts are no longer needed.
+
+Release Notes:
+
+- N/A"
 
 PR_URL=$(gh pr view --json url --jq '.url')
 

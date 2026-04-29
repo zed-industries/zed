@@ -1,5 +1,6 @@
 use anyhow::Result;
 use collections::BTreeMap;
+use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
@@ -7,7 +8,7 @@ use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, RateLimiter, Role, env_var,
+    LanguageModelRequest, LanguageModelToolChoice, RateLimiter, env_var,
 };
 use open_ai::ResponseStreamEvent;
 pub use settings::VercelAvailableModel as AvailableModel;
@@ -17,7 +18,7 @@ use strum::IntoEnumIterator;
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
-use vercel::{Model, VERCEL_API_URL};
+use vercel::VERCEL_API_URL;
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("vercel");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Vercel");
@@ -38,6 +39,7 @@ pub struct VercelLanguageModelProvider {
 
 pub struct State {
     api_key_state: ApiKeyState,
+    credentials_provider: Arc<dyn CredentialsProvider>,
 }
 
 impl State {
@@ -46,30 +48,51 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = VercelLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = VercelLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
+        self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 }
 
 impl VercelLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                let credentials_provider = this.credentials_provider.clone();
                 let api_url = Self::api_url(cx);
-                this.api_key_state
-                    .handle_url_change(api_url, |this| &mut this.api_key_state, cx);
+                this.api_key_state.handle_url_change(
+                    api_url,
+                    |this| &mut this.api_key_state,
+                    credentials_provider,
+                    cx,
+                );
                 cx.notify();
             })
             .detach();
             State {
                 api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
+                credentials_provider,
             }
         });
 
@@ -248,6 +271,10 @@ impl LanguageModel for VercelLanguageModel {
         true
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto
@@ -266,14 +293,6 @@ impl LanguageModel for VercelLanguageModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        count_vercel_tokens(request, self.model.clone(), cx)
     }
 
     fn stream_completion(
@@ -297,6 +316,7 @@ impl LanguageModel for VercelLanguageModel {
             self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
             None,
+            false,
         );
         let completions = self.stream_completion(request, cx);
         async move {
@@ -305,51 +325,6 @@ impl LanguageModel for VercelLanguageModel {
         }
         .boxed()
     }
-}
-
-pub fn count_vercel_tokens(
-    request: LanguageModelRequest,
-    model: Model,
-    cx: &App,
-) -> BoxFuture<'static, Result<u64>> {
-    cx.background_spawn(async move {
-        let messages = request
-            .messages
-            .into_iter()
-            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                role: match message.role {
-                    Role::User => "user".into(),
-                    Role::Assistant => "assistant".into(),
-                    Role::System => "system".into(),
-                },
-                content: Some(message.string_contents()),
-                name: None,
-                function_call: None,
-            })
-            .collect::<Vec<_>>();
-
-        match model {
-            Model::Custom { max_tokens, .. } => {
-                let model = if max_tokens >= 100_000 {
-                    // If the max tokens is 100k or more, it is likely the o200k_base tokenizer from gpt4o
-                    "gpt-4o"
-                } else {
-                    // Otherwise fallback to gpt-4, since only cl100k_base and o200k_base are
-                    // supported with this tiktoken method
-                    "gpt-4"
-                };
-                tiktoken_rs::num_tokens_from_messages(model, &messages)
-            }
-            // Map Vercel models to appropriate OpenAI models for token counting
-            // since Vercel uses OpenAI-compatible API
-            Model::VZeroOnePointFiveMedium => {
-                // Vercel v0 is similar to GPT-4o, so use gpt-4o for token counting
-                tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
-            }
-        }
-        .map(|tokens| tokens as u64)
-    })
-    .boxed()
 }
 
 struct ConfigurationView {

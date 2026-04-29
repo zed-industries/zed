@@ -6,7 +6,7 @@ use gpui::{
     App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
 };
 use itertools::Itertools;
-use language::language_settings::language_settings;
+use language::language_settings::LanguageSettings;
 use project::{
     lsp_store::{
         BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer,
@@ -15,7 +15,7 @@ use project::{
     project_settings::ProjectSettings,
 };
 use settings::{
-    SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight,
+    SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight, SemanticTokenRule,
     SemanticTokenRules, Settings as _,
 };
 use text::BufferId;
@@ -119,10 +119,13 @@ impl Editor {
         for_server: Option<RefreshForServer>,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() || !self.semantic_token_state.enabled() {
+        if !self.lsp_data_enabled() || !self.semantic_token_state.enabled() {
             self.invalidate_semantic_tokens(None);
             self.display_map.update(cx, |display_map, _| {
-                display_map.semantic_token_highlights.clear();
+                match Arc::get_mut(&mut display_map.semantic_token_highlights) {
+                    Some(highlights) => highlights.clear(),
+                    None => display_map.semantic_token_highlights = Arc::new(Default::default()),
+                };
             });
             self.semantic_token_state.update_task = Task::ready(());
             cx.notify();
@@ -145,20 +148,16 @@ impl Editor {
         };
 
         let buffers_to_query = self
-            .visible_excerpts(true, cx)
-            .into_values()
-            .map(|(buffer, ..)| buffer)
+            .visible_buffers(cx)
+            .into_iter()
+            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
             .chain(buffer_id.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))
             .filter_map(|editor_buffer| {
                 let editor_buffer_id = editor_buffer.read(cx).remote_id();
                 if self.registered_buffers.contains_key(&editor_buffer_id)
-                    && language_settings(
-                        editor_buffer.read(cx).language().map(|l| l.name()),
-                        editor_buffer.read(cx).file(),
-                        cx,
-                    )
-                    .semantic_tokens
-                    .enabled()
+                    && LanguageSettings::for_buffer(editor_buffer.read(cx), cx)
+                        .semantic_tokens
+                        .enabled()
                 {
                     Some((editor_buffer_id, editor_buffer))
                 } else {
@@ -171,8 +170,8 @@ impl Editor {
             .display_map
             .read(cx)
             .semantic_token_highlights
-            .iter()
-            .map(|(buffer_id, _)| *buffer_id)
+            .keys()
+            .copied()
             .filter(|buffer_id| !buffers_to_query.contains_key(buffer_id))
             .filter(|buffer_id| {
                 !self
@@ -181,7 +180,7 @@ impl Editor {
                     .buffer(*buffer_id)
                     .is_some_and(|buffer| {
                         let buffer = buffer.read(cx);
-                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                        LanguageSettings::for_buffer(&buffer, cx)
                             .semantic_tokens
                             .enabled()
                     })
@@ -214,8 +213,9 @@ impl Editor {
                             }) {
                                 None
                             } else {
-                                let task = sema.semantic_tokens(buffer, for_server, cx);
-                                Some(async move { (buffer_id, query_version, task.await) })
+                                sema.semantic_tokens(buffer, for_server, cx).map(
+                                    |task| async move { (buffer_id, query_version, task.await) },
+                                )
                             }
                         })
                         .collect::<Vec<_>>()
@@ -295,20 +295,21 @@ impl Editor {
                                     ) else {
                                         continue;
                                     };
+                                    let theme = cx.theme().syntax();
                                     token_highlights.reserve(2 * server_tokens.len());
                                     token_highlights.extend(buffer_into_editor_highlights(
                                         &server_tokens,
                                         stylizer,
                                         &multi_buffer_snapshot,
                                         &mut interner,
-                                        cx,
+                                        theme,
                                     ));
                                 }
 
                                 token_highlights.sort_by(|a, b| {
                                     a.range.start.cmp(&b.range.start, &multi_buffer_snapshot)
                                 });
-                                display_map.semantic_token_highlights.insert(
+                                Arc::make_mut(&mut display_map.semantic_token_highlights).insert(
                                     buffer_id,
                                     (Arc::from(token_highlights), Arc::new(interner)),
                                 );
@@ -328,7 +329,7 @@ fn buffer_into_editor_highlights<'a, 'b>(
     stylizer: &'a SemanticTokenStylizer,
     multi_buffer_snapshot: &'a multi_buffer::MultiBufferSnapshot,
     interner: &'b mut HighlightStyleInterner,
-    cx: &'a App,
+    theme: &'a SyntaxTheme,
 ) -> impl Iterator<Item = SemanticTokenHighlight> + use<'a, 'b> {
     multi_buffer_snapshot
         .text_anchors_to_visible_anchors(
@@ -341,12 +342,7 @@ fn buffer_into_editor_highlights<'a, 'b>(
         .zip(buffer_tokens)
         .filter_map(|((multi_buffer_start, multi_buffer_end), token)| {
             let range = multi_buffer_start?..multi_buffer_end?;
-            let style = convert_token(
-                stylizer,
-                cx.theme().syntax(),
-                token.token_type,
-                token.token_modifiers,
-            )?;
+            let style = convert_token(stylizer, theme, token.token_type, token.token_modifiers)?;
             let style = interner.intern(style);
             Some(SemanticTokenHighlight {
                 range,
@@ -365,19 +361,23 @@ fn convert_token(
     modifiers: u32,
 ) -> Option<HighlightStyle> {
     let rules = stylizer.rules_for_token(token_type)?;
-    let matching = rules.iter().filter(|rule| {
+    let filter = |rule: &&SemanticTokenRule| {
         rule.token_modifiers
             .iter()
             .all(|m| stylizer.has_modifier(modifiers, m))
-    });
+    };
+    let last = rules.last()?;
+    if last.no_style_defined() && filter(&last) {
+        return None;
+    }
 
     let mut highlight = HighlightStyle::default();
-    let mut empty = true;
 
-    for rule in matching {
-        empty = false;
-
-        let style = rule.style.iter().find_map(|style| theme.get_opt(style));
+    for rule in rules.into_iter().filter(filter) {
+        let style = rule
+            .style
+            .iter()
+            .find_map(|style| theme.style_for_name(style));
 
         macro_rules! overwrite {
             (
@@ -388,7 +388,7 @@ fn convert_token(
                 highlight.$highlight_field = rule
                     .$rule_field
                     .map($transform)
-                    .or_else(|| style.and_then(|s| s.$highlight_field))
+                    .or_else(|| style.as_ref().and_then(|s| s.$highlight_field))
                     .or(highlight.$highlight_field)
             };
         }
@@ -448,8 +448,7 @@ fn convert_token(
             },
         );
     }
-
-    if empty { None } else { Some(highlight) }
+    Some(highlight)
 }
 
 #[cfg(test)]
@@ -460,16 +459,25 @@ mod tests {
     };
 
     use futures::StreamExt as _;
-    use gpui::{AppContext as _, Entity, Focusable as _, HighlightStyle, TestAppContext};
-    use language::{Language, LanguageConfig, LanguageMatcher};
+    use gpui::{
+        AppContext as _, Entity, Focusable as _, HighlightStyle, TestAppContext, UpdateGlobal as _,
+    };
+    use language::{
+        Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageAwareStyling, LanguageConfig,
+        LanguageMatcher,
+    };
     use languages::FakeLspAdapter;
+    use lsp::LanguageServerId;
     use multi_buffer::{
-        AnchorRangeExt, ExcerptRange, ExpandExcerptDirection, MultiBuffer, MultiBufferOffset,
+        AnchorRangeExt, ExpandExcerptDirection, MultiBuffer, MultiBufferOffset, PathKey,
     };
     use project::Project;
-    use rope::Point;
+    use rope::{Point, PointUtf16};
     use serde_json::json;
-    use settings::{LanguageSettingsContent, SemanticTokenRules, SemanticTokens, SettingsStore};
+    use settings::{
+        GlobalLspSettingsContent, LanguageSettingsContent, SemanticTokenRule, SemanticTokenRules,
+        SemanticTokens, SettingsStore,
+    };
     use workspace::{MultiWorkspace, WorkspaceHandle as _};
 
     use crate::{
@@ -1160,14 +1168,18 @@ mod tests {
         });
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 toml_buffer.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+                [Point::new(0, 0)..Point::new(0, 4)],
+                0,
                 cx,
             );
-            multibuffer.push_excerpts(
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 rust_buffer.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+                [Point::new(0, 0)..Point::new(0, 4)],
+                0,
                 cx,
             );
             multibuffer
@@ -1207,11 +1219,19 @@ mod tests {
         );
 
         // Get the excerpt id for the TOML excerpt and expand it down by 2 lines.
-        let toml_excerpt_id =
-            editor.read_with(cx, |editor, cx| editor.buffer().read(cx).excerpt_ids()[0]);
+        let toml_anchor = editor.read_with(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .anchor_in_excerpt(text::Anchor::min_for_buffer(
+                    toml_buffer.read(cx).remote_id(),
+                ))
+                .unwrap()
+        });
         editor.update_in(cx, |editor, _, cx| {
             editor.buffer().update(cx, |buffer, cx| {
-                buffer.expand_excerpts([toml_excerpt_id], 2, ExpandExcerptDirection::Down, cx);
+                buffer.expand_excerpts([toml_anchor], 2, ExpandExcerptDirection::Down, cx);
             });
         });
 
@@ -1235,12 +1255,12 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn lsp_semantic_tokens_multibuffer_shared(cx: &mut TestAppContext) {
+    async fn lsp_semantic_tokens_singleton_opened_from_multibuffer(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
         update_test_language_settings(cx, &|language_settings| {
             language_settings.languages.0.insert(
-                "TOML".into(),
+                "Rust".into(),
                 LanguageSettingsContent {
                     semantic_tokens: Some(SemanticTokens::Full),
                     ..LanguageSettingsContent::default()
@@ -1248,11 +1268,11 @@ mod tests {
             );
         });
 
-        let toml_language = Arc::new(Language::new(
+        let rust_language = Arc::new(Language::new(
             LanguageConfig {
-                name: "TOML".into(),
+                name: "Rust".into(),
                 matcher: LanguageMatcher {
-                    path_suffixes: vec!["toml".into()],
+                    path_suffixes: vec!["rs".into()],
                     ..LanguageMatcher::default()
                 },
                 ..LanguageConfig::default()
@@ -1260,13 +1280,12 @@ mod tests {
             None,
         ));
 
-        let toml_legend = lsp::SemanticTokensLegend {
-            token_types: vec!["property".into()],
+        let rust_legend = lsp::SemanticTokensLegend {
+            token_types: vec!["function".into()],
             token_modifiers: Vec::new(),
         };
 
         let app_state = cx.update(workspace::AppState::test);
-
         cx.update(|cx| {
             assets::Assets.load_test_fonts(cx);
             crate::init(cx);
@@ -1275,18 +1294,16 @@ mod tests {
 
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        let full_counter_toml = Arc::new(AtomicUsize::new(0));
-        let full_counter_toml_clone = full_counter_toml.clone();
 
-        let mut toml_server = language_registry.register_fake_lsp(
-            toml_language.name(),
+        let mut rust_server = language_registry.register_fake_lsp(
+            rust_language.name(),
             FakeLspAdapter {
-                name: "toml",
+                name: "rust",
                 capabilities: lsp::ServerCapabilities {
                     semantic_tokens_provider: Some(
                         lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
                             lsp::SemanticTokensOptions {
-                                legend: toml_legend,
+                                legend: rust_legend,
                                 full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
                                 ..lsp::SemanticTokensOptions::default()
                             },
@@ -1294,37 +1311,34 @@ mod tests {
                     ),
                     ..lsp::ServerCapabilities::default()
                 },
-                initializer: Some(Box::new({
-                    let full_counter_toml_clone = full_counter_toml_clone.clone();
-                    move |fake_server| {
-                        let full_counter = full_counter_toml_clone.clone();
-                        fake_server
-                            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
-                                move |_, _| {
-                                    full_counter.fetch_add(1, atomic::Ordering::Release);
-                                    async move {
-                                        Ok(Some(lsp::SemanticTokensResult::Tokens(
-                                            lsp::SemanticTokens {
-                                                // highlight 'a' as a property
-                                                data: vec![
-                                                    0, // delta_line
-                                                    0, // delta_start
-                                                    1, // length
-                                                    0, // token_type
-                                                    0, // token_modifiers_bitset
-                                                ],
-                                                result_id: Some("a".into()),
-                                            },
-                                        )))
-                                    }
-                                },
-                            );
-                    }
+                initializer: Some(Box::new(move |fake_server| {
+                    fake_server
+                        .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                            move |_, _| async move {
+                                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                                    lsp::SemanticTokens {
+                                        data: vec![0, 3, 4, 0, 0],
+                                        result_id: None,
+                                    },
+                                )))
+                            },
+                        );
                 })),
                 ..FakeLspAdapter::default()
             },
         );
-        language_registry.add(toml_language.clone());
+        language_registry.add(rust_language.clone());
+
+        // foo.rs must be long enough that autoscroll triggers an actual scroll
+        // position change when opening from the multibuffer with cursor near
+        // the end. This reproduces the race: set_visible_line_count spawns a
+        // task, then autoscroll fires ScrollPositionChanged whose handler
+        // replaces post_scroll_update with a debounced task that skips
+        // update_lsp_data for singletons.
+        let mut foo_content = String::from("fn test() {}\n");
+        for i in 0..100 {
+            foo_content.push_str(&format!("fn func_{i}() {{}}\n"));
+        }
 
         app_state
             .fs
@@ -1333,9 +1347,8 @@ mod tests {
                 EditorLspTestContext::root_path(),
                 json!({
                     ".git": {},
-                    "dir": {
-                        "foo.toml": "a = 1\nb = 2\n",
-                    }
+                    "bar.rs": "fn main() {}\n",
+                    "foo.rs": foo_content,
                 }),
             )
             .await;
@@ -1352,46 +1365,78 @@ mod tests {
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
 
-        let toml_file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
-        let toml_item = workspace
+        // Open bar.rs as an editor to start the LSP server.
+        let bar_file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
+        let bar_item = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_path(toml_file, None, true, window, cx)
+                workspace.open_path(bar_file, None, true, window, cx)
             })
             .await
-            .expect("Could not open test file");
-
-        let toml_editor = cx.update(|_, cx| {
-            toml_item
+            .expect("Could not open bar.rs");
+        let bar_editor = cx.update(|_, cx| {
+            bar_item
                 .act_as::<Editor>(cx)
                 .expect("Opened test file wasn't an editor")
         });
-        let toml_buffer = cx.read(|cx| {
-            toml_editor
+        let bar_buffer = cx.read(|cx| {
+            bar_editor
                 .read(cx)
                 .buffer()
                 .read(cx)
                 .as_singleton()
                 .unwrap()
         });
+
+        let _rust_server = rust_server.next().await.unwrap();
+
+        cx.executor().advance_clock(Duration::from_millis(200));
+        let task = bar_editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
+        cx.run_until_parked();
+        task.await;
+        cx.run_until_parked();
+
+        assert!(
+            !extract_semantic_highlights(&bar_editor, &cx).is_empty(),
+            "bar.rs should have semantic tokens after initial open"
+        );
+
+        // Get foo.rs buffer directly from the project. No editor has ever
+        // fetched semantic tokens for this buffer.
+        let foo_file = cx.read(|cx| workspace.file_project_paths(cx)[1].clone());
+        let foo_buffer = project
+            .update(cx, |project, cx| project.open_buffer(foo_file, cx))
+            .await
+            .expect("Could not open foo.rs buffer");
+
+        // Build a multibuffer with both files. The foo.rs excerpt covers a
+        // range near the end of the file so that opening the singleton will
+        // autoscroll to a position that requires changing scroll_position.
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
-            multibuffer.push_excerpts(
-                toml_buffer.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                bar_buffer.clone(),
+                [Point::new(0, 0)..Point::new(0, 12)],
+                0,
                 cx,
             );
-            multibuffer.push_excerpts(
-                toml_buffer.clone(),
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))],
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(1),
+                foo_buffer.clone(),
+                [Point::new(95, 0)..Point::new(100, 0)],
+                0,
                 cx,
             );
             multibuffer
         });
 
-        let editor = workspace.update_in(cx, |_, window, cx| {
-            cx.new(|cx| build_editor_with_project(project, multibuffer, window, cx))
+        let mb_editor = workspace.update_in(cx, |workspace, window, cx| {
+            let editor =
+                cx.new(|cx| build_editor_with_project(project.clone(), multibuffer, window, cx));
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            editor
         });
-        editor.update_in(cx, |editor, window, cx| {
+        mb_editor.update_in(cx, |editor, window, cx| {
             let nav_history = workspace
                 .read(cx)
                 .active_pane()
@@ -1401,33 +1446,69 @@ mod tests {
             window.focus(&editor.focus_handle(cx), cx)
         });
 
-        let _toml_server = toml_server.next().await.unwrap();
+        // Close bar.rs tab so only the multibuffer remains.
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                let pane = workspace.active_pane().clone();
+                pane.update(cx, |pane, cx| {
+                    pane.close_item_by_id(
+                        bar_editor.entity_id(),
+                        workspace::SaveIntent::Skip,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .await
+            .ok();
 
-        // Initial request.
-        cx.executor().advance_clock(Duration::from_millis(200));
-        let task = editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
         cx.run_until_parked();
-        task.await;
-        assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 1);
 
-        // Edit two parts of the multibuffer, which both map to the same buffer.
-        //
-        // Without debouncing, this grabs semantic tokens 4 times (twice for the
-        // toml editor, and twice for the multibuffer).
-        editor.update_in(cx, |editor, _, cx| {
-            editor.edit([(MultiBufferOffset(0)..MultiBufferOffset(1), "b")], cx);
-            editor.edit([(MultiBufferOffset(12)..MultiBufferOffset(13), "c")], cx);
+        // Position cursor in the foo.rs excerpt (near line 95+).
+        mb_editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let end = snapshot.buffer_snapshot().len();
+            editor.change_selections(None.into(), window, cx, |s| {
+                s.select_ranges([end..end]);
+            });
         });
-        cx.executor().advance_clock(Duration::from_millis(200));
-        let task = editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
+
+        // Open the singleton from the multibuffer. open_buffers_in_workspace
+        // creates the editor and calls change_selections with autoscroll.
+        // During render, set_visible_line_count fires first (spawning a task),
+        // then autoscroll_vertically scrolls to line ~95 which emits
+        // ScrollPositionChanged, whose handler replaces post_scroll_update.
+        mb_editor.update_in(cx, |editor, window, cx| {
+            editor.open_excerpts(&crate::actions::OpenExcerpts, window, cx);
+        });
+
         cx.run_until_parked();
-        task.await;
-        assert_eq!(
-            extract_semantic_highlights(&editor, &cx),
-            vec![MultiBufferOffset(0)..MultiBufferOffset(1)]
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+
+        let active_editor = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+                .expect("Active item should be an editor")
+        });
+
+        assert!(
+            active_editor.read_with(cx, |editor, cx| editor.buffer().read(cx).is_singleton()),
+            "Active editor should be a singleton buffer"
         );
 
-        assert_eq!(full_counter_toml.load(atomic::Ordering::Acquire), 2);
+        // Wait for semantic tokens on the singleton.
+        cx.executor().advance_clock(Duration::from_millis(200));
+        let task = active_editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
+        task.await;
+        cx.run_until_parked();
+
+        let highlights = extract_semantic_highlights(&active_editor, &cx);
+        assert!(
+            !highlights.is_empty(),
+            "Singleton editor opened from multibuffer should have semantic tokens"
+        );
     }
 
     fn extract_semantic_highlights(
@@ -1572,7 +1653,7 @@ mod tests {
     async fn test_theme_override_changes_restyle_semantic_tokens(cx: &mut TestAppContext) {
         use collections::IndexMap;
         use gpui::{Hsla, Rgba, UpdateGlobal as _};
-        use theme::{HighlightStyleContent, ThemeStyleContent};
+        use theme_settings::{HighlightStyleContent, ThemeStyleContent};
 
         init_test(cx, |_| {});
 
@@ -1737,7 +1818,7 @@ mod tests {
     async fn test_per_theme_overrides_restyle_semantic_tokens(cx: &mut TestAppContext) {
         use collections::IndexMap;
         use gpui::{Hsla, Rgba, UpdateGlobal as _};
-        use theme::{HighlightStyleContent, ThemeStyleContent};
+        use theme_settings::{HighlightStyleContent, ThemeStyleContent};
         use ui::ActiveTheme as _;
 
         init_test(cx, |_| {});
@@ -2002,6 +2083,380 @@ mod tests {
             extract_semantic_highlights(&cx.editor, &cx),
             Vec::new(),
             "Semantic tokens should be cleared after disabling the setting"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_semantic_token_disabling_with_empty_rule(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        update_test_language_settings(cx, &|s| {
+            s.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..Default::default()
+                },
+            );
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                semantic_tokens_provider: Some(
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        lsp::SemanticTokensOptions {
+                            legend: lsp::SemanticTokensLegend {
+                                token_types: vec!["function".into()],
+                                token_modifiers: vec![],
+                            },
+                            full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                            ..Default::default()
+                        },
+                    ),
+                ),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::SemanticTokensResult::Tokens(
+                        lsp::SemanticTokens {
+                            data: vec![0, 3, 4, 0, 0],
+                            result_id: None,
+                        },
+                    )))
+                },
+            );
+
+        // Verify it highlights by default
+        cx.set_state("ˇfn main() {}");
+        full_request.next().await;
+        cx.run_until_parked();
+        assert_eq!(extract_semantic_highlights(&cx.editor, &cx).len(), 1);
+
+        // Apply EMPTY rule to disable it
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.global_lsp_settings = Some(GlobalLspSettingsContent {
+                        semantic_token_rules: Some(SemanticTokenRules {
+                            rules: vec![SemanticTokenRule {
+                                token_type: Some("function".to_string()),
+                                ..Default::default()
+                            }],
+                        }),
+                        ..Default::default()
+                    });
+                });
+            });
+        });
+
+        cx.set_state("ˇfn main() { }");
+        full_request.next().await;
+        cx.run_until_parked();
+
+        assert!(
+            extract_semantic_highlights(&cx.editor, &cx).is_empty(),
+            "Highlighting should be disabled by empty style setting"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_semantic_token_broad_rule_disables_specific_token(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        update_test_language_settings(cx, &|s| {
+            s.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..Default::default()
+                },
+            );
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                semantic_tokens_provider: Some(
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        lsp::SemanticTokensOptions {
+                            legend: lsp::SemanticTokensLegend {
+                                token_types: vec!["comment".into()],
+                                token_modifiers: vec!["documentation".into()],
+                            },
+                            full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                            ..Default::default()
+                        },
+                    ),
+                ),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::SemanticTokensResult::Tokens(
+                        lsp::SemanticTokens {
+                            data: vec![0, 0, 5, 0, 1], // comment [documentation]
+                            result_id: None,
+                        },
+                    )))
+                },
+            );
+
+        cx.set_state("ˇ/// d\n");
+        full_request.next().await;
+        cx.run_until_parked();
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx).len(),
+            1,
+            "Documentation comment should be highlighted"
+        );
+
+        // Apply a BROAD empty rule for "comment" (no modifiers)
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.global_lsp_settings = Some(GlobalLspSettingsContent {
+                        semantic_token_rules: Some(SemanticTokenRules {
+                            rules: vec![SemanticTokenRule {
+                                token_type: Some("comment".to_string()),
+                                ..Default::default()
+                            }],
+                        }),
+                        ..Default::default()
+                    });
+                });
+            });
+        });
+
+        cx.set_state("ˇ/// d\n");
+        full_request.next().await;
+        cx.run_until_parked();
+
+        assert!(
+            extract_semantic_highlights(&cx.editor, &cx).is_empty(),
+            "Broad empty rule should disable specific documentation comment"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_semantic_token_specific_rule_does_not_disable_broad_token(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui::UpdateGlobal as _;
+        use settings::{GlobalLspSettingsContent, SemanticTokenRule};
+
+        init_test(cx, |_| {});
+        update_test_language_settings(cx, &|s| {
+            s.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..Default::default()
+                },
+            );
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                semantic_tokens_provider: Some(
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        lsp::SemanticTokensOptions {
+                            legend: lsp::SemanticTokensLegend {
+                                token_types: vec!["comment".into()],
+                                token_modifiers: vec!["documentation".into()],
+                            },
+                            full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                            ..Default::default()
+                        },
+                    ),
+                ),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::SemanticTokensResult::Tokens(
+                        lsp::SemanticTokens {
+                            data: vec![
+                                0, 0, 5, 0, 1, // comment [documentation]
+                                1, 0, 5, 0, 0, // normal comment
+                            ],
+                            result_id: None,
+                        },
+                    )))
+                },
+            );
+
+        cx.set_state("ˇ/// d\n// n\n");
+        full_request.next().await;
+        cx.run_until_parked();
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx).len(),
+            2,
+            "Both documentation and normal comments should be highlighted initially"
+        );
+
+        // Apply a SPECIFIC empty rule for documentation only
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.global_lsp_settings = Some(GlobalLspSettingsContent {
+                        semantic_token_rules: Some(SemanticTokenRules {
+                            rules: vec![SemanticTokenRule {
+                                token_type: Some("comment".to_string()),
+                                token_modifiers: vec!["documentation".to_string()],
+                                ..Default::default()
+                            }],
+                        }),
+                        ..Default::default()
+                    });
+                });
+            });
+        });
+
+        cx.set_state("ˇ/// d\n// n\n");
+        full_request.next().await;
+        cx.run_until_parked();
+
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx).len(),
+            1,
+            "Normal comment should still be highlighted (matched by default rule)"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_diagnostics_visible_when_semantic_token_set_to_full(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, &|language_settings| {
+            language_settings.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..LanguageSettingsContent::default()
+                },
+            );
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                semantic_tokens_provider: Some(
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        lsp::SemanticTokensOptions {
+                            legend: lsp::SemanticTokensLegend {
+                                token_types: vec!["function".into()],
+                                token_modifiers: Vec::new(),
+                            },
+                            full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                            ..lsp::SemanticTokensOptions::default()
+                        },
+                    ),
+                ),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| {
+                    async move {
+                        Ok(Some(lsp::SemanticTokensResult::Tokens(
+                            lsp::SemanticTokens {
+                                data: vec![
+                                    0, // delta_line
+                                    3, // delta_start
+                                    4, // length
+                                    0, // token_type
+                                    0, // token_modifiers_bitset
+                                ],
+                                result_id: Some("a".into()),
+                            },
+                        )))
+                    }
+                },
+            );
+
+        cx.set_state("ˇfn main() {}");
+        assert!(full_request.next().await.is_some());
+
+        let task = cx.update_editor(|e, _, _| e.semantic_token_state.take_update_task());
+        task.await;
+
+        cx.update_buffer(|buffer, cx| {
+            buffer.update_diagnostics(
+                LanguageServerId(0),
+                DiagnosticSet::new(
+                    [DiagnosticEntry {
+                        range: PointUtf16::new(0, 3)..PointUtf16::new(0, 7),
+                        diagnostic: Diagnostic {
+                            severity: lsp::DiagnosticSeverity::ERROR,
+                            group_id: 1,
+                            message: "unused function".into(),
+                            ..Default::default()
+                        },
+                    }],
+                    buffer,
+                ),
+                cx,
+            )
+        });
+
+        cx.run_until_parked();
+        let chunks = cx.update_editor(|editor, window, cx| {
+            editor
+                .snapshot(window, cx)
+                .display_snapshot
+                .chunks(
+                    crate::display_map::DisplayRow(0)..crate::display_map::DisplayRow(1),
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: true,
+                    },
+                    crate::HighlightStyles::default(),
+                )
+                .map(|chunk| {
+                    (
+                        chunk.text.to_string(),
+                        chunk.diagnostic_severity,
+                        chunk.highlight_style,
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx),
+            vec![MultiBufferOffset(3)..MultiBufferOffset(7)]
+        );
+
+        assert!(
+            chunks.iter().any(
+                |(text, severity, style): &(
+                    String,
+                    Option<lsp::DiagnosticSeverity>,
+                    Option<gpui::HighlightStyle>
+                )| {
+                    text == "main"
+                        && *severity == Some(lsp::DiagnosticSeverity::ERROR)
+                        && style.is_some()
+                }
+            ),
+            "expected 'main' chunk to have both diagnostic and semantic styling: {:?}",
+            chunks
         );
     }
 

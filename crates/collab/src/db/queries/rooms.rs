@@ -629,6 +629,7 @@ impl Database {
                 settings_files: Default::default(),
                 scan_id: db_worktree.scan_id as u64,
                 completed_scan_id: db_worktree.completed_scan_id as u64,
+                root_repo_common_dir: db_worktree.root_repo_common_dir,
             };
 
             let rejoined_worktree = rejoined_project
@@ -738,7 +739,7 @@ impl Database {
                     while let Some(db_status) = db_statuses.next().await {
                         let db_status: project_repository_statuses::Model = db_status?;
                         if db_status.is_deleted {
-                            removed_statuses.push(db_status.repo_path);
+                            removed_statuses.push(db_status.repo_path.clone());
                         } else {
                             updated_statuses.push(db_status_to_proto(db_status)?);
                         }
@@ -789,15 +790,22 @@ impl Database {
                             current_merge_conflicts,
                             branch_summary,
                             head_commit_details,
+                            branch_list: Vec::new(),
                             project_id: project_id.to_proto(),
                             id: db_repository.id as u64,
-                            abs_path: db_repository.abs_path,
+                            abs_path: db_repository.abs_path.clone(),
                             scan_id: db_repository.scan_id as u64,
                             is_last_update: true,
                             merge_message: db_repository.merge_message,
                             stash_entries: Vec::new(),
                             remote_upstream_url: db_repository.remote_upstream_url.clone(),
                             remote_origin_url: db_repository.remote_origin_url.clone(),
+                            original_repo_abs_path: Some(db_repository.abs_path),
+                            linked_worktrees: db_repository
+                                .linked_worktrees
+                                .as_deref()
+                                .and_then(|s| serde_json::from_str(s).ok())
+                                .unwrap_or_default(),
                         });
                     }
                 }

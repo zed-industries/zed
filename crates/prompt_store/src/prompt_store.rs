@@ -433,7 +433,7 @@ impl PromptStore {
         let metadata = metadata_cache
             .metadata
             .iter()
-            .find(|metadata| metadata.title.as_ref().map(|title| &***title) == Some(title))?;
+            .find(|metadata| metadata.title.as_deref() == Some(title))?;
         Some(metadata.id)
     }
 

@@ -14,6 +14,14 @@ pub enum ListItemSpacing {
     Sparse,
 }
 
+#[derive(Default)]
+enum EndSlotVisibility {
+    #[default]
+    Always,
+    OnHover,
+    SwapOnHover(AnyElement),
+}
+
 #[derive(IntoElement, RegisterComponent)]
 pub struct ListItem {
     id: ElementId,
@@ -28,9 +36,7 @@ pub struct ListItem {
     /// A slot for content that appears after the children, usually on the other side of the header.
     /// This might be a button, a disclosure arrow, a face pile, etc.
     end_slot: Option<AnyElement>,
-    /// A slot for content that appears on hover after the children
-    /// It will obscure the `end_slot` when visible.
-    end_hover_slot: Option<AnyElement>,
+    end_slot_visibility: EndSlotVisibility,
     toggle: Option<bool>,
     inset: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -45,6 +51,8 @@ pub struct ListItem {
     rounded: bool,
     overflow_x: bool,
     focused: Option<bool>,
+    docked_right: bool,
+    height: Option<DefiniteLength>,
 }
 
 impl ListItem {
@@ -59,7 +67,7 @@ impl ListItem {
             indent_step_size: px(12.),
             start_slot: None,
             end_slot: None,
-            end_hover_slot: None,
+            end_slot_visibility: EndSlotVisibility::default(),
             toggle: None,
             inset: false,
             on_click: None,
@@ -74,6 +82,8 @@ impl ListItem {
             rounded: false,
             overflow_x: false,
             focused: None,
+            docked_right: false,
+            height: None,
         }
     }
 
@@ -161,8 +171,14 @@ impl ListItem {
         self
     }
 
-    pub fn end_hover_slot<E: IntoElement>(mut self, end_hover_slot: impl Into<Option<E>>) -> Self {
-        self.end_hover_slot = end_hover_slot.into().map(IntoElement::into_any_element);
+    pub fn end_slot_on_hover<E: IntoElement>(mut self, end_slot_on_hover: E) -> Self {
+        self.end_slot_visibility =
+            EndSlotVisibility::SwapOnHover(end_slot_on_hover.into_any_element());
+        self
+    }
+
+    pub fn show_end_slot_on_hover(mut self) -> Self {
+        self.end_slot_visibility = EndSlotVisibility::OnHover;
         self
     }
 
@@ -183,6 +199,16 @@ impl ListItem {
 
     pub fn focused(mut self, focused: bool) -> Self {
         self.focused = Some(focused);
+        self
+    }
+
+    pub fn docked_right(mut self, docked_right: bool) -> Self {
+        self.docked_right = docked_right;
+        self
+    }
+
+    pub fn height(mut self, height: impl Into<DefiniteLength>) -> Self {
+        self.height = Some(height.into());
         self
     }
 }
@@ -213,32 +239,31 @@ impl RenderOnce for ListItem {
             .id(self.id)
             .when_some(self.group_name, |this, group| this.group(group))
             .w_full()
+            .when_some(self.height, |this, height| this.h(height))
             .relative()
             // When an item is inset draw the indent spacing outside of the item
             .when(self.inset, |this| {
                 this.ml(self.indent_level as f32 * self.indent_step_size)
                     .px(DynamicSpacing::Base04.rems(cx))
             })
-            .when(!self.inset && !self.disabled, |this| {
-                this
-                    // TODO: Add focus state
-                    // .when(self.state == InteractionState::Focused, |this| {
-                    .when_some(self.focused, |this, focused| {
-                        if focused {
-                            this.border_1()
-                                .border_color(cx.theme().colors().border_focused)
-                        } else {
-                            this.border_1()
-                        }
-                    })
-                    .when(self.selectable, |this| {
-                        this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
-                            .active(|style| style.bg(cx.theme().colors().ghost_element_active))
-                            .when(self.outlined, |this| this.rounded_sm())
-                            .when(self.selected, |this| {
-                                this.bg(cx.theme().colors().ghost_element_selected)
-                            })
-                    })
+            .when(!self.inset, |this| {
+                this.when_some(self.focused, |this, focused| {
+                    if focused && !self.disabled {
+                        this.border_1()
+                            .when(self.docked_right, |this| this.border_r_2())
+                            .border_color(cx.theme().colors().border_focused)
+                    } else {
+                        this.border_1()
+                    }
+                })
+                .when(self.selectable && !self.disabled, |this| {
+                    this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                        .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                        .when(self.outlined, |this| this.rounded_sm())
+                        .when(self.selected, |this| {
+                            this.bg(cx.theme().colors().ghost_element_selected)
+                        })
+                })
             })
             .when(self.rounded, |this| this.rounded_sm())
             .when_some(self.on_hover, |this, on_hover| this.on_hover(on_hover))
@@ -255,27 +280,22 @@ impl RenderOnce for ListItem {
                         ListItemSpacing::ExtraDense => this.py_neg_px(),
                         ListItemSpacing::Sparse => this.py_1(),
                     })
-                    .when(self.inset && !self.disabled, |this| {
-                        this
-                            // TODO: Add focus state
-                            //.when(self.state == InteractionState::Focused, |this| {
-                            .when_some(self.focused, |this, focused| {
-                                if focused {
-                                    this.border_1()
-                                        .border_color(cx.theme().colors().border_focused)
-                                } else {
-                                    this.border_1()
-                                }
-                            })
-                            .when(self.selectable, |this| {
-                                this.hover(|style| {
-                                    style.bg(cx.theme().colors().ghost_element_hover)
-                                })
+                    .when(self.inset, |this| {
+                        this.when_some(self.focused, |this, focused| {
+                            if focused && !self.disabled {
+                                this.border_1()
+                                    .border_color(cx.theme().colors().border_focused)
+                            } else {
+                                this.border_1()
+                            }
+                        })
+                        .when(self.selectable && !self.disabled, |this| {
+                            this.hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
                                 .active(|style| style.bg(cx.theme().colors().ghost_element_active))
                                 .when(self.selected, |this| {
                                     this.bg(cx.theme().colors().ghost_element_selected)
                                 })
-                            })
+                        })
                     })
                     .when_some(
                         self.on_click.filter(|_| !self.disabled),
@@ -330,28 +350,31 @@ impl RenderOnce for ListItem {
                             .children(self.start_slot)
                             .children(self.children),
                     )
+                    .when(self.end_slot.is_some(), |this| this.justify_between())
                     .when_some(self.end_slot, |this, end_slot| {
-                        this.justify_between().child(
-                            h_flex()
+                        this.child(match self.end_slot_visibility {
+                            EndSlotVisibility::Always => {
+                                h_flex().flex_shrink().overflow_hidden().child(end_slot)
+                            }
+                            EndSlotVisibility::OnHover => h_flex()
                                 .flex_shrink()
                                 .overflow_hidden()
-                                .when(self.end_hover_slot.is_some(), |this| {
-                                    this.visible()
-                                        .group_hover("list_item", |this| this.invisible())
-                                })
-                                .child(end_slot),
-                        )
-                    })
-                    .when_some(self.end_hover_slot, |this, end_hover_slot| {
-                        this.child(
-                            h_flex()
-                                .h_full()
-                                .absolute()
-                                .right(DynamicSpacing::Base06.rems(cx))
-                                .top_0()
                                 .visible_on_hover("list_item")
-                                .child(end_hover_slot),
-                        )
+                                .child(end_slot),
+                            EndSlotVisibility::SwapOnHover(hover_slot) => h_flex()
+                                .relative()
+                                .flex_shrink()
+                                .child(h_flex().visible_on_hover("list_item").child(hover_slot))
+                                .child(
+                                    h_flex()
+                                        .absolute()
+                                        .inset_0()
+                                        .justify_end()
+                                        .overflow_hidden()
+                                        .group_hover("list_item", |this| this.invisible())
+                                        .child(end_slot),
+                                ),
+                        })
                     }),
             )
     }

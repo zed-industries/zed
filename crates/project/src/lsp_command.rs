@@ -18,7 +18,7 @@ use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::FluentBuilder};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
-    language_settings::{InlayHintKind, LanguageSettings, language_settings},
+    language_settings::{InlayHintKind, LanguageSettings},
     point_from_lsp, point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_anchor_range, deserialize_version, serialize_anchor,
@@ -33,6 +33,7 @@ use lsp::{
     OneOf, RenameOptions, ServerCapabilities,
 };
 use serde_json::Value;
+
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{
     cmp::Reverse, collections::hash_map, mem, ops::Range, path::Path, str::FromStr, sync::Arc,
@@ -533,7 +534,7 @@ impl LspCommand for PerformRename {
             .rename_provider
             .is_some_and(|capability| match capability {
                 OneOf::Left(enabled) => enabled,
-                OneOf::Right(_options) => true,
+                OneOf::Right(_) => true,
             })
     }
 
@@ -2636,11 +2637,10 @@ impl LspCommand for GetCodeActions {
             relevant_diagnostics.push(entry.to_lsp_diagnostic_stub()?);
         }
 
-        let supported =
-            Self::supported_code_action_kinds(language_server.adapter_server_capabilities());
-
         let only = if let Some(requested) = &self.kinds {
-            if let Some(supported_kinds) = supported {
+            if let Some(supported_kinds) =
+                Self::supported_code_action_kinds(language_server.adapter_server_capabilities())
+            {
                 let filtered = requested
                     .iter()
                     .filter(|requested_kind| {
@@ -2655,7 +2655,7 @@ impl LspCommand for GetCodeActions {
                 Some(requested.clone())
             }
         } else {
-            supported
+            None
         };
 
         Ok(lsp::CodeActionParams {
@@ -2937,9 +2937,7 @@ impl LspCommand for OnTypeFormatting {
             .await?;
 
         let options = buffer.update(&mut cx, |buffer, cx| {
-            lsp_formatting_options(
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx).as_ref(),
-            )
+            lsp_formatting_options(LanguageSettings::for_buffer(buffer, cx).as_ref())
         });
 
         Ok(Self {
@@ -3218,8 +3216,9 @@ impl InlayHints {
                                     Some(((uri, range), server_id)) => Some((
                                         LanguageServerId(server_id as usize),
                                         lsp::Location {
-                                            uri: lsp::Uri::from_str(&uri)
-                                                .context("invalid uri in hint part {part:?}")?,
+                                            uri: lsp::Uri::from_str(&uri).with_context(|| {
+                                                format!("invalid uri in hint part {uri:?}")
+                                            })?,
                                             range: lsp::Range::new(
                                                 point_to_lsp(PointUtf16::new(
                                                     range.start.row,
@@ -3853,45 +3852,27 @@ impl LspCommand for GetCodeLens {
     async fn response_from_lsp(
         self,
         message: Option<Vec<lsp::CodeLens>>,
-        lsp_store: Entity<LspStore>,
+        _lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> anyhow::Result<Vec<CodeAction>> {
         let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-        let language_server = cx.update(|cx| {
-            lsp_store
-                .read(cx)
-                .language_server_for_id(server_id)
-                .with_context(|| {
-                    format!("Missing the language server that just returned a response {server_id}")
-                })
-        })?;
-        let server_capabilities = language_server.capabilities();
-        let available_commands = server_capabilities
-            .execute_command_provider
-            .as_ref()
-            .map(|options| options.commands.as_slice())
-            .unwrap_or_default();
-        Ok(message
-            .unwrap_or_default()
+        let code_lenses = message.unwrap_or_default();
+
+        Ok(code_lenses
             .into_iter()
-            .filter(|code_lens| {
-                code_lens
-                    .command
-                    .as_ref()
-                    .is_none_or(|command| available_commands.contains(&command.command))
-            })
             .map(|code_lens| {
                 let code_lens_range = range_from_lsp(code_lens.range);
                 let start = snapshot.clip_point_utf16(code_lens_range.start, Bias::Left);
                 let end = snapshot.clip_point_utf16(code_lens_range.end, Bias::Right);
                 let range = snapshot.anchor_before(start)..snapshot.anchor_after(end);
+                let resolved = code_lens.command.is_some();
                 CodeAction {
                     server_id,
                     range,
                     lsp_action: LspAction::CodeLens(code_lens),
-                    resolved: false,
+                    resolved,
                 }
             })
             .collect())
@@ -4857,9 +4838,14 @@ impl LspCommand for GetFoldingRanges {
         self,
         message: proto::GetFoldingRangesResponse,
         _: Entity<LspStore>,
-        _: Entity<Buffer>,
-        _: AsyncApp,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
     ) -> Result<Self::Response> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
         message
             .ranges
             .into_iter()

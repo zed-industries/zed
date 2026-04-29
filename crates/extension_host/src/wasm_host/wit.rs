@@ -16,7 +16,7 @@ use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
 
-use crate::wasm_host::wit::since_v0_6_0::dap::StartDebuggingRequestArgumentsRequest;
+use latest::dap::StartDebuggingRequestArgumentsRequest;
 
 use super::{WasmState, wasm_engine};
 use anyhow::{Context as _, Result, anyhow};
@@ -42,16 +42,12 @@ pub use since_v0_0_4::LanguageServerConfig;
 
 pub fn new_linker(
     executor: &BackgroundExecutor,
-    f: impl Fn(&mut Linker<WasmState>, fn(&mut WasmState) -> &mut WasmState) -> Result<()>,
+    f: impl FnOnce(&mut Linker<WasmState>) -> Result<()>,
 ) -> Linker<WasmState> {
     let mut linker = Linker::new(&wasm_engine(executor));
     wasmtime_wasi::p2::add_to_linker_async(&mut linker).unwrap();
-    f(&mut linker, wasi_view).unwrap();
+    f(&mut linker).unwrap();
     linker
-}
-
-fn wasi_view(state: &mut WasmState) -> &mut WasmState {
-    state
 }
 
 /// Returns whether the given Wasm API version is supported by the Wasm host.
@@ -462,6 +458,60 @@ impl Extension {
                 .await
             }
             Extension::V0_0_4(_) | Extension::V0_0_1(_) => Ok(Ok(None)),
+        }
+    }
+
+    pub async fn call_language_server_initialization_options_schema(
+        &self,
+        store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<Option<String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_language_server_initialization_options_schema(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
+            Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => Ok(None),
+        }
+    }
+
+    pub async fn call_language_server_workspace_configuration_schema(
+        &self,
+        store: &mut Store<WasmState>,
+        language_server_id: &LanguageServerName,
+        resource: Resource<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<Option<String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_language_server_workspace_configuration_schema(
+                    store,
+                    &language_server_id.0,
+                    resource,
+                )
+                .await
+            }
+            Extension::V0_6_0(_)
+            | Extension::V0_5_0(_)
+            | Extension::V0_4_0(_)
+            | Extension::V0_3_0(_)
+            | Extension::V0_2_0(_)
+            | Extension::V0_1_0(_)
+            | Extension::V0_0_6(_)
+            | Extension::V0_0_4(_)
+            | Extension::V0_0_1(_) => Ok(None),
         }
     }
 
@@ -1022,18 +1072,19 @@ impl Extension {
                 Ok(Ok(dap_binary))
             }
             Extension::V0_6_0(ext) => {
+                let task: latest::DebugTaskDefinition = task.try_into()?;
                 let dap_binary = ext
                     .call_get_dap_binary(
                         store,
                         &adapter_name,
-                        &task.try_into()?,
+                        &task.into(),
                         user_installed_path.as_ref().and_then(|p| p.to_str()),
                         resource,
                     )
                     .await?
                     .map_err(|e| anyhow!("{e:?}"))?;
 
-                Ok(Ok(dap_binary))
+                Ok(Ok(dap_binary.into()))
             }
             Extension::V0_5_0(_)
             | Extension::V0_4_0(_)
@@ -1073,7 +1124,7 @@ impl Extension {
                     .await?
                     .map_err(|e| anyhow!("{e:?}"))?;
 
-                Ok(Ok(dap_binary))
+                Ok(Ok(dap_binary.into()))
             }
             Extension::V0_5_0(_)
             | Extension::V0_4_0(_)
@@ -1104,12 +1155,13 @@ impl Extension {
                 Ok(Ok(dap_binary.try_into()?))
             }
             Extension::V0_6_0(ext) => {
-                let config = config.into();
+                let config: latest::DebugConfig = config.into();
                 let dap_binary = ext
-                    .call_dap_config_to_scenario(store, &config)
+                    .call_dap_config_to_scenario(store, &config.into())
                     .await?
                     .map_err(|e| anyhow!("{e:?}"))?;
 
+                let dap_binary: latest::DebugScenario = dap_binary.into();
                 Ok(Ok(dap_binary.try_into()?))
             }
             Extension::V0_5_0(_)
@@ -1149,18 +1201,20 @@ impl Extension {
                 Ok(dap_binary.map(TryInto::try_into).transpose()?)
             }
             Extension::V0_6_0(ext) => {
-                let build_config_template = build_config_template.into();
+                let build_config_template: latest::dap::TaskTemplate = build_config_template.into();
                 let dap_binary = ext
                     .call_dap_locator_create_scenario(
                         store,
                         &locator_name,
-                        &build_config_template,
+                        &build_config_template.into(),
                         &resolved_label,
                         &debug_adapter_name,
                     )
                     .await?;
 
-                Ok(dap_binary.map(TryInto::try_into).transpose()?)
+                Ok(dap_binary
+                    .map(|s| latest::DebugScenario::from(s).try_into())
+                    .transpose()?)
             }
             Extension::V0_5_0(_)
             | Extension::V0_4_0(_)
@@ -1192,12 +1246,14 @@ impl Extension {
                 Ok(Ok(dap_request.into()))
             }
             Extension::V0_6_0(ext) => {
-                let build_config_template = resolved_build_task.try_into()?;
+                let build_config_template: latest::dap::TaskTemplate =
+                    resolved_build_task.try_into()?;
                 let dap_request = ext
-                    .call_run_dap_locator(store, &locator_name, &build_config_template)
+                    .call_run_dap_locator(store, &locator_name, &build_config_template.into())
                     .await?
                     .map_err(|e| anyhow!("{e:?}"))?;
 
+                let dap_request: latest::DebugRequest = dap_request.into();
                 Ok(Ok(dap_request.into()))
             }
             Extension::V0_5_0(_)
