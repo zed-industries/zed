@@ -173,7 +173,7 @@ struct PortForward {
 }
 impl ListPortForwardState {
     fn new(index: SshServerIndex, _port_index: usize, _window: &mut Window, cx: &mut App) -> Self {
-        let port_forwards = SshSettings::get_global(cx)
+        let port_forwards = RemoteSettings::get_global(cx)
             .ssh_connections()
             .nth(index.0)
             .and_then(|state| {
@@ -220,7 +220,7 @@ impl EditPortForwardState {
     fn new(index: SshServerIndex, port_index: usize, window: &mut Window, cx: &mut App) -> Self {
         let editor = cx.new(|cx| Editor::single_line(window, cx));
 
-        if let Some(port_forward_text) = SshSettings::get_global(cx)
+        if let Some(port_forward_text) = RemoteSettings::get_global(cx)
             .ssh_connections()
             .nth(index.0)
             .and_then(|conn| {
@@ -237,7 +237,7 @@ impl EditPortForwardState {
             });
         }
 
-        editor.focus_handle(cx).focus(window);
+        editor.focus_handle(cx).focus(window, cx);
 
         let entries = std::array::from_fn(|_| NavigableEntry::focusable(cx));
 
@@ -262,7 +262,7 @@ impl AddPortForwardState {
         this.editor.update(cx, |this, cx| {
             this.set_placeholder_text("remote_port:local_port", window, cx);
         });
-        this.editor.focus_handle(cx).focus(window);
+        this.editor.focus_handle(cx).focus(window, cx);
         this
     }
 }
@@ -1407,7 +1407,7 @@ impl RemoteServerProjects {
                 let index = state.index;
                 let port_index = state.port_index;
 
-                let mut port_forwards = SshSettings::get_global(cx)
+                let mut port_forwards = RemoteSettings::get_global(cx)
                     .ssh_connections()
                     .nth(index.0)
                     .and_then(|state| {
@@ -1498,13 +1498,13 @@ impl RemoteServerProjects {
                     port_forwards,
                     cx,
                 ));
-                self.focus_handle.focus(window);
+                self.focus_handle.focus(window, cx);
             }
             Mode::AddPortForward(state) => {
                 let input_text = state.editor.read(cx).text(cx);
                 let index = state.index;
 
-                let mut port_forwards = SshSettings::get_global(cx)
+                let mut port_forwards = RemoteSettings::get_global(cx)
                     .ssh_connections()
                     .nth(index.0)
                     .and_then(|state| {
@@ -1592,7 +1592,7 @@ impl RemoteServerProjects {
                     port_forwards,
                     cx,
                 ));
-                self.focus_handle.focus(window);
+                self.focus_handle.focus(window, cx);
             }
         }
     }
@@ -2911,7 +2911,7 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let Some(connection) = SshSettings::get_global(cx)
+        let Some(connection) = RemoteSettings::get_global(cx)
             .ssh_connections()
             .nth(state.index.0)
         else {
@@ -3067,10 +3067,11 @@ impl RemoteServerProjects {
                 .size_full()
                 .child(
                     SshConnectionHeader {
-                        connection_string: connection_string,
+                        connection_string: connection_string.into(),
                         paths: Default::default(),
                         nickname: connection.nickname.as_ref().map(|s| s.into()),
                         is_wsl: false,
+                        is_devcontainer: false,
                     }
                     .render(window, cx),
                 )
@@ -3117,7 +3118,10 @@ impl RemoteServerProjects {
         let index = state.index;
         let port_index = state.port_index;
 
-        let Some(connection) = SshSettings::get_global(cx).ssh_connections().nth(index.0) else {
+        let Some(connection) = RemoteSettings::get_global(cx)
+            .ssh_connections()
+            .nth(index.0)
+        else {
             return v_flex()
                 .id("ssh-edit-port-forward")
                 .track_focus(&self.focus_handle(cx))
@@ -3141,10 +3145,11 @@ impl RemoteServerProjects {
             .id("ssh-edit-port-forward")
             .child(
                 SshConnectionHeader {
-                    connection_string,
+                    connection_string: connection_string.into(),
                     paths: Default::default(),
                     nickname,
                     is_wsl: false,
+                    is_devcontainer: false,
                 }
                 .render(window, cx),
             )
@@ -3178,48 +3183,40 @@ impl RemoteServerProjects {
 
                         cx.spawn(async move |cx| {
                             if confirmation.await.ok() == Some(0) {
-                                remote_servers
-                                    .update(cx, |this, cx| {
-                                        let port_forwards = SshSettings::get_global(cx)
-                                            .ssh_connections()
-                                            .nth(index.0)
-                                            .and_then(|state| {
-                                                state.port_forwards.as_ref().map(
-                                                    |port_forwards_vec| {
-                                                        port_forwards_vec
-                                                            .iter()
-                                                            .enumerate()
-                                                            .filter_map(|(i, pf)| {
-                                                                if i != port_index {
-                                                                    Some(PortForward {
-                                                                        local: pf
-                                                                            .local_port
-                                                                            .to_string(),
-                                                                        remote: pf
-                                                                            .remote_port
-                                                                            .to_string(),
-                                                                    })
-                                                                } else {
-                                                                    None
-                                                                }
+                                remote_servers.update(cx, |this, cx| {
+                                    let port_forwards = RemoteSettings::get_global(cx)
+                                        .ssh_connections()
+                                        .nth(index.0)
+                                        .and_then(|state| {
+                                            state.port_forwards.as_ref().map(|port_forwards_vec| {
+                                                port_forwards_vec
+                                                    .iter()
+                                                    .enumerate()
+                                                    .filter_map(|(i, pf)| {
+                                                        if i != port_index {
+                                                            Some(PortForward {
+                                                                local: pf.local_port.to_string(),
+                                                                remote: pf.remote_port.to_string(),
                                                             })
-                                                            .collect::<Vec<PortForward>>()
-                                                    },
-                                                )
+                                                        } else {
+                                                            None
+                                                        }
+                                                    })
+                                                    .collect::<Vec<PortForward>>()
                                             })
-                                            .unwrap_or_default();
+                                        })
+                                        .unwrap_or_default();
 
-                                        this.delete_port_forward(index, port_index, cx);
-                                        this.mode = Mode::ListPortForward(
-                                            ListPortForwardState::with_port_forwards(
-                                                index,
-                                                port_forwards,
-                                                cx,
-                                            ),
-                                        );
-                                        cx.notify();
-                                    })
-                                    .ok();
+                                    this.delete_port_forward(index, port_index, cx);
+                                    this.mode = Mode::ListPortForward(
+                                        ListPortForwardState::with_port_forwards(
+                                            index,
+                                            port_forwards,
+                                            cx,
+                                        ),
+                                    );
+                                    cx.notify();
+                                });
                             }
                             anyhow::Ok(())
                         })
@@ -3324,7 +3321,7 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let Some(connection) = SshSettings::get_global(cx)
+        let Some(connection) = RemoteSettings::get_global(cx)
             .ssh_connections()
             .nth(state.index.0)
         else {
@@ -3340,10 +3337,11 @@ impl RemoteServerProjects {
             .track_focus(&self.focus_handle(cx))
             .child(
                 SshConnectionHeader {
-                    connection_string,
+                    connection_string: connection_string.into(),
                     paths: Default::default(),
                     nickname,
                     is_wsl: false,
+                    is_devcontainer: false,
                 }
                 .render(window, cx),
             )
