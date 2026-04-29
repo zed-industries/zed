@@ -8,7 +8,7 @@ use std::{
 
 use gpui::{BackgroundExecutor, SharedString};
 use nucleo::Utf32Str;
-use nucleo::pattern::{Atom, AtomKind, CaseMatching, Normalization};
+use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 
 use crate::{
     Cancelled, Case, LengthPenalty,
@@ -27,37 +27,34 @@ use fuzzy::CharBag;
 const SMART_CASE_PENALTY_PER_MISMATCH: f64 = 0.9;
 
 struct Query {
-    atoms: Vec<Atom>,
-    source_words: Option<Vec<Vec<char>>>,
+    pattern: Pattern,
+    /// Non-whitespace query chars in input order, populated only when a smart-case
+    /// penalty will actually be charged. Aligns 1:1 with the indices appended by
+    /// `Pattern::indices` (atom-order, needle-order within each atom).
+    query_chars: Option<Vec<char>>,
     char_bag: CharBag,
 }
 
 impl Query {
     fn build(query: &str, case: Case) -> Option<Self> {
-        let mut atoms = Vec::new();
-        let mut source_words = Vec::new();
-        let wants_case_penalty = case.is_smart() && query.chars().any(|c| c.is_uppercase());
-
-        for word in query.split_whitespace() {
-            atoms.push(Atom::new(
-                word,
-                CaseMatching::Ignore,
-                Normalization::Smart,
-                AtomKind::Fuzzy,
-                false,
-            ));
-            if wants_case_penalty {
-                source_words.push(word.chars().collect());
-            }
-        }
-
-        if atoms.is_empty() {
+        if query.chars().all(char::is_whitespace) {
             return None;
         }
-
+        let pattern = Pattern::new(
+            query,
+            CaseMatching::Ignore,
+            Normalization::Smart,
+            AtomKind::Fuzzy,
+        );
+        if pattern.atoms.is_empty() {
+            return None;
+        }
+        let wants_case_penalty = case.is_smart() && query.chars().any(|c| c.is_uppercase());
+        let query_chars = wants_case_penalty
+            .then(|| query.chars().filter(|c| !c.is_whitespace()).collect());
         Some(Query {
-            atoms,
-            source_words: wants_case_penalty.then_some(source_words),
+            pattern,
+            query_chars,
             char_bag: CharBag::from(query),
         })
     }
@@ -281,7 +278,6 @@ where
 {
     let mut buf = Vec::new();
     let mut matched_chars: Vec<u32> = Vec::new();
-    let mut atom_matched_chars = Vec::new();
     let mut candidate_chars: Vec<char> = Vec::new();
 
     for candidate in candidates {
@@ -299,56 +295,60 @@ where
 
         let haystack: Utf32Str = Utf32Str::new(&borrowed.string, &mut buf);
 
-        if query.source_words.is_some() {
-            candidate_chars.clear();
-            candidate_chars.extend(borrowed.string.chars());
-        }
+        let Some(score) = query.pattern.indices(haystack, matcher, &mut matched_chars) else {
+            continue;
+        };
 
-        let mut total_score: u32 = 0;
-        let mut case_mismatches: u32 = 0;
-        let mut all_matched = true;
+        let case_mismatches = count_case_mismatches(
+            query.query_chars.as_deref(),
+            &matched_chars,
+            &borrowed.string,
+            &mut candidate_chars,
+        );
 
-        for (atom_idx, atom) in query.atoms.iter().enumerate() {
-            atom_matched_chars.clear();
-            let Some(score) = atom.indices(haystack, matcher, &mut atom_matched_chars) else {
-                all_matched = false;
-                break;
-            };
-            total_score = total_score.saturating_add(score as u32);
-            if let Some(source_words) = query.source_words.as_deref() {
-                let query_chars = &source_words[atom_idx];
-                if query_chars.len() == atom_matched_chars.len() {
-                    for (&query_char, &pos) in query_chars.iter().zip(&atom_matched_chars) {
-                        if let Some(&candidate_char) = candidate_chars.get(pos as usize)
-                            && candidate_char != query_char
-                            && candidate_char.eq_ignore_ascii_case(&query_char)
-                        {
-                            case_mismatches += 1;
-                        }
-                    }
-                }
-            }
-            matched_chars.extend_from_slice(&atom_matched_chars);
-        }
+        matched_chars.sort_unstable();
+        matched_chars.dedup();
 
-        if all_matched {
-            matched_chars.sort_unstable();
-            matched_chars.dedup();
+        let positive = score as f64 * case_penalty(case_mismatches);
+        let adjusted_score =
+            positive - length_penalty_for(borrowed.string.as_ref(), length_penalty);
+        let positions = positions_from_sorted(borrowed.string.as_ref(), &matched_chars);
 
-            let positive = total_score as f64 * case_penalty(case_mismatches);
-            let adjusted_score =
-                positive - length_penalty_for(borrowed.string.as_ref(), length_penalty);
-            let positions = positions_from_sorted(borrowed.string.as_ref(), &matched_chars);
-
-            results.push(StringMatch {
-                candidate_id: borrowed.id,
-                score: adjusted_score,
-                positions,
-                string: borrowed.string.clone(),
-            });
-        }
+        results.push(StringMatch {
+            candidate_id: borrowed.id,
+            score: adjusted_score,
+            positions,
+            string: borrowed.string.clone(),
+        });
     }
     Ok(())
+}
+
+#[inline]
+fn count_case_mismatches(
+    query_chars: Option<&[char]>,
+    matched_chars: &[u32],
+    candidate: &str,
+    candidate_chars: &mut Vec<char>,
+) -> u32 {
+    let Some(query_chars) = query_chars else {
+        return 0;
+    };
+    if query_chars.len() != matched_chars.len() {
+        return 0;
+    }
+    candidate_chars.clear();
+    candidate_chars.extend(candidate.chars());
+    let mut mismatches: u32 = 0;
+    for (&query_char, &pos) in query_chars.iter().zip(matched_chars) {
+        if let Some(&candidate_char) = candidate_chars.get(pos as usize)
+            && candidate_char != query_char
+            && candidate_char.eq_ignore_ascii_case(&query_char)
+        {
+            mismatches += 1;
+        }
+    }
+    mismatches
 }
 
 #[inline]
