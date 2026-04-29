@@ -7934,7 +7934,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.auto_indent_on_move.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.auto_indent_on_move = value;
                         })
