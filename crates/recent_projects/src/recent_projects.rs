@@ -1115,6 +1115,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                     return;
                 };
 
+                if secondary && key.host().is_none() && self.window_project_groups.len() >= 2 {
+                    move_project_group_to_new_window(key, window, cx);
+                    cx.emit(DismissEvent);
+                    return;
+                }
+
                 let key = key.clone();
                 let path_list = key.path_list().clone();
                 if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
@@ -1414,7 +1420,17 @@ impl PickerDelegate for RecentProjectsDelegate {
                         this.child(
                             IconButton::new("move_to_new_window", IconName::ArrowUpRight)
                                 .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Open in New Window"))
+                                .tooltip({
+                                    let focus_handle = self.focus_handle.clone();
+                                    move |_, cx| {
+                                        Tooltip::for_action_in(
+                                            "Open in New Window",
+                                            &menu::SecondaryConfirm,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                })
                                 .on_click({
                                     let project_group_key = project_group_key.clone();
                                     cx.listener(move |_picker, _, window, cx| {
@@ -1793,8 +1809,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 let window_project_groups = self.window_project_groups.clone();
                                 let selected_index = self.selected_index;
                                 let filtered_entries = self.filtered_entries.clone();
-                                Button::new("move_to_new_window", "New Window").on_click(
-                                    move |_, window, cx| {
+                                Button::new("move_to_new_window", "New Window")
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &menu::SecondaryConfirm,
+                                        &focus_handle,
+                                        cx,
+                                    ))
+                                    .on_click(move |_, window, cx| {
                                         let key = match filtered_entries.get(selected_index) {
                                             Some(ProjectPickerEntry::ProjectGroup(hit)) => {
                                                 window_project_groups.get(hit.candidate_id).cloned()
@@ -1804,8 +1825,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         if let Some(key) = key {
                                             move_project_group_to_new_window(&key, window, cx);
                                         }
-                                    },
-                                )
+                                    })
                             })
                         })
                         .child(
