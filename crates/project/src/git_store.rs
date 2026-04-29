@@ -2660,9 +2660,7 @@ impl GitStore {
         envelope: TypedEnvelope<proto::SearchCommits>,
         mut cx: AsyncApp,
     ) -> Result<impl Stream<Item = Result<proto::SearchCommitsResponse>>> {
-        const RESPONSE_TARGET_BYTES: usize = 4 * 1024;
-        const REQUEST_BUFFER_CAPACITY: usize = 1024;
-        const RESPONSE_BUFFER_CAPACITY: usize = 16;
+        const CHUNK_SIZE: usize = 100;
 
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
@@ -2677,22 +2675,19 @@ impl GitStore {
             case_sensitive: envelope.payload.case_sensitive,
         };
 
-        let (request_tx, request_rx) = async_channel::bounded::<Oid>(REQUEST_BUFFER_CAPACITY);
+        let (request_tx, request_rx) = async_channel::unbounded();
         repository_handle.update(&mut cx, |repository, cx| {
             repository.search_commits(log_source, search_args, request_tx, cx);
         });
 
-        let (mut response_tx, response_rx) = mpsc::channel(RESPONSE_BUFFER_CAPACITY);
+        let (mut response_tx, response_rx) = mpsc::unbounded();
         cx.background_spawn(async move {
             let mut shas = Vec::new();
-            let mut byte_size = 0;
 
             while let Ok(sha) = request_rx.recv().await {
-                let sha = sha.to_string();
-                byte_size += sha.len();
-                shas.push(sha);
+                shas.push(sha.to_string());
 
-                if byte_size >= RESPONSE_TARGET_BYTES {
+                if shas.len() >= CHUNK_SIZE {
                     if response_tx
                         .send(Ok(proto::SearchCommitsResponse {
                             shas: mem::take(&mut shas),
@@ -2702,7 +2697,6 @@ impl GitStore {
                     {
                         return;
                     }
-                    byte_size = 0;
                 }
             }
 
