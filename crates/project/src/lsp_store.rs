@@ -1931,7 +1931,6 @@ impl LocalLspStore {
                         buffer_path_abs,
                         &language_server,
                         &settings,
-                        logger,
                         cx,
                     )
                     .await
@@ -2333,7 +2332,6 @@ impl LocalLspStore {
         abs_path: &Path,
         language_server: &Arc<LanguageServer>,
         settings: &LanguageSettings,
-        logger: zlog::Logger,
         cx: &mut AsyncApp,
     ) -> Result<Option<Vec<(Range<Anchor>, Arc<str>)>>> {
         let capabilities = &language_server.capabilities();
@@ -2342,8 +2340,8 @@ impl LocalLspStore {
             range_formatting_provider,
             Some(OneOf::Left(true) | OneOf::Right(_))
         ) {
-            zlog::debug!(
-                logger => "Skipping range formatting - LSP {} does not support document_range_formatting_provider",
+            log::info!(
+                "Skipping range formatting - LSP {} does not support document_range_formatting_provider",
                 language_server.name()
             );
             return Ok(None);

@@ -3844,6 +3844,50 @@ async fn test_final_newline_unmodified_last_line(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_trailing_whitespace_in_ranges_crlf(cx: &mut gpui::TestAppContext) {
+    let text = "zero\r\none  \r\ntwo\r\nthree   \r\nfour\r\nfive    ";
+    let buffer = cx.new(|cx| {
+        let buffer = Buffer::local(text, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+        buffer
+    });
+
+    let modified_rows = vec![1u32..2u32, 5u32..6u32];
+    let diff = buffer
+        .update(cx, |buffer, cx| {
+            buffer.remove_trailing_whitespace_in_ranges(&modified_rows, cx)
+        })
+        .await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "zero\none\ntwo\nthree   \nfour\nfive");
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+}
+
+#[gpui::test]
+async fn test_final_newline_in_range_crlf(cx: &mut gpui::TestAppContext) {
+    let text = "line0\r\nline1\r\nline2";
+    let buffer = cx.new(|cx| {
+        let buffer = Buffer::local(text, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+        buffer
+    });
+
+    let modified_rows = vec![0u32..3u32];
+    let diff = buffer
+        .update(cx, |buffer, cx| {
+            buffer.ensure_final_newline_in_range(&modified_rows, cx)
+        })
+        .await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "line0\nline1\nline2\n");
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+}
+
+#[gpui::test]
 fn test_words_in_range(cx: &mut gpui::App) {
     init_settings(cx, |_| {});
 
