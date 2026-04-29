@@ -184,7 +184,6 @@ pub enum IconName {
     NewThread,
     Notepad,
     OpenFolder,
-    OpenNewWindow,
     Option,
     PageDown,
     PageUp,

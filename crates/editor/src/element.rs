@@ -8736,6 +8736,7 @@ pub(crate) fn render_buffer_header(
 
     let file = buffer.file().cloned();
     let editor = editor.clone();
+    let buffer_snapshot = buffer.clone();
 
     right_click_menu("buffer-header-context-menu")
         .trigger(move |_, _, _| header)
@@ -8743,6 +8744,7 @@ pub(crate) fn render_buffer_header(
             let menu_context = focus_handle.clone();
             let editor = editor.clone();
             let file = file.clone();
+            let buffer_snapshot = buffer_snapshot.clone();
             ContextMenu::build(window, cx, move |mut menu, window, cx| {
                 if let Some(file) = file
                     && let Some(project) = editor.read(cx).project()
@@ -8828,6 +8830,19 @@ pub(crate) fn render_buffer_header(
                             )
                         });
                 }
+
+                menu = editor.update(cx, |editor, cx| {
+                    let mut menu = menu;
+                    for addon in editor.addons.values() {
+                        menu = addon.extend_buffer_header_context_menu(
+                            menu,
+                            &buffer_snapshot,
+                            window,
+                            cx,
+                        );
+                    }
+                    menu
+                });
 
                 menu.context(menu_context)
             })
