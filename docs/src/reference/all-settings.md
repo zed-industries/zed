@@ -631,23 +631,7 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 
 - Description: A list of globs for which edit predictions should be disabled for. This list adds to a pre-existing, sensible default set of globs. Any additional ones you add are combined with them.
 - Setting: `disabled_globs`
-- Default:
-
-```json [settings]
-[
-  "**/.dev.vars",
-  "**/.env*",
-  "**/*.{cert,crt}",
-  "**/*.key",
-  "**/*.pem",
-  "**/*.tfstate",
-  "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}",
-  "**/id_{dsa,ecdsa,ed25519,rsa}*",
-  "**/.zed/settings.json", // zed project settings
-  "/**/zed/settings.json", // zed user settings
-  "/**/zed/keymap.json"
-]
-```
+- Default: `["**/.dev.vars", "**/.env*", "**/*.{cert,crt}", "**/*.key", "**/*.pem", "**/*.tfstate", "**/*{credential,password,secret}*.{json,tfvars,toml,xml,yaml,yml}", "**/id_{dsa,ecdsa,ed25519,rsa}*", "**/.zed/settings.json", "/**/zed/settings.json", "/**/zed/keymap.json"]`
 
 **Options**
 
