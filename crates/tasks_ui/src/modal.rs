@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{cmp::Ordering, sync::Arc};
 
 use crate::TaskContexts;
 use editor::Editor;
@@ -361,6 +361,9 @@ impl PickerDelegate for TasksModalDelegate {
                 .update(cx, |picker, _| {
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
+                    delegate.matches.sort_by(|left, right| {
+                        compare_string_match_order(left, right, &query)
+                    });
                     if let Some(index) = delegate.last_used_candidate_index {
                         delegate.matches.sort_by_key(|m| m.candidate_id > index);
                     }
@@ -717,6 +720,25 @@ impl PickerDelegate for TasksModalDelegate {
                 .into_any_element(),
         )
     }
+}
+
+fn compare_string_match_order(left: &StringMatch, right: &StringMatch, query: &str) -> Ordering {
+    let lowercase_query = query.to_ascii_lowercase();
+    let left_starts_with_query = left.string.to_ascii_lowercase().starts_with(&lowercase_query);
+    let right_starts_with_query = right.string.to_ascii_lowercase().starts_with(&lowercase_query);
+
+    right_starts_with_query
+        .cmp(&left_starts_with_query)
+        .then_with(|| {
+            if left_starts_with_query && right_starts_with_query {
+                left.string
+                    .to_ascii_lowercase()
+                    .cmp(&right.string.to_ascii_lowercase())
+            } else {
+                Ordering::Equal
+            }
+        })
+        .then_with(|| right.cmp(left))
 }
 
 fn string_match_candidates<'a>(
