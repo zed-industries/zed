@@ -542,6 +542,9 @@ impl AnyProtoClient {
                     let request_id = envelope.message_id();
                     let stream = handler(entity, *envelope, cx);
                     async move {
+                        // An Error response is itself a terminal stream frame on
+                        // both transports (Peer and ChannelClient), so we don't
+                        // need to follow it with an EndStream.
                         match stream.await {
                             Ok(stream) => {
                                 futures::pin_mut!(stream);
@@ -552,8 +555,6 @@ impl AnyProtoClient {
                                         }
                                         Err(error) => {
                                             client.send_response(request_id, error.to_proto())?;
-                                            client
-                                                .send_response(request_id, proto::EndStream {})?;
                                             return Err(error);
                                         }
                                     }
@@ -563,7 +564,6 @@ impl AnyProtoClient {
                             }
                             Err(error) => {
                                 client.send_response(request_id, error.to_proto())?;
-                                client.send_response(request_id, proto::EndStream {})?;
                                 Err(error)
                             }
                         }

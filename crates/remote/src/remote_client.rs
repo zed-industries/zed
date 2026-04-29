@@ -1657,12 +1657,17 @@ impl ChannelClient {
 
                 if let Some(request_id) = incoming.responding_to {
                     let request_id = MessageId(request_id);
+                    // An incoming response with no payload is malformed; drop
+                    // it. The request future and any stream consumers will
+                    // remain pending until either a real response arrives or
+                    // the connection is torn down.
+                    if incoming.payload.is_none() {
+                        continue;
+                    }
                     let sender = this.response_channels.lock().remove(&request_id);
                     if let Some(sender) = sender {
                         let (tx, rx) = oneshot::channel();
-                        if incoming.payload.is_some() {
-                            sender.send((incoming, tx)).ok();
-                        }
+                        sender.send((incoming, tx)).ok();
                         rx.await.ok();
                     } else {
                         let terminal_stream_response = matches!(
@@ -1680,9 +1685,7 @@ impl ChannelClient {
                         };
                         if let Some(sender) = sender {
                             let (tx, rx) = oneshot::channel();
-                            if incoming.payload.is_some()
-                                && sender.unbounded_send((Ok(incoming), tx)).is_err()
-                            {
+                            if sender.unbounded_send((Ok(incoming), tx)).is_err() {
                                 this.stream_response_channels.lock().remove(&request_id);
                                 continue;
                             }

@@ -331,21 +331,15 @@ impl Peer {
                                 ?error,
                                 "incoming stream response: request future dropped",
                             );
+                            // The consumer has gone away, so drop the bookkeeping
+                            // for this stream rather than letting it accumulate
+                            // every subsequent message until a terminal frame.
+                            if let Some(channels) = stream_response_channels.lock().as_mut() {
+                                channels.remove(&responding_to);
+                            }
+                        } else {
+                            let _ = requester_resumed.1.await;
                         }
-
-                        tracing::debug!(
-                            %connection_id,
-                            message_id,
-                            responding_to,
-                            "incoming stream response: waiting to resume requester"
-                        );
-                        let _ = requester_resumed.1.await;
-                        tracing::debug!(
-                            %connection_id,
-                            message_id,
-                            responding_to,
-                            "incoming stream response: requester resumed"
-                        );
                     } else {
                         let message_type = proto::build_typed_envelope(
                             connection_id.into(),

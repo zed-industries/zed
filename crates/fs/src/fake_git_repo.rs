@@ -51,7 +51,7 @@ pub struct FakeCommitSnapshot {
 #[derive(Debug, Clone)]
 pub enum FakeCommitDataEntry {
     Success(CommitData),
-    Fail(CommitData),
+    Fail(Option<CommitData>),
 }
 
 #[derive(Debug, Clone)]
@@ -1450,9 +1450,8 @@ impl GitRepository for FakeGitRepository {
                     .commit_data
                     .iter()
                     .filter_map(|(sha, entry)| {
-                        let commit_data = match entry {
-                            FakeCommitDataEntry::Success(commit_data)
-                            | FakeCommitDataEntry::Fail(commit_data) => commit_data,
+                        let FakeCommitDataEntry::Success(commit_data) = entry else {
+                            return None;
                         };
                         let message = if search_args.case_sensitive {
                             commit_data.message.to_string()

@@ -2384,7 +2384,7 @@ impl FakeFs {
                     (
                         data.sha,
                         if should_fail {
-                            FakeCommitDataEntry::Fail(data)
+                            FakeCommitDataEntry::Fail(Some(data))
                         } else {
                             FakeCommitDataEntry::Success(data)
                         },
