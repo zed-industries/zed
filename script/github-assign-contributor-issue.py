@@ -87,20 +87,17 @@ def fetch_tally_contributors(api_key, form_id):
 
         questions = {q["id"]: q for q in data.get("questions", [])}
 
-        if page == 1:
-            print(
-                f"Tally question titles: {[q.get('title') for q in data.get('questions', [])]}"
-            )
-            print(f"Tally field titles: {list(field_titles.values())}")
-            print(f"Submissions on page 1: {len(data.get('submissions', []))}")
-
         for submission in data.get("submissions", []):
-            print(
-                f"  Submission {submission.get('id')}: {submission.get('submittedAt')}"
-            )
             record = parse_submission(submission, questions, field_titles)
-            if record:
-                contributors[record["github_username"].lower()] = record
+            if not record:
+                continue
+            key = record["github_username"].lower()
+            if (
+                key not in contributors
+                or submission["submittedAt"] > contributors[key]["_submitted_at"]
+            ):
+                record["_submitted_at"] = submission["submittedAt"]
+                contributors[key] = record
 
         if not data.get("hasMore", False):
             break
@@ -132,7 +129,6 @@ def parse_submission(submission, questions, field_titles):
             elif "email" in question_title:
                 email = str(answer).strip().lower()
             elif "area" in question_title:
-                print(f"  Raw area answer: {answer!r}")
                 for item in answer if isinstance(answer, list) else [answer]:
                     area = field_titles.get(item, item).strip()
                     if area:
@@ -140,7 +136,6 @@ def parse_submission(submission, questions, field_titles):
         except (TypeError, AttributeError):
             continue
 
-    print(f"  Parsed: username={github_username!r}, email={email!r}, areas={areas!r}")
     if not github_username or not areas:
         return None
 
