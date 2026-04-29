@@ -37,9 +37,7 @@ fn init_test(cx: &mut TestAppContext) {
 fn assert_active_thread(sidebar: &Sidebar, session_id: &acp::SessionId, msg: &str) {
     let active = sidebar.active_entry.as_ref();
     let matches = active.is_some_and(|entry| {
-        // Match by session_id directly on active_entry.
-        entry.session_id.as_ref() == Some(session_id)
-            // Or match by finding the thread in sidebar entries.
+        matches!(entry, ActiveEntry::Thread { session_id: Some(active_session_id), .. } if active_session_id == session_id)
             || sidebar.contents.entries.iter().any(|list_entry| {
                 matches!(list_entry, ListEntry::Thread(t)
                     if t.metadata.session_id.as_ref() == Some(session_id)
@@ -67,7 +65,7 @@ fn is_active_session(sidebar: &Sidebar, session_id: &acp::SessionId) -> bool {
         });
     match thread_id {
         Some(tid) => {
-            matches!(&sidebar.active_entry, Some(ActiveEntry { thread_id, .. }) if *thread_id == tid)
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { thread_id, .. }) if *thread_id == tid)
         }
         // Thread not in sidebar entries — can't confirm it's active.
         None => false,
@@ -77,7 +75,7 @@ fn is_active_session(sidebar: &Sidebar, session_id: &acp::SessionId) -> bool {
 #[track_caller]
 fn assert_active_draft(sidebar: &Sidebar, workspace: &Entity<Workspace>, msg: &str) {
     assert!(
-        matches!(&sidebar.active_entry, Some(ActiveEntry { workspace: ws, .. }) if ws == workspace),
+        matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { workspace: ws, .. }) if ws == workspace),
         "{msg}: expected active_entry to be Draft for workspace {:?}, got {:?}",
         workspace.entity_id(),
         sidebar.active_entry,
@@ -145,6 +143,12 @@ fn assert_remote_project_integration_sidebar_state(
                 panic!(
                     "unexpected sidebar thread while simulating remote project integration flicker: title=`{}`",
                     title
+                );
+            }
+            ListEntry::Terminal(terminal) => {
+                panic!(
+                    "unexpected sidebar terminal while simulating remote project integration flicker: title=`{}`",
+                    terminal.title
                 );
             }
         }
@@ -516,6 +520,10 @@ fn visible_entries_as_strings(
                             };
                             format!("  {title}{worktree}{live}{status_str}{notified}{selected}")
                         }
+                    }
+                    ListEntry::Terminal(terminal) => {
+                        let title = &terminal.title;
+                        format!("  {title}{selected}")
                     }
                 }
             })
@@ -2740,7 +2748,7 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
     // because the panel has a thread with messages.
     sidebar.read_with(cx, |sidebar, _cx| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry { .. })),
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { .. })),
             "Panel has a thread with messages, so active_entry should be Thread, got {:?}",
             sidebar.active_entry,
         );
@@ -2776,7 +2784,7 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
     // false — the panel still has the old thread with messages.
     sidebar.read_with(cx, |sidebar, _cx| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry { .. })),
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { .. })),
             "After adding a folder the panel still has a thread with messages, \
                  so active_entry should be Thread, got {:?}",
             sidebar.active_entry,
@@ -3871,6 +3879,12 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                     panic!(
                         "unexpected sidebar thread while opening linked worktree thread: title=`{}`, worktree=`{}`",
                         title, worktree_name
+                    );
+                }
+                ListEntry::Terminal(terminal) => {
+                    panic!(
+                        "unexpected sidebar terminal while opening linked worktree thread: title=`{}`",
+                        terminal.title
                     );
                 }
             }
@@ -6241,7 +6255,7 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
     // active_entry should still be a draft on workspace_b (the active one).
     sidebar.read_with(cx, |sidebar, _| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry { workspace: ws, .. }) if ws == &workspace_b),
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { workspace: ws, .. }) if ws == &workspace_b),
             "expected Draft(workspace_b) after archiving non-active thread, got: {:?}",
             sidebar.active_entry,
         );
@@ -6278,7 +6292,7 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
     // sidebar row but active_entry tracks it.
     sidebar.read_with(cx, |sidebar, _| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry { workspace: ws, .. }) if ws == &workspace_b),
+            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { workspace: ws, .. }) if ws == &workspace_b),
             "expected draft on workspace_b after archiving active thread, got: {:?}",
             sidebar.active_entry,
         );
@@ -9773,7 +9787,7 @@ mod property_test {
         // 3. The entry must match the agent panel's current state.
         if panel.read(cx).active_thread_id(cx).is_some() {
             anyhow::ensure!(
-                matches!(entry, ActiveEntry { .. }),
+                matches!(entry, ActiveEntry::Thread { .. }),
                 "panel shows a tracked draft but active_entry is {:?}",
                 entry,
             );
@@ -9783,7 +9797,7 @@ mod property_test {
             .map(|cv| cv.read(cx).parent_id())
         {
             anyhow::ensure!(
-                matches!(entry, ActiveEntry { thread_id: tid, .. } if *tid == thread_id),
+                matches!(entry, ActiveEntry::Thread { thread_id: tid, .. } if *tid == thread_id),
                 "panel has thread {:?} but active_entry is {:?}",
                 thread_id,
                 entry,

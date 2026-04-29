@@ -2708,10 +2708,13 @@ impl ConversationView {
                     &panel,
                     window,
                     move |this, _, event: &AgentPanelEvent, window, cx| match event {
-                        AgentPanelEvent::ActiveViewChanged | AgentPanelEvent::ThreadFocused => {
+                        AgentPanelEvent::ActiveViewChanged
+                        | AgentPanelEvent::ThreadFocused
+                        | AgentPanelEvent::TerminalFocused => {
                             dismiss_if_visible(this, window, cx);
                         }
-                        AgentPanelEvent::RetainedThreadChanged
+                        AgentPanelEvent::TerminalsChanged
+                        | AgentPanelEvent::RetainedThreadChanged
                         | AgentPanelEvent::ThreadInteracted { .. } => {}
                     },
                 ));
