@@ -13,10 +13,8 @@ pub struct Child {
 #[cfg(windows)]
 pub struct Child {
     process: smol::process::Child,
-    /// Owns the job object the spawned process is assigned to.
-    /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` means the kernel terminates every
-    /// process in the job when this handle is closed, which is the safety net
-    /// for app-quit cleanup.
+    /// Job object configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so the
+    /// kernel kills every process in the job when this handle is dropped.
     _job: std::os::windows::io::OwnedHandle,
 }
 
@@ -74,13 +72,10 @@ impl Child {
         };
         use windows::core::PCWSTR;
 
-        // SAFETY: CreateJobObjectW with null attrs/name creates an unnamed job
-        // with default security; returns Err on failure.
+        // SAFETY: FFI call with no preconditions; result checked.
         let job_handle = unsafe { CreateJobObjectW(None, PCWSTR::null()) }
             .context("CreateJobObjectW failed")?;
-        // SAFETY: CreateJobObjectW transfers ownership of the handle. Wrapping
-        // it in OwnedHandle means the kernel cleans up the job (and, with
-        // KILL_ON_JOB_CLOSE, every process in it) when this struct is dropped.
+        // SAFETY: CreateJobObjectW transfers ownership of the handle.
         let job: OwnedHandle = unsafe { OwnedHandle::from_raw_handle(job_handle.0 as _) };
 
         let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
@@ -109,13 +104,11 @@ impl Child {
                 )
             })?;
 
-        // Race window: if the spawned process forks descendants between
-        // `spawn` returning and `AssignProcessToJobObject` running, those
-        // descendants escape the job. Closing it race-free would require
-        // CREATE_SUSPENDED, which std::process::Command doesn't expose.
-        // Debug adapters don't fork during the first instructions of startup,
-        // so this is acceptable in practice.
-        // SAFETY: process and job handles are both owned and valid here.
+        // Race window: descendants forked between `spawn` returning and
+        // `AssignProcessToJobObject` escape the job. Closing it race-free would
+        // require CREATE_SUSPENDED, which std::process::Command doesn't expose.
+        // Debug adapters don't fork during startup, so this is acceptable.
+        // SAFETY: handles owned and valid for the call.
         unsafe {
             AssignProcessToJobObject(
                 HANDLE(job.as_raw_handle() as _),
@@ -138,8 +131,7 @@ impl Child {
     pub fn kill(&mut self) -> Result<()> {
         let pid = self.process.id();
         kill_descendant_tree(pid);
-        // SAFETY: killpg with SIGKILL on the original process group.
-        // Returns ESRCH if the group is empty, which we ignore.
+        // SAFETY: ESRCH (empty group) is the only failure mode and we ignore it.
         unsafe {
             libc::killpg(pid as i32, libc::SIGKILL);
         }
@@ -153,7 +145,6 @@ impl Child {
         use windows::Win32::System::JobObjects::TerminateJobObject;
 
         // SAFETY: job handle is owned by self and valid for this call.
-        // TerminateJobObject atomically kills every process in the job.
         unsafe { TerminateJobObject(HANDLE(self._job.as_raw_handle() as _), 1) }
             .context("TerminateJobObject failed")?;
         Ok(())
@@ -183,8 +174,7 @@ fn kill_descendant_tree(root_pid: u32) {
     }
 
     for pid in descendants {
-        // SAFETY: kill(2) with SIGKILL on a nonexistent PID returns ESRCH,
-        // which we ignore.
+        // SAFETY: ESRCH (PID gone) is acceptable; we ignore the result.
         unsafe {
             libc::kill(pid as i32, libc::SIGKILL);
         }
@@ -225,6 +215,9 @@ fn list_parent_pids() -> std::collections::HashMap<u32, u32> {
 fn list_parent_pids() -> std::collections::HashMap<u32, u32> {
     use std::collections::HashMap;
     let mut parent_of: HashMap<u32, u32> = HashMap::new();
+    // Synchronous fork is intentional: this only runs during app-quit cleanup,
+    // not on an async runtime thread.
+    #[allow(clippy::disallowed_methods)]
     let Ok(output) = std::process::Command::new("/bin/ps")
         .args(["-A", "-o", "pid=,ppid="])
         .output()
