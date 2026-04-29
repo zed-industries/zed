@@ -112,6 +112,7 @@ struct MessageEditorCompletionDelegate {
     session_capabilities: SharedSessionCapabilities,
     has_thread_store: bool,
     message_editor: WeakEntity<MessageEditor>,
+    supports_skills: bool,
 }
 
 impl PromptCompletionProviderDelegate for MessageEditorCompletionDelegate {
@@ -131,6 +132,10 @@ impl PromptCompletionProviderDelegate for MessageEditorCompletionDelegate {
 
     fn confirm_command(&self, cx: &mut App) {
         let _ = self.message_editor.update(cx, |this, cx| this.send(cx));
+    }
+
+    fn supports_skills(&self) -> bool {
+        self.supports_skills
     }
 }
 
@@ -455,6 +460,7 @@ impl MessageEditor {
                 session_capabilities: session_capabilities.clone(),
                 has_thread_store: thread_store.is_some(),
                 message_editor: cx.weak_entity(),
+                supports_skills: agent_id.0 == "codex-acp",
             },
             editor.downgrade(),
             mention_set.clone(),
@@ -1841,13 +1847,19 @@ impl Addon for MessageEditorAddon {
     }
 }
 
-/// Parses markdown mention links in the format `[@name](uri)` from text.
+/// Parses markdown-backed mentions from text. `@` entries refer to context,
+/// while `$` entries refer to agent skills such as `[$skill](skill://...)`.
 /// Returns a vector of (range, MentionUri) pairs where range is the byte range in the text.
 fn parse_mention_links(text: &str, path_style: PathStyle) -> Vec<(Range<usize>, MentionUri)> {
     let mut mentions = Vec::new();
     let mut search_start = 0;
 
-    while let Some(link_start) = text[search_start..].find("[@") {
+    while let Some(link_start) = text[search_start..]
+        .find("[@")
+        .into_iter()
+        .chain(text[search_start..].find("[$"))
+        .min()
+    {
         let absolute_start = search_start + link_start;
 
         // Find the matching closing bracket for the name, handling nested brackets.

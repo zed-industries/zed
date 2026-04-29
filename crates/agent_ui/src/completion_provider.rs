@@ -1,6 +1,6 @@
 use std::cmp::Reverse;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -32,6 +32,7 @@ use ui::IconName;
 use ui::prelude::*;
 use util::ResultExt as _;
 use util::paths::PathStyle;
+use util::paths::home_dir;
 use util::rel_path::RelPath;
 use util::truncate_and_remove_front;
 use workspace::Workspace;
@@ -158,6 +159,13 @@ pub(crate) enum Match {
 }
 
 #[derive(Debug, Clone)]
+pub struct SkillMatch {
+    name: SharedString,
+    description: Option<SharedString>,
+    path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
 pub struct BranchDiffMatch {
     pub base_ref: SharedString,
 }
@@ -216,6 +224,9 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
 
     fn available_commands(&self, cx: &App) -> Vec<AvailableCommand>;
     fn confirm_command(&self, cx: &mut App);
+    fn supports_skills(&self) -> bool {
+        false
+    }
 }
 
 pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
@@ -355,6 +366,46 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             icon_path: Some(icon_path),
             confirm: Some(confirm_completion_callback(
                 rule.title,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+        }
+    }
+
+    fn completion_for_skill(
+        skill: SkillMatch,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Completion {
+        let uri = MentionUri::Skill {
+            name: skill.name.to_string(),
+            abs_path: skill.path,
+        };
+        let new_text = format!("[{}]({}) ", uri.name(), uri.to_uri());
+        let new_text_len = new_text.len();
+        Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label: CodeLabel::plain(skill.name.to_string(), None),
+            documentation: skill.description.map(|description| {
+                CompletionDocumentation::MultiLinePlainText(description)
+            }),
+            source: project::CompletionSource::Custom,
+            icon_path: Some(uri.icon_path(cx)),
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                uri.name().into(),
                 source_range.start,
                 new_text_len - 1,
                 uri,
@@ -860,6 +911,54 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         })
     }
 
+    fn search_skills(&self, query: String, cx: &mut App) -> Task<Vec<SkillMatch>> {
+        if !self.source.supports_skills() {
+            return Task::ready(Vec::new());
+        }
+
+        let workspace_roots = self
+            .workspace
+            .upgrade()
+            .map(|workspace| {
+                workspace
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let background_executor = cx.background_executor().clone();
+
+        cx.background_spawn(async move {
+            let mut skills = discover_codex_skills(workspace_roots);
+            skills.sort_by(|left, right| left.name.cmp(&right.name));
+
+            if query.is_empty() {
+                skills.truncate(100);
+                return skills;
+            }
+
+            let candidates = skills
+                .iter()
+                .enumerate()
+                .map(|(id, skill)| StringMatchCandidate::new(id, &skill.name))
+                .collect::<Vec<_>>();
+            fuzzy::match_strings(
+                &candidates,
+                &query,
+                false,
+                true,
+                100,
+                &Arc::new(AtomicBool::default()),
+                background_executor,
+            )
+            .await
+            .into_iter()
+            .map(|mat| skills[mat.candidate_id].clone())
+            .collect()
+        })
+    }
+
     fn fetch_branch_diff_match(
         &self,
         workspace: &Entity<Workspace>,
@@ -1245,6 +1344,36 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
         let editor = self.editor.clone();
         let mention_set = self.mention_set.downgrade();
         match state {
+            PromptCompletion::Skill(SkillCompletion { query, .. }) => {
+                let search_task = self.search_skills(query.unwrap_or_default(), cx);
+                cx.spawn(async move |_, cx| {
+                    let matches = search_task.await;
+                    let completions = cx.update(|cx| {
+                        matches
+                            .into_iter()
+                            .map(|skill| {
+                                Self::completion_for_skill(
+                                    skill,
+                                    source_range.clone(),
+                                    source.clone(),
+                                    editor.clone(),
+                                    mention_set.clone(),
+                                    workspace.clone(),
+                                    cx,
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    });
+
+                    Ok(vec![CompletionResponse {
+                        completions,
+                        display_options: CompletionDisplayOptions {
+                            dynamic_width: true,
+                        },
+                        is_incomplete: true,
+                    }])
+                })
+            }
             PromptCompletion::SlashCommand(SlashCommandCompletion {
                 command, argument, ..
             }) => {
@@ -1585,6 +1714,7 @@ fn confirm_completion_callback<T: PromptCompletionProviderDelegate>(
 enum PromptCompletion {
     SlashCommand(SlashCommandCompletion),
     Mention(MentionCompletion),
+    Skill(SkillCompletion),
 }
 
 impl PromptCompletion {
@@ -1592,6 +1722,7 @@ impl PromptCompletion {
         match self {
             Self::SlashCommand(completion) => completion.source_range.clone(),
             Self::Mention(completion) => completion.source_range.clone(),
+            Self::Skill(completion) => completion.source_range.clone(),
         }
     }
 
@@ -1607,8 +1738,135 @@ impl PromptCompletion {
                 return Some(Self::Mention(mention));
             }
         }
+        if line.contains('$')
+            && let Some(skill) = SkillCompletion::try_parse(line, offset_to_line)
+        {
+            return Some(Self::Skill(skill));
+        }
         SlashCommandCompletion::try_parse(line, offset_to_line).map(Self::SlashCommand)
     }
+}
+
+#[derive(Debug, Default, PartialEq)]
+struct SkillCompletion {
+    source_range: Range<usize>,
+    query: Option<String>,
+}
+
+impl SkillCompletion {
+    fn try_parse(line: &str, offset_to_line: usize) -> Option<Self> {
+        let mut skill_start = None;
+        for (idx, _) in line.rmatch_indices('$') {
+            if line[idx + 1..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_whitespace())
+            {
+                continue;
+            }
+
+            if idx > 0
+                && line[..idx]
+                    .chars()
+                    .last()
+                    .is_some_and(|c| !c.is_whitespace())
+            {
+                continue;
+            }
+
+            skill_start = Some(idx);
+            break;
+        }
+
+        let skill_start = skill_start?;
+        let rest_of_line = &line[skill_start + 1..];
+        let query_text = rest_of_line.split_whitespace().next().unwrap_or_default();
+        let end = skill_start + 1 + query_text.len();
+
+        Some(Self {
+            source_range: skill_start + offset_to_line..end + offset_to_line,
+            query: (!query_text.is_empty()).then(|| query_text.to_string()),
+        })
+    }
+}
+
+fn discover_codex_skills(workspace_roots: Vec<PathBuf>) -> Vec<SkillMatch> {
+    let mut skill_roots = Vec::new();
+
+    if let Ok(codex_home) = std::env::var("CODEX_HOME") {
+        skill_roots.push(PathBuf::from(codex_home).join("skills"));
+    } else {
+        skill_roots.push(home_dir().join(".codex").join("skills"));
+    }
+
+    for root in workspace_roots {
+        skill_roots.push(root.join(".codex").join("skills"));
+    }
+
+    let mut skills = Vec::new();
+    for root in skill_roots {
+        collect_codex_skills_from_root(&root, &mut skills);
+    }
+    skills
+}
+
+fn collect_codex_skills_from_root(root: &Path, skills: &mut Vec<SkillMatch>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let skill_path = entry.path().join("SKILL.md");
+        if !skill_path.is_file() {
+            continue;
+        }
+
+        let skill_name = entry.file_name().to_string_lossy().into_owned();
+        let metadata = std::fs::read_to_string(&skill_path)
+            .ok()
+            .map(|content| parse_skill_metadata(&content))
+            .unwrap_or_default();
+        let name = metadata
+            .name
+            .unwrap_or(skill_name)
+            .trim_start_matches('$')
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+
+        skills.push(SkillMatch {
+            name: name.into(),
+            description: metadata.description.map(Into::into),
+            path: skill_path,
+        });
+    }
+}
+
+#[derive(Default)]
+struct SkillMetadata {
+    name: Option<String>,
+    description: Option<String>,
+}
+
+fn parse_skill_metadata(content: &str) -> SkillMetadata {
+    let mut metadata = SkillMetadata::default();
+    for line in content.lines().take(80) {
+        let Some((key, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.trim().trim_matches('"').trim_matches('\'');
+        match key.trim() {
+            "name" if metadata.name.is_none() && !value.is_empty() => {
+                metadata.name = Some(value.to_string());
+            }
+            "description" if metadata.description.is_none() && !value.is_empty() => {
+                metadata.description = Some(value.to_string());
+            }
+            _ => {}
+        }
+    }
+    metadata
 }
 
 #[derive(Debug, Default, PartialEq)]

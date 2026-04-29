@@ -360,6 +360,7 @@ impl UserMessage {
                             )
                             .ok();
                         }
+                        MentionUri::Skill { .. } => {}
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())

@@ -9265,6 +9265,7 @@ pub(crate) fn open_link(
             MentionUri::TerminalSelection { .. } => {}
             MentionUri::GitDiff { .. } => {}
             MentionUri::MergeConflict { .. } => {}
+            MentionUri::Skill { .. } => {}
         })
     } else {
         cx.open_url(&url);

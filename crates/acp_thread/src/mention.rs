@@ -61,6 +61,10 @@ pub enum MentionUri {
     MergeConflict {
         file_path: String,
     },
+    Skill {
+        name: String,
+        abs_path: PathBuf,
+    },
 }
 
 impl MentionUri {
@@ -225,6 +229,20 @@ impl MentionUri {
                 }
             }
             "http" | "https" => Ok(MentionUri::Fetch { url }),
+            "skill" => {
+                let decoded = decode(path).unwrap_or(Cow::Borrowed(path));
+                Ok(MentionUri::Skill {
+                    name: single_query_param(&url, "name")?
+                        .or_else(|| {
+                            Path::new(decoded.as_ref())
+                                .parent()
+                                .and_then(Path::file_name)
+                                .map(|name| name.to_string_lossy().into_owned())
+                        })
+                        .unwrap_or_else(|| "skill".to_string()),
+                    abs_path: decoded.as_ref().into(),
+                })
+            }
             other => bail!("unrecognized scheme {:?}", other),
         }
     }
@@ -262,6 +280,7 @@ impl MentionUri {
                 ..
             } => selection_name(path.as_deref(), line_range),
             MentionUri::Fetch { url } => url.to_string(),
+            MentionUri::Skill { name, .. } => format!("${name}"),
         }
     }
 
@@ -317,6 +336,7 @@ impl MentionUri {
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
             MentionUri::GitDiff { .. } => IconName::GitBranch.path().into(),
             MentionUri::MergeConflict { .. } => IconName::GitMergeConflict.path().into(),
+            MentionUri::Skill { .. } => IconName::Sparkle.path().into(),
         }
     }
 
@@ -424,6 +444,12 @@ impl MentionUri {
                 url.query_pairs_mut().append_pair("path", file_path);
                 url
             }
+            MentionUri::Skill { name, abs_path } => {
+                let mut url = Url::parse("skill:///").unwrap();
+                url.set_path(&abs_path.to_string_lossy());
+                url.query_pairs_mut().append_pair("name", name);
+                url
+            }
         }
     }
 }
@@ -432,7 +458,10 @@ pub struct MentionLink<'a>(&'a MentionUri);
 
 impl fmt::Display for MentionLink<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[@{}]({})", self.0.name(), self.0.to_uri())
+        match self.0 {
+            MentionUri::Skill { name, .. } => write!(f, "[${name}]({})", self.0.to_uri()),
+            _ => write!(f, "[@{}]({})", self.0.name(), self.0.to_uri()),
+        }
     }
 }
 

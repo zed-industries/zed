@@ -147,6 +147,7 @@ impl MentionSet {
             MentionUri::GitDiff { base_ref } => {
                 self.confirm_mention_for_git_diff(base_ref.into(), cx)
             }
+            MentionUri::Skill { .. } => Task::ready(Ok(Mention::Link)),
             MentionUri::Selection {
                 abs_path: Some(abs_path),
                 line_range,
@@ -296,6 +297,7 @@ impl MentionSet {
             MentionUri::GitDiff { base_ref } => {
                 self.confirm_mention_for_git_diff(base_ref.into(), cx)
             }
+            MentionUri::Skill { .. } => Task::ready(Ok(Mention::Link)),
             MentionUri::MergeConflict { .. } => {
                 debug_panic!("unexpected merge conflict URI");
                 Task::ready(Err(anyhow!("unexpected merge conflict URI")))
