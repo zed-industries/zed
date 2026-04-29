@@ -603,6 +603,8 @@ enum EditPrediction {
     MoveWithin {
         target: Anchor,
         snapshot: BufferSnapshot,
+        excerpt_expansion: Option<EditPredictionExcerptExpansion>,
+        open_on_accept: Option<language::Anchor>,
     },
     /// Move to a specific location in a different editor (not the active one)
     MoveOutside {
@@ -616,6 +618,12 @@ struct EditPredictionState {
     completion: EditPrediction,
     completion_id: Option<SharedString>,
     invalidation_range: Option<Range<Anchor>>,
+}
+
+struct EditPredictionExcerptExpansion {
+    buffer: Entity<Buffer>,
+    target: language::Anchor,
+    ranges: Vec<Range<Point>>,
 }
 
 enum EditPredictionSettings {
@@ -4335,10 +4343,52 @@ impl Editor {
         }
 
         match &active_edit_prediction.completion {
-            EditPrediction::MoveWithin { target, .. } => {
+            EditPrediction::MoveWithin {
+                target,
+                snapshot,
+                excerpt_expansion,
+                open_on_accept,
+            } => {
                 let target = *target;
 
                 if matches!(granularity, EditPredictionGranularity::Full) {
+                    if let Some(target) = open_on_accept {
+                        if let Some(workspace) = self.workspace() {
+                            Self::open_editor_at_anchor(snapshot, *target, &workspace, window, cx)
+                                .detach_and_log_err(cx);
+                        }
+                        return;
+                    }
+
+                    if let Some(expansion) = excerpt_expansion {
+                        self.buffer.update(cx, |multi_buffer, cx| {
+                            multi_buffer.update_excerpts_for_path(
+                                PathKey::for_buffer(&expansion.buffer, cx),
+                                expansion.buffer.clone(),
+                                expansion.ranges.clone(),
+                                multibuffer_context_lines(cx),
+                                cx,
+                            );
+                        });
+
+                        if let Some(target) = self
+                            .buffer
+                            .read(cx)
+                            .snapshot(cx)
+                            .anchor_in_excerpt(expansion.target)
+                        {
+                            self.change_selections(
+                                SelectionEffects::scroll(Autoscroll::newest()),
+                                window,
+                                cx,
+                                |selections| {
+                                    selections.select_anchor_ranges([target..target]);
+                                },
+                            );
+                            self.update_visible_edit_prediction(window, cx);
+                        }
+                        return;
+                    }
                     if let Some(position_map) = &self.last_position_map {
                         let target_row = target.to_display_point(&position_map.snapshot).row();
                         let is_visible = position_map.visible_row_range.contains(&target_row);
@@ -4922,16 +4972,21 @@ impl Editor {
             }
         };
 
-        let edits = edits
-            .into_iter()
-            .flat_map(|(range, new_text)| {
+        let snapshot = multibuffer
+            .buffer_for_id(cursor_text_anchor.buffer_id)
+            .cloned()?;
+
+        let buffer_edits = edits;
+        let edits = buffer_edits
+            .iter()
+            .filter_map(|(range, new_text)| {
                 Some((
-                    multibuffer.buffer_anchor_range_to_anchor_range(range)?,
-                    new_text,
+                    multibuffer.buffer_anchor_range_to_anchor_range(range.clone())?,
+                    new_text.clone(),
                 ))
             })
             .collect::<Vec<_>>();
-        if edits.is_empty() {
+        if buffer_edits.is_empty() {
             return None;
         }
 
@@ -4940,19 +4995,26 @@ impl Editor {
             Some((anchor, predicted.offset))
         });
 
-        let first_edit_start = edits.first().unwrap().0.start;
+        let first_buffer_edit = buffer_edits.first()?;
+        let last_buffer_edit = buffer_edits.last()?;
+        let first_buffer_edit_start_point = first_buffer_edit.0.start.to_point(&snapshot);
+        let last_buffer_edit_end_point = last_buffer_edit.0.end.to_point(&snapshot);
+
+        let first_edit_start = edits.first().map(|edit| edit.0.start).or_else(|| {
+            self.buffer
+                .read(cx)
+                .buffer_point_to_anchor(&buffer, first_buffer_edit_start_point, cx)
+        })?;
         let first_edit_start_point = first_edit_start.to_point(&multibuffer);
         let edit_start_row = first_edit_start_point.row.saturating_sub(2);
 
-        let last_edit_end = edits.last().unwrap().0.end;
-        let last_edit_end_point = last_edit_end.to_point(&multibuffer);
+        let last_edit_end_point = edits
+            .last()
+            .map(|edit| edit.0.end.to_point(&multibuffer))
+            .unwrap_or(first_edit_start_point);
         let edit_end_row = cmp::min(multibuffer.max_point().row, last_edit_end_point.row + 2);
 
         let cursor_row = cursor.to_point(&multibuffer).row;
-
-        let snapshot = multibuffer
-            .buffer_for_id(cursor_text_anchor.buffer_id)
-            .cloned()?;
 
         let mut inlay_ids = Vec::new();
         let invalidation_row_range;
@@ -4969,20 +5031,55 @@ impl Editor {
             .map(|provider| provider.provider.supports_jump_to_edit())
             .unwrap_or(true);
 
+        let prediction_fully_visible = edits.len() == buffer_edits.len();
         let is_move = supports_jump
-            && (move_invalidation_row_range.is_some() || self.edit_predictions_hidden_for_vim_mode);
+            && (!prediction_fully_visible
+                || move_invalidation_row_range.is_some()
+                || self.edit_predictions_hidden_for_vim_mode);
         let completion = if is_move {
             if let Some(provider) = &self.edit_prediction_provider {
                 provider.provider.did_show(SuggestionDisplayType::Jump, cx);
             }
             invalidation_row_range =
                 move_invalidation_row_range.unwrap_or(edit_start_row..edit_end_row);
+            let target = first_edit_start;
+            let (_, target_snapshot) = multibuffer.anchor_to_buffer_anchor(target)?;
+            let mut open_on_accept = None;
+            let excerpt_expansion = if prediction_fully_visible {
+                None
+            } else {
+                let edit_row_range = first_buffer_edit.0.start.to_point(&target_snapshot).row
+                    ..last_buffer_edit.0.end.to_point(&target_snapshot).row;
+                let closest_excerpt_distance = multibuffer
+                    .excerpts_for_buffer(target_snapshot.remote_id())
+                    .map(|excerpt| {
+                        let excerpt_range = excerpt.context.to_point(&target_snapshot);
+                        if edit_row_range.end < excerpt_range.start.row {
+                            excerpt_range.start.row - edit_row_range.end
+                        } else if edit_row_range.start > excerpt_range.end.row {
+                            edit_row_range.start - excerpt_range.end.row
+                        } else {
+                            0
+                        }
+                    })
+                    .min();
 
-            let (_, snapshot) = multibuffer.anchor_to_buffer_anchor(first_edit_start)?;
-
+                if closest_excerpt_distance.is_some_and(|distance| distance <= 10) {
+                    Some(EditPredictionExcerptExpansion {
+                        buffer: buffer.clone(),
+                        target: first_buffer_edit.0.start,
+                        ranges: vec![first_buffer_edit_start_point..last_buffer_edit_end_point],
+                    })
+                } else {
+                    open_on_accept = Some(first_buffer_edit.0.start);
+                    None
+                }
+            };
             EditPrediction::MoveWithin {
-                target: first_edit_start,
-                snapshot: snapshot.clone(),
+                target,
+                snapshot: target_snapshot.clone(),
+                excerpt_expansion,
+                open_on_accept,
             }
         } else {
             let show_completions_in_menu = self.has_visible_completions_menu();
@@ -6581,7 +6678,9 @@ impl Editor {
                             .rounded_tl(px(0.))
                             .overflow_hidden()
                             .child(div().px_1p5().child(match &prediction.completion {
-                                EditPrediction::MoveWithin { target, snapshot } => {
+                                EditPrediction::MoveWithin {
+                                    target, snapshot, ..
+                                } => {
                                     use text::ToPoint as _;
                                     if target.text_anchor_in(&snapshot).to_point(snapshot).row
                                         > cursor_point.row
