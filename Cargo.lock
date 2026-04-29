@@ -16289,6 +16289,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "git",
+ "git_ui",
  "gpui",
  "http_client",
  "language",
