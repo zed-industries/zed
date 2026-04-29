@@ -71,48 +71,6 @@ fn parse_env_output(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::{cell::Cell, process::ExitStatus};
-
-    use super::*;
-
-    #[cfg(unix)]
-    fn exit_status(code: i32) -> ExitStatus {
-        use std::os::unix::process::ExitStatusExt;
-
-        ExitStatus::from_raw(code << 8)
-    }
-
-    #[cfg(windows)]
-    fn exit_status(code: u32) -> ExitStatus {
-        use std::os::windows::process::ExitStatusExt;
-
-        ExitStatus::from_raw(code)
-    }
-
-    #[test]
-    fn parse_env_output_accepts_valid_env_when_shell_exits_nonzero() {
-        let warning_called = Cell::new(false);
-        let env_output = "shell startup noise\n{\"PATH\":\"/usr/bin\",\"SHELL\":\"/bin/zsh\"}\nshell shutdown noise";
-
-        let env_map = parse_env_output(
-            env_output,
-            &exit_status(1),
-            || {
-                warning_called.set(true);
-                "shell exited with 1 but environment was captured successfully".to_string()
-            },
-            || "shell exited with 1".to_string(),
-        )
-        .expect("valid environment output should be returned despite non-zero shell exit");
-
-        assert!(warning_called.get());
-        assert_eq!(env_map.get("PATH").map(String::as_str), Some("/usr/bin"));
-        assert_eq!(env_map.get("SHELL").map(String::as_str), Some("/bin/zsh"));
-    }
-}
-
 #[cfg(unix)]
 async fn capture_unix(
     shell_path: &Path,
@@ -343,4 +301,46 @@ async fn capture_windows(
             )
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, process::ExitStatus};
+
+    use super::*;
+
+    #[cfg(unix)]
+    fn exit_status(code: i32) -> ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+
+        ExitStatus::from_raw(code << 8)
+    }
+
+    #[cfg(windows)]
+    fn exit_status(code: u32) -> ExitStatus {
+        use std::os::windows::process::ExitStatusExt;
+
+        ExitStatus::from_raw(code)
+    }
+
+    #[test]
+    fn parse_env_output_accepts_valid_env_when_shell_exits_nonzero() {
+        let warning_called = Cell::new(false);
+        let env_output = "shell startup noise\n{\"PATH\":\"/usr/bin\",\"SHELL\":\"/bin/zsh\"}\nshell shutdown noise";
+
+        let env_map = parse_env_output(
+            env_output,
+            &exit_status(1),
+            || {
+                warning_called.set(true);
+                "shell exited with 1 but environment was captured successfully".to_string()
+            },
+            || "shell exited with 1".to_string(),
+        )
+        .expect("valid environment output should be returned despite non-zero shell exit");
+
+        assert!(warning_called.get());
+        assert_eq!(env_map.get("PATH").map(String::as_str), Some("/usr/bin"));
+        assert_eq!(env_map.get("SHELL").map(String::as_str), Some("/bin/zsh"));
+    }
 }
