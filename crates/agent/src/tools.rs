@@ -16,6 +16,7 @@ mod open_tool;
 mod read_file_tool;
 mod restore_file_from_disk_tool;
 mod save_file_tool;
+mod skill_tool;
 mod spawn_agent_tool;
 mod streaming_edit_file_tool;
 mod terminal_tool;
@@ -43,6 +44,7 @@ pub use open_tool::*;
 pub use read_file_tool::*;
 pub use restore_file_from_disk_tool::*;
 pub use save_file_tool::*;
+pub use skill_tool::*;
 pub use spawn_agent_tool::*;
 pub use streaming_edit_file_tool::*;
 pub use terminal_tool::*;
@@ -134,6 +136,7 @@ tools! {
     ReadFileTool,
     RestoreFileFromDiskTool,
     SaveFileTool,
+    SkillTool,
     SpawnAgentTool,
     TerminalTool,
     UpdatePlanTool,

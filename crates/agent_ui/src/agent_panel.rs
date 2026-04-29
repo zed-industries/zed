@@ -34,6 +34,7 @@ use crate::ExpandMessageEditor;
 use crate::ManageProfiles;
 use crate::agent_connection_store::AgentConnectionStore;
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
+use crate::ui::HoldForDefault;
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow,
     InlineAssistant, LoadThreadFromClipboard, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
@@ -47,7 +48,10 @@ use crate::{
     Agent, AgentInitialContent, ExternalSourcePrompt, NewExternalAgentThread,
     NewNativeAgentThreadFromSummary,
 };
-use agent_settings::AgentSettings;
+use crate::{ExpandMessageEditor, ThreadHistoryView};
+use crate::{ManageProfiles, ThreadHistoryViewEvent};
+use crate::{ThreadHistoryView, agent_connection_store::AgentConnectionStore};
+use agent_settings::{AgentSettings, WindowLayout};
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::Result;
 use chrono::{DateTime, Utc};

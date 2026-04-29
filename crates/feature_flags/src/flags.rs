@@ -59,6 +59,16 @@ impl FeatureFlag for UpdatePlanToolFeatureFlag {
 }
 register_feature_flag!(UpdatePlanToolFeatureFlag);
 
+pub struct AgentSkillsFeatureFlag;
+
+impl FeatureFlag for AgentSkillsFeatureFlag {
+    const NAME: &'static str = "agent-skills";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
 pub struct ProjectPanelUndoRedoFeatureFlag;
 
 impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {

@@ -1,6 +1,7 @@
 use super::*;
 use crate::{AgentTool, EditFileTool, ReadFileTool};
 use acp_thread::UserMessageId;
+use feature_flags::FeatureFlagAppExt;
 use fs::FakeFs;
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelToolUse, StopReason,

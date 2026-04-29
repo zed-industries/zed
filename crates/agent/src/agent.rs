@@ -4,6 +4,7 @@ mod legacy_thread;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
+mod skills;
 mod templates;
 #[cfg(test)]
 mod tests;
@@ -18,6 +19,7 @@ use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 pub use pattern_extraction::*;
 pub use shell_command_parser::extract_commands;
+pub use skills::*;
 pub use templates::*;
 pub use thread::*;
 pub use thread_store::*;
@@ -49,7 +51,7 @@ use prompt_store::{
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 use std::any::Any;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
 use util::ResultExt;
@@ -422,7 +424,17 @@ impl NativeAgent {
             return project_id;
         }
 
-        let project_context = cx.new(|_| ProjectContext::new(vec![], vec![]));
+        // Load rules files synchronously on first construction to ensure they're
+        // in the system prompt deterministically
+        let worktree_roots: Vec<(String, Arc<Path>)> = project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let tree = worktree.read(cx);
+                (tree.root_name_str().to_string(), tree.abs_path().clone())
+            })
+            .collect();
+        let project_context = cx.new(|_| ProjectContext::new_sync(&worktree_roots));
         self.register_project_with_initial_context(project.clone(), project_context, cx);
         if let Some(state) = self.projects.get_mut(&project_id) {
             state.project_context_needs_refresh.send(()).ok();
