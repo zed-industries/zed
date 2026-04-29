@@ -271,6 +271,20 @@ impl MergeFrom for OpenAiReasoningEffort {
 pub struct OpenAiCompatibleSettingsContent {
     pub api_url: String,
     pub available_models: Vec<OpenAiCompatibleAvailableModel>,
+    /// Configuration for an external command that provides the API key.
+    pub api_key_helper: Option<ApiKeyHelperConfig>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct ApiKeyHelperConfig {
+    /// The shell command to execute via `sh -c`. Should output the API key on stdout.
+    pub command: String,
+    /// Cache lifetime in seconds for the key returned by the command.
+    /// Values above 604800 (one week) are clamped to that maximum.
+    /// When omitted, the key is fetched once per Zed session and only refreshed
+    /// when the helper settings change or Zed is restarted.
+    #[schemars(range(min = 0, max = 604800))]
+    pub ttl_seconds: Option<u64>,
 }
 
 #[with_fallible_options]

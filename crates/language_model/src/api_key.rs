@@ -11,8 +11,8 @@ use util::ResultExt as _;
 
 use crate::AuthenticateError;
 
-/// Manages a single API key for a language model provider. API keys either come from environment
-/// variables or the system keychain.
+/// Manages a single API key for a language model provider. API keys come from environment
+/// variables, the system keychain, or an external helper command.
 ///
 /// Keys from the system keychain are associated with a provider URL, and this ensures that they are
 /// only used with that URL.
@@ -202,6 +202,32 @@ impl ApiKeyState {
         })
     }
 
+    /// Clears the cached API key if it was provided by a helper command.
+    /// Keys from environment variables or the system keychain are left untouched.
+    pub fn clear_helper_key(&mut self) {
+        if matches!(
+            &self.load_status,
+            LoadStatus::Loaded(ApiKey {
+                source: ApiKeySource::Helper,
+                ..
+            })
+        ) {
+            self.load_status = LoadStatus::NotPresent;
+        }
+    }
+
+    /// Recorded as `Helper` rather than `EnvVar` so that `store()` and
+    /// `handle_url_change()` still work — env-var keys block keychain writes
+    /// and URL-change reloads.
+    pub fn set_key_from_helper(&mut self, url: SharedString, key: Arc<str>) {
+        self.url = url;
+        self.load_status = LoadStatus::Loaded(ApiKey {
+            source: ApiKeySource::Helper,
+            key,
+        });
+        self.load_task = None;
+    }
+
     fn load<Ent: 'static>(
         url: SharedString,
         get_this: impl Fn(&mut Ent) -> &mut Self + 'static,
@@ -286,6 +312,7 @@ impl LoadStatus {
 enum ApiKeySource {
     EnvVar(SharedString),
     SystemKeychain,
+    Helper,
 }
 
 impl Display for ApiKeySource {
@@ -293,6 +320,7 @@ impl Display for ApiKeySource {
         match self {
             ApiKeySource::EnvVar(var) => write!(f, "environment variable {}", var),
             ApiKeySource::SystemKeychain => write!(f, "system keychain"),
+            ApiKeySource::Helper => write!(f, "api_key_helper"),
         }
     }
 }
