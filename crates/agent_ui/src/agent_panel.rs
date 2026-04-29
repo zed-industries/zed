@@ -2604,7 +2604,7 @@ impl AgentPanel {
             .thread
             .read(cx)
             .draft_prompt()
-            .map(<[_]>::to_vec)
+            .map(|blocks| blocks.to_vec())
             .filter(|blocks| !blocks.is_empty());
         let blocks = saved.unwrap_or_else(|| {
             thread_view

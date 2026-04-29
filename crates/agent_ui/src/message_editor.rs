@@ -12,7 +12,6 @@ use acp_thread::MentionUri;
 use agent::ThreadStore;
 use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
-use collections::HashMap;
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
@@ -768,20 +767,17 @@ impl MessageEditor {
                 let crease_snapshot = editor.display_map.read(cx).crease_snapshot();
                 let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
                 let text = editor.text(cx);
-                let mut tracked_buffers = Vec::new();
-                let chunks = build_chunks_from_creases(
+                build_chunks_from_creases(
                     &text,
                     &crease_snapshot,
                     &buffer_snapshot,
                     supports_embedded_context,
-                    &mut tracked_buffers,
                     |crease_id| {
                         contents
                             .get(crease_id)
-                            .map(|(uri, mention)| (uri, Some(mention)))
+                            .map(|(uri, mention)| (uri.clone(), Some(mention.clone())))
                     },
-                );
-                (chunks, tracked_buffers)
+                )
             }))
         })
     }
@@ -796,27 +792,14 @@ impl MessageEditor {
         let mention_set = self.mention_set.read(cx);
         let supports_embedded_context =
             self.session_capabilities.read().supports_embedded_context();
-        let resolved: HashMap<CreaseId, (MentionUri, Option<Mention>)> = crease_snapshot
-            .creases()
-            .filter_map(|(crease_id, _)| {
-                mention_set
-                    .resolved_mention_for_crease(&crease_id)
-                    .map(|entry| (crease_id, entry))
-            })
-            .collect();
-        let mut tracked_buffers = Vec::new();
-        build_chunks_from_creases(
+        let (chunks, _tracked_buffers) = build_chunks_from_creases(
             &text,
             &crease_snapshot,
             &buffer_snapshot,
             supports_embedded_context,
-            &mut tracked_buffers,
-            |crease_id| {
-                resolved
-                    .get(crease_id)
-                    .map(|(uri, mention)| (uri, mention.as_ref()))
-            },
-        )
+            |crease_id| mention_set.resolved_mention_for_crease(crease_id),
+        );
+        chunks
     }
 
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1817,19 +1800,19 @@ impl Addon for MessageEditorAddon {
 
 /// Walks the editor's creases in order, interleaving plain-text chunks from
 /// `text` with mention blocks produced from `resolve`.
-fn build_chunks_from_creases<'a>(
+fn build_chunks_from_creases(
     text: &str,
     crease_snapshot: &CreaseSnapshot,
     buffer_snapshot: &MultiBufferSnapshot,
     supports_embedded_context: bool,
-    tracked_buffers: &mut Vec<Entity<Buffer>>,
-    mut resolve: impl FnMut(&CreaseId) -> Option<(&'a MentionUri, Option<&'a Mention>)>,
-) -> Vec<acp::ContentBlock> {
-    let (mut ix, _) = text
+    mut resolve: impl FnMut(&CreaseId) -> Option<(MentionUri, Option<Mention>)>,
+) -> (Vec<acp::ContentBlock>, Vec<Entity<Buffer>>) {
+    let mut ix = text
         .char_indices()
         .find(|(_, c)| !c.is_whitespace())
-        .unwrap_or((0, '\0'));
+        .map_or(text.len(), |(i, _)| i);
     let mut chunks = Vec::new();
+    let mut tracked_buffers = Vec::new();
 
     for (crease_id, crease) in crease_snapshot.creases() {
         let Some((uri, mention)) = resolve(&crease_id) else {
@@ -1840,10 +1823,10 @@ fn build_chunks_from_creases<'a>(
             chunks.push(text[ix..crease_range.start.0].into());
         }
         chunks.push(mention_to_content_block(
-            uri,
-            mention,
+            &uri,
+            mention.as_ref(),
             supports_embedded_context,
-            tracked_buffers,
+            &mut tracked_buffers,
         ));
         ix = crease_range.end.0;
     }
@@ -1854,7 +1837,7 @@ fn build_chunks_from_creases<'a>(
             chunks.push(last_chunk.into());
         }
     }
-    chunks
+    (chunks, tracked_buffers)
 }
 
 fn mention_to_content_block(
@@ -1867,13 +1850,20 @@ fn mention_to_content_block(
         Some(Mention::Text {
             content,
             tracked_buffers: mention_tracked_buffers,
-        }) if supports_embedded_context => {
+        }) => {
             tracked_buffers.extend(mention_tracked_buffers.iter().cloned());
-            acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                acp::EmbeddedResourceResource::TextResourceContents(
-                    acp::TextResourceContents::new(content.clone(), uri.to_uri().to_string()),
-                ),
-            ))
+            if supports_embedded_context {
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new(content.clone(), uri.to_uri().to_string()),
+                    ),
+                ))
+            } else {
+                acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+                    uri.name(),
+                    uri.to_uri().to_string(),
+                ))
+            }
         }
         Some(Mention::Image(mention_image)) => acp::ContentBlock::Image(
             acp::ImageContent::new(mention_image.data.clone(), mention_image.format.mime_type())
