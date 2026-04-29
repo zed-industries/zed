@@ -14,6 +14,7 @@ use extension::build_debug_adapter_schema_path;
 use extension::extension_builder::CompilationConcurrency;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
+use futures::StreamExt as _;
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
 use settings_content::SemanticTokenRules;
@@ -95,11 +96,14 @@ async fn main() -> Result<()> {
     let extension_provides = manifest.provides();
     validate_extension_features(&extension_provides)?;
 
-    let grammars = test_grammars(&manifest, &extension_path, &mut wasm_store)?;
-    test_languages(&manifest, &extension_path, &grammars)?;
-    test_themes(&manifest, &extension_path, fs.clone()).await?;
-    test_snippets(&manifest, &extension_path, fs.clone()).await?;
-    test_debug_adapter_schemas(&manifest, &extension_path, fs.clone()).await?;
+    let grammars = test_grammars(&manifest, &extension_path, &mut wasm_store, fs.clone()).await?;
+    futures::future::try_join4(
+        test_languages(&manifest, &extension_path, &grammars, fs.clone()),
+        test_themes(&manifest, &extension_path, fs.clone()),
+        test_snippets(&manifest, &extension_path, fs.clone()),
+        test_debug_adapter_schemas(&manifest, &extension_path, fs.clone()),
+    )
+    .await?;
 
     let archive_dir = output_dir.join("archive");
     fs::remove_dir_all(&archive_dir).ok();
