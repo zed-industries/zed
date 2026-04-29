@@ -1741,6 +1741,21 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
+    // TODO(partial-commit): stage/unstage only the individual lines under the
+    // cursor within their hunk. The line-level index computation was written
+    // against the old whole-index-rebuild staging path; it still needs to be
+    // reimplemented on top of the current optimistic-index model in
+    // `project::git_store`. Until then, toggling selected lines falls back to
+    // toggling the whole hunk(s) the selection covers.
+    pub(super) fn toggle_staged_selected_lines(
+        &mut self,
+        _: &::git::ToggleStagedSelectedLines,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_staged_selected_diff_hunks(&::git::ToggleStaged, window, cx);
+    }
+
     pub(super) fn stage_and_next(
         &mut self,
         _: &::git::StageAndNext,
