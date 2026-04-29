@@ -49,7 +49,7 @@ pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, Ext
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
-    linked_worktree_short_name, worktrees_directory_for_repo,
+    linked_worktree_short_name, repo_identity_path, worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
@@ -6204,7 +6204,14 @@ impl ProjectGroupKey {
         let mut names = Vec::with_capacity(self.paths.paths().len());
         for abs_path in self.paths.ordered_paths() {
             let detail = path_detail_map.get(abs_path).copied().unwrap_or(0);
-            let suffix = path_suffix(abs_path, detail);
+            // Strip a `.git` extension for display (bare clones like `foo.git`
+            // should display as `foo`, matching the titlebar).
+            let display_path = if abs_path.extension() == Some(std::ffi::OsStr::new("git")) {
+                std::borrow::Cow::Owned(abs_path.with_extension(""))
+            } else {
+                std::borrow::Cow::Borrowed(abs_path.as_path())
+            };
+            let suffix = path_suffix(&display_path, detail);
             if !suffix.is_empty() {
                 names.push(suffix);
             }

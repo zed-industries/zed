@@ -895,7 +895,7 @@ impl ContextProvider for PythonContextProvider {
             Ok(task::TaskVariables::from_iter(
                 test_target
                     .into_iter()
-                    .chain(module_target.into_iter())
+                    .chain(module_target)
                     .chain([toolchain]),
             ))
         })
