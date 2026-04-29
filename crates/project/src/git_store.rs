@@ -29,7 +29,7 @@ use futures::{
     stream::{FuturesOrdered, FuturesUnordered},
 };
 use git::{
-    BuildPermalinkParams, GitHostingProviderRegistry, Oid, RunHook,
+    BuildPermalinkParams, GitHostingProviderRegistry, Oid, REPO_EXCLUDE, RunHook,
     blame::Blame,
     parse_git_remote_url,
     repository::{
@@ -5905,6 +5905,57 @@ impl Repository {
                 }
                 RepositoryState::Remote(_) => Err(anyhow::anyhow!(
                     "Cannot modify .gitignore on remote repository"
+                )),
+            }
+        })
+    }
+
+    pub fn add_path_to_exclude(
+        &mut self,
+        repo_path: &RepoPath,
+        is_dir: bool,
+    ) -> oneshot::Receiver<Result<()>> {
+        let path_display = repo_path.as_ref().display(PathStyle::Posix);
+        let file_path_str = if is_dir {
+            format!("{}/", path_display)
+        } else {
+            path_display.to_string()
+        };
+
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { fs, backend, .. }) => {
+                    let exclude_path = backend.main_repository_path().join(REPO_EXCLUDE);
+                    if let Some(parent) = exclude_path.parent() {
+                        fs.create_dir(parent).await?;
+                    }
+
+                    let existing_content = fs.load(&exclude_path).await.unwrap_or_default();
+
+                    if existing_content
+                        .lines()
+                        .any(|line| line.trim() == file_path_str)
+                    {
+                        return Ok(());
+                    }
+
+                    let new_content = if existing_content.is_empty() {
+                        format!("{}\n", file_path_str)
+                    } else if existing_content.ends_with('\n') {
+                        format!("{}{}\n", existing_content, file_path_str)
+                    } else {
+                        format!("{}\n{}\n", existing_content, file_path_str)
+                    };
+
+                    fs.save(
+                        &exclude_path,
+                        &text::Rope::from(new_content.as_str()),
+                        text::LineEnding::Unix,
+                    )
+                    .await
+                }
+                RepositoryState::Remote(_) => Err(anyhow::anyhow!(
+                    "Cannot modify .git/info/exclude on remote repository"
                 )),
             }
         })

@@ -1143,6 +1143,10 @@ impl ProjectPanel {
                                         )
                                     })
                                     .action("Add to .gitignore", Box::new(git::AddToGitignore))
+                                    .action(
+                                        "Add to .git/info/exclude",
+                                        Box::new(git::AddToGitExclude),
+                                    )
                                     .when(has_file_history, |menu| {
                                         menu.action("View File History", Box::new(git::FileHistory))
                                     })
@@ -2293,6 +2297,52 @@ impl ProjectPanel {
                     if let Some(workspace) = workspace.upgrade() {
                         cx.update(|cx| {
                             let message = format!("Failed to add to .gitignore: {}", e);
+                            let toast = StatusToast::new(message, cx, |this, _| {
+                                this.icon(Icon::new(IconName::XCircle).color(Color::Error))
+                                    .dismiss_button(true)
+                            });
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.toggle_status_toast(toast, cx);
+                            });
+                        });
+                    }
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+            Some(())
+        });
+    }
+
+    fn add_to_git_exclude(
+        &mut self,
+        _: &git::AddToGitExclude,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            let selection = self.selection?;
+            let (_, entry) = self.selected_sub_entry(cx)?;
+            let is_dir = entry.is_dir();
+            let project = self.project.read(cx);
+
+            let project_path = project.path_for_entry(selection.entry_id, cx)?;
+
+            let git_store = project.git_store();
+            let (repository, repo_path) = git_store
+                .read(cx)
+                .repository_and_path_for_project_path(&project_path, cx)?;
+
+            let workspace = self.workspace.clone();
+            let receiver =
+                repository.update(cx, |repo, _| repo.add_path_to_exclude(&repo_path, is_dir));
+
+            cx.spawn(async move |_, cx| {
+                if let Err(e) = receiver.await? {
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|cx| {
+                            let message = format!("Failed to add to .git/info/exclude: {}", e);
                             let toast = StatusToast::new(message, cx, |this, _| {
                                 this.icon(Icon::new(IconName::XCircle).color(Color::Error))
                                     .dismiss_button(true)
@@ -6684,6 +6734,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::duplicate))
                         .on_action(cx.listener(Self::restore_file))
                         .on_action(cx.listener(Self::add_to_gitignore))
+                        .on_action(cx.listener(Self::add_to_git_exclude))
                         .when(!project.is_remote(), |el| {
                             el.on_action(cx.listener(Self::trash))
                         })

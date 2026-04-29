@@ -10339,3 +10339,219 @@ impl Render for TestProjectItemView {
         Empty
     }
 }
+
+#[gpui::test]
+async fn test_add_to_git_exclude_creates_file_when_missing(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {
+                "HEAD": "ref: refs/heads/main",
+            },
+            "scratch.log": "debug output",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/scratch.log", cx);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.add_to_git_exclude(&git::AddToGitExclude, window, cx);
+    });
+    cx.run_until_parked();
+
+    let exclude_contents = fs
+        .load(Path::new("/root/.git/info/exclude"))
+        .await
+        .expect("info/exclude should exist after action");
+    assert_eq!(exclude_contents, "scratch.log\n");
+}
+
+#[gpui::test]
+async fn test_add_to_git_exclude_is_noop_when_already_present(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {
+                "HEAD": "ref: refs/heads/main",
+                "info": {
+                    "exclude": "scratch.log\n",
+                },
+            },
+            "scratch.log": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/scratch.log", cx);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.add_to_git_exclude(&git::AddToGitExclude, window, cx);
+    });
+    cx.run_until_parked();
+
+    let exclude_contents = fs
+        .load(Path::new("/root/.git/info/exclude"))
+        .await
+        .unwrap();
+    assert_eq!(
+        exclude_contents, "scratch.log\n",
+        "duplicate add should leave file unchanged"
+    );
+}
+
+#[gpui::test]
+async fn test_add_to_git_exclude_inserts_newline_when_missing(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {
+                "HEAD": "ref: refs/heads/main",
+                "info": {
+                    "exclude": "first.log",
+                },
+            },
+            "second.log": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/second.log", cx);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.add_to_git_exclude(&git::AddToGitExclude, window, cx);
+    });
+    cx.run_until_parked();
+
+    let exclude_contents = fs
+        .load(Path::new("/root/.git/info/exclude"))
+        .await
+        .unwrap();
+    assert_eq!(exclude_contents, "first.log\nsecond.log\n");
+}
+
+#[gpui::test]
+async fn test_add_to_git_exclude_appends_trailing_slash_for_dirs(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {
+                "HEAD": "ref: refs/heads/main",
+            },
+            "build": {
+                "out.txt": "",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/build", cx);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.add_to_git_exclude(&git::AddToGitExclude, window, cx);
+    });
+    cx.run_until_parked();
+
+    let exclude_contents = fs
+        .load(Path::new("/root/.git/info/exclude"))
+        .await
+        .unwrap();
+    assert_eq!(exclude_contents, "build/\n");
+}
+
+#[gpui::test]
+async fn test_add_to_git_exclude_appends_to_file_with_trailing_newline(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".git": {
+                "HEAD": "ref: refs/heads/main",
+                "info": {
+                    "exclude": "first.log\n",
+                },
+            },
+            "second.log": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/second.log", cx);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.add_to_git_exclude(&git::AddToGitExclude, window, cx);
+    });
+    cx.run_until_parked();
+
+    let exclude_contents = fs
+        .load(Path::new("/root/.git/info/exclude"))
+        .await
+        .unwrap();
+    assert_eq!(exclude_contents, "first.log\nsecond.log\n");
+}
