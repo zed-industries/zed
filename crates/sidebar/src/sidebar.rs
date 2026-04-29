@@ -1009,7 +1009,6 @@ impl Sidebar {
         let mut entries = Vec::new();
         let mut notified_threads = previous.notified_threads;
         let mut current_session_ids: HashSet<acp::SessionId> = HashSet::new();
-        let mut current_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
         let mut project_header_indices: Vec<usize> = Vec::new();
         let mut seen_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
 
@@ -1362,7 +1361,6 @@ impl Sidebar {
                     if let Some(sid) = thread.metadata.session_id.clone() {
                         current_session_ids.insert(sid);
                     }
-                    current_thread_ids.insert(thread.metadata.thread_id);
                     entries.push(thread.into());
                 }
             } else {
@@ -1385,16 +1383,17 @@ impl Sidebar {
                     if let Some(sid) = &thread.metadata.session_id {
                         current_session_ids.insert(sid.clone());
                     }
-                    current_thread_ids.insert(thread.metadata.thread_id);
                     entries.push(thread.into());
                 }
             }
         }
 
-        notified_threads.retain(|id| current_thread_ids.contains(id));
+        // Collapsed groups don't load threads, so retain against the global store rather than rebuilt entries.
+        let thread_store = ThreadMetadataStore::global(cx).read(cx);
+        notified_threads.retain(|id| thread_store.entry(*id).is_some_and(|m| !m.archived));
 
         self.thread_last_accessed
-            .retain(|id, _| current_thread_ids.contains(id));
+            .retain(|id, _| thread_store.entry(*id).is_some_and(|m| !m.archived));
 
         self.contents = SidebarContents {
             entries,

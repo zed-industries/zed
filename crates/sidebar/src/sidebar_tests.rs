@@ -773,6 +773,64 @@ async fn test_collapse_and_expand_group(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_collapse_preserves_unread_indicator(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    save_n_test_threads(1, &project, cx).await;
+
+    let project_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    let thread_id = sidebar.read_with(cx, |s, _| {
+        s.contents
+            .entries
+            .iter()
+            .find_map(|e| match e {
+                ListEntry::Thread(t) => Some(t.metadata.thread_id),
+                _ => None,
+            })
+            .expect("expected one thread entry")
+    });
+
+    sidebar.update_in(cx, |s, _, _| {
+        s.contents.notified_threads.insert(thread_id);
+    });
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [my-project]",
+            "  Thread 1 (!)",
+        ]
+    );
+
+    sidebar.update_in(cx, |s, window, cx| {
+        s.toggle_collapse(&project_group_key, window, cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.update_in(cx, |s, window, cx| {
+        s.toggle_collapse(&project_group_key, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [my-project]",
+            "  Thread 1 (!)",
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_collapse_state_survives_worktree_key_change(cx: &mut TestAppContext) {
     // When a worktree is added to a project, the project group key changes.
     // The sidebar's collapsed/expanded state is keyed by ProjectGroupKey, so
