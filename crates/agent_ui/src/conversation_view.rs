@@ -88,7 +88,7 @@ use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
-    Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
+    Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AgentPanelEvent, AllowAlways, AllowOnce,
     AuthorizeToolCall, ClearMessageQueue, CycleFavoriteModels, CycleModeSelector,
     CycleThinkingEffort, EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread,
     OpenAddContextMenu, OpenAgentDiff, RejectAll, RejectOnce, RemoveFirstQueuedMessage,
@@ -2656,23 +2656,61 @@ impl ConversationView {
 
             self.notifications.push(screen_window);
 
-            // If the user manually refocuses the original window, dismiss the popup.
-            self.notification_subscriptions
-                .entry(screen_window)
-                .or_insert_with(Vec::new)
-                .push({
-                    let pop_up_weak = pop_up.downgrade();
+            let dismiss_if_visible = {
+                let pop_up_weak = pop_up.downgrade();
+                move |this: &ConversationView,
+                      window: &mut Window,
+                      cx: &mut Context<ConversationView>| {
+                    if this.agent_status_visible(window, cx)
+                        && let Some(pop_up) = pop_up_weak.upgrade()
+                    {
+                        pop_up.update(cx, |notification, cx| {
+                            notification.dismiss(cx);
+                        });
+                    }
+                }
+            };
 
-                    cx.observe_window_activation(window, move |this, window, cx| {
-                        if this.agent_status_visible(window, cx)
-                            && let Some(pop_up) = pop_up_weak.upgrade()
-                        {
-                            pop_up.update(cx, |notification, cx| {
-                                notification.dismiss(cx);
-                            });
+            let subscriptions = self
+                .notification_subscriptions
+                .entry(screen_window)
+                .or_insert_with(Vec::new);
+
+            subscriptions.push({
+                let dismiss_if_visible = dismiss_if_visible.clone();
+                cx.observe_window_activation(window, move |this, window, cx| {
+                    dismiss_if_visible(this, window, cx);
+                })
+            });
+
+            if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+                let dismiss_if_visible = dismiss_if_visible.clone();
+                subscriptions.push(cx.observe_in(
+                    &multi_workspace,
+                    window,
+                    move |this, _, window, cx| {
+                        dismiss_if_visible(this, window, cx);
+                    },
+                ));
+            }
+
+            if let Some(panel) = self
+                .workspace
+                .upgrade()
+                .and_then(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
+            {
+                subscriptions.push(cx.subscribe_in(
+                    &panel,
+                    window,
+                    move |this, _, event: &AgentPanelEvent, window, cx| match event {
+                        AgentPanelEvent::ActiveViewChanged | AgentPanelEvent::ThreadFocused => {
+                            dismiss_if_visible(this, window, cx);
                         }
-                    })
-                });
+                        AgentPanelEvent::RetainedThreadChanged
+                        | AgentPanelEvent::ThreadInteracted { .. } => {}
+                    },
+                ));
+            }
         }
     }
 
@@ -3886,6 +3924,94 @@ pub(crate) mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some()),
             "Expected no notification when the sidebar is open, even if focused on another thread"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_dismissed_when_sidebar_opens(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs, [], cx).await;
+        let multi_workspace_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace_handle
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(StubAgentServer::default_response()),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project.clone(),
+                    Some(thread_store),
+                    None,
+                    "agent_panel",
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.windows()
+                .iter()
+                .filter(|window| window.downcast::<AgentNotification>().is_some())
+                .count(),
+            1,
+            "Expected a notification while the thread is not visible"
+        );
+
+        multi_workspace_handle
+            .update(cx, |mw, _window, cx| {
+                mw.open_sidebar(cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            cx.windows()
+                .iter()
+                .filter(|window| window.downcast::<AgentNotification>().is_some())
+                .count(),
+            0,
+            "Notification should auto-dismiss when the sidebar opens and makes the thread visible"
         );
     }
 
