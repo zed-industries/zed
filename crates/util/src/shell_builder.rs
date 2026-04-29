@@ -111,7 +111,7 @@ impl ShellBuilder {
                     | ShellKind::Xonsh
                     | ShellKind::Elvish => {
                         combined_command.insert(0, '(');
-                        combined_command.push_str(") </dev/null");
+                        combined_command.push_str("\n) </dev/null");
                     }
                     ShellKind::PowerShell | ShellKind::Pwsh => {
                         combined_command.insert_str(0, "$null | & {");
@@ -157,7 +157,7 @@ impl ShellBuilder {
                     | ShellKind::Xonsh
                     | ShellKind::Elvish => {
                         combined_command.insert(0, '(');
-                        combined_command.push_str(") </dev/null");
+                        combined_command.push_str("\n) </dev/null");
                     }
                     ShellKind::PowerShell | ShellKind::Pwsh => {
                         combined_command.insert_str(0, "$null | & {");
@@ -273,7 +273,7 @@ mod test {
             .build(Some("echo".into()), &["nothing".to_string()]);
 
         assert_eq!(program, "nu");
-        assert_eq!(args, vec!["-i", "-c", "(echo nothing) </dev/null"]);
+        assert_eq!(args, vec!["-i", "-c", "(echo nothing\n) </dev/null"]);
     }
 
     #[test]
@@ -287,6 +287,23 @@ mod test {
 
         assert_eq!(program, "fish");
         assert_eq!(args, vec!["-i", "-c", "begin; echo test; end </dev/null"]);
+    }
+
+    #[test]
+    fn redirect_stdin_to_dev_null_preserves_heredoc() {
+        let shell = Shell::Program("sh".to_owned());
+        let shell_builder = ShellBuilder::new(&shell, false);
+
+        let command = "cat <<EOF\nhello\nEOF";
+        let (program, args) = shell_builder
+            .redirect_stdin_to_dev_null()
+            .build(Some(command.into()), &[]);
+
+        assert_eq!(program, "sh");
+        assert_eq!(
+            args,
+            vec!["-i", "-c", "(cat <<EOF\nhello\nEOF\n) </dev/null"]
+        );
     }
 
     #[test]

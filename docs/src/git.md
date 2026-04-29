@@ -11,7 +11,7 @@ For operations that Zed doesn't support natively, you can use the integrated ter
 
 ## Git Panel
 
-The Git Panel gives you a birds-eye view of the state of your working tree and of Git's staging area.
+The Git Panel shows the state of your working tree and Git's staging area.
 
 You can open the Git Panel using {#action git_panel::ToggleFocus}, or by clicking the Git icon in the status bar.
 
@@ -70,15 +70,40 @@ To disable word diff for specific languages only, add this to your settings.json
 }
 ```
 
+### Diff View Styles
+
+Zed displays diffs in two modes: **split** (side-by-side comparison) or **unified** (inline changes). Split view is the default.
+
+#### Changing the diff view
+
+Open the Settings Editor ({#kb zed::OpenSettings}) and search for "diff view style". Select either **Split** or **Unified**.
+
+To change the default, add this to your `settings.json`:
+
+```json
+{
+  "diff_view_style": "unified"
+}
+```
+
+See [Configuring Zed](./configuring-zed.md) for more about the Settings Editor.
+
+#### Split vs unified
+
+- **Split**: Shows the original and modified versions side by side. Useful for comparing file structure or reviewing large changes.
+- **Unified**: Shows changes inline with additions and deletions in a single view. Useful for focusing on specific line changes.
+
+You can switch between modes at any time. Your preference applies to [Project Diff](#project-diff), [File History](#file-history), and [Stash Diff View](#stash-diff-view). These diff views function as [multibuffers](./multibuffers.md), allowing you to edit multiple excerpts simultaneously.
+
 ## File History
 
 File History shows the commit history for an individual file. Each entry displays the commit's author, timestamp, and message. Selecting a commit opens a diff view filtered to show only the changes made to that file in that commit.
 
-To open File History:
+To view File History:
 
-- Right-click on a file in the Project Panel and select "Open File History"
-- Right-click on a file in the Git Panel and select "Open File History"
-- Right-click on an editor tab and select "Open File History"
+- Right-click on a file in the Project Panel and select "View File History"
+- Right-click on a file in the Git Panel and select "View File History"
+- Right-click on an editor tab and select "View File History"
 - Use the Command Palette and search for "file history"
 
 ## Fetch, Push, and Pull
@@ -143,11 +168,48 @@ Find more information about setting the `preferred-line-length` in the [Configur
 
 Create a new branch using {#action git::Branch} or switch to an existing branch using {#action git::Switch} or {#action git::CheckoutBranch}.
 
+When you are working in a [Git worktree](#git-worktrees), use the branch picker after switching to the worktree to create or check out the branch you want to use there.
+
 ### Deleting Branches
 
 To delete a branch, open the branch switcher with {#action git::Switch}, find the branch you want to delete, and use the delete option. Zed will confirm before deleting to prevent accidental data loss.
 
 > **Note:** You cannot delete the branch you currently have checked out. Switch to a different branch first.
+
+## Git Worktrees
+
+Git worktrees let you keep multiple checkouts of the same repository on disk at the same time.
+This is useful when you want to work on more than one branch or task without stashing, rebuilding, or disturbing the files in your main checkout.
+
+Open the worktree picker from the title bar, next to the project picker, or by running {#action git::Worktree}.
+From the picker, you can:
+
+- Create a new linked worktree either from the current branch or default branch
+- Type a name to create a named worktree or let Zed automatically pick one for you
+- Switch the current workspace to an existing worktree
+- Open an existing worktree in a new window
+- Delete linked worktrees that are not currently open in the project
+
+### Worktree Management
+
+New worktrees are created in detached HEAD state.
+After switching to the new worktree, use the branch picker next to the worktree picker to create a new branch or check out an existing, unused branch.
+This keeps Zed from accidentally checking out the same branch in multiple worktrees.
+
+The directory used for new worktrees is controlled by the `git.worktree_directory` setting.
+By default, Zed creates worktrees under `../worktrees` relative to the repository's working directory.
+
+See [All Settings](./reference/all-settings.md#git-worktree-directory) for examples.
+
+### Init Setup
+
+To run setup steps after Zed creates a linked worktree, use the [`create_worktree` task hook](./tasks.md#hooks).
+For agent-specific workflows, see [Worktree Isolation](./ai/parallel-agents.md#worktree-isolation).
+
+### Multi-root Workspaces
+
+If your project contains multiple Git repositories (i.e., multi-root folders), Zed creates a linked worktree for each repository when creating a new worktree from the picker.
+Non-Git folders in the same project are included in the new workspace as-is.
 
 ## Merge Conflicts
 
@@ -249,7 +311,9 @@ Zed currently supports links to the hosted versions of
 
 ### Self-Hosted Instances
 
-For self-hosted GitHub, GitLab, or Bitbucket instances, add them to the `git_hosting_providers` setting so commit hashes and permalinks resolve to your domain:
+Zed automatically identifies Git hosting providers by checking for keywords in your Git remote URL. For example, if your self-hosted URL contains `gitlab`, `gitea`, or other recognized provider names, Zed will automatically register that hosting provider without any configuration needed.
+
+However, if your self-hosted Git instance URL doesn't contain identifying keywords, you can manually configure Zed to create clickable links to your instance by adding a `git_hosting_providers` setting so commit hashes and permalinks resolve to your domain:
 
 ```json [settings]
 {
@@ -263,7 +327,9 @@ For self-hosted GitHub, GitLab, or Bitbucket instances, add them to the `git_hos
 }
 ```
 
-Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, and `sourcehut`. The `name` field is optional and used for display purposes.
+The `provider` field specifies which type of hosting service you're using. Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, and `sourcehut`. The `name` is optional and used as a display name for your instance, and `base_url` is the root URL of your self-hosted server.
+
+You can configure multiple custom providers if you work with several self-hosted instances.
 
 ### Permalinks
 
@@ -308,6 +374,7 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::Branch}                     | {#kb git::Branch}                     |
 | {#action git::Switch}                     | {#kb git::Switch}                     |
 | {#action git::CheckoutBranch}             | {#kb git::CheckoutBranch}             |
+| {#action git::Worktree}                   | {#kb git::Worktree}                   |
 | {#action git::Blame}                      | {#kb git::Blame}                      |
 | {#action git::StashAll}                   | {#kb git::StashAll}                   |
 | {#action git::StashPop}                   | {#kb git::StashPop}                   |

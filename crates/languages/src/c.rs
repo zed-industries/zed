@@ -80,7 +80,9 @@ impl LspInstaller for CLspAdapter {
             digest: expected_digest,
         } = version;
         let version_dir = container_dir.join(format!("clangd_{name}"));
-        let binary_path = version_dir.join("bin/clangd");
+        let binary_path = version_dir
+            .join("bin")
+            .join(format!("clangd{}", consts::EXE_SUFFIX));
 
         let binary = LanguageServerBinary {
             path: binary_path.clone(),
@@ -287,11 +289,11 @@ impl super::LspAdapter for CLspAdapter {
 
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
+        let name = &symbol.name;
+        let (text, filter_range, display_range) = match symbol.kind {
             lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
                 let text = format!("void {} () {{}}", name);
                 let filter_range = 0..name.len();
@@ -368,7 +370,7 @@ impl super::LspAdapter for CLspAdapter {
         Ok(original)
     }
 
-    fn retain_old_diagnostic(&self, previous_diagnostic: &Diagnostic, _: &App) -> bool {
+    fn retain_old_diagnostic(&self, previous_diagnostic: &Diagnostic) -> bool {
         clangd_ext::is_inactive_region(previous_diagnostic)
     }
 
@@ -388,7 +390,9 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             }
         }
         let clangd_dir = last_clangd_dir.context("no cached binary")?;
-        let clangd_bin = clangd_dir.join("bin/clangd");
+        let clangd_bin = clangd_dir
+            .join("bin")
+            .join(format!("clangd{}", consts::EXE_SUFFIX));
         anyhow::ensure!(
             clangd_bin.exists(),
             "missing clangd binary in directory {clangd_dir:?}"

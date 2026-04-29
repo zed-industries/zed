@@ -1,3 +1,8 @@
+---
+title: Docker
+description: "Configure Docker language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Docker
 
 Support for `Dockerfile` and `docker-compose.yaml` in Zed is provided by community-maintained extensions.

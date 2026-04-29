@@ -123,8 +123,6 @@ pub fn assert_text_with_selections(
     assert_eq!(actual, marked_text, "Selections don't match");
 }
 
-// RA thinks this is dead code even though it is used in a whole lot of tests
-#[allow(dead_code)]
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn build_editor(
     buffer: Entity<MultiBuffer>,
@@ -240,37 +238,52 @@ pub fn editor_content_with_blocks_and_size(
                 first_excerpt,
                 height,
             } => {
+                while lines.len() <= row.0 as usize {
+                    lines.push(String::new());
+                }
                 lines[row.0 as usize].push_str(&cx.update(|_, cx| {
                     format!(
                         "§ {}",
                         first_excerpt
-                            .buffer
+                            .buffer(snapshot.buffer_snapshot())
                             .file()
                             .map(|file| file.file_name(cx))
                             .unwrap_or("<no file>")
                     )
                 }));
                 for row in row.0 + 1..row.0 + height {
+                    while lines.len() <= row as usize {
+                        lines.push(String::new());
+                    }
                     lines[row as usize].push_str("§ -----");
                 }
             }
             Block::ExcerptBoundary { height, .. } => {
                 for row in row.0..row.0 + height {
+                    while lines.len() <= row as usize {
+                        lines.push(String::new());
+                    }
                     lines[row as usize].push_str("§ -----");
                 }
             }
             Block::BufferHeader { excerpt, height } => {
+                while lines.len() <= row.0 as usize {
+                    lines.push(String::new());
+                }
                 lines[row.0 as usize].push_str(&cx.update(|_, cx| {
                     format!(
                         "§ {}",
                         excerpt
-                            .buffer
+                            .buffer(snapshot.buffer_snapshot())
                             .file()
                             .map(|file| file.file_name(cx))
                             .unwrap_or("<no file>")
                     )
                 }));
                 for row in row.0 + 1..row.0 + height {
+                    while lines.len() <= row as usize {
+                        lines.push(String::new());
+                    }
                     lines[row as usize].push_str("§ -----");
                 }
             }

@@ -4,6 +4,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, OnceLock};
 
+use util::paths::SanitizedPath;
 pub use util::paths::home_dir;
 use util::rel_path::RelPath;
 
@@ -69,15 +70,16 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
         panic!("set_custom_data_dir called after data_dir or config_dir was initialized");
     }
     CUSTOM_DATA_DIR.get_or_init(|| {
-        let mut path = PathBuf::from(dir);
-        if path.is_relative() && path.exists() {
-            let abs_path = path
-                .canonicalize()
-                .expect("failed to canonicalize custom data directory's path to an absolute path");
-            path = util::paths::SanitizedPath::new(&abs_path).into()
-        }
+        let path = PathBuf::from(dir);
         std::fs::create_dir_all(&path).expect("failed to create custom data directory");
-        path
+        let canonicalized = path
+            .canonicalize()
+            .expect("failed to canonicalize custom data directory's path to an absolute path");
+        // On Windows, `canonicalize` produces extended-length paths prefixed
+        // with `\\?\`. Strip that prefix so downstream consumers (e.g.
+        // Node.js language servers) that receive derived paths as arguments
+        // don't choke on the verbatim syntax.
+        SanitizedPath::new(&canonicalized).as_path().to_path_buf()
     })
 }
 
@@ -123,6 +125,29 @@ pub fn data_dir() -> &'static PathBuf {
                 .join("Zed")
         } else {
             config_dir().clone() // Fallback
+        }
+    })
+}
+
+pub fn state_dir() -> &'static PathBuf {
+    static STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
+    STATE_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            return home_dir().join(".local").join("state").join("Zed");
+        }
+
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            return if let Ok(flatpak_xdg_state) = std::env::var("FLATPAK_XDG_STATE_HOME") {
+                flatpak_xdg_state.into()
+            } else {
+                dirs::state_dir().expect("failed to determine XDG_STATE_HOME directory")
+            }
+            .join("zed");
+        } else {
+            // Windows
+            return dirs::data_local_dir()
+                .expect("failed to determine LocalAppData directory")
+                .join("Zed");
         }
     })
 }
@@ -294,20 +319,6 @@ pub fn snippets_dir() -> &'static PathBuf {
 
 /// Returns the path to the contexts directory.
 ///
-/// This is where the saved contexts from the Assistant are stored.
-pub fn text_threads_dir() -> &'static PathBuf {
-    static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    CONTEXTS_DIR.get_or_init(|| {
-        if cfg!(target_os = "macos") {
-            config_dir().join("conversations")
-        } else {
-            data_dir().join("conversations")
-        }
-    })
-}
-
-/// Returns the path to the contexts directory.
-///
 /// This is where the prompts for use with the Assistant are stored.
 pub fn prompts_dir() -> &'static PathBuf {
     static PROMPTS_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -389,12 +400,6 @@ pub fn external_agents_dir() -> &'static PathBuf {
 pub fn copilot_dir() -> &'static PathBuf {
     static COPILOT_DIR: OnceLock<PathBuf> = OnceLock::new();
     COPILOT_DIR.get_or_init(|| data_dir().join("copilot"))
-}
-
-/// Returns the path to the Supermaven directory.
-pub fn supermaven_dir() -> &'static PathBuf {
-    static SUPERMAVEN_DIR: OnceLock<PathBuf> = OnceLock::new();
-    SUPERMAVEN_DIR.get_or_init(|| data_dir().join("supermaven"))
 }
 
 /// Returns the path to the default Prettier directory.

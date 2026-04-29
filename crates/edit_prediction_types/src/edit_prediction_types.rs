@@ -2,6 +2,12 @@ use std::{ops::Range, sync::Arc};
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditPredictionDiscardReason {
+    Rejected,
+    Ignored,
+}
 use icons::IconName;
 use language::{Anchor, Buffer, OffsetRangeExt};
 
@@ -162,6 +168,10 @@ pub trait EditPredictionDelegate: 'static + Sized {
         None
     }
 
+    fn can_toggle_data_collection(&self, _cx: &App) -> bool {
+        true
+    }
+
     fn toggle_data_collection(&mut self, _cx: &mut App) {}
     fn is_enabled(
         &self,
@@ -178,7 +188,7 @@ pub trait EditPredictionDelegate: 'static + Sized {
         cx: &mut Context<Self>,
     );
     fn accept(&mut self, cx: &mut Context<Self>);
-    fn discard(&mut self, cx: &mut Context<Self>);
+    fn discard(&mut self, reason: EditPredictionDiscardReason, cx: &mut Context<Self>);
     fn did_show(&mut self, _display_type: SuggestionDisplayType, _cx: &mut Context<Self>) {}
     fn suggest(
         &mut self,
@@ -203,6 +213,7 @@ pub trait EditPredictionDelegateHandle {
     fn icons(&self, cx: &App) -> EditPredictionIconSet;
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage>;
+    fn can_toggle_data_collection(&self, cx: &App) -> bool;
     fn toggle_data_collection(&self, cx: &mut App);
     fn is_refreshing(&self, cx: &App) -> bool;
     fn refresh(
@@ -214,7 +225,7 @@ pub trait EditPredictionDelegateHandle {
     );
     fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App);
     fn accept(&self, cx: &mut App);
-    fn discard(&self, cx: &mut App);
+    fn discard(&self, reason: EditPredictionDiscardReason, cx: &mut App);
     fn suggest(
         &self,
         buffer: &Entity<Buffer>,
@@ -259,6 +270,10 @@ where
         self.read(cx).usage(cx)
     }
 
+    fn can_toggle_data_collection(&self, cx: &App) -> bool {
+        self.read(cx).can_toggle_data_collection(cx)
+    }
+
     fn toggle_data_collection(&self, cx: &mut App) {
         self.update(cx, |this, cx| this.toggle_data_collection(cx))
     }
@@ -292,8 +307,8 @@ where
         self.update(cx, |this, cx| this.accept(cx))
     }
 
-    fn discard(&self, cx: &mut App) {
-        self.update(cx, |this, cx| this.discard(cx))
+    fn discard(&self, reason: EditPredictionDiscardReason, cx: &mut App) {
+        self.update(cx, |this, cx| this.discard(reason, cx))
     }
 
     fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App) {

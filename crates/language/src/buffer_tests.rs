@@ -3,6 +3,7 @@ use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
+use futures_lite::future::yield_now;
 use gpui::{App, AppContext as _, BorrowAppContext, Entity};
 use gpui::{HighlightStyle, TestAppContext};
 use indoc::indoc;
@@ -246,6 +247,7 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
         matcher: LanguageMatcher {
             path_suffixes: vec!["js".into()],
             first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
+            ..LanguageMatcher::default()
         },
         ..Default::default()
     });
@@ -267,7 +269,7 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
         ))
         .unwrap()
         .name(),
-        "JavaScript".into()
+        "JavaScript"
     );
 }
 
@@ -341,48 +343,48 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.ts"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "TypeScript".into());
+    assert_eq!(language.name(), "TypeScript");
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.ts.ecmascript"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "TypeScript".into());
+    assert_eq!(language.name(), "TypeScript");
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.cpp"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "C++".into());
+    assert_eq!(language.name(), "C++");
 
     // user configured lang extension, same length as system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.js"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "TypeScript".into());
+    assert_eq!(language.name(), "TypeScript");
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.c"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "C++".into());
+    assert_eq!(language.name(), "C++");
 
     // user configured lang extension, longer than system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.longer.ts"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "JavaScript".into());
+    assert_eq!(language.name(), "JavaScript");
 
     // user configured lang extension, shorter than system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.ecmascript"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "JavaScript".into());
+    assert_eq!(language.name(), "JavaScript");
 
     // user configured glob matches
     let language = cx
         .read(|cx| languages.language_for_file(&file("c-plus-plus.dev"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "C++".into());
+    assert_eq!(language.name(), "C++");
     // should match Dockerfile.* => Dockerfile, not *.dev => C++
     let language = cx
         .read(|cx| languages.language_for_file(&file("Dockerfile.dev"), None, cx))
         .unwrap();
-    assert_eq!(language.name(), "Dockerfile".into());
+    assert_eq!(language.name(), "Dockerfile");
 }
 
 fn file(path: &str) -> Arc<dyn File> {
@@ -458,15 +460,18 @@ fn test_edit_events(cx: &mut gpui::App) {
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
         vec![
-            BufferEvent::Edited,
+            BufferEvent::Edited { is_local: true },
             BufferEvent::DirtyChanged,
-            BufferEvent::Edited,
-            BufferEvent::Edited,
+            BufferEvent::Edited { is_local: true },
+            BufferEvent::Edited { is_local: true },
         ]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
-        vec![BufferEvent::Edited, BufferEvent::DirtyChanged]
+        vec![
+            BufferEvent::Edited { is_local: false },
+            BufferEvent::DirtyChanged
+        ]
     );
 
     buffer1.update(cx, |buffer, cx| {
@@ -481,11 +486,17 @@ fn test_edit_events(cx: &mut gpui::App) {
     });
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
-        vec![BufferEvent::Edited, BufferEvent::DirtyChanged,]
+        vec![
+            BufferEvent::Edited { is_local: true },
+            BufferEvent::DirtyChanged,
+        ]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
-        vec![BufferEvent::Edited, BufferEvent::DirtyChanged]
+        vec![
+            BufferEvent::Edited { is_local: false },
+            BufferEvent::DirtyChanged
+        ]
     );
 }
 
@@ -549,7 +560,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
     // Spawn a task to format the buffer's whitespace.
     // Pause so that the formatting task starts running.
     let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
-    smol::future::yield_now().await;
+    yield_now().await;
 
     // Edit the buffer while the normalization task is running.
     let version_before_edit = buffer.update(cx, |buffer, _| buffer.version());
@@ -2771,14 +2782,11 @@ fn test_language_scope_at_with_combined_injections(cx: &mut App) {
 
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry.clone());
-        buffer.set_language(
-            language_registry
-                .language_for_name("HTML+ERB")
-                .now_or_never()
-                .unwrap()
-                .ok(),
-            cx,
-        );
+        let language = language_registry
+            .language_for_name("HTML+ERB")
+            .now_or_never()
+            .and_then(Result::ok);
+        buffer.set_language(language, cx);
 
         let snapshot = buffer.snapshot();
         let html_config = snapshot.language_scope_at(Point::new(2, 4)).unwrap();
@@ -2830,7 +2838,7 @@ fn test_language_at_with_hidden_languages(cx: &mut App) {
 
         for point in [Point::new(0, 4), Point::new(0, 16)] {
             let config = snapshot.language_scope_at(point).unwrap();
-            assert_eq!(config.language_name(), "Markdown".into());
+            assert_eq!(config.language_name(), "Markdown");
 
             let language = snapshot.language_at(point).unwrap();
             assert_eq!(language.name().as_ref(), "Markdown");
@@ -2874,7 +2882,7 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
         // Test points in the code line
         for point in [Point::new(1, 4), Point::new(1, 6)] {
             let config = snapshot.language_scope_at(point).unwrap();
-            assert_eq!(config.language_name(), "Rust".into());
+            assert_eq!(config.language_name(), "Rust");
 
             let language = snapshot.language_at(point).unwrap();
             assert_eq!(language.name().as_ref(), "Rust");
@@ -2883,7 +2891,7 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
         // Test points in the comment line to verify it's still detected as Rust
         for point in [Point::new(2, 4), Point::new(2, 6)] {
             let config = snapshot.language_scope_at(point).unwrap();
-            assert_eq!(config.language_name(), "Rust".into());
+            assert_eq!(config.language_name(), "Rust");
 
             let language = snapshot.language_at(point).unwrap();
             assert_eq!(language.name().as_ref(), "Rust");
@@ -2894,15 +2902,80 @@ fn test_language_at_for_markdown_code_block(cx: &mut App) {
 }
 
 #[gpui::test]
-fn test_syntax_layer_at_for_injected_languages(cx: &mut App) {
+fn test_syntax_layer_at_for_combined_injections(cx: &mut App) {
     init_settings(cx, |_| {});
 
     cx.new(|cx| {
+        // ERB template with HTML and Ruby content
         let text = r#"
-            ```html+erb
-            <div>Hello</div>
-            <%= link_to "Some", "https://zed.dev" %>
-            ```
+<div>Hello</div>
+<%= link_to "Click", url %>
+<p>World</p>
+        "#
+        .unindent();
+
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+        language_registry.add(Arc::new(erb_lang()));
+        language_registry.add(Arc::new(html_lang()));
+        language_registry.add(Arc::new(ruby_lang()));
+
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry.clone());
+        let language = language_registry
+            .language_for_name("HTML+ERB")
+            .now_or_never()
+            .and_then(Result::ok);
+        buffer.set_language(language, cx);
+
+        let snapshot = buffer.snapshot();
+
+        // Test language_at for HTML content (line 0: "<div>Hello</div>")
+        let html_point = Point::new(0, 4);
+        let language = snapshot.language_at(html_point).unwrap();
+        assert_eq!(
+            language.name().as_ref(),
+            "HTML",
+            "Expected HTML at {:?}, got {}",
+            html_point,
+            language.name()
+        );
+
+        // Test language_at for Ruby code (line 1: "<%= link_to ... %>")
+        let ruby_point = Point::new(1, 6);
+        let language = snapshot.language_at(ruby_point).unwrap();
+        assert_eq!(
+            language.name().as_ref(),
+            "Ruby",
+            "Expected Ruby at {:?}, got {}",
+            ruby_point,
+            language.name()
+        );
+
+        // Test language_at for HTML after Ruby (line 2: "<p>World</p>")
+        let html_after_ruby = Point::new(2, 2);
+        let language = snapshot.language_at(html_after_ruby).unwrap();
+        assert_eq!(
+            language.name().as_ref(),
+            "HTML",
+            "Expected HTML at {:?}, got {}",
+            html_after_ruby,
+            language.name()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_languages_at_for_combined_injections(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        // ERB template with HTML and Ruby content
+        let text = r#"
+<div>Hello</div>
+<%= yield %>
+<p>World</p>
         "#
         .unindent();
 
@@ -2922,16 +2995,47 @@ fn test_syntax_layer_at_for_injected_languages(cx: &mut App) {
             cx,
         );
 
-        let snapshot = buffer.snapshot();
+        // Test languages_at for HTML content - should NOT include Ruby
+        let html_point = Point::new(0, 4);
+        let languages = buffer.languages_at(html_point);
+        let language_names: Vec<_> = languages.iter().map(|language| language.name()).collect();
+        assert!(
+            language_names
+                .iter()
+                .any(|language_name| language_name.as_ref() == "HTML"),
+            "Expected HTML in languages at {:?}, got {:?}",
+            html_point,
+            language_names
+        );
+        assert!(
+            !language_names
+                .iter()
+                .any(|language_name| language_name.as_ref() == "Ruby"),
+            "Did not expect Ruby in languages at {:?}, got {:?}",
+            html_point,
+            language_names
+        );
 
-        // Test points in the code line
-        let html_point = Point::new(1, 4);
-        let language = snapshot.language_at(html_point).unwrap();
-        assert_eq!(language.name().as_ref(), "HTML");
-
-        let ruby_point = Point::new(2, 6);
-        let language = snapshot.language_at(ruby_point).unwrap();
-        assert_eq!(language.name().as_ref(), "Ruby");
+        // Test languages_at for Ruby code - should NOT include HTML
+        let ruby_point = Point::new(1, 6);
+        let languages = buffer.languages_at(ruby_point);
+        let language_names: Vec<_> = languages.iter().map(|language| language.name()).collect();
+        assert!(
+            language_names
+                .iter()
+                .any(|language_name| language_name.as_ref() == "Ruby"),
+            "Expected Ruby in languages at {:?}, got {:?}",
+            ruby_point,
+            language_names
+        );
+        assert!(
+            !language_names
+                .iter()
+                .any(|language_name| language_name.as_ref() == "HTML"),
+            "Did not expect HTML in languages at {:?}, got {:?}",
+            ruby_point,
+            language_names
+        );
 
         buffer
     });
@@ -3144,7 +3248,7 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
 async fn test_preview_edits(cx: &mut TestAppContext) {
     cx.update(|cx| {
         init_settings(cx, |_| {});
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
     });
 
     let insertion_style = HighlightStyle {
@@ -3999,7 +4103,13 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
     let snapshot = buffer.read(cx).snapshot();
 
     // Get all chunks and verify their bitmaps
-    let chunks = snapshot.chunks(0..snapshot.len(), false);
+    let chunks = snapshot.chunks(
+        0..snapshot.len(),
+        LanguageAwareStyling {
+            tree_sitter: false,
+            diagnostics: false,
+        },
+    );
 
     for chunk in chunks {
         let chunk_text = chunk.text;

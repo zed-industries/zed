@@ -33,6 +33,7 @@
       "cmd-+": "editor::UnfoldLines",
       "alt-shift-g": "editor::SplitSelectionIntoLines",
       "ctrl-g": ["editor::SelectNext", { "replace_newest": false }],
+      "ctrl-shift-g": "editor::UndoSelection",
       "ctrl-cmd-g": ["editor::SelectPrevious", { "replace_newest": false }],
       "cmd-/": ["editor::ToggleComments", { "advance_downwards": true }],
       "alt-up": "editor::SelectLargerSyntaxNode",
@@ -77,6 +78,13 @@
       "cmd-j": "editor::Hover",
       "cmd-p": "editor::ShowSignatureHelp",
       "cmd-\\": "assistant::InlineAssist",
+    },
+  },
+  {
+    "context": "Editor && mode == auto_height",
+    "bindings": {
+      "shift-enter": "editor::Newline",
+      "ctrl-shift-enter": "editor::NewlineBelow",
     },
   },
   {
@@ -181,10 +189,16 @@
   { "context": "Diagnostics > Editor", "bindings": { "cmd-6": "pane::CloseActiveItem" } },
   { "context": "OutlinePanel", "bindings": { "cmd-7": "workspace::CloseActiveDock" } },
   {
-    "context": "Dock || Workspace || OutlinePanel || ProjectPanel || CollabPanel || (Editor && mode == auto_height)",
+    "context": "Dock || Workspace || OutlinePanel || ProjectPanel || CollabPanel",
     "bindings": {
       "escape": "editor::ToggleFocus",
       "shift-escape": "workspace::CloseActiveDock",
+    },
+  },
+  {
+    "context": "Editor && mode == auto_height",
+    "bindings": {
+      "escape": "editor::Cancel",
     },
   },
 ]

@@ -56,10 +56,9 @@ pub fn init_output_file(
     path: &'static PathBuf,
     path_rotate: Option<&'static PathBuf>,
 ) -> io::Result<()> {
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
+    let mut enabled_sinks_file = ENABLED_SINKS_FILE
+        .try_lock()
+        .expect("Log file lock is available during init");
 
     SINK_FILE_PATH
         .set(path)
@@ -70,20 +69,28 @@ pub fn init_output_file(
             .expect("Init file output should only be called once");
     }
 
-    let mut enabled_sinks_file = ENABLED_SINKS_FILE
-        .try_lock()
-        .expect("Log file lock is available during init");
-
-    let size_bytes = file.metadata().map_or(0, |metadata| metadata.len());
-    if size_bytes >= SINK_FILE_SIZE_BYTES_MAX {
-        rotate_log_file(&mut file, Some(path), path_rotate, &SINK_FILE_SIZE_BYTES);
-    } else {
-        SINK_FILE_SIZE_BYTES.store(size_bytes, Ordering::Release);
-    }
-
+    let file = open_or_create_log_file(path, path_rotate, SINK_FILE_SIZE_BYTES_MAX)?;
+    SINK_FILE_SIZE_BYTES.store(file.metadata().map_or(0, |m| m.len()), Ordering::Release);
     *enabled_sinks_file = Some(file);
 
     Ok(())
+}
+
+fn open_or_create_log_file(
+    path: &PathBuf,
+    path_rotate: Option<&PathBuf>,
+    sink_file_size_bytes_max: u64,
+) -> Result<fs::File, io::Error> {
+    let size_bytes = std::fs::metadata(path).map(|metadata| metadata.len());
+    match size_bytes {
+        Ok(size_bytes) if size_bytes >= sink_file_size_bytes_max => {
+            rotate_log_file(Some(path), path_rotate).map(|it| it.unwrap())
+        }
+        _ => std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path),
+    }
 }
 
 const LEVEL_OUTPUT_STRINGS: [&str; 6] = [
@@ -144,11 +151,11 @@ pub fn submit(mut record: Record) {
             record.message
         );
     }
-    let mut file = ENABLED_SINKS_FILE.lock().unwrap_or_else(|handle| {
+    let mut file_guard = ENABLED_SINKS_FILE.lock().unwrap_or_else(|handle| {
         ENABLED_SINKS_FILE.clear_poison();
         handle.into_inner()
     });
-    if let Some(file) = file.as_mut() {
+    if let Some(file) = file_guard.as_mut() {
         struct SizedWriter<'a> {
             file: &'a mut std::fs::File,
             written: u64,
@@ -182,12 +189,16 @@ pub fn submit(mut record: Record) {
             SINK_FILE_SIZE_BYTES.fetch_add(writer.written, Ordering::AcqRel) + writer.written
         };
         if file_size_bytes > SINK_FILE_SIZE_BYTES_MAX {
-            rotate_log_file(
-                file,
-                SINK_FILE_PATH.get(),
-                SINK_FILE_PATH_ROTATE.get(),
-                &SINK_FILE_SIZE_BYTES,
-            );
+            *file_guard = None;
+            let file = rotate_log_file(SINK_FILE_PATH.get(), SINK_FILE_PATH_ROTATE.get());
+            match file {
+                Ok(Some(file)) => *file_guard = Some(file),
+                Ok(None) => {}
+                Err(e) => {
+                    eprintln!("Failed to open log file: {e}")
+                }
+            }
+            SINK_FILE_SIZE_BYTES.store(0, Ordering::Release);
         }
     }
 }
@@ -247,19 +258,13 @@ impl std::fmt::Display for SourceFmt<'_> {
 }
 
 fn rotate_log_file<PathRef>(
-    file: &mut fs::File,
     path: Option<PathRef>,
     path_rotate: Option<PathRef>,
-    atomic_size: &AtomicU64,
-) where
+) -> std::io::Result<Option<fs::File>>
+where
     PathRef: AsRef<std::path::Path>,
 {
-    if let Err(err) = file.flush() {
-        eprintln!(
-            "Failed to flush log file before rotating, some logs may be lost: {}",
-            err
-        );
-    }
+    let path = path.as_ref().map(PathRef::as_ref);
     let rotation_error = match (path, path_rotate) {
         (Some(_), None) => Some(anyhow::anyhow!("No rotation log file path configured")),
         (None, _) => Some(anyhow::anyhow!("No log file path configured")),
@@ -270,46 +275,53 @@ fn rotate_log_file<PathRef>(
     if let Some(err) = rotation_error {
         eprintln!("Log file rotation failed. Truncating log file anyways: {err}",);
     }
-    _ = file.set_len(0);
-
-    // SAFETY: It is safe to set size to 0 even if set_len fails as
-    // according to the documentation, it only fails if:
-    // - the file is not writeable: should never happen,
-    // - the size would cause an overflow (implementation specific): 0 should never cause an overflow
-    atomic_size.store(0, Ordering::Release);
+    path.map(|path| {
+        fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)
+    })
+    .transpose()
 }
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     #[test]
-    fn test_rotate_log_file() {
+    fn test_open_or_create_log_file_rotate() {
         let temp_dir = tempfile::tempdir().unwrap();
         let log_file_path = temp_dir.path().join("log.txt");
         let rotation_log_file_path = temp_dir.path().join("log_rotated.txt");
 
-        let mut file = fs::File::create(&log_file_path).unwrap();
         let contents = String::from("Hello, world!");
-        file.write_all(contents.as_bytes()).unwrap();
+        std::fs::write(&log_file_path, &contents).unwrap();
 
-        let size = AtomicU64::new(contents.len() as u64);
-
-        rotate_log_file(
-            &mut file,
-            Some(&log_file_path),
-            Some(&rotation_log_file_path),
-            &size,
-        );
+        open_or_create_log_file(&log_file_path, Some(&rotation_log_file_path), 4).unwrap();
 
         assert!(log_file_path.exists());
         assert_eq!(log_file_path.metadata().unwrap().len(), 0);
         assert!(rotation_log_file_path.exists());
-        assert_eq!(
-            std::fs::read_to_string(&rotation_log_file_path).unwrap(),
-            contents,
-        );
-        assert_eq!(size.load(Ordering::Acquire), 0);
+        assert_eq!(std::fs::read_to_string(&log_file_path).unwrap(), "");
+    }
+
+    #[test]
+    fn test_open_or_create_log_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_file_path = temp_dir.path().join("log.txt");
+        let rotation_log_file_path = temp_dir.path().join("log_rotated.txt");
+
+        let contents = String::from("Hello, world!");
+        std::fs::write(&log_file_path, &contents).unwrap();
+
+        open_or_create_log_file(&log_file_path, Some(&rotation_log_file_path), !0).unwrap();
+
+        assert!(log_file_path.exists());
+        assert_eq!(log_file_path.metadata().unwrap().len(), 13);
+        assert!(!rotation_log_file_path.exists());
+        assert_eq!(std::fs::read_to_string(&log_file_path).unwrap(), contents);
     }
 
     /// Regression test, ensuring that if log level values change we are made aware

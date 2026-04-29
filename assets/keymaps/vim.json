@@ -263,6 +263,7 @@
       "] c": "editor::GoToHunk",
       "[ c": "editor::GoToPreviousHunk",
       "g c": "vim::PushToggleComments",
+      "g b": "vim::PushToggleBlockComments",
     },
   },
   {
@@ -319,6 +320,7 @@
       "a": ["vim::PushObject", { "around": true }],
       "g shift-r": ["vim::Paste", { "preserve_clipboard": true }],
       "g c": "vim::ToggleComments",
+      "g b": "vim::ToggleBlockComments",
       "g q": "vim::Rewrap",
       "g w": "vim::Rewrap",
       "g ?": "vim::ConvertToRot13",
@@ -337,6 +339,8 @@
       "shift-j": "vim::JoinLines",
       "i": "vim::InsertBefore",
       "a": "vim::InsertAfter",
+      "o": "vim::InsertLineBelow",
+      "shift-o": "vim::InsertLineAbove",
       "p": "vim::Paste",
       "u": "vim::Undo",
       "r": "vim::PushReplace",
@@ -414,7 +418,7 @@
     },
   },
   {
-    "context": "VimControl && vim_mode == helix_normal && !menu",
+    "context": "VimControl && vim_mode == helix_normal && !menu && !BufferSearchBar",
     "bindings": {
       "j": ["vim::Down", { "display_lines": true }],
       "down": ["vim::Down", { "display_lines": true }],
@@ -427,11 +431,12 @@
       "escape": "vim::SwitchToHelixNormalMode",
       "i": "vim::HelixInsert",
       "a": "vim::HelixAppend",
+      "shift-a": "vim::HelixInsertEndOfLine",
       "ctrl-[": "editor::Cancel",
     },
   },
   {
-    "context": "vim_mode == helix_select && !menu",
+    "context": "vim_mode == helix_select && !menu && !BufferSearchBar",
     "bindings": {
       "escape": "vim::SwitchToHelixNormalMode",
     },
@@ -502,6 +507,7 @@
       "shift-l": "pane::ActivateNextItem", // not a helix default
       "g p": "pane::ActivatePreviousItem",
       "shift-h": "pane::ActivatePreviousItem", // not a helix default
+      "g w": "vim::HelixJumpToWord",
       "g .": "vim::HelixGotoLastModification",
       "g o": "editor::ToggleSelectedDiffHunks", // Zed specific
       "g shift-o": "git::ToggleStaged", // Zed specific
@@ -510,8 +516,8 @@
       "g shift-u": "git::UnstageAndNext", // Zed specific
 
       // Window mode
-      "space w v": "pane::SplitDown",
-      "space w s": "pane::SplitRight",
+      "space w v": "pane::SplitRight",
+      "space w s": "pane::SplitDown",
       "space w h": "workspace::ActivatePaneLeft",
       "space w j": "workspace::ActivatePaneDown",
       "space w k": "workspace::ActivatePaneUp",
@@ -539,8 +545,8 @@
       "m": "vim::PushHelixMatch",
       "]": ["vim::PushHelixNext", { "around": true }],
       "[": ["vim::PushHelixPrevious", { "around": true }],
+      "ctrl-s": "editor::SaveLocation",
       "g q": "vim::PushRewrap",
-      "g w": "vim::PushRewrap", // not a helix default & clashes with helix `goto_word`
     },
   },
   {
@@ -789,6 +795,12 @@
     },
   },
   {
+    "context": "vim_operator == gb",
+    "bindings": {
+      "c": "vim::CurrentLine",
+    },
+  },
+  {
     "context": "vim_operator == gR",
     "bindings": {
       "r": "vim::CurrentLine",
@@ -923,6 +935,14 @@
       "[ b": "pane::ActivatePreviousItem",
       "] shift-b": "pane::ActivateLastItem",
       "[ shift-b": ["pane::ActivateItem", 0],
+      "space f": "file_finder::Toggle",
+      "space /": "pane::DeploySearch",
+      "space shift-s": "project_symbols::Toggle",
+      "space w h": "workspace::ActivatePaneLeft",
+      "space w j": "workspace::ActivatePaneDown",
+      "space w k": "workspace::ActivatePaneUp",
+      "space w l": "workspace::ActivatePaneRight",
+	  "space w q": "pane::CloseActiveItem",
     },
   },
   {
@@ -1014,7 +1034,16 @@
     },
   },
   {
-    "context": "GitPanel && ChangesList",
+    "context": "GitGraph",
+    "bindings": {
+      "j": "vim::MenuSelectNext",
+      "k": "vim::MenuSelectPrevious",
+      "shift-g": "menu::SelectLast",
+      "g g": "menu::SelectFirst"
+    }
+  },
+  {
+    "context": "GitPanel && ChangesList && !GitBranchSelector",
     "use_key_equivalents": true,
     "bindings": {
       "k": "menu::SelectPrevious",
@@ -1059,7 +1088,7 @@
     },
   },
   {
-    "context": "Editor && edit_prediction",
+    "context": "Editor && edit_prediction && edit_prediction_mode == eager && !showing_completions",
     "bindings": {
       // This is identical to the binding in the base keymap, but the vim bindings above to
       // "vim::Tab" shadow it, so it needs to be bound again.
@@ -1072,15 +1101,7 @@
       "enter": "agent::Chat",
     },
   },
-  {
-    "context": "os != macos && Editor && edit_prediction_conflict",
-    "bindings": {
-      // alt-l is provided as an alternative to tab/alt-tab. and will be displayed in the UI. This
-      // is because alt-tab may not be available, as it is often used for window switching on Linux
-      // and Windows.
-      "alt-l": "editor::AcceptEditPrediction",
-    },
-  },
+
   {
     "context": "SettingsWindow > NavigationMenu && !search",
     "bindings": {
@@ -1099,6 +1120,9 @@
       "ctrl-d": "markdown::ScrollPageDown",
       "ctrl-y": "markdown::ScrollUp",
       "ctrl-e": "markdown::ScrollDown",
+      "g g": "markdown::ScrollToTop",
+      "shift-g": "markdown::ScrollToBottom",
+      "/": "buffer_search::Deploy",
     },
   },
   {
@@ -1108,6 +1132,60 @@
       "k": "menu::SelectPrevious",
       "g g": "menu::SelectFirst",
       "shift-g": "menu::SelectLast",
+    },
+  },
+  {
+    "context": "NotebookEditor > Editor && VimControl && vim_mode == normal",
+    "bindings": {
+      "j": "notebook::NotebookMoveDown",
+      "k": "notebook::NotebookMoveUp",
+      "escape": "notebook::EnterCommandMode",
+    },
+  },
+  {
+    "context": "NotebookEditor && notebook_mode == command",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrevious",
+      "g g": "menu::SelectFirst",
+      "shift-g": "menu::SelectLast",
+      "i": "notebook::EnterEditMode",
+      "a": "notebook::EnterEditMode",
+      "enter": "notebook::EnterEditMode",
+      "shift-enter": "notebook::RunAndAdvance",
+      "ctrl-enter": "notebook::Run",
+    },
+  },
+  {
+    "context": "ThreadsSidebar && !Editor",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrevious",
+      "h": "menu::SelectParent",
+      "l": "menu::SelectChild",
+      "g g": "menu::SelectFirst",
+      "shift-g": "menu::SelectLast",
+      "/": "agents_sidebar::FocusSidebarFilter",
+      "d d": "agent::RemoveSelectedThread",
+      "o": "agents_sidebar::NewThreadInGroup",
+      "shift-o": "agents_sidebar::NewThreadInGroup",
+      "] p": "multi_workspace::NextProject",
+      "[ p": "multi_workspace::PreviousProject",
+      "z a": "editor::ToggleFold",
+      "z c": "menu::SelectParent",
+      "z o": "menu::SelectChild",
+      "z shift-m": "editor::FoldAll",
+      "z shift-r": "editor::UnfoldAll",
+    },
+  },
+  {
+    "context": "ThreadsSidebar > Editor && VimControl && vim_mode == normal",
+    "bindings": {
+      "j": "editor::MoveDown",
+      "k": "editor::MoveUp",
+      "/": "vim::SwitchToInsertMode",
+      "escape": "menu::Cancel",
+      "enter": "editor::Newline",
     },
   },
 ]
