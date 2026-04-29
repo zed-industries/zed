@@ -210,11 +210,6 @@ async fn test_streaming_edit_json_parse_error_does_not_cause_unsaved_changes(
     super::init_test(cx);
     super::always_allow_tools(cx);
 
-    // Enable the streaming edit file tool feature flag.
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["streaming-edit-file-tool".to_string()]);
-    });
-
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/project"),
