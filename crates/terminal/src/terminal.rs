@@ -3835,6 +3835,9 @@ mod tests {
                 // Existing hovered_word IS NOT reused when viewport is changing (total lines changed,
                 // but display offset did not have a corresponding change)
                 cx.assert_hovered_word(None);
+                // NOTE: 16 of these wakeups are from write_output() (2x8). The 17th is the important
+                // one we are testing that comes from sync() and results in the hovered word being
+                // set again, which we asserted below.
                 Some(Expected(Wakeups(17), Notifies(1)))
             });
             update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
@@ -3894,14 +3897,14 @@ mod tests {
                     OUTPUT_ZED_DEV,
                     OUTPUT_NONE,
                 ]);
-                Some(Expected(Wakeups(0), Notifies(0)))
+                None
             });
             update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
-                // Existing hovered word IS NOT reused when scrolling
                 expected_hovered_word =
                     expected_hovered_word.with_line_and_id(-3, expected_hovered_word.id + 2);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
                 cx.write_output_lines(OUTPUT_ZED_DEV, 2);
+                // All wakeups here are from write_output()
                 Some(Expected(Wakeups(4), Notifies(0)))
             });
             update_test_entities(&test_entities, cx, |cx: &mut HyperlinkVisualTestContext| {
@@ -3914,10 +3917,11 @@ mod tests {
                     OUTPUT_ZED_DEV,
                     OUTPUT_NONE,
                 ]);
-                // Existing hovered word IS reused when total lines changed, but visible lines unchanged
+                // Existing hovered word IS reused (and adjusted) when total lines changed, but
+                // visible lines unchanged
                 expected_hovered_word = expected_hovered_word.with_line(-5);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
-                Some(Expected(Wakeups(0), Notifies(0)))
+                None
             });
         }
 
@@ -3948,7 +3952,7 @@ mod tests {
                 // ...AND new hovered_word is set if secondary was held.
                 expected_hovered_word = expected_hovered_word.with_id(expected_hovered_word.id + 1);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
-                None
+                Some(Expected(Wakeups(0), Notifies(0)))
             });
         }
 
