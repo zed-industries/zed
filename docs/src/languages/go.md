@@ -234,3 +234,26 @@ In such case Zed won't spawn a new instance of Delve, as it opts to use an exist
 - Tree-sitter:
   [tree-sitter-go-work](https://github.com/d1y/tree-sitter-go-work)
 - Language Server: N/A
+
+## Using the Tailwind CSS Language Server with Templ
+
+[Templ](https://github.com/a-h/templ) is an HTML templating language for Go. Templ files are not recognised as HTML by default, so the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) needs to be told to treat them as HTML and where to look for class names. With the [Templ extension](https://github.com/makifdb/zed-templ) installed, add the following to your `settings.json`:
+
+```json [settings]
+{
+  "lsp": {
+    "tailwindcss-language-server": {
+      "settings": {
+        "includeLanguages": {
+          "templ": "html"
+        },
+        "experimental": {
+          "classRegex": ["class=\"([^\"]*)\"", "className=\"([^\"]*)\""]
+        }
+      }
+    }
+  }
+}
+```
+
+With these settings you'll get Tailwind completions inside `class="..."` (and `className="..."`) attributes in `.templ` files.
