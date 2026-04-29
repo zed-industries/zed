@@ -1,12 +1,11 @@
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::env;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr as _;
 use std::sync::Arc;
 
-use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
+use ::fs::{CopyOptions, Fs, RealFs, RemoveOptions, copy_recursive};
 use anyhow::{Context as _, Result, anyhow, bail};
 use clap::Parser;
 use cloud_api_types::ExtensionProvides;
@@ -106,7 +105,15 @@ async fn main() -> Result<()> {
     .await?;
 
     let archive_dir = output_dir.join("archive");
-    fs::remove_dir_all(&archive_dir).ok();
+    fs.remove_dir(
+        &archive_dir,
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: true,
+        },
+    )
+    .await
+    .ok();
     copy_extension_resources(&manifest, &extension_path, &archive_dir, fs.clone())
         .await
         .context("failed to copy extension resources")?;
@@ -136,8 +143,16 @@ async fn main() -> Result<()> {
         wasm_api_version: manifest.lib.version.map(|version| version.to_string()),
         provides: extension_provides,
     })?;
-    fs::remove_dir_all(&archive_dir)?;
-    fs::write(output_dir.join("manifest.json"), manifest_json.as_bytes())?;
+    fs.remove_dir(
+        &archive_dir,
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await?;
+    fs.write(&output_dir.join("manifest.json"), manifest_json.as_bytes())
+        .await?;
 
     Ok(())
 }
@@ -148,68 +163,107 @@ async fn copy_extension_resources(
     output_dir: &Path,
     fs: Arc<dyn Fs>,
 ) -> Result<()> {
-    fs::create_dir_all(output_dir).context("failed to create output dir")?;
+    fs.create_dir(output_dir)
+        .await
+        .context("failed to create output dir")?;
 
     let manifest_toml = toml::to_string(&manifest).context("failed to serialize manifest")?;
-    fs::write(output_dir.join("extension.toml"), &manifest_toml)
+    fs.write(&output_dir.join("extension.toml"), manifest_toml.as_bytes())
+        .await
         .context("failed to write extension.toml")?;
 
     if manifest.lib.kind.is_some() {
-        fs::copy(
-            extension_path.join("extension.wasm"),
-            output_dir.join("extension.wasm"),
+        fs.copy_file(
+            &extension_path.join("extension.wasm"),
+            &output_dir.join("extension.wasm"),
+            CopyOptions {
+                overwrite: true,
+                ignore_if_exists: false,
+            },
         )
+        .await
         .context("failed to copy extension.wasm")?;
     }
 
     if !manifest.grammars.is_empty() {
         let source_grammars_dir = extension_path.join("grammars");
         let output_grammars_dir = output_dir.join("grammars");
-        fs::create_dir_all(&output_grammars_dir)?;
-        for grammar_name in manifest.grammars.keys() {
-            let mut grammar_filename = PathBuf::from(grammar_name.as_ref());
-            grammar_filename.set_extension("wasm");
-            fs::copy(
-                source_grammars_dir.join(&grammar_filename),
-                output_grammars_dir.join(&grammar_filename),
-            )
-            .with_context(|| format!("failed to copy grammar '{}'", grammar_filename.display()))?;
-        }
+        fs.create_dir(&output_grammars_dir).await?;
+        futures::future::try_join_all(manifest.grammars.keys().map(|grammar_name| {
+            let fs = fs.clone();
+            let source_grammars_dir = source_grammars_dir.as_path();
+            let output_grammars_dir = output_grammars_dir.as_path();
+            async move {
+                let mut grammar_filename = PathBuf::from(grammar_name.as_ref());
+                grammar_filename.set_extension("wasm");
+                fs.copy_file(
+                    &source_grammars_dir.join(&grammar_filename),
+                    &output_grammars_dir.join(&grammar_filename),
+                    CopyOptions {
+                        overwrite: true,
+                        ignore_if_exists: false,
+                    },
+                )
+                .await
+                .with_context(|| format!("failed to copy grammar '{}'", grammar_filename.display()))
+            }
+        }))
+        .await?;
     }
 
     if !manifest.themes.is_empty() {
         let output_themes_dir = output_dir.join("themes");
-        fs::create_dir_all(&output_themes_dir)?;
-        for theme_path in &manifest.themes {
-            let theme_path = theme_path.as_std_path();
-            fs::copy(
-                extension_path.join(theme_path),
-                output_themes_dir.join(theme_path.file_name().context("invalid theme path")?),
-            )
-            .with_context(|| format!("failed to copy theme '{}'", theme_path.display()))?;
-        }
+        fs.create_dir(&output_themes_dir).await?;
+        futures::future::try_join_all(manifest.themes.iter().map(|theme_path| {
+            let fs = fs.clone();
+            let output_themes_dir = output_themes_dir.as_path();
+            async move {
+                let theme_path = theme_path.as_std_path();
+                fs.copy_file(
+                    &extension_path.join(theme_path),
+                    &output_themes_dir.join(theme_path.file_name().context("invalid theme path")?),
+                    CopyOptions {
+                        overwrite: true,
+                        ignore_if_exists: false,
+                    },
+                )
+                .await
+                .with_context(|| format!("failed to copy theme '{}'", theme_path.display()))
+            }
+        }))
+        .await?;
     }
 
     if !manifest.icon_themes.is_empty() {
         let output_icon_themes_dir = output_dir.join("icon_themes");
-        fs::create_dir_all(&output_icon_themes_dir)?;
-        for icon_theme_path in &manifest.icon_themes {
-            let icon_theme_path = icon_theme_path.as_std_path();
-            fs::copy(
-                extension_path.join(icon_theme_path),
-                output_icon_themes_dir.join(
-                    icon_theme_path
-                        .file_name()
-                        .context("invalid icon theme path")?,
-                ),
-            )
-            .with_context(|| {
-                format!("failed to copy icon theme '{}'", icon_theme_path.display())
-            })?;
-        }
+        fs.create_dir(&output_icon_themes_dir).await?;
+        futures::future::try_join_all(manifest.icon_themes.iter().map(|icon_theme_path| {
+            let fs = fs.clone();
+            let output_icon_themes_dir = output_icon_themes_dir.as_path();
+            async move {
+                let icon_theme_path = icon_theme_path.as_std_path();
+                fs.copy_file(
+                    &extension_path.join(icon_theme_path),
+                    &output_icon_themes_dir.join(
+                        icon_theme_path
+                            .file_name()
+                            .context("invalid icon theme path")?,
+                    ),
+                    CopyOptions {
+                        overwrite: true,
+                        ignore_if_exists: false,
+                    },
+                )
+                .await
+                .with_context(|| {
+                    format!("failed to copy icon theme '{}'", icon_theme_path.display())
+                })
+            }
+        }))
+        .await?;
 
         let output_icons_dir = output_dir.join("icons");
-        fs::create_dir_all(&output_icons_dir)?;
+        fs.create_dir(&output_icons_dir).await?;
         copy_recursive(
             fs.as_ref(),
             &extension_path.join("icons"),
@@ -223,90 +277,121 @@ async fn copy_extension_resources(
         .context("failed to copy icons")?;
     }
 
-    for (_, agent_entry) in &manifest.agent_servers {
-        if let Some(icon_path) = &agent_entry.icon {
-            let source_icon = extension_path.join(icon_path);
-            let dest_icon = output_dir.join(icon_path);
-
-            // Create parent directory if needed
-            if let Some(parent) = dest_icon.parent() {
-                fs::create_dir_all(parent)?;
-            }
-
-            fs::copy(&source_icon, &dest_icon)
-                .with_context(|| format!("failed to copy agent server icon '{}'", icon_path))?;
-        }
-    }
+    futures::future::try_join_all(
+        manifest
+            .agent_servers
+            .iter()
+            .filter_map(|(_, agent_entry)| {
+                let icon_path = agent_entry.icon.as_ref()?;
+                let fs = fs.clone();
+                let source_icon = extension_path.join(icon_path);
+                let dest_icon = output_dir.join(icon_path);
+                let icon_path = icon_path.as_str();
+                Some(async move {
+                    if let Some(parent) = dest_icon.parent() {
+                        fs.create_dir(parent).await?;
+                    }
+                    fs.copy_file(
+                        &source_icon,
+                        &dest_icon,
+                        CopyOptions {
+                            overwrite: true,
+                            ignore_if_exists: false,
+                        },
+                    )
+                    .await
+                    .with_context(|| format!("failed to copy agent server icon '{}'", icon_path))
+                })
+            }),
+    )
+    .await?;
 
     if !manifest.languages.is_empty() {
         let output_languages_dir = output_dir.join("languages");
-        fs::create_dir_all(&output_languages_dir)?;
-        for language_path in &manifest.languages {
-            let language_path = language_path.as_std_path();
-            copy_recursive(
-                fs.as_ref(),
-                &extension_path.join(language_path),
-                &output_languages_dir
-                    .join(language_path.file_name().context("invalid language path")?),
-                CopyOptions {
-                    overwrite: true,
-                    ignore_if_exists: false,
-                },
-            )
-            .await
-            .with_context(|| {
-                format!("failed to copy language dir '{}'", language_path.display())
-            })?;
-        }
+        fs.create_dir(&output_languages_dir).await?;
+        futures::future::try_join_all(manifest.languages.iter().map(|language_path| {
+            let fs = fs.clone();
+            let output_languages_dir = output_languages_dir.clone();
+            async move {
+                let language_path = language_path.as_std_path();
+                copy_recursive(
+                    fs.as_ref(),
+                    &extension_path.join(language_path),
+                    &output_languages_dir
+                        .join(language_path.file_name().context("invalid language path")?),
+                    CopyOptions {
+                        overwrite: true,
+                        ignore_if_exists: false,
+                    },
+                )
+                .await
+                .with_context(|| {
+                    format!("failed to copy language dir '{}'", language_path.display())
+                })
+            }
+        }))
+        .await?;
     }
 
     if !manifest.debug_adapters.is_empty() {
-        for (debug_adapter, entry) in &manifest.debug_adapters {
-            let schema_path = extension::build_debug_adapter_schema_path(debug_adapter, entry)?;
-            let parent = schema_path
-                .parent()
-                .with_context(|| format!("invalid empty schema path for {debug_adapter}"))?;
-            let schema_path = schema_path.as_std_path();
-            fs::create_dir_all(output_dir.join(parent))?;
-            copy_recursive(
-                fs.as_ref(),
-                &extension_path.join(&schema_path),
-                &output_dir.join(&schema_path),
-                CopyOptions {
-                    overwrite: true,
-                    ignore_if_exists: false,
-                },
-            )
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to copy debug adapter schema '{}'",
-                    schema_path.display(),
-                )
-            })?;
-        }
+        futures::future::try_join_all(manifest.debug_adapters.iter().map(
+            |(debug_adapter, entry)| {
+                let fs = fs.clone();
+                let debug_adapter = debug_adapter.clone();
+                async move {
+                    let schema_path =
+                        extension::build_debug_adapter_schema_path(&debug_adapter, &entry)?;
+                    let parent = schema_path.parent().with_context(|| {
+                        format!("invalid empty schema path for {debug_adapter}")
+                    })?;
+                    let schema_path = schema_path.as_std_path();
+                    fs.create_dir(&output_dir.join(parent)).await?;
+                    copy_recursive(
+                        fs.as_ref(),
+                        &extension_path.join(schema_path),
+                        &output_dir.join(schema_path),
+                        CopyOptions {
+                            overwrite: true,
+                            ignore_if_exists: false,
+                        },
+                    )
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "failed to copy debug adapter schema '{}'",
+                            schema_path.display(),
+                        )
+                    })
+                }
+            },
+        ))
+        .await?;
     }
 
     if let Some(snippets) = manifest.snippets.as_ref() {
-        for snippets_path in snippets.paths() {
-            let parent = snippets_path.parent();
-            if let Some(parent) = parent.filter(|p| p.components().next().is_some()) {
-                fs::create_dir_all(output_dir.join(parent))?;
+        futures::future::try_join_all(snippets.paths().map(|snippets_path| {
+            let fs = fs.clone();
+            async move {
+                let parent = snippets_path.parent();
+                if let Some(parent) = parent.filter(|p| p.components().next().is_some()) {
+                    fs.create_dir(&output_dir.join(parent)).await?;
+                }
+                copy_recursive(
+                    fs.as_ref(),
+                    &extension_path.join(&snippets_path),
+                    &output_dir.join(&snippets_path),
+                    CopyOptions {
+                        overwrite: true,
+                        ignore_if_exists: false,
+                    },
+                )
+                .await
+                .with_context(|| {
+                    format!("failed to copy snippets from '{}'", snippets_path.display())
+                })
             }
-            copy_recursive(
-                fs.as_ref(),
-                &extension_path.join(&snippets_path),
-                &output_dir.join(&snippets_path),
-                CopyOptions {
-                    overwrite: true,
-                    ignore_if_exists: false,
-                },
-            )
-            .await
-            .with_context(|| {
-                format!("failed to copy snippets from '{}'", snippets_path.display())
-            })?;
-        }
+        }))
+        .await?;
     }
 
     Ok(())
@@ -328,10 +413,11 @@ fn validate_extension_features(provides: &BTreeSet<ExtensionProvides>) -> Result
     Ok(())
 }
 
-fn test_grammars(
+async fn test_grammars(
     manifest: &ExtensionManifest,
     extension_path: &Path,
     wasm_store: &mut WasmStore,
+    fs: Arc<dyn Fs>,
 ) -> Result<HashMap<String, Language>> {
     let mut grammars = HashMap::default();
     let grammars_dir = extension_path.join("grammars");
@@ -340,7 +426,7 @@ fn test_grammars(
         let mut grammar_path = grammars_dir.join(grammar_name.as_ref());
         grammar_path.set_extension("wasm");
 
-        let wasm = fs::read(&grammar_path)?;
+        let wasm = fs.load_bytes(&grammar_path).await?;
         let language = wasm_store.load_language(grammar_name, &wasm)?;
         log::info!("loaded grammar {grammar_name}");
         grammars.insert(grammar_name.to_string(), language);
@@ -349,77 +435,96 @@ fn test_grammars(
     Ok(grammars)
 }
 
-fn test_languages(
+async fn test_languages(
     manifest: &ExtensionManifest,
     extension_path: &Path,
     grammars: &HashMap<String, Language>,
+    fs: Arc<dyn Fs>,
 ) -> Result<()> {
-    for relative_language_dir in &manifest.languages {
-        let language_dir = extension_path.join(relative_language_dir);
-        let config_path = language_dir.join(LanguageConfig::FILE_NAME);
-        let config = LanguageConfig::load(&config_path)?;
-        let grammar = if let Some(name) = &config.grammar {
-            Some(
-                grammars
-                    .get(name.as_ref())
-                    .with_context(|| format!("grammar not found: '{name}'"))?,
-            )
-        } else {
-            None
-        };
-
-        let query_entries = fs::read_dir(&language_dir)?;
-        for entry in query_entries {
-            let entry = entry?;
-            let file_path = entry.path();
-
-            let Some(file_name) = file_path.file_name().and_then(|name| name.to_str()) else {
-                continue;
+    futures::future::try_join_all(manifest.languages.iter().map(|relative_language_dir| {
+        let fs = fs.clone();
+        async move {
+            let language_dir = extension_path.join(relative_language_dir);
+            let config_path = language_dir.join(LanguageConfig::FILE_NAME);
+            let config_content = fs.load(&config_path).await?;
+            let config: LanguageConfig = toml::from_str(&config_content)?;
+            let grammar = if let Some(name) = &config.grammar {
+                Some(
+                    grammars
+                        .get(name.as_ref())
+                        .with_context(|| format!("grammar not found: '{name}'"))?,
+                )
+            } else {
+                None
             };
 
-            match file_name {
-                LanguageConfig::FILE_NAME => {
-                    // Loaded above
-                }
-                SemanticTokenRules::FILE_NAME => {
-                    let _token_rules = SemanticTokenRules::load(&file_path)?;
-                }
-                TaskTemplates::FILE_NAME => {
-                    let task_file_content = std::fs::read(&file_path).with_context(|| {
-                        anyhow!(
-                            "Failed to read tasks file at {path}",
-                            path = file_path.display()
-                        )
-                    })?;
-                    let _task_templates =
-                        serde_json_lenient::from_slice::<TaskTemplates>(&task_file_content)
-                            .with_context(|| {
+            let mut query_entries = fs.read_dir(&language_dir).await?;
+            while let Some(file_path) = query_entries.next().await {
+                let file_path = file_path?;
+
+                let Some(file_name) = file_path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+
+                match file_name {
+                    LanguageConfig::FILE_NAME => {
+                        // Loaded above
+                    }
+                    SemanticTokenRules::FILE_NAME => {
+                        let rules_content = fs.load_bytes(&file_path).await.with_context(|| {
+                            anyhow!(
+                                "Could not read semantic token rules from {}",
+                                file_path.display()
+                            )
+                        })?;
+                        let _token_rules =
+                            serde_json_lenient::from_slice::<SemanticTokenRules>(&rules_content)
+                                .with_context(|| {
+                                    anyhow!(
+                                        "Failed to parse semantic token rules from {}",
+                                        file_path.display()
+                                    )
+                                })?;
+                    }
+                    TaskTemplates::FILE_NAME => {
+                        let task_file_content =
+                            fs.load_bytes(&file_path).await.with_context(|| {
                                 anyhow!(
-                                    "Failed to parse tasks file at {path}",
+                                    "Failed to read tasks file at {path}",
                                     path = file_path.display()
                                 )
                             })?;
-                }
-                _ if file_name.ends_with(".scm") => {
-                    let grammar = grammar.with_context(|| {
-                        format! {
-                            "language {} provides query {} but no grammar",
-                            config.name,
-                            file_path.display()
-                        }
-                    })?;
+                        let _task_templates =
+                            serde_json_lenient::from_slice::<TaskTemplates>(&task_file_content)
+                                .with_context(|| {
+                                    anyhow!(
+                                        "Failed to parse tasks file at {path}",
+                                        path = file_path.display()
+                                    )
+                                })?;
+                    }
+                    _ if file_name.ends_with(".scm") => {
+                        let grammar = grammar.with_context(|| {
+                            format!(
+                                "language {} provides query {} but no grammar",
+                                config.name,
+                                file_path.display()
+                            )
+                        })?;
 
-                    let query_source = fs::read_to_string(&file_path)?;
-                    let _query = Query::new(grammar, &query_source)?;
+                        let query_source = fs.load(&file_path).await?;
+                        let _query = Query::new(grammar, &query_source)?;
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
+
+            log::info!("loaded language {}", config.name);
+            Ok(())
         }
-
-        log::info!("loaded language {}", config.name);
-    }
-
-    Ok(())
+    }))
+    .await
+    .map(|_| ())
 }
 
 async fn test_themes(
