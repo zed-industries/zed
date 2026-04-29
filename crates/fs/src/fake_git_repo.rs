@@ -2,7 +2,9 @@ use std::path::Path;
 
 use crate::{FakeFs, FakeFsEntry, Fs, RemoveOptions, RenameOptions};
 use anyhow::{Context as _, Result, bail};
+use async_channel::Sender;
 use collections::{HashMap, HashSet};
+use futures::FutureExt as _;
 use futures::future::{self, BoxFuture, join_all};
 use git::repository::GitCommitTemplate;
 use git::{
@@ -24,7 +26,6 @@ use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use parking_lot::Mutex;
 use rope::Rope;
-use smol::{channel::Sender, future::FutureExt as _};
 use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
 use text::LineEnding;
 use util::{paths::PathStyle, rel_path::RelPath};
@@ -56,7 +57,7 @@ pub enum FakeCommitDataEntry {
 #[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
     pub commit_history: Vec<FakeCommitSnapshot>,
-    pub event_emitter: smol::channel::Sender<PathBuf>,
+    pub event_emitter: async_channel::Sender<PathBuf>,
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
     pub head_contents: HashMap<RepoPath, String>,
     pub index_contents: HashMap<RepoPath, String>,
@@ -78,7 +79,7 @@ pub struct FakeGitRepositoryState {
 }
 
 impl FakeGitRepositoryState {
-    pub fn new(event_emitter: smol::channel::Sender<PathBuf>) -> Self {
+    pub fn new(event_emitter: async_channel::Sender<PathBuf>) -> Self {
         FakeGitRepositoryState {
             event_emitter,
             head_contents: Default::default(),

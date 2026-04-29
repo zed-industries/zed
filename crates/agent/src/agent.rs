@@ -1743,14 +1743,14 @@ impl acp_thread::AgentTelemetry for NativeAgentConnection {
 
 pub struct NativeAgentSessionList {
     thread_store: Entity<ThreadStore>,
-    updates_tx: smol::channel::Sender<acp_thread::SessionListUpdate>,
-    updates_rx: smol::channel::Receiver<acp_thread::SessionListUpdate>,
+    updates_tx: async_channel::Sender<acp_thread::SessionListUpdate>,
+    updates_rx: async_channel::Receiver<acp_thread::SessionListUpdate>,
     _subscription: Subscription,
 }
 
 impl NativeAgentSessionList {
     fn new(thread_store: Entity<ThreadStore>, cx: &mut App) -> Self {
-        let (tx, rx) = smol::channel::unbounded();
+        let (tx, rx) = async_channel::unbounded();
         let this_tx = tx.clone();
         let subscription = cx.observe(&thread_store, move |_, _| {
             this_tx
@@ -1802,7 +1802,7 @@ impl AgentSessionList for NativeAgentSessionList {
     fn watch(
         &self,
         _cx: &mut App,
-    ) -> Option<smol::channel::Receiver<acp_thread::SessionListUpdate>> {
+    ) -> Option<async_channel::Receiver<acp_thread::SessionListUpdate>> {
         Some(self.updates_rx.clone())
     }
 

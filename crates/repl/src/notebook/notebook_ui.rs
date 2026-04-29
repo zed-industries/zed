@@ -809,6 +809,7 @@ impl NotebookEditor {
 
         let code_cell = cx.new(|cx| {
             super::CodeCell::new(
+                super::CellSource::None,
                 new_cell_id.clone(),
                 metadata,
                 String::new(),

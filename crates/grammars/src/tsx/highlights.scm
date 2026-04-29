@@ -393,6 +393,18 @@
     (member_expression
       object: (identifier) @type @tag.component.jsx
       property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (identifier) @type @tag.component.jsx
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (member_expression
+          object: (identifier) @type @tag.component.jsx
+          property: (property_identifier) @type @tag.component.jsx)
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
   ])
 
 (jsx_closing_element
@@ -401,6 +413,18 @@
     (member_expression
       object: (identifier) @type @tag.component.jsx
       property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (identifier) @type @tag.component.jsx
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (member_expression
+          object: (identifier) @type @tag.component.jsx
+          property: (property_identifier) @type @tag.component.jsx)
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
   ])
 
 (jsx_self_closing_element
@@ -408,6 +432,18 @@
     (identifier) @type @tag.component.jsx
     (member_expression
       object: (identifier) @type @tag.component.jsx
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (identifier) @type @tag.component.jsx
+        property: (property_identifier) @type @tag.component.jsx)
+      property: (property_identifier) @type @tag.component.jsx)
+    (member_expression
+      object: (member_expression
+        object: (member_expression
+          object: (identifier) @type @tag.component.jsx
+          property: (property_identifier) @type @tag.component.jsx)
+        property: (property_identifier) @type @tag.component.jsx)
       property: (property_identifier) @type @tag.component.jsx)
   ])
 

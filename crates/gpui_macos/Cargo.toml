@@ -61,3 +61,13 @@ uuid.workspace = true
 [target.'cfg(target_os = "macos")'.build-dependencies]
 cbindgen = { version = "0.28.0", default-features = false }
 gpui.workspace = true
+
+# When this crate is itself being tested (cargo test -p gpui_macos), its own
+# cfg(test) flag enables impls of test-only traits like PlatformHeadlessRenderer
+# and PlatformWindow::render_to_image. Those traits/methods only exist in gpui
+# when gpui's `test-support` feature is on, so we have to turn that feature on
+# as a dev-dependency. The `cfg(test)` flag of a dependent crate doesn't
+# propagate to its dependencies, but dev-dependencies do, so this is the
+# correct way to enable the feature exactly when needed.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

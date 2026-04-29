@@ -380,21 +380,25 @@ impl LmStudioLanguageModel {
                         }
                     }
                     MessageContent::ToolResult(tool_result) => {
-                        let content = match &tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => {
-                                vec![lmstudio::MessagePart::Text {
-                                    text: text.to_string(),
-                                }]
-                            }
-                            LanguageModelToolResultContent::Image(image) => {
-                                vec![lmstudio::MessagePart::Image {
-                                    image_url: lmstudio::ImageUrl {
-                                        url: image.to_base64_url(),
-                                        detail: None,
-                                    },
-                                }]
-                            }
-                        };
+                        let content: Vec<lmstudio::MessagePart> = tool_result
+                            .content
+                            .iter()
+                            .map(|part| match part {
+                                LanguageModelToolResultContent::Text(text) => {
+                                    lmstudio::MessagePart::Text {
+                                        text: text.to_string(),
+                                    }
+                                }
+                                LanguageModelToolResultContent::Image(image) => {
+                                    lmstudio::MessagePart::Image {
+                                        image_url: lmstudio::ImageUrl {
+                                            url: image.to_base64_url(),
+                                            detail: None,
+                                        },
+                                    }
+                                }
+                            })
+                            .collect();
 
                         messages.push(lmstudio::ChatMessage::Tool {
                             content: content.into(),

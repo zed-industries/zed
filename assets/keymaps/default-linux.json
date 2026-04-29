@@ -748,7 +748,9 @@
   {
     "context": "Workspace && debugger_running",
     "bindings": {
-      "f5": "zed::NoAction",
+      // Unbind `f5` to avoid dispatching the `debugger::Rerun` as that is what `f5` is bound to in the `Workspace`
+      // context.
+      "f5": null,
     },
   },
   {
@@ -1069,6 +1071,8 @@
       "ctrl-shift-enter": "git::Amend",
       "alt-up": "git_panel::FocusChanges",
       "alt-l": "git::GenerateCommitMessage",
+      "shift-escape": "git::ExpandCommitEditor",
+      "alt-shift-escape": "git::ToggleFillCommitEditor",
     },
   },
   {

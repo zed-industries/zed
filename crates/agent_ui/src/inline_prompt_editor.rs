@@ -1541,26 +1541,6 @@ pub enum CodegenStatus {
     Error(anyhow::Error),
 }
 
-/// This is just CodegenStatus without the anyhow::Error, which causes a lifetime issue for rendering the Cancel button.
-#[derive(Copy, Clone)]
-pub enum CancelButtonState {
-    Idle,
-    Pending,
-    Done,
-    Error,
-}
-
-impl Into<CancelButtonState> for &CodegenStatus {
-    fn into(self) -> CancelButtonState {
-        match self {
-            CodegenStatus::Idle => CancelButtonState::Idle,
-            CodegenStatus::Pending => CancelButtonState::Pending,
-            CodegenStatus::Done => CancelButtonState::Done,
-            CodegenStatus::Error(_) => CancelButtonState::Error,
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 pub enum GenerationMode {
     Generate,

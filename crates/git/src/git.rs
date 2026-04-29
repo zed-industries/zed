@@ -94,6 +94,9 @@ actions!(
         Cancel,
         /// Expands the commit message editor.
         ExpandCommitEditor,
+        /// Toggles whether the commit message editor fills all the available
+        /// vertical space within the git panel.
+        ToggleFillCommitEditor,
         /// Generates a commit message using AI.
         GenerateCommitMessage,
         /// Initializes a new git repository.

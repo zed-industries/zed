@@ -13,6 +13,7 @@ use editor::{
     multibuffer_context_lines,
     scroll::Autoscroll,
 };
+use futures_lite::future::yield_now;
 use git::repository::DiffType;
 
 use git::{
@@ -33,7 +34,6 @@ use project::{
     },
 };
 use settings::{Settings, SettingsStore};
-use smol::future::yield_now;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -822,7 +822,7 @@ impl ProjectDiff {
 
         let mut buffers_to_fold = Vec::new();
 
-        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys.into_iter()) {
+        for (entry, path_key) in buffers_to_load.into_iter().zip(path_keys) {
             if let Some((buffer, diff)) = entry.load.await.log_err() {
                 // We might be lagging behind enough that all future entry.load futures are no longer pending.
                 // If that is the case, this task will never yield, starving the foreground thread of execution time.

@@ -162,6 +162,8 @@ Note that non-compliance will be raised during the publishing process by reviewe
 
 ## Publishing your extension
 
+> Prior to publishing your extension, you should have installed as well as tested it locally thoroughly. Note that untested extension submissions where the extension is not functioning at all will be closed eagerly without further feedback.
+
 To publish an extension, open a PR to [the `zed-industries/extensions` repo](https://github.com/zed-industries/extensions).
 
 In your PR, do the following:

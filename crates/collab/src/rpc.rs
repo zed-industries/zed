@@ -947,10 +947,6 @@ impl Server {
                     )?;
                 }
 
-                if should_auto_subscribe_to_channels(&zed_version) {
-                    subscribe_user_to_channels(user.id, session).await?;
-                }
-
                 if let Some(incoming_call) =
                     self.app_state.db.incoming_call_for_user(user.id).await?
                 {
@@ -2746,10 +2742,6 @@ async fn remove_contact(
 
     response.send(proto::Ack {})?;
     Ok(())
-}
-
-fn should_auto_subscribe_to_channels(version: &ZedVersion) -> bool {
-    version.0.minor < 139
 }
 
 async fn subscribe_to_channels(
