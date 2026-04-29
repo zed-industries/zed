@@ -1288,7 +1288,7 @@ mod tests {
                     .runnables
                     .iter()
                     .flat_map(|(_, (_, tasks))| {
-                        tasks.iter().flat_map(|(_, runnable_tasks)| {
+                        tasks.values().flat_map(|runnable_tasks| {
                             runnable_tasks
                                 .templates
                                 .iter()
