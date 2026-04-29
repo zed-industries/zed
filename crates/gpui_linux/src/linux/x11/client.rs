@@ -571,7 +571,7 @@ impl X11Client {
             scale_factor,
 
             xkb_context,
-            xcb_connection: xcb_connection.clone(),
+            xcb_connection: xcb_connection,
             xkb_device_id,
             client_side_decorations_supported,
             x_root_index,
@@ -608,8 +608,7 @@ impl X11Client {
         }));
 
         {
-            let root = xcb_connection.setup().roots[x_root_index].root;
-            let has_appmenu = x11_global_menu_supported(&xcb_connection, &atoms, root);
+            let has_appmenu = crate::linux::dbusmenu::appmenu_registrar_present();
             let enabled = match crate::linux::dbusmenu::global_menu_env_override() {
                 Some(true) => true,
                 Some(false) => false,
@@ -2322,36 +2321,6 @@ fn check_gtk_frame_extents_supported(
         .collect();
 
     supported_atom_ids.contains(&atoms._GTK_FRAME_EXTENTS)
-}
-
-fn x11_global_menu_supported(
-    xcb_connection: &XCBConnection,
-    atoms: &XcbAtoms,
-    root: xproto::Window,
-) -> bool {
-    let Some(supported_atoms) = get_reply(
-        || "Failed to get _NET_SUPPORTED",
-        xcb_connection.get_property(
-            false,
-            root,
-            atoms._NET_SUPPORTED,
-            xproto::AtomEnum::ATOM,
-            0,
-            1024,
-        ),
-    )
-    .log_with_level(Level::Debug) else {
-        return false;
-    };
-
-    let supported_atom_ids: Vec<u32> = supported_atoms
-        .value
-        .chunks_exact(4)
-        .filter_map(|chunk| chunk.try_into().ok().map(u32::from_ne_bytes))
-        .collect();
-
-    supported_atom_ids.contains(&atoms._KDE_NET_WM_APPMENU_SERVICE_NAME)
-        || supported_atom_ids.contains(&atoms._KDE_NET_WM_APPMENU_OBJECT_PATH)
 }
 
 fn x11_appmenu_service_name(state: &X11ClientState) -> Option<String> {

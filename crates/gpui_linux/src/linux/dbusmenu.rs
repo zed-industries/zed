@@ -1065,6 +1065,43 @@ pub fn global_menu_env_override() -> Option<bool> {
     }
 }
 
+/// Probe the session bus for the global menu registrar.
+///
+/// Used by X11 (which has no compositor-level appmenu protocol) to decide whether
+/// to publish the `_KDE_NET_WM_APPMENU_*` window properties. Most KDE/X11 setups
+/// do not advertise the appmenu atoms in `_NET_SUPPORTED` even when the registrar
+/// is running, so checking the registrar's bus name is more reliable.
+pub fn appmenu_registrar_present() -> bool {
+    use zbus::blocking;
+    use zbus::names::BusName;
+
+    let connection = match blocking::Connection::session() {
+        Ok(connection) => connection,
+        Err(error) => {
+            log::debug!("Failed to open session bus while probing appmenu registrar: {error}");
+            return false;
+        }
+    };
+
+    let proxy = match blocking::fdo::DBusProxy::new(&connection) {
+        Ok(proxy) => proxy,
+        Err(error) => {
+            log::debug!("Failed to build DBus proxy while probing appmenu registrar: {error}");
+            return false;
+        }
+    };
+
+    let name = match BusName::try_from("com.canonical.AppMenu.Registrar") {
+        Ok(name) => name,
+        Err(error) => {
+            log::debug!("Failed to build BusName for appmenu registrar: {error}");
+            return false;
+        }
+    };
+
+    proxy.name_has_owner(name).unwrap_or(false)
+}
+
 fn owned_bool(value: bool) -> Option<OwnedValue> {
     Value::Bool(value).try_into().ok()
 }
