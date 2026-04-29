@@ -45,8 +45,7 @@ use std::{
 use ui::{
     CommonAnimationExt, HighlightedLabel, IconButtonShape, KeyBinding, List, ListItem,
     ListSeparator, Modal, ModalFooter, ModalHeader, Navigable, NavigableEntry, ScrollAxes,
-    Scrollbars, Section, Tooltip,
-    WithScrollbar, prelude::*,
+    Scrollbars, Section, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt,
@@ -1154,11 +1153,12 @@ impl RemoteServerProjects {
                 }
             });
 
-        let filter_subscription = cx.subscribe(&filter_editor, |this, _, event: &EditorEvent, cx| {
-            if matches!(event, EditorEvent::BufferEdited) {
-                this.recompute_filter(cx);
-            }
-        });
+        let filter_subscription =
+            cx.subscribe(&filter_editor, |this, _, event: &EditorEvent, cx| {
+                if matches!(event, EditorEvent::BufferEdited) {
+                    this.recompute_filter(cx);
+                }
+            });
 
         Self {
             mode,
@@ -3385,11 +3385,7 @@ mod filter_tests {
         }
     }
 
-    fn build_entries(
-        cx: &App,
-        handle: &ScrollHandle,
-        servers: &[MockServer],
-    ) -> Vec<RemoteEntry> {
+    fn build_entries(cx: &App, handle: &ScrollHandle, servers: &[MockServer]) -> Vec<RemoteEntry> {
         servers
             .iter()
             .map(|server| {
@@ -3483,31 +3479,23 @@ mod filter_tests {
     #[gpui::test]
     async fn test_filter_project_path_match(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
-            with_filter_data(
-                cx,
-                &[mock("myhost", &["/home/user/project"])],
-                |_, data| {
-                    let results = filter(data, "project");
-                    assert_eq!(results.len(), 1);
-                    assert_eq!(results[0].project_matches.len(), 1);
-                    assert_eq!(results[0].project_matches[0].project_index, 0);
-                },
-            );
+            with_filter_data(cx, &[mock("myhost", &["/home/user/project"])], |_, data| {
+                let results = filter(data, "project");
+                assert_eq!(results.len(), 1);
+                assert_eq!(results[0].project_matches.len(), 1);
+                assert_eq!(results[0].project_matches[0].project_index, 0);
+            });
         });
     }
 
     #[gpui::test]
     async fn test_filter_host_match_includes_all_projects(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
-            with_filter_data(
-                cx,
-                &[mock("myhost", &["/path/a", "/path/b"])],
-                |_, data| {
-                    let results = filter(data, "myhost");
-                    assert_eq!(results.len(), 1);
-                    assert_eq!(results[0].project_matches.len(), 2);
-                },
-            );
+            with_filter_data(cx, &[mock("myhost", &["/path/a", "/path/b"])], |_, data| {
+                let results = filter(data, "myhost");
+                assert_eq!(results.len(), 1);
+                assert_eq!(results[0].project_matches.len(), 2);
+            });
         });
     }
 
@@ -3644,11 +3632,7 @@ mod filter_tests {
     async fn test_filter_sync_repopulates_after_rebuild(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             let handle = ScrollHandle::new();
-            let entries = build_entries(
-                cx,
-                &handle,
-                &[mock("alpha", &[]), mock("beta", &[])],
-            );
+            let entries = build_entries(cx, &handle, &[mock("alpha", &[]), mock("beta", &[])]);
             let mut state = DefaultState {
                 scroll_handle: handle.clone(),
                 add_new_server: NavigableEntry::new(&handle, cx),
