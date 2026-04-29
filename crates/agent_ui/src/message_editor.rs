@@ -12,11 +12,13 @@ use acp_thread::MentionUri;
 use agent::ThreadStore;
 use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
+use collections::HashMap;
 use editor::{
     Addon, AnchorRangeExt, ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode,
     EditorStyle, Inlay, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, ToOffset,
     actions::{Copy, Paste},
     code_context_menus::CodeContextMenu,
+    display_map::{CreaseId, CreaseSnapshot},
     scroll::Autoscroll,
 };
 use futures::{FutureExt as _, future::join_all};
@@ -762,87 +764,59 @@ impl MessageEditor {
 
         cx.spawn(async move |_, cx| {
             let contents = contents.await?;
-            let mut all_tracked_buffers = Vec::new();
-
-            let result = editor.update(cx, |editor, cx| {
+            Ok(editor.update(cx, |editor, cx| {
+                let crease_snapshot = editor.display_map.read(cx).crease_snapshot();
+                let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
                 let text = editor.text(cx);
-                let (mut ix, _) = text
-                    .char_indices()
-                    .find(|(_, c)| !c.is_whitespace())
-                    .unwrap_or((0, '\0'));
-                let mut chunks: Vec<acp::ContentBlock> = Vec::new();
-                editor.display_map.update(cx, |map, cx| {
-                    let snapshot = map.snapshot(cx);
-                    for (crease_id, crease) in snapshot.crease_snapshot.creases() {
-                        let Some((uri, mention)) = contents.get(&crease_id) else {
-                            continue;
-                        };
-
-                        let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot());
-                        if crease_range.start.0 > ix {
-                            let chunk = text[ix..crease_range.start.0].into();
-                            chunks.push(chunk);
-                        }
-                        let chunk = match mention {
-                            Mention::Text {
-                                content,
-                                tracked_buffers,
-                            } => {
-                                all_tracked_buffers.extend(tracked_buffers.iter().cloned());
-                                if supports_embedded_context {
-                                    acp::ContentBlock::Resource(acp::EmbeddedResource::new(
-                                        acp::EmbeddedResourceResource::TextResourceContents(
-                                            acp::TextResourceContents::new(
-                                                content.clone(),
-                                                uri.to_uri().to_string(),
-                                            ),
-                                        ),
-                                    ))
-                                } else {
-                                    acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
-                                        uri.name(),
-                                        uri.to_uri().to_string(),
-                                    ))
-                                }
-                            }
-                            Mention::Image(mention_image) => acp::ContentBlock::Image(
-                                acp::ImageContent::new(
-                                    mention_image.data.clone(),
-                                    mention_image.format.mime_type(),
-                                )
-                                .uri(match uri {
-                                    MentionUri::File { .. } => Some(uri.to_uri().to_string()),
-                                    MentionUri::PastedImage { .. } => {
-                                        Some(uri.to_uri().to_string())
-                                    }
-                                    other => {
-                                        debug_panic!(
-                                            "unexpected mention uri for image: {:?}",
-                                            other
-                                        );
-                                        None
-                                    }
-                                }),
-                            ),
-                            Mention::Link => acp::ContentBlock::ResourceLink(
-                                acp::ResourceLink::new(uri.name(), uri.to_uri().to_string()),
-                            ),
-                        };
-                        chunks.push(chunk);
-                        ix = crease_range.end.0;
-                    }
-
-                    if ix < text.len() {
-                        let last_chunk = text[ix..].trim_end().to_owned();
-                        if !last_chunk.is_empty() {
-                            chunks.push(last_chunk.into());
-                        }
-                    }
-                });
-                anyhow::Ok((chunks, all_tracked_buffers))
-            })?;
-            Ok(result)
+                let mut tracked_buffers = Vec::new();
+                let chunks = build_chunks_from_creases(
+                    &text,
+                    &crease_snapshot,
+                    &buffer_snapshot,
+                    supports_embedded_context,
+                    &mut tracked_buffers,
+                    |crease_id| {
+                        contents
+                            .get(crease_id)
+                            .map(|(uri, mention)| (uri, Some(mention)))
+                    },
+                );
+                (chunks, tracked_buffers)
+            }))
         })
+    }
+
+    /// Snapshots the editor's current draft into a list of `ContentBlock`s
+    /// without awaiting any pending mention resolution.
+    pub fn draft_content_blocks_snapshot(&self, cx: &App) -> Vec<acp::ContentBlock> {
+        let editor = self.editor.read(cx);
+        let crease_snapshot = editor.display_map.read(cx).crease_snapshot();
+        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+        let text = editor.text(cx);
+        let mention_set = self.mention_set.read(cx);
+        let supports_embedded_context =
+            self.session_capabilities.read().supports_embedded_context();
+        let resolved: HashMap<CreaseId, (MentionUri, Option<Mention>)> = crease_snapshot
+            .creases()
+            .filter_map(|(crease_id, _)| {
+                mention_set
+                    .resolved_mention_for_crease(&crease_id)
+                    .map(|entry| (crease_id, entry))
+            })
+            .collect();
+        let mut tracked_buffers = Vec::new();
+        build_chunks_from_creases(
+            &text,
+            &crease_snapshot,
+            &buffer_snapshot,
+            supports_embedded_context,
+            &mut tracked_buffers,
+            |crease_id| {
+                resolved
+                    .get(crease_id)
+                    .map(|(uri, mention)| (uri, mention.as_ref()))
+            },
+        )
     }
 
     pub fn clear(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1838,6 +1812,85 @@ impl Addon for MessageEditorAddon {
         if settings.use_modifier_to_send {
             key_context.add("use_modifier_to_send");
         }
+    }
+}
+
+/// Walks the editor's creases in order, interleaving plain-text chunks from
+/// `text` with mention blocks produced from `resolve`.
+fn build_chunks_from_creases<'a>(
+    text: &str,
+    crease_snapshot: &CreaseSnapshot,
+    buffer_snapshot: &MultiBufferSnapshot,
+    supports_embedded_context: bool,
+    tracked_buffers: &mut Vec<Entity<Buffer>>,
+    mut resolve: impl FnMut(&CreaseId) -> Option<(&'a MentionUri, Option<&'a Mention>)>,
+) -> Vec<acp::ContentBlock> {
+    let (mut ix, _) = text
+        .char_indices()
+        .find(|(_, c)| !c.is_whitespace())
+        .unwrap_or((0, '\0'));
+    let mut chunks = Vec::new();
+
+    for (crease_id, crease) in crease_snapshot.creases() {
+        let Some((uri, mention)) = resolve(&crease_id) else {
+            continue;
+        };
+        let crease_range = crease.range().to_offset(buffer_snapshot);
+        if crease_range.start.0 > ix {
+            chunks.push(text[ix..crease_range.start.0].into());
+        }
+        chunks.push(mention_to_content_block(
+            uri,
+            mention,
+            supports_embedded_context,
+            tracked_buffers,
+        ));
+        ix = crease_range.end.0;
+    }
+
+    if ix < text.len() {
+        let last_chunk = text[ix..].trim_end().to_owned();
+        if !last_chunk.is_empty() {
+            chunks.push(last_chunk.into());
+        }
+    }
+    chunks
+}
+
+fn mention_to_content_block(
+    uri: &MentionUri,
+    mention: Option<&Mention>,
+    supports_embedded_context: bool,
+    tracked_buffers: &mut Vec<Entity<Buffer>>,
+) -> acp::ContentBlock {
+    match mention {
+        Some(Mention::Text {
+            content,
+            tracked_buffers: mention_tracked_buffers,
+        }) if supports_embedded_context => {
+            tracked_buffers.extend(mention_tracked_buffers.iter().cloned());
+            acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents::new(content.clone(), uri.to_uri().to_string()),
+                ),
+            ))
+        }
+        Some(Mention::Image(mention_image)) => acp::ContentBlock::Image(
+            acp::ImageContent::new(mention_image.data.clone(), mention_image.format.mime_type())
+                .uri(match uri {
+                    MentionUri::File { .. } | MentionUri::PastedImage { .. } => {
+                        Some(uri.to_uri().to_string())
+                    }
+                    other => {
+                        debug_panic!("unexpected mention uri for image: {:?}", other);
+                        None
+                    }
+                }),
+        ),
+        _ => acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
+            uri.name(),
+            uri.to_uri().to_string(),
+        )),
     }
 }
 
@@ -4162,6 +4215,56 @@ mod tests {
             });
 
         assert_eq!(copied, None);
+    }
+
+    #[gpui::test]
+    async fn test_draft_content_blocks_snapshot_preserves_selection_mentions(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (fixture, mut cx) = setup_selection_mention_fixture(cx).await;
+
+        let blocks = fixture.message_editor.update(&mut cx, |editor, cx| {
+            editor
+                .session_capabilities
+                .write()
+                .set_prompt_capabilities(acp::PromptCapabilities::new().embedded_context(true));
+            editor.draft_content_blocks_snapshot(cx)
+        });
+
+        // Each selection mention must round-trip as a `Resource` block carrying
+        // its URI and content, not as a `Text` block containing the fold
+        // placeholder string.
+        let resource_uris: Vec<&str> =
+            blocks
+                .iter()
+                .filter_map(|block| match block {
+                    acp::ContentBlock::Resource(acp::EmbeddedResource {
+                        resource:
+                            acp::EmbeddedResourceResource::TextResourceContents(
+                                acp::TextResourceContents { uri, .. },
+                            ),
+                        ..
+                    }) => Some(uri.as_str()),
+                    _ => None,
+                })
+                .collect();
+        assert_eq!(
+            resource_uris.len(),
+            2,
+            "snapshot should emit one Resource block per selection mention; got {blocks:#?}"
+        );
+        assert!(resource_uris.contains(&fixture.first_uri.to_uri().to_string().as_str()));
+        for block in &blocks {
+            if let acp::ContentBlock::Text(text) = block {
+                assert!(
+                    !text.text.split_whitespace().any(|word| word == "selection"),
+                    "text block must not contain bare fold placeholder: {:?}",
+                    text.text
+                );
+            }
+        }
     }
 
     #[gpui::test]

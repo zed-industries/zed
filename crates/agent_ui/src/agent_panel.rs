@@ -2598,31 +2598,26 @@ impl AgentPanel {
     }
 
     fn active_initial_content(&self, cx: &App) -> Option<AgentInitialContent> {
-        self.active_thread_view(cx).and_then(|thread_view| {
+        let thread_view = self.active_thread_view(cx)?;
+        let thread_view = thread_view.read(cx);
+        let saved = thread_view
+            .thread
+            .read(cx)
+            .draft_prompt()
+            .map(<[_]>::to_vec)
+            .filter(|blocks| !blocks.is_empty());
+        let blocks = saved.unwrap_or_else(|| {
             thread_view
+                .message_editor
                 .read(cx)
-                .thread
-                .read(cx)
-                .draft_prompt()
-                .map(|draft| AgentInitialContent::ContentBlock {
-                    blocks: draft.to_vec(),
-                    auto_submit: false,
-                })
-                .filter(|initial_content| match initial_content {
-                    AgentInitialContent::ContentBlock { blocks, .. } => !blocks.is_empty(),
-                    _ => true,
-                })
-                .or_else(|| {
-                    let text = thread_view.read(cx).message_editor.read(cx).text(cx);
-                    if text.trim().is_empty() {
-                        None
-                    } else {
-                        Some(AgentInitialContent::ContentBlock {
-                            blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(text))],
-                            auto_submit: false,
-                        })
-                    }
-                })
+                .draft_content_blocks_snapshot(cx)
+        });
+        if blocks.is_empty() {
+            return None;
+        }
+        Some(AgentInitialContent::ContentBlock {
+            blocks,
+            auto_submit: false,
         })
     }
 

@@ -688,6 +688,10 @@ impl DisplayMap {
         }
     }
 
+    pub fn crease_snapshot(&self) -> CreaseSnapshot {
+        self.crease_map.snapshot()
+    }
+
     #[instrument(skip_all)]
     pub fn set_state(&mut self, other: &DisplaySnapshot, cx: &mut Context<Self>) {
         self.fold(
