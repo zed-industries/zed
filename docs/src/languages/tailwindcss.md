@@ -15,6 +15,7 @@ Languages which can be used with Tailwind CSS in Zed:
 - [CSS](./css.md)
 - [ERB](./ruby.md#using-the-tailwind-css-language-server-with-ruby)
 - [Gleam](./gleam.md#using-the-tailwind-css-language-server-with-gleam)
+- [Go (Templ)](./go.md#using-the-tailwind-css-language-server-with-templ)
 - [HEEx](./elixir.md#using-the-tailwind-css-language-server-with-heex-templates)
 - [HTML](./html.md#using-the-tailwind-css-language-server-with-html)
 - [TypeScript](./typescript.md#using-the-tailwind-css-language-server-with-typescript)
