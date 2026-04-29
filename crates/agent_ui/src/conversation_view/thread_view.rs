@@ -2295,7 +2295,7 @@ impl ThreadView {
             .id("edited_files_list")
             .max_h_40()
             .overflow_y_scroll()
-            .children(
+            .child(v_flex().children(
                 sorted_buffers
                     .into_iter()
                     .enumerate()
@@ -2403,7 +2403,7 @@ impl ThreadView {
 
                         Some(element)
                     }),
-            )
+            ))
             .into_any_element()
     }
 
@@ -2786,7 +2786,7 @@ impl ThreadView {
             .id("plan_items_list")
             .max_h_40()
             .overflow_y_scroll()
-            .children(plan.entries.iter().enumerate().flat_map(|(index, entry)| {
+            .child(v_flex().children(plan.entries.iter().enumerate().flat_map(|(index, entry)| {
                 let entry_bg = cx.theme().colors().editor_background;
                 let tooltip_text: SharedString = entry.content.read(cx).source().to_string().into();
 
@@ -2845,7 +2845,7 @@ impl ThreadView {
                         ))
                         .tooltip(Tooltip::text(tooltip_text)),
                 )
-            }))
+            })))
             .into_any_element()
     }
 
