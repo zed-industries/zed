@@ -31,10 +31,10 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
-    Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
-    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task,
-    ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
+    ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
+    PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
+    SystemWindowTab, Task, ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -783,6 +783,10 @@ pub trait PlatformTextSystem: Send + Sync {
     /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
     -> TextRenderingMode;
+    /// Returns the dilation level to use for a glyph painted in the given color.
+    fn glyph_dilation_for_color(&self, _color: Hsla) -> u8 {
+        0
+    }
 }
 
 #[expect(missing_docs)]

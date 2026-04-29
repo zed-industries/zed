@@ -10981,7 +10981,7 @@ async fn test_remote_archive_thread_with_disconnected_remote(
     // Disconnect the remote connection before archiving. We don't
     // `run_until_parked` here because the disconnect itself triggers
     // reconnection work that can't complete in the test environment.
-    remote_client.update_in(cx, |client, _window, cx| {
+    remote_client.update(cx, |client, cx| {
         client.simulate_disconnect(cx).detach();
     });
 

@@ -3211,10 +3211,9 @@ impl ThreadView {
             .child(
                 v_flex()
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
-                    .when(max_content_width.is_none(), |this| this.w_full())
+                    .when(fills_container, |this| this.h_full())
                     .flex_shrink()
                     .flex_grow_0()
-                    .when(fills_container, |this| this.h_full())
                     .justify_between()
                     .gap_2()
                     .child(
@@ -3275,6 +3274,7 @@ impl ThreadView {
                             )
                             .child(
                                 h_flex()
+                                    .flex_wrap()
                                     .gap_1()
                                     .children(self.render_token_usage(cx))
                                     .children(self.profile_selector.clone())

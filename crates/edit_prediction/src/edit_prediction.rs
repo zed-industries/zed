@@ -2109,8 +2109,7 @@ fn is_ep_store_provider(provider: EditPredictionProvider) -> bool {
         EditPredictionProvider::Zed
         | EditPredictionProvider::Mercury
         | EditPredictionProvider::Ollama
-        | EditPredictionProvider::OpenAiCompatibleApi
-        | EditPredictionProvider::Experimental(_) => true,
+        | EditPredictionProvider::OpenAiCompatibleApi => true,
         EditPredictionProvider::None
         | EditPredictionProvider::Copilot
         | EditPredictionProvider::Codestral => false,
@@ -2145,9 +2144,7 @@ impl EditPredictionStore {
 
         let (needs_acceptance_tracking, max_pending_predictions) =
             match all_language_settings(None, cx).edit_predictions.provider {
-                EditPredictionProvider::Zed
-                | EditPredictionProvider::Mercury
-                | EditPredictionProvider::Experimental(_) => (true, 2),
+                EditPredictionProvider::Zed | EditPredictionProvider::Mercury => (true, 2),
                 EditPredictionProvider::Ollama => (false, 1),
                 EditPredictionProvider::OpenAiCompatibleApi => (false, 2),
                 EditPredictionProvider::None
