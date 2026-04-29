@@ -2806,7 +2806,7 @@ impl Render for GitGraph {
                             cx,
                         ))
                         .child({
-                            let row_height = is_path_historylf::row_height(window, cx);
+                            let row_height = Self::row_height(window, cx);
                             let selected_entry_idx = self.selected_entry_idx;
                             let hovered_entry_idx = self.hovered_entry_idx;
                             let weak_self = cx.weak_entity();
