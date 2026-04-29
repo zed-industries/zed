@@ -5,14 +5,17 @@
 //! (which owns the actual connections and their lifetime) lives in
 //! `nrepl_store.rs`; this module is purely the workspace-facing UI.
 
+use editor::Editor;
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, actions,
     prelude::*,
 };
 use ui::{ButtonLike, KeyBinding, prelude::*};
+use util::ResultExt as _;
 use workspace::item::ItemEvent;
 use workspace::{Toast, Workspace, item::Item, notifications::NotificationId};
 
+use crate::editor_session;
 use crate::nrepl_settings::NreplSettings;
 use crate::nrepl_store::{ConnectTarget, ConnectionState, NreplConnection, NreplStore};
 
@@ -27,6 +30,23 @@ actions!(
         Disconnect,
         /// Opens the nREPL sessions panel.
         Sessions,
+        /// Evaluates the top-level form under the cursor.
+        Eval,
+        /// Evaluates the current selection. No-op when nothing is
+        /// selected.
+        EvalSelection,
+        /// Evaluates the entire buffer. Equivalent to `LoadFile` for
+        /// saved buffers; refuses on dirty buffers (save first).
+        EvalBuffer,
+        /// Sends `{:op "load-file" ...}` for the current buffer's
+        /// on-disk contents. Refuses if the buffer has unsaved changes.
+        LoadFile,
+        /// Interrupts the most recent in-flight evaluation in the
+        /// current editor.
+        Interrupt,
+        /// Re-parses the buffer's `(ns ...)` form and updates the
+        /// editor session's cached namespace.
+        SwitchNamespace,
     ]
 );
 
@@ -37,7 +57,7 @@ pub fn init(cx: &mut App) {
                 show_sessions_page(workspace, window, cx);
             });
 
-            workspace.register_action(|workspace, _: &Connect, _window, cx| {
+            workspace.register_action(|workspace, _: &Connect, window, cx| {
                 if !NreplSettings::enabled(cx) {
                     return;
                 }
@@ -46,9 +66,16 @@ pub fn init(cx: &mut App) {
                 store.update(cx, |store, cx| {
                     store.connect(weak, ConnectTarget::Auto, cx);
                 });
+                // Bring the panel forward so the user actually sees the
+                // state transitions (Resolving / Connecting / Failed /
+                // Connected). Without this, command-palette focus returns
+                // to whatever was active before — usually the editor —
+                // and the panel sits behind it, making Connect look like
+                // a no-op.
+                show_sessions_page(workspace, window, cx);
             });
 
-            workspace.register_action(|workspace, _: &Disconnect, _window, cx| {
+            workspace.register_action(|workspace, _: &Disconnect, window, cx| {
                 if !NreplSettings::enabled(cx) {
                     return;
                 }
@@ -61,8 +88,85 @@ pub fn init(cx: &mut App) {
                         Toast::new(id, "No active nREPL connection to disconnect.").autohide(),
                         cx,
                     );
+                    return;
                 }
+                // Same reasoning as Connect: surface the panel so the
+                // disconnected state is visible.
+                show_sessions_page(workspace, window, cx);
             });
+        },
+    )
+    .detach();
+
+    // Editor-level actions. We don't gate by language here — the keymap
+    // context is `Editor && nrepl`, and users may want to drive eval from
+    // a scratch buffer too. The editor session itself bails when the
+    // buffer isn't a singleton or has no associated workspace.
+    cx.observe_new(
+        move |editor: &mut Editor, _window, cx: &mut Context<Editor>| {
+            if !editor.use_modal_editing() || !editor.buffer().read(cx).is_singleton() {
+                // Mini-buffers (search, command-palette inputs, etc.) and
+                // multi-buffer views can't host eval blocks sensibly;
+                // skip wiring actions on them. Mirrors the gate used by
+                // `crates/repl/src/repl_sessions_ui.rs`.
+                return;
+            }
+            let editor_handle = cx.entity().downgrade();
+
+            editor
+                .register_action({
+                    let editor_handle = editor_handle.clone();
+                    move |_: &Eval, window, cx| {
+                        editor_session::eval_form_at_cursor(editor_handle.clone(), window, cx)
+                            .log_err();
+                    }
+                })
+                .detach();
+
+            editor
+                .register_action({
+                    let editor_handle = editor_handle.clone();
+                    move |_: &EvalSelection, window, cx| {
+                        editor_session::eval_selection(editor_handle.clone(), window, cx).log_err();
+                    }
+                })
+                .detach();
+
+            editor
+                .register_action({
+                    let editor_handle = editor_handle.clone();
+                    move |_: &EvalBuffer, window, cx| {
+                        editor_session::load_file(editor_handle.clone(), window, cx).log_err();
+                    }
+                })
+                .detach();
+
+            editor
+                .register_action({
+                    let editor_handle = editor_handle.clone();
+                    move |_: &LoadFile, window, cx| {
+                        editor_session::load_file(editor_handle.clone(), window, cx).log_err();
+                    }
+                })
+                .detach();
+
+            editor
+                .register_action({
+                    let editor_handle = editor_handle.clone();
+                    move |_: &Interrupt, _window, cx| {
+                        editor_session::interrupt(editor_handle.clone(), cx).log_err();
+                    }
+                })
+                .detach();
+
+            editor
+                .register_action({
+                    let editor_handle = editor_handle;
+                    move |_: &SwitchNamespace, _window, cx| {
+                        editor_session::switch_namespace(editor_handle.clone(), cx).log_err();
+                    }
+                })
+                .detach();
         },
     )
     .detach();
