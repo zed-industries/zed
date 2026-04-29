@@ -9,6 +9,7 @@ use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
+use project::lsp_store::lsp_ext_command;
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
@@ -608,20 +609,60 @@ impl LspAdapter for RustLspAdapter {
             .lsp
             .get(&SERVER_NAME)
             .is_some_and(|s| s.enable_lsp_tasks);
-        if enable_lsp_tasks {
-            let experimental = json!({
-                "runnables": {
-                    "kinds": [ "cargo", "shell" ],
-                },
-            });
-            if let Some(original_experimental) = &mut original.capabilities.experimental {
-                merge_json_value_into(experimental, original_experimental);
-            } else {
-                original.capabilities.experimental = Some(experimental);
+
+        let mut experimental = json!({
+            "commands": {
+                "commands": [
+                    "rust-analyzer.showReferences",
+                    "rust-analyzer.gotoLocation",
+                    "rust-analyzer.triggerParameterHints",
+                    "rust-analyzer.rename",
+                ]
             }
+        });
+
+        if enable_lsp_tasks {
+            merge_json_value_into(
+                json!({
+                    "runnables": {
+                        "kinds": [ "cargo", "shell" ],
+                    },
+                    "commands": {
+                        "commands": [
+                            "rust-analyzer.runSingle",
+                        ]
+                    }
+                }),
+                &mut experimental,
+            );
+        }
+
+        if let Some(original_experimental) = &mut original.capabilities.experimental {
+            merge_json_value_into(experimental, original_experimental);
+        } else {
+            original.capabilities.experimental = Some(experimental);
         }
 
         Ok(original)
+    }
+
+    fn client_command(
+        &self,
+        command_name: &str,
+        arguments: &[serde_json::Value],
+    ) -> Option<ClientCommand> {
+        match command_name {
+            "rust-analyzer.showReferences" => Some(ClientCommand::ShowLocations),
+            "rust-analyzer.runSingle" => {
+                let first_arg = arguments.first()?;
+                let runnable =
+                    serde_json::from_value::<lsp_ext_command::Runnable>(first_arg.clone()).ok()?;
+                let template =
+                    lsp_ext_command::runnable_to_task_template(runnable.label, runnable.args);
+                Some(ClientCommand::ScheduleTask(template))
+            }
+            _ => None,
+        }
     }
 }
 
@@ -1542,10 +1583,10 @@ mod tests {
                 "await.as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
                 6..18,
                 vec![
-                    (6..18, HighlightId(2)),
-                    (20..23, HighlightId(1)),
-                    (33..40, HighlightId(0)),
-                    (45..46, HighlightId(0))
+                    (6..18, HighlightId::new(2)),
+                    (20..23, HighlightId::new(1)),
+                    (33..40, HighlightId::new(0)),
+                    (45..46, HighlightId::new(0))
                 ],
             ))
         );
@@ -1572,12 +1613,12 @@ mod tests {
                 "pub fn as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
                 7..19,
                 vec![
-                    (0..3, HighlightId(1)),
-                    (4..6, HighlightId(1)),
-                    (7..19, HighlightId(2)),
-                    (21..24, HighlightId(1)),
-                    (34..41, HighlightId(0)),
-                    (46..47, HighlightId(0))
+                    (0..3, HighlightId::new(1)),
+                    (4..6, HighlightId::new(1)),
+                    (7..19, HighlightId::new(2)),
+                    (21..24, HighlightId::new(1)),
+                    (34..41, HighlightId::new(0)),
+                    (46..47, HighlightId::new(0))
                 ],
             ))
         );
@@ -1598,7 +1639,7 @@ mod tests {
             Some(CodeLabel::new(
                 "inner_value: String".to_string(),
                 6..11,
-                vec![(0..11, HighlightId(3)), (13..19, HighlightId(0))],
+                vec![(0..11, HighlightId::new(3)), (13..19, HighlightId::new(0))],
             ))
         );
 
@@ -1625,8 +1666,8 @@ mod tests {
                 vec![
                     (10..13, HighlightId::TABSTOP_INSERT_ID),
                     (16..19, HighlightId::TABSTOP_INSERT_ID),
-                    (0..7, HighlightId(2)),
-                    (7..8, HighlightId(2)),
+                    (0..7, HighlightId::new(2)),
+                    (7..8, HighlightId::new(2)),
                 ],
             ))
         );
@@ -1653,8 +1694,8 @@ mod tests {
                 0..4,
                 vec![
                     (5..9, HighlightId::TABSTOP_REPLACE_ID),
-                    (0..3, HighlightId(2)),
-                    (3..4, HighlightId(2)),
+                    (0..3, HighlightId::new(2)),
+                    (3..4, HighlightId::new(2)),
                 ],
             ))
         );
@@ -1682,8 +1723,8 @@ mod tests {
                 vec![
                     (7..10, HighlightId::TABSTOP_REPLACE_ID),
                     (13..16, HighlightId::TABSTOP_INSERT_ID),
-                    (0..2, HighlightId(1)),
-                    (3..6, HighlightId(1)),
+                    (0..2, HighlightId::new(1)),
+                    (3..6, HighlightId::new(1)),
                 ],
             ))
         );
@@ -1711,8 +1752,8 @@ mod tests {
                 vec![
                     (4..8, HighlightId::TABSTOP_REPLACE_ID),
                     (12..16, HighlightId::TABSTOP_REPLACE_ID),
-                    (0..3, HighlightId(1)),
-                    (9..11, HighlightId(1)),
+                    (0..3, HighlightId::new(1)),
+                    (9..11, HighlightId::new(1)),
                 ],
             ))
         );

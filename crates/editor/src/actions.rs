@@ -150,6 +150,12 @@ pub struct ToggleComments {
     pub ignore_indent: bool,
 }
 
+/// Toggles block comment markers for the selected text.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct ToggleBlockComments;
+
 /// Moves the cursor up by a specified number of lines.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
@@ -186,7 +192,7 @@ pub struct SelectDownByLines {
     pub(super) lines: u32,
 }
 
-/// Expands all excerpts in the editor.
+/// Expands all excerpts with selections.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -545,6 +551,14 @@ actions!(
         /// Formats the entire document.
         Format,
         /// Formats only the selected text.
+        ///
+        /// This action is only available when the active formatter can format ranges.
+        /// When using a language server, this sends an LSP range formatting request for each
+        /// selection, and is hidden when the selected buffer's configured language server does
+        /// not advertise range-formatting support. When using Prettier, Prettier's own range
+        /// formatting is used to format the encompassing range of all selections, and resulting
+        /// edits outside the selected ranges are discarded. External command formatters do not
+        /// support range formatting and are skipped.
         FormatSelections,
         /// Goes to the declaration of the symbol at cursor.
         GoToDeclaration,
@@ -562,10 +576,14 @@ actions!(
         GoToImplementation,
         /// Goes to implementation in a split pane.
         GoToImplementationSplit,
+        /// Goes to the next bookmark in the file.
+        GoToNextBookmark,
         /// Goes to the next change in the file.
         GoToNextChange,
         /// Goes to the parent module of the current file.
         GoToParentModule,
+        /// Goes to the previous bookmark in the file.
+        GoToPreviousBookmark,
         /// Goes to the previous change in the file.
         GoToPreviousChange,
         /// Goes to the next symbol.
@@ -656,6 +674,8 @@ actions!(
         NextScreen,
         /// Goes to the next snippet tabstop if one exists.
         NextSnippetTabstop,
+        /// Opens a view of all bookmarks in the project.
+        ViewBookmarks,
         /// Opens the context menu at cursor position.
         OpenContextMenu,
         /// Opens excerpts from the current file.
@@ -805,6 +825,8 @@ actions!(
         Tab,
         /// Removes a tab character or outdents.
         Backtab,
+        /// Toggles a bookmark at the current line.
+        ToggleBookmark,
         /// Toggles a breakpoint at the current line.
         ToggleBreakpoint,
         /// Toggles the case of selected text.
@@ -827,6 +849,8 @@ actions!(
         ToggleIndentGuides,
         /// Toggles inlay hints display.
         ToggleInlayHints,
+        /// Toggles code lens display.
+        ToggleCodeLens,
         /// Toggles semantic highlights display.
         ToggleSemanticHighlights,
         /// Toggles inline values display.
@@ -883,6 +907,8 @@ actions!(
         WrapSelectionsInTag,
         /// Aligns selections from different rows into the same column
         AlignSelections,
+        /// Saves the current location to navigation history.
+        SaveLocation,
     ]
 );
 

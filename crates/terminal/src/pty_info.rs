@@ -157,6 +157,17 @@ impl PtyProcessInfo {
         self.get_child().is_some_and(|process| process.kill())
     }
 
+    #[cfg(unix)]
+    pub(crate) fn terminate_child_process(&self) -> bool {
+        let pid = self.pid_getter.fallback_pid();
+        unsafe { libc::killpg(pid.as_u32() as i32, libc::SIGTERM) == 0 }
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn terminate_child_process(&self) -> bool {
+        false
+    }
+
     fn load(&self) -> Option<ProcessInfo> {
         let process = self.refresh()?;
         let cwd = process.cwd().map_or(PathBuf::new(), |p| p.to_owned());

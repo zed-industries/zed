@@ -1,11 +1,11 @@
 ---
 title: Developing Extensions
-description: "Create Zed extensions: languages, themes, debuggers, slash commands, and more."
+description: "Create Zed extensions: languages, themes, debuggers, and more."
 ---
 
 # Developing Extensions {#developing-extensions}
 
-Zed extensions are Git repositories containing an `extension.toml` manifest. They can provide languages, themes, debuggers, snippets, slash commands, and MCP servers.
+Zed extensions are Git repositories containing an `extension.toml` manifest. They can provide languages, themes, debuggers, snippets, and MCP servers.
 
 ## Extension Features {#extension-features}
 
@@ -16,7 +16,6 @@ Extensions can provide:
 - [Themes](./themes.md)
 - [Icon Themes](./icon-themes.md)
 - [Snippets](./snippets.md)
-- [Slash Commands](./slash-commands.md)
 - [MCP Servers](./mcp-extensions.md)
 
 ## Developing an Extension Locally
@@ -163,6 +162,8 @@ Note that non-compliance will be raised during the publishing process by reviewe
 
 ## Publishing your extension
 
+> Prior to publishing your extension, you should have installed as well as tested it locally thoroughly. Note that untested extension submissions where the extension is not functioning at all will be closed eagerly without further feedback.
+
 To publish an extension, open a PR to [the `zed-industries/extensions` repo](https://github.com/zed-industries/extensions).
 
 In your PR, do the following:
@@ -173,8 +174,6 @@ In your PR, do the following:
 git submodule add https://github.com/your-username/foobar-zed.git extensions/my-extension
 git add extensions/my-extension
 ```
-
-> **Note:** Your extension must live under te
 
 > All extension submodules must use HTTPS URLs and not SSH URLS (`git@github.com`).
 

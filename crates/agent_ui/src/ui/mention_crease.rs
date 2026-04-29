@@ -1,7 +1,7 @@
 use std::{ops::RangeInclusive, path::PathBuf, time::Duration};
 
 use acp_thread::MentionUri;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use gpui::{
     Animation, AnimationExt, AnyView, Context, IntoElement, WeakEntity, Window, pulsating_between,
@@ -9,7 +9,7 @@ use gpui::{
 use prompt_store::PromptId;
 use rope::Point;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
 use workspace::{OpenOptions, Workspace};
 
@@ -178,14 +178,13 @@ fn open_mention_uri(
         MentionUri::Thread { id, name } => {
             open_thread(workspace, id, name, window, cx);
         }
-        MentionUri::TextThread { .. } => {}
         MentionUri::Rule { id, .. } => {
             open_rule(workspace, id, window, cx);
         }
         MentionUri::Fetch { url } => {
             cx.open_url(url.as_str());
         }
-        MentionUri::PastedImage
+        MentionUri::PastedImage { .. }
         | MentionUri::Selection { abs_path: None, .. }
         | MentionUri::Diagnostics { .. }
         | MentionUri::TerminalSelection { .. }
@@ -285,6 +284,7 @@ fn open_thread(
             None,
             Some(name.into()),
             true,
+            "agent_panel",
             window,
             cx,
         )

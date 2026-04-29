@@ -10,7 +10,7 @@ path = "src/language_core.rs"
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
-gpui.workspace = true
+gpui_shared_string.workspace = true
 log.workspace = true
 lsp.workspace = true
 parking_lot.workspace = true
@@ -22,8 +22,6 @@ toml.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
 
-[dev-dependencies]
-gpui = { workspace = true, features = ["test-support"] }
 
 [features]
 test-support = []

@@ -6,6 +6,7 @@ use indoc::indoc;
 use serde_json::json;
 
 use crate::tasks::workflows::steps::CheckoutStep;
+use crate::tasks::workflows::steps::TokenPermissions;
 use crate::tasks::workflows::steps::cache_rust_dependencies_namespace;
 use crate::tasks::workflows::vars::JobOutput;
 use crate::tasks::workflows::{
@@ -33,6 +34,7 @@ pub(crate) fn extension_workflow_rollout() -> Workflow {
         removed_ci,
         removed_shared,
         &extra_context_input,
+        &filter_repos_input,
     );
     let create_tag = create_rollout_tag(&rollout_workflows, &filter_repos_input);
 
@@ -191,6 +193,7 @@ fn rollout_workflows_to_extension(
     removed_ci: JobOutput,
     removed_shared: JobOutput,
     extra_context_input: &WorkflowInput,
+    filter_repos_input: &WorkflowInput,
 ) -> NamedJob {
     fn checkout_extension_repo(token: &StepOutput) -> CheckoutStep {
         steps::checkout_repo()
@@ -258,6 +261,7 @@ fn rollout_workflows_to_extension(
         token: &StepOutput,
         short_sha: &StepOutput,
         context_input: &WorkflowInput,
+        filter_repos_input: &WorkflowInput,
     ) -> Step<Use> {
         let title = format!("Update CI workflows to `{short_sha}`");
 
@@ -269,29 +273,16 @@ fn rollout_workflows_to_extension(
         "#,
         };
 
-        named::uses(
-            "peter-evans",
-            "create-pull-request",
-            "98357b18bf14b5342f975ff684046ec3b2a07725",
-        )
-        .add_with(("path", "extension"))
-        .add_with(("title", title.clone()))
-        .add_with(("body", body))
-        .add_with(("commit-message", title))
-        .add_with(("branch", "update-workflows"))
-        .add_with((
-            "committer",
-            "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-        ))
-        .add_with((
-            "author",
-            "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-        ))
-        .add_with(("base", "main"))
-        .add_with(("delete-branch", true))
-        .add_with(("token", token.to_string()))
-        .add_with(("sign-commits", true))
-        .id("create-pr")
+        let pr_step: Step<Use> = steps::CreatePrStep::new(title, "update-workflows", token)
+            .with_body(body)
+            .with_path("extension")
+            // Save my inbox from exploding on rollout
+            .with_assignee(format!(
+                "${{{{ {repos_expr} != '' && github.actor || '' }}}}",
+                repos_expr = filter_repos_input.expr()
+            ))
+            .into();
+        pr_step.id("create-pr")
     }
 
     fn enable_auto_merge(token: &StepOutput) -> Step<gh_workflow::Run> {
@@ -309,13 +300,17 @@ fn rollout_workflows_to_extension(
     }
 
     let (authenticate, token) =
-        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY).for_repository(
-            RepositoryTarget::new("zed-extensions", &["${{ matrix.repo }}"]).permissions([
-                ("permission-pull-requests".to_owned(), Level::Write),
-                ("permission-contents".to_owned(), Level::Write),
-                ("permission-workflows".to_owned(), Level::Write),
-            ]),
-        );
+        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
+            .for_repository(RepositoryTarget::new(
+                "zed-extensions",
+                &["${{ matrix.repo }}"],
+            ))
+            .with_permissions([
+                (TokenPermissions::PullRequests, Level::Write),
+                (TokenPermissions::Contents, Level::Write),
+                (TokenPermissions::Workflows, Level::Write),
+            ])
+            .into();
 
     let (calculate_short_sha, short_sha) = get_short_sha();
 
@@ -340,7 +335,7 @@ fn rollout_workflows_to_extension(
         .add_step(download_workflow_files())
         .add_step(sync_workflow_files(removed_ci, removed_shared))
         .add_step(calculate_short_sha)
-        .add_step(create_pull_request(&token, &short_sha, extra_context_input))
+        .add_step(create_pull_request(&token, &short_sha, extra_context_input, filter_repos_input))
         .add_step(enable_auto_merge(&token));
 
     named::job(job)
@@ -372,10 +367,10 @@ fn create_rollout_tag(rollout_job: &NamedJob, filter_repos_input: &WorkflowInput
     }
 
     let (authenticate, token) =
-        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY).for_repository(
-            RepositoryTarget::current()
-                .permissions([("permission-contents".to_owned(), Level::Write)]),
-        );
+        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
+            .for_repository(RepositoryTarget::current())
+            .with_permissions([(TokenPermissions::Contents, Level::Write)])
+            .into();
 
     let job = Job::default()
         .needs([rollout_job.name.clone()])

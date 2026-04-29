@@ -9,9 +9,9 @@ pub mod language_config;
 pub use diagnostic::{Diagnostic, DiagnosticSourceKind};
 pub use grammar::{
     BracketsConfig, BracketsPatternConfig, DebugVariablesConfig, DebuggerTextObject, Grammar,
-    GrammarId, HighlightsConfig, ImportsConfig, IndentConfig, InjectionConfig,
-    InjectionPatternConfig, NEXT_GRAMMAR_ID, OutlineConfig, OverrideConfig, OverrideEntry,
-    RedactionConfig, RunnableCapture, RunnableConfig, TextObject, TextObjectConfig,
+    GrammarId, HighlightsConfig, IndentConfig, InjectionConfig, InjectionPatternConfig,
+    NEXT_GRAMMAR_ID, OutlineConfig, OverrideConfig, OverrideEntry, RedactionConfig,
+    RunnableCapture, RunnableConfig, TextObject, TextObjectConfig,
 };
 pub use highlight_map::{HighlightId, HighlightMap};
 pub use language_config::{
