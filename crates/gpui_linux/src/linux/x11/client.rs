@@ -1599,9 +1599,9 @@ impl LinuxClient for X11Client {
         let appearance = state.common.appearance;
         let compositor_gpu = state.compositor_gpu.take();
         let supports_xinput_gestures = state.supports_xinput_gestures;
-        let is_bgr = dbg!(state
+        let is_bgr = state
             .resource_database
-            .get_string("Xft.rgba", "Xft.Rgba"))
+            .get_string("Xft.rgba", "Xft.Rgba")
             .is_some_and(|v| v.eq_ignore_ascii_case("bgr"));
         let window = X11Window::new(
             handle,
