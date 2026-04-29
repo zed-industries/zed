@@ -4824,7 +4824,13 @@ impl GitPanel {
     }
 
     fn render_no_changes_ui(&self, cx: &Context<Self>) -> Vec<AnyElement> {
-        let mut elements: Vec<AnyElement> = vec!["No changes to commit".into_any_element()];
+        let mut elements: Vec<AnyElement> = vec![
+            div()
+                .self_stretch()
+                .text_center()
+                .child("No changes to commit")
+                .into_any_element(),
+        ];
 
         if self.changes_count == 0 && !self.is_on_main_branch(cx) {
             elements.push(
@@ -4906,7 +4912,11 @@ impl GitPanel {
         let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
         if worktree_count > 0 && self.active_repository.is_none() {
             vec![
-                "No Git Repositories".into_any_element(),
+                div()
+                    .self_stretch()
+                    .text_center()
+                    .child("No Git Repositories")
+                    .into_any_element(),
                 panel_filled_button("Initialize Repository")
                     .tooltip(Tooltip::for_action_title_in(
                         "git init",
