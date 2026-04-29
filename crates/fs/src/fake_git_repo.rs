@@ -51,7 +51,7 @@ pub struct FakeCommitSnapshot {
 #[derive(Debug, Clone)]
 pub enum FakeCommitDataEntry {
     Success(CommitData),
-    Fail(Option<CommitData>),
+    Fail(CommitData),
 }
 
 #[derive(Debug, Clone)]
