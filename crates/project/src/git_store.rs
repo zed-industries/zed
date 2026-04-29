@@ -6632,6 +6632,7 @@ impl Repository {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
                                 is_remote,
+                                force,
                                 branch_name,
                             })
                             .await?;

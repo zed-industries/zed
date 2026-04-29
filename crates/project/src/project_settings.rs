@@ -546,8 +546,8 @@ pub struct BranchPickerSettings {
     #[serde(default)]
     pub show_author_name: bool,
     #[serde(default)]
-    // whether branch deletion uses the soft delete ('-d') or hard delete ('-D') flag
-    //
+    /// whether branch deletion uses the soft delete ('-d') or hard delete ('-D') flag
+    ///
     /// Default: false
     pub force_delete: bool,
 }
@@ -653,6 +653,7 @@ impl Settings for ProjectSettings {
                 let branch_picker = git.branch_picker.unwrap();
                 BranchPickerSettings {
                     show_author_name: branch_picker.show_author_name.unwrap(),
+                    force_delete: branch_picker.force_delete.unwrap(),
                 }
             },
             hunk_style: git.hunk_style.unwrap(),

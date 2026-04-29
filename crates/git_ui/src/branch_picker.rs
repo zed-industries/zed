@@ -511,11 +511,14 @@ impl BranchListDelegate {
 
         let workspace = self.workspace.clone();
 
+        let force = ProjectSettings::get_global(cx)
+            .git
+            .branch_picker
+            .force_delete;
+
         cx.spawn_in(window, async move |picker, cx| {
             let is_remote;
-            let force = ProjectSettings::get_global(cx)
-                .git_branch_picker
-                .force_delete;
+
             let result = match &entry {
                 Entry::Branch { branch, .. } => {
                     if branch.is_head {
@@ -543,21 +546,18 @@ impl BranchListDelegate {
 
                 if let Some(workspace) = workspace.upgrade() {
                     cx.update(|_window, cx| {
-                        if is_remote {
-                            show_error_toast(
-                                workspace,
-                                format!("branch -dr {}", entry.name()),
-                                e,
-                                cx,
-                            )
-                        } else {
-                            show_error_toast(
-                                workspace,
-                                format!("branch -d {}", entry.name()),
-                                e,
-                                cx,
-                            )
-                        }
+                        let deletion_flag = match (is_remote, force) {
+                            (true, false) => "-dr",
+                            (true, true) => "-Dr",
+                            (false, false) => "-d",
+                            (false, true) => "-D",
+                        };
+                        show_error_toast(
+                            workspace,
+                            format!("branch {} {}", deletion_flag, entry.name()),
+                            e,
+                            cx,
+                        )
                     })?;
                 }
 
