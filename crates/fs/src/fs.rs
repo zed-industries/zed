@@ -13,7 +13,6 @@ use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
 use gpui::SharedString;
-use std::borrow::Cow;
 #[cfg(unix)]
 use std::ffi::CString;
 use util::command::new_command;
@@ -136,14 +135,14 @@ fn detect_requires_poll_watcher_linux(path: &Path) -> bool {
 
     // Filesystem magic numbers where inotify does not deliver events.
     // These are defined in linux/magic.h and statfs(2).
-    const V9FS_MAGIC: i64 = 0x01021997; // Plan 9 / WSL2 interop (drvfs)
-    const NFS_SUPER_MAGIC: i64 = 0x6969;
-    const CIFS_MAGIC: i64 = 0xFF534D42u32 as i64; // CIFS/SMB
-    const SMB_SUPER_MAGIC: i64 = 0x517B;
-    const SMB2_MAGIC: i64 = 0xFE534D42u32 as i64;
-    const FUSE_SUPER_MAGIC: i64 = 0x65735546; // FUSE (includes sshfs)
+    const V9FS_MAGIC: u64 = 0x0102_1997; // Plan 9 / WSL2 interop (drvfs)
+    const NFS_SUPER_MAGIC: u64 = 0x0000_6969;
+    const CIFS_MAGIC: u64 = 0xFF53_4D42; // CIFS/SMB
+    const SMB_SUPER_MAGIC: u64 = 0x0000_517B;
+    const SMB2_MAGIC: u64 = 0xFE53_4D42;
+    const FUSE_SUPER_MAGIC: u64 = 0x6573_5546; // FUSE (includes sshfs)
 
-    let fs_type = stat.f_type;
+    let fs_type = (stat.f_type as u64) & 0xFFFF_FFFF;
     if fs_type == V9FS_MAGIC
         || fs_type == NFS_SUPER_MAGIC
         || fs_type == CIFS_MAGIC
@@ -287,7 +286,8 @@ pub trait Fs: Send + Sync {
     ) -> Result<Arc<dyn GitRepository>>;
     async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
     -> Result<()>;
-    async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
+    async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()>;
+    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<String>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> bool;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
@@ -1200,7 +1200,7 @@ impl Fs for RealFs {
         let use_poll = requires_poll_watcher(path);
         let watch_path = effective_watch_path(path);
 
-        let (tx, rx) = smol::channel::unbounded();
+        let (tx, rx) = async_channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
 
         let mode = if use_poll {
@@ -1283,19 +1283,19 @@ impl Fs for RealFs {
         abs_work_directory_path: &Path,
         fallback_branch_name: String,
     ) -> Result<()> {
-        let config = new_command("git")
+        let result = new_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["config", "--global", "--get", "init.defaultBranch"])
             .output()
-            .await?;
+            .await;
 
-        let branch_name;
-
-        if config.status.success() && !config.stdout.is_empty() {
-            branch_name = String::from_utf8_lossy(&config.stdout);
-        } else {
-            branch_name = Cow::Borrowed(fallback_branch_name.as_str());
-        }
+        // In case the `git config` command fails, which would be the case if
+        // the user doesn't have an `init.defaultBranch` value set, we'll just
+        // default to the provided `fallback_branch_name`.
+        let branch_name = match result {
+            Ok(output) if !output.stdout.is_empty() => String::from_utf8(output.stdout)?,
+            _ => fallback_branch_name,
+        };
 
         new_command("git")
             .current_dir(abs_work_directory_path)
@@ -1307,7 +1307,7 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()> {
+    async fn git_clone(&self, abs_work_directory: &Path, repo_url: &str) -> Result<()> {
         let job_id = self.next_job_id.fetch_add(1, Ordering::SeqCst);
         let job_info = JobInfo {
             id: job_id,
@@ -1331,6 +1331,24 @@ impl Fs for RealFs {
         }
 
         Ok(())
+    }
+
+    /// Runs `git config` with the given arguments.
+    /// Will return `Ok` if the commands exit status is `0`, with the stdout
+    /// contents. Otherwise returns `Err` with the stderr contents.
+    async fn git_config(&self, abs_work_directory: &Path, args: Vec<String>) -> Result<String> {
+        let output = new_command("git")
+            .current_dir(abs_work_directory)
+            .args([String::from("config")].into_iter().chain(args))
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let err = String::from_utf8(output.stderr)?;
+            anyhow::bail!(err);
+        }
+
+        String::from_utf8(output.stdout).map_err(Into::into)
     }
 
     fn is_fake(&self) -> bool {
@@ -1449,8 +1467,8 @@ struct FakeFsState {
     root: FakeFsEntry,
     next_inode: u64,
     next_mtime: SystemTime,
-    git_event_tx: smol::channel::Sender<PathBuf>,
-    event_txs: Vec<(PathBuf, smol::channel::Sender<Vec<PathEvent>>)>,
+    git_event_tx: async_channel::Sender<PathBuf>,
+    event_txs: Vec<(PathBuf, async_channel::Sender<Vec<PathEvent>>)>,
     events_paused: bool,
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
@@ -1720,7 +1738,7 @@ impl FakeFs {
     const SYSTEMTIME_INTERVAL: Duration = Duration::from_nanos(100);
 
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
-        let (tx, rx) = smol::channel::bounded::<PathBuf>(10);
+        let (tx, rx) = async_channel::bounded::<PathBuf>(10);
 
         let this = Arc::new_cyclic(|this| Self {
             this: this.clone(),
@@ -2714,7 +2732,7 @@ impl FakeFsEntry {
 
 #[cfg(feature = "test-support")]
 struct FakeWatcher {
-    tx: smol::channel::Sender<Vec<PathEvent>>,
+    tx: async_channel::Sender<Vec<PathEvent>>,
     original_path: PathBuf,
     fs_state: Arc<Mutex<FakeFsState>>,
     prefixes: Mutex<Vec<PathBuf>>,
@@ -3183,7 +3201,7 @@ impl Fs for FakeFs {
         Arc<dyn Watcher>,
     ) {
         self.simulate_random_delay().await;
-        let (tx, rx) = smol::channel::unbounded();
+        let (tx, rx) = async_channel::unbounded();
         let path = path.to_path_buf();
         self.state.lock().event_txs.push((path.clone(), tx.clone()));
         let executor = self.executor.clone();
@@ -3245,8 +3263,12 @@ impl Fs for FakeFs {
         self.create_dir(&abs_work_directory_path.join(".git")).await
     }
 
-    async fn git_clone(&self, _repo_url: &str, _abs_work_directory: &Path) -> Result<()> {
+    async fn git_clone(&self, _abs_work_directory: &Path, _repo_url: &str) -> Result<()> {
         anyhow::bail!("Git clone is not supported in fake Fs")
+    }
+
+    async fn git_config(&self, _abs_work_directory: &Path, _args: Vec<String>) -> Result<String> {
+        anyhow::bail!("Git config is not supported in fake Fs")
     }
 
     fn is_fake(&self) -> bool {

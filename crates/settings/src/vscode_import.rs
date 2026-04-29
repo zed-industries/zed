@@ -222,6 +222,7 @@ impl VsCodeSettings {
             which_key: None,
             modeline_lines: None,
             feature_flags: None,
+            instrumentation: None,
         }
     }
 
@@ -264,6 +265,7 @@ impl VsCodeSettings {
             fast_scroll_sensitivity: self.read_f32("editor.fastScrollSensitivity"),
             sticky_scroll: self.sticky_scroll_content(),
             go_to_definition_fallback: None,
+            go_to_definition_scroll_strategy: None,
             gutter: self.gutter_content(),
             hide_mouse: None,
             horizontal_scroll_margin: None,
@@ -974,6 +976,8 @@ impl VsCodeSettings {
             buffer_font_features: None,
             agent_ui_font_size: None,
             agent_buffer_font_size: None,
+            markdown_preview_font_family: None,
+            markdown_preview_theme: None,
             theme: None,
             icon_theme: None,
             ui_density: None,

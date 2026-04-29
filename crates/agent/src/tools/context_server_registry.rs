@@ -5,6 +5,7 @@ use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
+use language_model::LanguageModelToolResultContent;
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
 use util::ResultExt;
@@ -336,7 +337,7 @@ impl AnyAgentTool for ContextServerTool {
         cx: &mut App,
     ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
         let Some(server) = self.store.read(cx).get_running_server(&self.server_id) else {
-            return Task::ready(Err(AgentToolOutput::from_error("Context server not found")));
+            return Task::ready(Err(anyhow::anyhow!("Context server not found").into()));
         };
         let tool_name = self.tool.name.clone();
         let tool_id = mcp_tool_id(&self.server_id.0, &self.tool.name);
@@ -346,14 +347,17 @@ impl AnyAgentTool for ContextServerTool {
             event_stream.authorize_third_party_tool(initial_title, tool_id, display_name, cx);
 
         cx.spawn(async move |_cx| {
-            let input = input.recv().await.map_err(|e| {
-                AgentToolOutput::from_error(format!("Failed to receive tool input: {e}"))
-            })?;
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| anyhow::anyhow!(format!("Failed to receive tool input: {e}")))?;
 
-            authorize.await.map_err(|e| AgentToolOutput::from_error(e.to_string()))?;
+            authorize
+                .await
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
             let Some(protocol) = server.client() else {
-                return Err(AgentToolOutput::from_error("Context server not initialized"));
+                return Err(anyhow::anyhow!("Context server not initialized").into());
             };
 
             let arguments = if let serde_json::Value::Object(map) = input {
@@ -377,23 +381,25 @@ impl AnyAgentTool for ContextServerTool {
             );
 
             let response = futures::select! {
-                response = request.fuse() => response.map_err(|e| AgentToolOutput::from_error(e.to_string()))?,
+                response = request.fuse() => response?,
                 _ = event_stream.cancelled_by_user().fuse() => {
-                    return Err(AgentToolOutput::from_error("MCP tool cancelled by user"));
+                    return Err(anyhow::anyhow!("MCP tool cancelled by user").into());
                 }
             };
 
             if response.is_error == Some(true) {
                 let error_message: String =
                     response.content.iter().filter_map(|c| c.text()).collect();
-                return Err(AgentToolOutput::from_error(error_message));
+                return Err(anyhow::anyhow!(error_message).into());
             }
 
-            let mut result = String::new();
+            let mut llm_output = Vec::new();
+            let mut concatenated_text = String::new();
             for content in response.content {
                 match content {
                     context_server::types::ToolResponseContent::Text { text } => {
-                        result.push_str(&text);
+                        concatenated_text.push_str(&text);
+                        llm_output.push(LanguageModelToolResultContent::Text(text.into()));
                     }
                     context_server::types::ToolResponseContent::Image { .. } => {
                         log::warn!("Ignoring image content from tool response");
@@ -406,9 +412,10 @@ impl AnyAgentTool for ContextServerTool {
                     }
                 }
             }
+            let raw_output = serde_json::Value::String(concatenated_text);
             Ok(AgentToolOutput {
-                raw_output: result.clone().into(),
-                llm_output: result.into(),
+                raw_output,
+                llm_output,
             })
         })
     }

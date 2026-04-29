@@ -7,8 +7,7 @@ use crate::project_diff::{self, BranchDiff, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
-    file_history_view::FileHistoryView, git_panel_settings::GitPanelSettings, git_status_icon,
-    repository_selector::RepositorySelector,
+    git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
 use alacritty_terminal::vte::ansi;
@@ -17,12 +16,13 @@ use askpass::AskPassDelegate;
 use collections::{BTreeMap, HashMap, HashSet};
 use db::kvp::KeyValueStore;
 use editor::{
-    Direction, Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset,
+    Direction, Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset, SizingBehavior,
     actions::ExpandAllDiffHunks,
 };
 use editor::{EditorStyle, RewrapOptions};
 use file_icons::FileIcons;
 use futures::StreamExt as _;
+use futures::channel::oneshot::Canceled;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, GitCommitTemplate,
@@ -34,7 +34,7 @@ use git::status::{DiffStat, StageStatus};
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, RestoreTrackedFiles, StageAll, StashAll,
-    StashApply, StashPop, TrashUntrackedFiles, UnstageAll,
+    StashApply, StashPop, ToggleFillCommitEditor, TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
     Action, Anchor, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, DismissEvent, Empty, Entity,
@@ -52,6 +52,7 @@ use menu;
 use multi_buffer::ExcerptBoundaryInfo;
 use notifications::status_toast::StatusToast;
 use panel::{PanelHeader, panel_button, panel_filled_button, panel_icon_button};
+use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op},
@@ -70,8 +71,8 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, IndentGuideColors,
-    PopoverMenu, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tooltip, WithScrollbar,
+    ButtonLike, Checkbox, ContextMenu, ElevationIndex, IndentGuideColors, PopoverMenu,
+    RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, TintColor, Tooltip, WithScrollbar,
     prelude::*,
 };
 use util::paths::PathStyle;
@@ -245,6 +246,13 @@ pub fn register(workspace: &mut Workspace) {
     });
     workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
         CommitModal::toggle(workspace, None, window, cx)
+    });
+    workspace.register_action(|workspace, _: &ToggleFillCommitEditor, window, cx| {
+        if let Some(panel) = workspace.panel::<GitPanel>(cx) {
+            panel.update(cx, |panel, cx| {
+                panel.toggle_fill_commit_editor(&Default::default(), window, cx)
+            });
+        }
     });
     workspace.register_action(|workspace, _: &git::Init, window, cx| {
         if let Some(panel) = workspace.panel::<GitPanel>(cx) {
@@ -618,6 +626,8 @@ impl TruncatedPatch {
 pub struct GitPanel {
     pub(crate) active_repository: Option<Entity<Repository>>,
     pub(crate) commit_editor: Entity<Editor>,
+    /// Whether the commit editor should fill the vertical height of the panel.
+    commit_editor_expanded: bool,
     conflicted_count: usize,
     conflicted_staged_count: usize,
     add_coauthors: bool,
@@ -657,6 +667,7 @@ pub struct GitPanel {
     stash_entries: GitStash,
 
     _settings_subscription: Subscription,
+    git_access: GitAccess,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -787,6 +798,7 @@ impl GitPanel {
                     )
                     | GitStoreEvent::RepositoryAdded
                     | GitStoreEvent::RepositoryRemoved(_)
+                    | GitStoreEvent::GlobalConfigurationUpdated
                     | GitStoreEvent::ActiveRepositoryChanged(_) => {
                         this.schedule_update(window, cx);
                     }
@@ -806,6 +818,7 @@ impl GitPanel {
             let mut this = Self {
                 active_repository,
                 commit_editor,
+                commit_editor_expanded: false,
                 conflicted_count: 0,
                 conflicted_staged_count: 0,
                 add_coauthors: true,
@@ -844,6 +857,7 @@ impl GitPanel {
                 bulk_staging: None,
                 stash_entries: Default::default(),
                 _settings_subscription,
+                git_access: GitAccess::Yes,
             };
 
             this.schedule_update(window, cx);
@@ -1311,26 +1325,6 @@ impl GitPanel {
         });
     }
 
-    fn file_history(&mut self, _: &git::FileHistory, window: &mut Window, cx: &mut Context<Self>) {
-        maybe!({
-            let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
-            let active_repo = self.active_repository.as_ref()?;
-            let repo_path = entry.repo_path.clone();
-            let git_store = self.project.read(cx).git_store();
-
-            FileHistoryView::open(
-                repo_path,
-                git_store.downgrade(),
-                active_repo.downgrade(),
-                self.workspace.clone(),
-                window,
-                cx,
-            );
-
-            Some(())
-        });
-    }
-
     fn open_file(
         &mut self,
         _: &menu::SecondaryConfirm,
@@ -1765,11 +1759,18 @@ impl GitPanel {
         // 3. finally, if there is no info about this `entry` in the repo, we fall back to whatever status is encoded
         //    in `entry` arg.
         repo.pending_ops_for_path(&entry.repo_path)
-            .map(|ops| {
+            .and_then(|ops| {
+                // In case the last operation in the list of pending operations
+                // failed, we can't assume the stage status for this entry and
+                // need to fallback to the actual state in the repo.
+                if ops.last_op_errored() {
+                    return None;
+                }
+
                 if ops.staging() || ops.staged() {
-                    StageStatus::Staged
+                    Some(StageStatus::Staged)
                 } else {
-                    StageStatus::Unstaged
+                    Some(StageStatus::Unstaged)
                 }
             })
             .or_else(|| {
@@ -1971,6 +1972,7 @@ impl GitPanel {
                 this.update(cx, |this, cx| {
                     if let Err(err) = result {
                         this.show_error_toast(if stage { "add" } else { "reset" }, err, cx);
+                        this.update_counts(active_repository.read(cx));
                     }
                     cx.notify();
                 })
@@ -3131,6 +3133,37 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
+    /// Updates git's configuration, adding the directory of the current
+    /// worktree to the `safe.directory` config, ensuring that, even if the user
+    /// that's running the application is not the owner of `.git/`, it can still
+    /// read the repository's contents.
+    fn add_safe_directory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repository) = &self.active_repository else {
+            return;
+        };
+
+        let path = active_repository.update(cx, |repository, _cx| {
+            repository.snapshot().work_directory_abs_path
+        });
+
+        if let Some(path_str) = path.to_str() {
+            let path_arg = String::from(path_str);
+            let args = vec![
+                String::from("--global"),
+                String::from("--add"),
+                String::from("safe.directory"),
+                path_arg,
+            ];
+
+            cx.spawn_in(window, async move |git_panel, cx| {
+                git_panel.update(cx, |git_panel, cx| {
+                    git_panel.project.read(cx).git_config(path, args, cx)
+                })
+            })
+            .detach();
+        }
+    }
+
     pub fn create_pull_request(&self, window: &mut Window, cx: &mut Context<Self>) {
         let result = (|| -> anyhow::Result<()> {
             let repo = self
@@ -3528,10 +3561,36 @@ impl GitPanel {
         self.tracked_staged_count = 0;
         self.entry_count = 0;
         self.max_width_item_index = None;
+        self.git_access = GitAccess::Yes;
 
         let sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
         let is_tree_view = matches!(self.view_mode, GitPanelViewMode::Tree(_));
         let group_by_status = is_tree_view || !sort_by_path;
+
+        if let Some(active_repo) = self.active_repository.as_ref() {
+            let access = active_repo.update(cx, |active_repo, cx| active_repo.access(cx));
+
+            cx.spawn_in(window, async move |git_panel, cx| {
+                // When the user does not own the `.git` folder, the
+                // `GitStore.spawn_local_git_worker` will fail to create the
+                // receiver for Git jobs, so this access check will be
+                // cancelled.
+                //
+                // We assume `GitAccess::No` on cancellation. I believe this is
+                // imprecise, other failures could also cause cancellation, but
+                // the consequence is just showing the "unsafe repo" UI, which
+                // seems acceptable for this edge case.
+                let access = match access.await {
+                    Ok(access) => access,
+                    Err(Canceled) => GitAccess::No,
+                };
+
+                git_panel.update(cx, |this, _cx| {
+                    this.git_access = access;
+                })
+            })
+            .detach_and_log_err(cx);
+        }
 
         let mut changed_entries = Vec::new();
         let mut new_entries = Vec::new();
@@ -4014,10 +4073,15 @@ impl GitPanel {
                 h_flex()
                     .gap_1()
                     .child(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::XSmall)
-                            .color(Color::Info)
-                            .with_rotate_animation(2),
+                        IconButton::new("cancel-generate-commit-message", IconName::Stop)
+                            .icon_color(Color::Error)
+                            .icon_size(IconSize::Small)
+                            .style(ButtonStyle::Tinted(TintColor::Error))
+                            .tooltip(Tooltip::text("Cancel Commit Message Generation"))
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.generate_commit_message_task.take();
+                                cx.notify();
+                            })),
                     )
                     .child(
                         Label::new("Generating Commit…")
@@ -4205,9 +4269,34 @@ impl GitPanel {
         }
     }
 
+    fn toggle_fill_commit_editor(
+        &mut self,
+        _: &ToggleFillCommitEditor,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit_editor_expanded = !self.commit_editor_expanded;
+        self.commit_editor.update(cx, |editor, _cx| {
+            if self.commit_editor_expanded {
+                editor.set_mode(EditorMode::Full {
+                    scale_ui_elements_with_buffer_font_size: false,
+                    show_active_line_background: false,
+                    sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
+                })
+            } else {
+                editor.set_mode(EditorMode::AutoHeight {
+                    min_lines: MAX_PANEL_EDITOR_LINES,
+                    max_lines: Some(MAX_PANEL_EDITOR_LINES),
+                })
+            }
+        });
+
+        cx.notify();
+    }
+
     fn expand_commit_editor(
         &mut self,
-        _: &git::ExpandCommitEditor,
+        _: &ExpandCommitEditor,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4226,6 +4315,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
+        if matches!(self.git_access, GitAccess::No) {
+            return None;
+        }
+
         self.active_repository.as_ref()?;
 
         let (text, action, stage, tooltip) =
@@ -4317,10 +4410,7 @@ impl GitPanel {
         let active_repository = self.active_repository.clone()?;
         let panel_editor_style = panel_editor_style(true, window, cx);
         let enable_coauthors = self.render_co_authors(cx);
-
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
-        let expand_tooltip_focus_handle = editor_focus_handle;
-
         let branch = active_repository.read(cx).branch.clone();
         let head_commit = active_repository.read(cx).head_commit.clone();
 
@@ -4343,22 +4433,64 @@ impl GitPanel {
             editor.max_point(cx).row().0 >= MAX_PANEL_EDITOR_LINES as u32
         });
 
+        let max_title_length = GitPanelSettings::get_global(cx).commit_title_max_length;
+        let title_exceeds_limit = if max_title_length > 0 {
+            self.commit_editor
+                .read(cx)
+                .text(cx)
+                .lines()
+                .next()
+                .is_some_and(|title| title.len() > max_title_length)
+        } else {
+            false
+        };
+
         let footer = v_flex()
+            .when(self.commit_editor_expanded, |this| this.flex_1().min_h_0())
             .child(PanelRepoFooter::new(
                 display_name,
                 branch,
                 head_commit,
                 Some(git_panel),
             ))
+            .when(title_exceeds_limit, |this| {
+                this.child(
+                    h_flex()
+                        .px_2()
+                        .py_1()
+                        .gap_1()
+                        .border_t_1()
+                        .border_color(cx.theme().status().warning_border)
+                        .bg(cx.theme().status().warning_background.opacity(0.5))
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::XSmall)
+                                .color(Color::Warning),
+                        )
+                        .child(
+                            Label::new(format!(
+                                "Commit message title exceeds {max_title_length}-character limit."
+                            ))
+                            .size(LabelSize::Small),
+                        ),
+                )
+            })
             .child(
                 panel_editor_container(window, cx)
                     .id("commit-editor-container")
+                    .cursor_text()
                     .relative()
                     .w_full()
-                    .h(max_height + footer_size)
+                    .when(self.commit_editor_expanded, |this| this.flex_1().min_h_0())
+                    .when(!self.commit_editor_expanded, |this| {
+                        this.h(max_height + footer_size)
+                    })
                     .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .cursor_text()
+                    .border_color(if title_exceeds_limit {
+                        cx.theme().status().warning_border
+                    } else {
+                        cx.theme().colors().border
+                    })
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         window.focus(&this.commit_editor.focus_handle(cx), cx);
                     }))
@@ -4390,6 +4522,9 @@ impl GitPanel {
                     )
                     .child(
                         div()
+                            .when(self.commit_editor_expanded, |this| {
+                                this.flex_1().min_h_0().pb(footer_size)
+                            })
                             .pr_2p5()
                             .on_action(|&zed_actions::editor::MoveUp, _, cx| {
                                 cx.stop_propagation();
@@ -4404,19 +4539,21 @@ impl GitPanel {
                             .absolute()
                             .top_2()
                             .right_2()
-                            .opacity(0.5)
-                            .hover(|this| this.opacity(1.0))
+                            .gap_px()
+                            .opacity(0.6)
+                            .hover(|s| s.opacity(1.0))
                             .child(
-                                panel_icon_button("expand-commit-editor", IconName::Maximize)
+                                panel_icon_button("expand-commit-editor", IconName::MaximizeAlt)
                                     .icon_size(IconSize::Small)
-                                    .size(ui::ButtonSize::Default)
-                                    .tooltip(move |_window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Open Commit Modal",
-                                            &git::ExpandCommitEditor,
-                                            &expand_tooltip_focus_handle,
-                                            cx,
-                                        )
+                                    .tooltip({
+                                        move |_window, cx| {
+                                            Tooltip::for_action_in(
+                                                "Open Commit Modal",
+                                                &git::ExpandCommitEditor,
+                                                &editor_focus_handle,
+                                                cx,
+                                            )
+                                        }
                                     })
                                     .on_click(cx.listener({
                                         move |_, _, window, cx| {
@@ -4426,7 +4563,36 @@ impl GitPanel {
                                             )
                                         }
                                     })),
-                            ),
+                            )
+                            .child({
+                                let (icon, label) = if self.commit_editor_expanded {
+                                    (IconName::Minimize, "Collapse Commit Editor")
+                                } else {
+                                    (IconName::Maximize, "Expand Commit Editor")
+                                };
+                                let focus_handle = self.focus_handle.clone();
+
+                                panel_icon_button("fill-commit-editor", icon)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip({
+                                        move |_window, cx| {
+                                            Tooltip::for_action_in(
+                                                label,
+                                                &git::ToggleFillCommitEditor,
+                                                &focus_handle,
+                                                cx,
+                                            )
+                                        }
+                                    })
+                                    .on_click(cx.listener({
+                                        move |_, _, window, cx| {
+                                            window.dispatch_action(
+                                                git::ToggleFillCommitEditor.boxed_clone(),
+                                                cx,
+                                            )
+                                        }
+                                    }))
+                            }),
                     ),
             );
 
@@ -4642,17 +4808,10 @@ impl GitPanel {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_repo = self.active_repository.is_some();
-        let has_no_repo = self.active_repository.is_none();
-        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
-
-        let should_show_branch_diff =
-            has_repo && self.changes_count == 0 && !self.is_on_main_branch(cx);
-
-        let label = if has_repo {
-            "No changes to commit"
-        } else {
-            "No Git repositories"
+        let children = match (self.git_access, &self.active_repository) {
+            (GitAccess::No, Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
+            (_, None) => self.render_uninitialized_ui(cx),
+            (_, Some(_)) => self.render_no_changes_ui(cx),
         };
 
         v_flex()
@@ -4660,40 +4819,110 @@ impl GitPanel {
             .flex_1()
             .items_center()
             .justify_center()
-            .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
-            .when(has_no_repo && worktree_count > 0, |this| {
-                this.child(
-                    panel_filled_button("Initialize Repository")
-                        .tooltip(Tooltip::for_action_title_in(
-                            "git init",
-                            &git::Init,
-                            &self.focus_handle,
-                        ))
-                        .on_click(move |_, _, cx| {
-                            cx.defer(move |cx| {
-                                cx.dispatch_action(&git::Init);
-                            })
-                        }),
-                )
-            })
-            .when(should_show_branch_diff, |this| {
-                this.child(
-                    panel_filled_button("View Branch Diff")
-                        .tooltip(move |_, cx| {
-                            Tooltip::with_meta(
-                                "Branch Diff",
-                                Some(&BranchDiff),
-                                "Show diff between working directory and default branch",
-                                cx,
-                            )
+            .text_color(Color::Placeholder.color(cx))
+            .children(children)
+    }
+
+    fn render_no_changes_ui(&self, cx: &Context<Self>) -> Vec<AnyElement> {
+        let mut elements: Vec<AnyElement> = vec!["No changes to commit".into_any_element()];
+
+        if self.changes_count == 0 && !self.is_on_main_branch(cx) {
+            elements.push(
+                panel_filled_button("View Branch Diff")
+                    .tooltip(move |_, cx| {
+                        Tooltip::with_meta(
+                            "Branch Diff",
+                            Some(&BranchDiff),
+                            "Show diff between working directory and default branch",
+                            cx,
+                        )
+                    })
+                    .on_click(move |_, _, cx| {
+                        cx.defer(move |cx| {
+                            cx.dispatch_action(&BranchDiff);
                         })
-                        .on_click(move |_, _, cx| {
-                            cx.defer(move |cx| {
-                                cx.dispatch_action(&BranchDiff);
-                            })
-                        }),
+                    })
+                    .into_any_element(),
+            );
+        }
+
+        elements
+    }
+
+    fn render_unsafe_repo_ui(
+        &self,
+        active_repository: &Entity<Repository>,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let directory = active_repository.update(cx, |repository, _cx| {
+            repository.snapshot().work_directory_abs_path
+        });
+
+        let message = format!(
+            "Detected dubious ownership in repository at {}. \
+            This happens when the .git/ directory is not owned by the current user. \
+            If you want to learn more about safe directories, visit git's documentation.",
+            directory.display()
+        );
+
+        vec![
+            div()
+                .self_stretch()
+                .px_4()
+                .text_center()
+                .child(Label::new(message).color(Color::Muted))
+                .into_any_element(),
+            self.render_unsafe_repo_buttons(directory, cx)
+                .into_any_element(),
+        ]
+    }
+
+    fn render_unsafe_repo_buttons(&self, directory: Arc<Path>, cx: &mut Context<Self>) -> Div {
+        h_flex()
+            .max_w_full()
+            .gap_2()
+            .justify_center()
+            .child(
+                panel_filled_button("Trust Directory")
+                .end_icon(Icon::new(IconName::Check).size(IconSize::Small))
+                .tooltip(Tooltip::text(
+                    format!("git config --global --add safe.directory {}", directory.display())
+                ))
+                .on_click(
+                    cx.listener(|this, _, window, cx| {
+                        this.add_safe_directory(window, cx);
+                    })
                 )
-            })
+        )
+        .child(
+            panel_filled_button("Learn More")
+                .end_icon(Icon::new(IconName::Link).size(IconSize::Small))
+                .tooltip(Tooltip::text("Open https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory in your default browser"))
+                .on_click(move |_, _, cx| cx.open_url("https://git-scm.com/docs/git-config#Documentation/git-config.txt-safedirectory"))
+        )
+    }
+
+    fn render_uninitialized_ui(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
+        if worktree_count > 0 && self.active_repository.is_none() {
+            vec![
+                "No Git Repositories".into_any_element(),
+                panel_filled_button("Initialize Repository")
+                    .tooltip(Tooltip::for_action_title_in(
+                        "git init",
+                        &git::Init,
+                        &self.focus_handle,
+                    ))
+                    .on_click(move |_, _, cx| {
+                        cx.defer(move |cx| {
+                            cx.dispatch_action(&git::Init);
+                        })
+                    })
+                    .into_any_element(),
+            ]
+        } else {
+            vec![]
+        }
     }
 
     fn is_on_main_branch(&self, cx: &Context<Self>) -> bool {
@@ -4724,7 +4953,7 @@ impl GitPanel {
 
         let is_staging_or_staged = repo
             .pending_ops_for_path(&repo_path)
-            .map(|ops| ops.staging() || ops.staged())
+            .map(|ops| !ops.last_op_errored() && (ops.staging() || ops.staged()))
             .or_else(|| {
                 repo.status_for_path(&repo_path)
                     .and_then(|status| status.status.staging().as_bool())
@@ -4939,57 +5168,46 @@ impl GitPanel {
         let toggle_state = self.header_state(header.header);
         let section = header.header;
         let weak = cx.weak_entity();
-        let show_checkbox_persistently = !matches!(&toggle_state, ToggleState::Unselected);
 
         h_flex()
             .id(id)
-            .group(group_name.clone())
+            .cursor_pointer()
+            .group(group_name)
             .h(self.list_item_height())
             .w_full()
-            .items_center()
             .pl_3()
             .pr_1()
-            .gap_1p5()
+            .gap_2()
+            .justify_between()
+            .hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
             .border_1()
             .border_r_2()
             .child(
-                h_flex().flex_1().child(
-                    Label::new(header.title())
-                        .color(Color::Muted)
-                        .size(LabelSize::Small)
-                        .line_height_style(LineHeightStyle::UiLabel)
-                        .single_line(),
-                ),
+                Label::new(header.title())
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
             )
             .child(
-                div()
-                    .flex_none()
-                    .cursor_pointer()
-                    .child(
-                        Checkbox::new(checkbox_id, toggle_state)
-                            .disabled(!has_write_access)
-                            .fill()
-                            .elevation(ElevationIndex::Surface)
-                            .on_click_ext(move |_, _, window, cx| {
-                                if !has_write_access {
-                                    return;
-                                }
-
-                                weak.update(cx, |this, cx| {
-                                    this.toggle_staged_for_entry(
-                                        &GitListEntry::Header(GitHeaderEntry { header: section }),
-                                        window,
-                                        cx,
-                                    );
-                                    cx.stop_propagation();
-                                })
-                                .ok();
-                            }),
-                    )
-                    .when(!show_checkbox_persistently, |this| {
-                        this.visible_on_hover(group_name)
-                    }),
+                Checkbox::new(checkbox_id, toggle_state)
+                    .disabled(!has_write_access)
+                    .fill()
+                    .elevation(ElevationIndex::Surface),
             )
+            .on_click(move |_, window, cx| {
+                if !has_write_access {
+                    return;
+                }
+
+                weak.update(cx, |this, cx| {
+                    this.toggle_staged_for_entry(
+                        &GitListEntry::Header(GitHeaderEntry { header: section }),
+                        window,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                })
+                .ok();
+            })
             .into_any_element()
     }
 
@@ -5041,8 +5259,11 @@ impl GitPanel {
                 .separator()
                 .action("Open Diff", menu::Confirm.boxed_clone())
                 .action("Open File", menu::SecondaryConfirm.boxed_clone())
-                .separator()
-                .action_disabled_when(is_created, "View File History", Box::new(git::FileHistory))
+                .when(!is_created, |context_menu| {
+                    context_menu
+                        .separator()
+                        .action("View File History", Box::new(git::FileHistory))
+                })
         });
         self.selected_entry = Some(ix);
         self.set_context_menu(context_menu, position, window, cx);
@@ -5688,6 +5909,17 @@ impl GitPanel {
     }
 }
 
+impl GitPanel {
+    pub fn selected_file_history_target(&self) -> Option<(Entity<Repository>, RepoPath)> {
+        let entry = self.get_selected_entry()?.status_entry()?;
+        let repository = self.active_repository.clone()?;
+        if entry.status.is_created() {
+            return None;
+        }
+        Some((repository, entry.repo_path.clone()))
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 impl GitPanel {
     pub fn new_test(
@@ -5756,7 +5988,6 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::close_panel))
             .on_action(cx.listener(Self::open_diff))
             .on_action(cx.listener(Self::open_file))
-            .on_action(cx.listener(Self::file_history))
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::expand_commit_editor))
@@ -5771,15 +6002,22 @@ impl Render for GitPanel {
             .child(
                 v_flex()
                     .size_full()
-                    .children(self.render_panel_header(window, cx))
-                    .map(|this| {
-                        if let Some(repo) = self.active_repository.clone()
-                            && has_entries
-                        {
-                            this.child(self.render_entries(has_write_access, repo, window, cx))
-                        } else {
-                            this.child(self.render_empty_state(cx).into_any_element())
-                        }
+                    .when(!self.commit_editor_expanded, |this| {
+                        this.children(self.render_panel_header(window, cx))
+                            .map(|this| {
+                                if let Some(repo) = self.active_repository.clone()
+                                    && has_entries
+                                {
+                                    this.child(self.render_entries(
+                                        has_write_access,
+                                        repo,
+                                        window,
+                                        cx,
+                                    ))
+                                } else {
+                                    this.child(self.render_empty_state(cx).into_any_element())
+                                }
+                            })
                     })
                     .children(self.render_footer(window, cx))
                     .when(self.amend_pending, |this| {
@@ -6123,10 +6361,6 @@ impl RenderOnce for PanelRepoFooter {
             util::truncate_and_trailoff(branch_name.trim_ascii(), branch_display_len)
         };
 
-        let repo_selector_trigger = Button::new("repo-selector", truncated_repo_name)
-            .size(ButtonSize::None)
-            .label_size(LabelSize::Small);
-
         let repo_selector = PopoverMenu::new("repository-switcher")
             .menu({
                 let project = project;
@@ -6136,8 +6370,9 @@ impl RenderOnce for PanelRepoFooter {
                 }
             })
             .trigger_with_tooltip(
-                repo_selector_trigger
-                    .when(single_repo, |this| this.disabled(true).color(Color::Muted))
+                Button::new("repo-selector", truncated_repo_name)
+                    .size(ButtonSize::None)
+                    .label_size(LabelSize::Small)
                     .truncate(true),
                 move |_, cx| {
                     if single_repo {
@@ -6179,7 +6414,7 @@ impl RenderOnce for PanelRepoFooter {
             });
 
         h_flex()
-            .h(px(36.))
+            .h_9()
             .w_full()
             .px_2()
             .justify_between()
@@ -6196,14 +6431,14 @@ impl RenderOnce for PanelRepoFooter {
                             Color::Muted
                         },
                     ))
-                    .child(repo_selector)
-                    .when(show_separator, |this| {
-                        this.child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().colors().icon_muted.opacity(0.5))
-                                .child("/"),
-                        )
+                    .when(!single_repo, |this| {
+                        this.child(repo_selector).when(show_separator, |this| {
+                            this.child(
+                                Label::new("/").size(LabelSize::Small).color(Color::Custom(
+                                    cx.theme().colors().text_muted.opacity(0.4),
+                                )),
+                            )
+                        })
                     })
                     .child(branch_selector),
             )
@@ -8115,6 +8350,50 @@ mod tests {
                 context.contains("ChangesList"),
                 "should have ChangesList context after re-focusing changes list"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_fill_commit_editor_toggle(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({ "project": { ".git": {}, "src": { "main.rs": "fn main() {}" } } }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        panel.update_in(cx, |panel, window, cx| {
+            assert!(!panel.commit_editor_expanded);
+            assert!(matches!(
+                panel.commit_editor.read(cx).mode().clone(),
+                EditorMode::AutoHeight { .. }
+            ));
+
+            panel.toggle_fill_commit_editor(&ToggleFillCommitEditor, window, cx);
+            assert!(panel.commit_editor_expanded);
+            assert!(matches!(
+                panel.commit_editor.read(cx).mode().clone(),
+                EditorMode::Full { .. }
+            ));
+
+            panel.toggle_fill_commit_editor(&ToggleFillCommitEditor, window, cx);
+            assert!(!panel.commit_editor_expanded);
+            assert!(matches!(
+                panel.commit_editor.read(cx).mode().clone(),
+                EditorMode::AutoHeight { .. }
+            ));
         });
     }
 }

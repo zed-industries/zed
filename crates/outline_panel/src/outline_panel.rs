@@ -46,7 +46,6 @@ use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use smol::channel;
 use theme::SyntaxTheme;
 use theme_settings::ThemeSettings;
 use ui::{
@@ -156,7 +155,7 @@ struct SearchState {
     kind: SearchKind,
     query: String,
     matches: Vec<(Range<editor::Anchor>, Arc<OnceLock<SearchData>>)>,
-    highlight_search_match_tx: channel::Sender<HighlightArguments>,
+    highlight_search_match_tx: async_channel::Sender<HighlightArguments>,
     _search_match_highlighter: Task<()>,
     _search_match_notify: Task<()>,
 }
@@ -177,8 +176,8 @@ impl SearchState {
         window: &mut Window,
         cx: &mut Context<OutlinePanel>,
     ) -> Self {
-        let (highlight_search_match_tx, highlight_search_match_rx) = channel::unbounded();
-        let (notify_tx, notify_rx) = channel::unbounded::<()>();
+        let (highlight_search_match_tx, highlight_search_match_rx) = async_channel::unbounded();
+        let (notify_tx, notify_rx) = async_channel::unbounded::<()>();
         Self {
             kind,
             query,
@@ -5249,6 +5248,7 @@ impl GenerationState {
 #[cfg(test)]
 mod tests {
     use db::indoc;
+    use futures::stream::StreamExt as _;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle};
     use language::{self, FakeLspAdapter, markdown_lang, rust_lang};
     use pretty_assertions::assert_eq;
@@ -5258,7 +5258,6 @@ mod tests {
         project_search::{self, perform_project_search},
     };
     use serde_json::json;
-    use smol::stream::StreamExt as _;
     use util::path;
     use workspace::{MultiWorkspace, OpenOptions, OpenVisible, ToolbarItemView};
 
