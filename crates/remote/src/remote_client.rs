@@ -1553,7 +1553,7 @@ pub trait RemoteConnection: Send + Sync {
 
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
 type StreamResponseChannels =
-    Mutex<HashMap<MessageId, UnboundedSender<(Result<Envelope>, oneshot::Sender<()>)>>>;
+    Arc<Mutex<HashMap<MessageId, UnboundedSender<(Result<Envelope>, oneshot::Sender<()>)>>>>;
 
 struct Signal<T> {
     tx: Mutex<Option<oneshot::Sender<T>>>,
@@ -1894,7 +1894,8 @@ impl ChannelClient {
         envelope.id = self.next_message_id.fetch_add(1, SeqCst);
         let message_id = MessageId(envelope.id);
         let (tx, rx) = mpsc::unbounded();
-        self.stream_response_channels.lock().insert(message_id, tx);
+        let stream_response_channels = self.stream_response_channels.clone();
+        stream_response_channels.lock().insert(message_id, tx);
 
         let result = self.send_buffered(envelope);
         async move {
@@ -1903,8 +1904,17 @@ impl ChannelClient {
                 anyhow::bail!("failed to send message: {error}");
             }
 
+            let cleanup_stream_response_channel = util::defer({
+                let stream_response_channels = stream_response_channels.clone();
+                move || {
+                    stream_response_channels.lock().remove(&message_id);
+                }
+            });
+
             Ok(rx
                 .filter_map(move |(response, _barrier)| {
+                    // Keep the cleanup guard alive until the returned stream is dropped.
+                    let _keep_cleanup_guard_alive = &cleanup_stream_response_channel;
                     futures::future::ready(match response {
                         Ok(response) => {
                             if let Some(proto::envelope::Payload::Error(error)) = &response.payload

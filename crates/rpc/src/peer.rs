@@ -521,19 +521,35 @@ impl Peer {
                 .as_mut()
                 .context("connection was closed")?
                 .insert(message_id, tx);
-            connection
+            if let Err(error) = connection
                 .outgoing_tx
                 .unbounded_send(Message::Envelope(envelope))
-                .context("connection was closed")?;
+            {
+                if let Some(channels) = stream_response_channels.lock().as_mut() {
+                    channels.remove(&message_id);
+                }
+                return Err(error).context("connection was closed");
+            }
             Ok((message_id, stream_response_channels))
         });
 
         async move {
             let (message_id, stream_response_channels) = send?;
             let stream_response_channels = Arc::downgrade(&stream_response_channels);
+            let cleanup_stream_response_channel = util::defer({
+                let stream_response_channels = stream_response_channels.clone();
+                move || {
+                    if let Some(channels) = stream_response_channels.upgrade()
+                        && let Some(channels) = channels.lock().as_mut()
+                    {
+                        channels.remove(&message_id);
+                    }
+                }
+            });
 
             Ok(rx
                 .filter_map(move |(response, _barrier)| {
+                    let _keep_cleanup_guard_alive = &cleanup_stream_response_channel;
                     let stream_response_channels = stream_response_channels.clone();
                     future::ready(match response {
                         Ok(response) => {
