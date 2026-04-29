@@ -57,8 +57,6 @@ mod window;
 pub use proptest;
 
 #[cfg(doc)]
-pub mod _examples;
-#[cfg(doc)]
 pub mod _ownership_and_data_flow;
 
 /// Do not touch, here be dragons for use by gpui_macros and such.
