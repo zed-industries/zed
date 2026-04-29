@@ -1098,6 +1098,35 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_request_stream_send_failure_cleans_up_response_channel(cx: &mut TestAppContext) {
+        init_logger();
+
+        let executor = cx.executor();
+        let client = Peer::new(0);
+
+        let (client_to_server_conn, _server_to_client_conn, _kill) =
+            Connection::in_memory(executor.clone());
+        let (client_to_server_conn_id, io_task, _client_incoming) =
+            client.add_test_connection(client_to_server_conn, executor.clone());
+
+        drop(io_task);
+
+        let result = client
+            .request_stream(client_to_server_conn_id, proto::Test { id: 0 })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "stream request should fail when the connection write task has gone away"
+        );
+        assert_eq!(
+            client.pending_stream_request_count(client_to_server_conn_id),
+            Some(0),
+            "failed stream request should not leave response channel bookkeeping behind"
+        );
+    }
+
     #[gpui::test(iterations = 50)]
     async fn test_request_stream_terminates_on_error(cx: &mut TestAppContext) {
         init_logger();

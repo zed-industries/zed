@@ -1399,6 +1399,37 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_channel_client_dropping_stream_request_before_response_cleans_up_channel(
+        cx: &mut TestAppContext,
+    ) {
+        let (_incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        let client =
+            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+
+        let _drain_outgoing = cx
+            .executor()
+            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
+
+        let stream = client
+            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
+            .await
+            .unwrap();
+
+        assert_eq!(client.stream_response_channels.lock().len(), 1);
+
+        drop(stream);
+        cx.run_until_parked();
+
+        assert_eq!(
+            client.stream_response_channels.lock().len(),
+            0,
+            "dropping a stream before any responses arrive should remove response channel bookkeeping"
+        );
+    }
+
+    #[gpui::test]
     async fn test_channel_client_dropping_stream_request_before_completion(
         cx: &mut TestAppContext,
     ) {
