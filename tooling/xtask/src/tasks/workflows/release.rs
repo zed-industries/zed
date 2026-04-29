@@ -64,7 +64,7 @@ pub(crate) fn release() -> Workflow {
         job_output,
     );
 
-    let auto_release_preview =
+    let (auto_release_preview, auto_release_published) =
         auto_release_preview(&[&validate_release_assets, &release_compliance]);
 
     let test_jobs = [
@@ -82,6 +82,7 @@ pub(crate) fn release() -> Workflow {
         &validate_release_assets,
         &release_compliance,
         &auto_release_preview,
+        &auto_release_published,
         &test_jobs,
         &bundle,
     );
@@ -361,23 +362,70 @@ fn release_compliance_check(deps: &[&NamedJob], non_blocking_outcome: JobOutput)
     named::job(job)
 }
 
-fn auto_release_preview(deps: &[&NamedJob]) -> NamedJob {
-    let (authenticate, token) = steps::authenticate_as_zippy().into();
+fn auto_release_preview(deps: &[&NamedJob]) -> (NamedJob, JobOutput) {
+    fn auto_release_preview(token: &StepOutput) -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            tag="$GITHUB_REF_NAME"
+            release_published=false
 
-    named::job(
+            if [[ ! "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-pre$ ]]; then
+                echo "::error::expected preview release tag in the form vMAJOR.MINOR.PATCH-pre, got $tag"
+                exit 1
+            fi
+
+            major="${BASH_REMATCH[1]}"
+            minor="${BASH_REMATCH[2]}"
+            should_release=true
+
+            released_preview="$(script/get-released-version preview)"
+            if [[ -z "$released_preview" || "$released_preview" == "null" ]]; then
+                echo "::error::could not determine released preview version"
+                exit 1
+            fi
+
+            released_preview_major="$(echo "$released_preview" | cut -d. -f1)"
+            released_preview_minor="$(echo "$released_preview" | cut -d. -f2)"
+
+            if [[ "$released_preview_major" != "$major" || "$released_preview_minor" != "$minor" ]]; then
+                should_release=false
+                echo "Leaving $tag as a draft because it is the first preview release for v${major}.${minor}.x"
+            fi
+
+            if [[ "$should_release" == "true" ]]; then
+                gh release edit "$tag" --repo=zed-industries/zed --draft=false
+                release_published=true
+            fi
+
+            echo "release_published=$release_published" >> "$GITHUB_OUTPUT"
+        "#})
+        .id("auto-release-preview")
+        .add_env(("GITHUB_TOKEN", token))
+    }
+
+    let (authenticate, token) = steps::authenticate_as_zippy().into();
+    let auto_release_preview_step = auto_release_preview(&token);
+    let release_published = StepOutput::new(&auto_release_preview_step, "release_published");
+
+    let job = named::job(
         dependant_job(deps)
             .runs_on(runners::LINUX_SMALL)
             .cond(Expression::new(indoc::indoc!(
-                r#"startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')"#
+                r#"startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre')"#
             )))
             .add_step(authenticate)
             .add_step(
-                steps::script(
-                    r#"gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false"#,
-                )
-                .add_env(("GITHUB_TOKEN", &token)),
+                steps::checkout_repo()
+                    .with_token(&token)
+                    .with_ref(Context::github().ref_()),
             )
-    )
+            .add_step(auto_release_preview_step)
+            .outputs([(
+                release_published.name.to_owned(),
+                release_published.to_string(),
+            )]),
+    );
+    let release_published = release_published.as_job_output(&job);
+    (job, release_published)
 }
 
 pub(crate) fn download_workflow_artifacts() -> Step<Use> {
@@ -453,6 +501,7 @@ pub(crate) fn push_release_update_notification(
     validate_assets_job: &NamedJob,
     compliance_job: &NamedJob,
     auto_release_preview: &NamedJob,
+    auto_release_published: &JobOutput,
     test_jobs: &[&NamedJob],
     bundle_jobs: &ReleaseBundleJobs,
 ) -> NamedJob {
@@ -486,6 +535,10 @@ pub(crate) fn push_release_update_notification(
         (
             "AUTO_RELEASE_RESULT".into(),
             format!("${{{{ needs.{}.result }}}}", auto_release_preview.name),
+        ),
+        (
+            "AUTO_RELEASE_PUBLISHED".into(),
+            auto_release_published.to_string(),
         ),
         ("RUN_URL".into(), CURRENT_ACTION_RUN_URL.to_string()),
         ("TAG".into(), Context::github().ref_name().to_string()),
@@ -537,10 +590,10 @@ pub(crate) fn push_release_update_notification(
                 echo ""
             elif [ "$VALIDATE_RESULT" == "failure" ]; then
                 echo "❌ Release validation failed for $TAG: missing assets: $RUN_URL"
-            elif [ "$AUTO_RELEASE_RESULT" == "success" ]; then
-                echo "✅ Release $TAG was auto-released successfully: $RELEASE_URL"
             elif [ "$AUTO_RELEASE_RESULT" == "failure" ]; then
                 echo "❌ Auto release failed for $TAG: $RUN_URL"
+            elif [ "$AUTO_RELEASE_RESULT" == "success" ] && [ "$AUTO_RELEASE_PUBLISHED" == "true" ]; then
+                echo "✅ Release $TAG was auto-released successfully: $RELEASE_URL"
             else
                 echo "👀 Release $TAG sitting freshly baked in the oven and waiting to be published: $RELEASE_URL"
             fi
