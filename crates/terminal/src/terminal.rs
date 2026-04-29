@@ -3340,7 +3340,7 @@ mod tests {
     mod hyperlinks {
         use super::init_terminal_test_with_window;
         use crate::*;
-        use alacritty_terminal::index::{Column, Line, Point as AlacPoint};
+        use alacritty_terminal::index::{Line, Point as AlacPoint};
         use gpui::{
             Entity, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
             Point, TestAppContext, VisualContext, bounds, point, size,
@@ -3392,158 +3392,6 @@ mod tests {
             terminal
         }
 
-        impl<T: AsRef<str>> From<(T, RangeInclusive<(i32, usize)>, usize)> for HoveredWord {
-            fn from(value: (T, RangeInclusive<(i32, usize)>, usize)) -> Self {
-                Self {
-                    word: value.0.as_ref().to_string(),
-                    word_match: AlacPoint::new(Line(value.1.start().0), Column(value.1.start().1))
-                        ..=AlacPoint::new(Line(value.1.end().0), Column(value.1.end().1)),
-                    id: value.2,
-                }
-            }
-        }
-
-        trait WithLineAndId {
-            fn with_line(&self, line: i32) -> Self;
-            fn with_id(&self, id: usize) -> Self;
-            fn with_line_and_id(&self, line: i32, id: usize) -> Self;
-        }
-
-        impl WithLineAndId for HoveredWord {
-            fn with_line(&self, line: i32) -> Self {
-                (
-                    self.word.clone(),
-                    (line, self.word_match.start().column.0)
-                        ..=(line, self.word_match.end().column.0),
-                    self.id,
-                )
-                    .into()
-            }
-
-            fn with_id(&self, id: usize) -> Self {
-                Self {
-                    word: self.word.clone(),
-                    word_match: self.word_match.clone(),
-                    id,
-                }
-            }
-
-            fn with_line_and_id(&self, line: i32, id: usize) -> Self {
-                (
-                    self.word.clone(),
-                    (line, self.word_match.start().column.0)
-                        ..=(line, self.word_match.end().column.0),
-                    id,
-                )
-                    .into()
-            }
-        }
-
-        struct HyperlinkVisualTestContext<'a, 'b> {
-            terminal: &'a mut Terminal,
-            window: &'a mut Window,
-            cx: &'a mut Context<'b, Terminal>,
-        }
-
-        impl<'a, 'b> HyperlinkVisualTestContext<'a, 'b> {
-            fn new(
-                terminal: &'a mut Terminal,
-                window: &'a mut Window,
-                cx: &'a mut Context<'b, Terminal>,
-            ) -> Self {
-                Self {
-                    terminal,
-                    window,
-                    cx,
-                }
-            }
-
-            #[track_caller]
-            fn assert_visible_lines_match(
-                &self,
-                expected_lines: impl IntoIterator<Item = (i32, &'static str)>,
-            ) {
-                fn visible_lines(terminal: &Terminal) -> Vec<(i32, String)> {
-                    let term = terminal.term.lock_unfair();
-                    let grid = term.grid();
-                    let columns = grid.columns();
-                    // From Grid::display_iter()
-                    let start_line = Line(-(grid.display_offset() as i32));
-                    let end_line = min(start_line + grid.screen_lines(), grid.bottommost_line());
-                    (start_line.0..end_line.0)
-                        .map(|line| {
-                            (
-                                line,
-                                term.bounds_to_string(
-                                    AlacPoint::new(Line(line), Column(0)),
-                                    AlacPoint::new(Line(line), Column(columns)),
-                                ),
-                            )
-                        })
-                        .collect()
-                }
-
-                let lines = visible_lines(self.terminal);
-                let mut expected_lines = expected_lines.into_iter();
-                for (line, text) in &lines {
-                    let Some((expected_line, expected_text)) = expected_lines.next() else {
-                        // More actual lines than expected lines, ignore
-                        return;
-                    };
-                    assert_eq!(*line, expected_line, "Mismatched line at line {line}");
-                    assert_eq!(*text, expected_text, "Mismatched text at line {line}");
-                }
-
-                assert!(expected_lines.next().is_none(), "Extra expected lines")
-            }
-
-            #[track_caller]
-            fn assert_hovered_word(&self, expected_hovered_word: Option<&HoveredWord>) {
-                assert_eq!(
-                    self.terminal.last_content().last_hovered_word.as_ref(),
-                    expected_hovered_word,
-                    "Mismatched hovered word"
-                );
-            }
-
-            fn ctrl_mouse_move_to_and_sync(&mut self, position: Point<Pixels>) {
-                self.unthrottle();
-                ctrl_mouse_move_to(position, self.terminal, self.window, self.cx);
-                self.sync();
-            }
-
-            fn try_modifiers_change_and_sync(&mut self, modifiers: Modifiers) {
-                self.unthrottle();
-                self.terminal
-                    .try_modifiers_change(&modifiers, self.window, self.cx);
-                self.sync();
-            }
-
-            fn write_output_lines_and_sync(&mut self, output: &str, repeat: usize) {
-                for _ in 0..repeat {
-                    self.terminal.write_output(output.as_bytes(), self.cx);
-                    self.terminal.write_output(b"\n", self.cx);
-                }
-                self.sync();
-            }
-
-            fn scroll_up_by_and_sync(&mut self, lines: usize) {
-                self.unthrottle();
-                self.terminal.scroll_up_by(lines);
-                self.sync();
-            }
-
-            fn sync(&mut self) {
-                self.unthrottle();
-                self.terminal.sync(self.window, self.cx);
-            }
-
-            fn unthrottle(&mut self) {
-                // Suppress hyperlink throttling for testing
-                self.terminal.suppress_hyperlink_throttle_once = true;
-            }
-        }
-
         fn ctrl_mouse_down_at(
             terminal: &mut Terminal,
             position: Point<Pixels>,
@@ -3571,23 +3419,6 @@ mod tests {
                 modifiers: Modifiers::secondary_key(),
             };
             terminal.mouse_drag(&drag_event, terminal_bounds, cx);
-        }
-
-        fn ctrl_mouse_move_to(
-            position: Point<Pixels>,
-            terminal: &mut Terminal,
-            window: &mut Window,
-            cx: &mut Context<Terminal>,
-        ) {
-            let modifiers = Modifiers::secondary_key();
-            let move_event = MouseMoveEvent {
-                position,
-                modifiers,
-                ..default()
-            };
-            window.set_modifiers(modifiers);
-            window.simulate_mouse_move(position, cx);
-            terminal.mouse_move(&move_event, cx);
         }
 
         fn ctrl_mouse_up_at(
@@ -3669,6 +3500,189 @@ mod tests {
             });
         }
 
+        impl<T: AsRef<str>> From<(T, RangeInclusive<(i32, usize)>, usize)> for HoveredWord {
+            fn from(value: (T, RangeInclusive<(i32, usize)>, usize)) -> Self {
+                let match_start =
+                    AlacPoint::new(value.1.start().0.into(), value.1.start().1.into());
+                let match_end = AlacPoint::new(value.1.end().0.into(), value.1.end().1.into());
+                Self {
+                    word: value.0.as_ref().to_string(),
+                    word_match: match_start..=match_end,
+                    id: value.2,
+                }
+            }
+        }
+
+        trait WithLineAndId {
+            fn with_line(&self, line: i32) -> Self;
+            fn with_id(&self, id: usize) -> Self;
+            fn with_line_and_id(&self, line: i32, id: usize) -> Self;
+        }
+
+        impl WithLineAndId for HoveredWord {
+            fn with_line(&self, line: i32) -> Self {
+                (
+                    self.word.clone(),
+                    (line, self.word_match.start().column.0)
+                        ..=(line, self.word_match.end().column.0),
+                    self.id,
+                )
+                    .into()
+            }
+
+            fn with_id(&self, id: usize) -> Self {
+                Self {
+                    word: self.word.clone(),
+                    word_match: self.word_match.clone(),
+                    id,
+                }
+            }
+
+            fn with_line_and_id(&self, line: i32, id: usize) -> Self {
+                (
+                    self.word.clone(),
+                    (line, self.word_match.start().column.0)
+                        ..=(line, self.word_match.end().column.0),
+                    id,
+                )
+                    .into()
+            }
+        }
+
+        struct HyperlinkVisualTestContext<'a, 'b> {
+            terminal: &'a mut Terminal,
+            window: &'a mut Window,
+            cx: &'a mut Context<'b, Terminal>,
+        }
+
+        impl<'a, 'b> HyperlinkVisualTestContext<'a, 'b> {
+            fn new(
+                terminal: &'a mut Terminal,
+                window: &'a mut Window,
+                cx: &'a mut Context<'b, Terminal>,
+            ) -> Self {
+                Self {
+                    terminal,
+                    window,
+                    cx,
+                }
+            }
+
+            #[track_caller]
+            fn assert_visible_lines_match(
+                &self,
+                expected_lines: impl IntoIterator<Item = &'static str>,
+            ) {
+                fn visible_lines(terminal: &Terminal) -> Vec<String> {
+                    let term = terminal.term.lock_unfair();
+                    let grid = term.grid();
+                    let columns = grid.columns();
+                    // From Grid::display_iter()
+                    let start_line = Line(-(grid.display_offset() as i32));
+                    let end_line = min(start_line + grid.screen_lines(), grid.bottommost_line());
+                    (start_line.0..end_line.0)
+                        .map(|line| {
+                            let line_start = AlacPoint::new(line.into(), 0.into());
+                            let line_end = AlacPoint::new(line.into(), columns.into());
+                            term.bounds_to_string(line_start, line_end)
+                        })
+                        .collect()
+                }
+
+                let lines = visible_lines(self.terminal);
+                let mut expected_lines = expected_lines.into_iter();
+                for (line, text) in lines.into_iter().enumerate() {
+                    let Some(expected_text) = expected_lines.next() else {
+                        // More actual lines than expected lines, ignore
+                        return;
+                    };
+                    assert_eq!(text, expected_text, "Mismatched text at line {line}");
+                }
+
+                assert!(expected_lines.next().is_none(), "Extra expected lines")
+            }
+
+            #[track_caller]
+            fn assert_display_offset(&self, expected_display_offset: usize) {
+                assert_eq!(
+                    self.terminal.last_content().display_offset,
+                    expected_display_offset,
+                    "Mismatched display offset"
+                );
+            }
+
+            #[track_caller]
+            fn assert_hovered_word(&self, expected_hovered_word: Option<&HoveredWord>) {
+                assert_eq!(
+                    self.terminal.last_content().last_hovered_word.as_ref(),
+                    expected_hovered_word,
+                    "Mismatched hovered word"
+                );
+            }
+
+            fn ctrl_mouse_move_to_and_sync(&mut self, position: Point<Pixels>) {
+                self.unthrottle();
+                let modifiers = Modifiers::secondary_key();
+                let move_event = MouseMoveEvent {
+                    position,
+                    modifiers,
+                    ..default()
+                };
+                let original_modifiers = self.window.modifiers();
+                self.window.set_modifiers(modifiers);
+                self.window.simulate_mouse_move(position, self.cx);
+                self.terminal.mouse_move(&move_event, self.cx);
+                self.window.set_modifiers(original_modifiers);
+                self.sync();
+            }
+
+            fn try_modifiers_change_and_sync(&mut self, modifiers: Modifiers) {
+                self.unthrottle();
+                self.window.set_modifiers(modifiers);
+                self.terminal
+                    .try_modifiers_change(&modifiers, self.window, self.cx);
+                self.sync();
+            }
+
+            fn write_output_lines_and_sync(&mut self, output: &str, repeat: usize) {
+                for _ in 0..repeat {
+                    self.terminal.write_output(output.as_bytes(), self.cx);
+                    self.terminal.write_output(b"\n", self.cx);
+                }
+                self.sync();
+            }
+
+            fn scroll_up_by_and_sync(&mut self, lines: usize) {
+                self.unthrottle();
+                self.terminal.scroll_up_by(lines);
+                self.sync();
+            }
+
+            fn set_size_and_sync(&mut self, new_bounds: TerminalBounds) {
+                self.unthrottle();
+                self.terminal.set_size(new_bounds);
+                self.sync();
+            }
+
+            fn set_secondary(&mut self) {
+                self.window.set_modifiers(Modifiers::secondary_key());
+            }
+
+            fn clear_secondary(&mut self) {
+                self.window.set_modifiers(default());
+            }
+
+            fn sync(&mut self) {
+                self.unthrottle();
+                self.terminal.sync(self.window, self.cx);
+            }
+
+            fn unthrottle(&mut self) {
+                // Suppress hyperlink throttling for testing
+                self.terminal.suppress_hyperlink_throttle_once = true;
+            }
+        }
+
         const OUTPUT_ZED_DEV: &str = "Visit https://zed.dev/ for more";
         const OUTPUT_NONE: &str = "None";
         const ZED_DEV_STR: &str = "https://zed.dev/";
@@ -3684,27 +3698,33 @@ mod tests {
                 let mut expected_hovered_word: HoveredWord =
                     (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
                 cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
-                cx.assert_visible_lines_match(vec![(0, OUTPUT_ZED_DEV)]);
+                cx.assert_display_offset(0);
+                cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV]);
                 cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
 
                 // Existing hovered_word IS reused when viewport is static
                 cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
-                cx.assert_visible_lines_match(vec![(0, OUTPUT_ZED_DEV), (1, OUTPUT_ZED_DEV)]);
+                cx.assert_display_offset(0);
+                cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV, OUTPUT_ZED_DEV]);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
 
                 // Existing hovered_word IS NOT reused when viewport is changing (total lines changed,
                 // but display offset did not have a corresponding change)
+                cx.set_secondary();
                 cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 8);
+                cx.assert_display_offset(0);
                 cx.assert_visible_lines_match(vec![
-                    (0, OUTPUT_ZED_DEV),
-                    (1, OUTPUT_ZED_DEV),
-                    (2, OUTPUT_ZED_DEV),
-                    (3, OUTPUT_ZED_DEV),
-                    (4, OUTPUT_ZED_DEV),
+                    OUTPUT_ZED_DEV,
+                    OUTPUT_ZED_DEV,
+                    OUTPUT_ZED_DEV,
+                    OUTPUT_ZED_DEV,
+                    OUTPUT_ZED_DEV,
                 ]);
                 cx.assert_hovered_word(None);
-                // ...AND new hovered_word is set if secondary is held.
+                cx.clear_secondary();
+
+                // ...AND new hovered_word is set if secondary was held.
                 cx.sync();
                 expected_hovered_word = expected_hovered_word.with_id(expected_hovered_word.id + 1);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
@@ -3714,8 +3734,9 @@ mod tests {
                     cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
                     cx.write_output_lines_and_sync(OUTPUT_NONE, 1);
                 }
-                expected_hovered_word = expected_hovered_word.with_id(expected_hovered_word.id + 7);
+                cx.assert_hovered_word(None);
 
+                cx.set_secondary();
                 for _ in 0..5 {
                     cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
                     cx.assert_hovered_word(None);
@@ -3729,33 +3750,76 @@ mod tests {
                     cx.sync();
                     cx.assert_hovered_word(None);
                 }
+                cx.clear_secondary();
 
                 // Existing hovered word IS NOT reused when scrolling
                 cx.scroll_up_by_and_sync(3);
                 cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
+                cx.assert_display_offset(3);
                 cx.assert_visible_lines_match(vec![
-                    (-3, OUTPUT_ZED_DEV),
-                    (-2, OUTPUT_NONE),
-                    (-1, OUTPUT_ZED_DEV),
-                    (0, OUTPUT_NONE),
-                    (1, OUTPUT_ZED_DEV),
-                    (2, OUTPUT_NONE),
+                    OUTPUT_ZED_DEV,
+                    OUTPUT_NONE,
+                    OUTPUT_ZED_DEV,
+                    OUTPUT_NONE,
+                    OUTPUT_ZED_DEV,
+                    OUTPUT_NONE,
                 ]);
                 expected_hovered_word =
-                    expected_hovered_word.with_line_and_id(-3, expected_hovered_word.id + 2);
+                    expected_hovered_word.with_line_and_id(-3, expected_hovered_word.id + 1);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
 
                 // Existing hovered word IS reused when total lines changed, but visible lines unchanged
                 cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 2);
+                cx.assert_display_offset(5);
                 cx.assert_visible_lines_match(vec![
-                    (-5, OUTPUT_ZED_DEV),
-                    (-4, OUTPUT_NONE),
-                    (-3, OUTPUT_ZED_DEV),
-                    (-2, OUTPUT_NONE),
-                    (-1, OUTPUT_ZED_DEV),
-                    (0, OUTPUT_NONE),
+                    OUTPUT_ZED_DEV,
+                    OUTPUT_NONE,
+                    OUTPUT_ZED_DEV,
+                    OUTPUT_NONE,
+                    OUTPUT_ZED_DEV,
+                    OUTPUT_NONE,
                 ]);
                 expected_hovered_word = expected_hovered_word.with_line(-5);
+                cx.assert_hovered_word(Some(&expected_hovered_word));
+            });
+        }
+
+        #[gpui::test]
+        async fn test_ctrl_hover_with_changing_bounds(cx: &mut TestAppContext) {
+            let (terminal, cx) = init_terminal_test_with_window(cx, b"").await;
+            cx.update_window_entity(&terminal, |terminal, window, cx| {
+                let mut cx = HyperlinkVisualTestContext::new(terminal, window, cx);
+
+                // Set initial expected hovered word
+                let mut expected_hovered_word: HoveredWord =
+                    (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
+                cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
+                cx.assert_display_offset(0);
+                cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV]);
+                cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
+                cx.assert_hovered_word(Some(&expected_hovered_word));
+
+                // Existing hovered word IS NOT reused when bounds change
+                cx.set_secondary();
+                cx.set_size_and_sync(TerminalBounds::new(
+                    px(5.0),
+                    px(5.0),
+                    Bounds {
+                        origin: Point::default(),
+                        size: Size {
+                            width: px(161.8),
+                            height: px(61.8),
+                        },
+                    },
+                ));
+                cx.assert_display_offset(0);
+                cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV]);
+                cx.assert_hovered_word(None);
+                cx.clear_secondary();
+
+                // ...AND new hovered_word is set if secondary was held.
+                cx.sync();
+                expected_hovered_word = expected_hovered_word.with_id(expected_hovered_word.id + 1);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
             });
         }
@@ -3770,7 +3834,8 @@ mod tests {
                 let mut expected_hovered_word: HoveredWord =
                     (ZED_DEV_STR, (0, 6)..=(0, 21), 0).into();
                 cx.write_output_lines_and_sync(OUTPUT_ZED_DEV, 1);
-                cx.assert_visible_lines_match(vec![(0, OUTPUT_ZED_DEV)]);
+                cx.assert_display_offset(0);
+                cx.assert_visible_lines_match(vec![OUTPUT_ZED_DEV]);
                 cx.ctrl_mouse_move_to_and_sync(ZED_DEV_PT);
                 cx.assert_hovered_word(Some(&expected_hovered_word));
 
@@ -3779,7 +3844,7 @@ mod tests {
                     cx.try_modifiers_change_and_sync(default());
                     cx.assert_hovered_word(None);
 
-                    // Existing hovered_word set when secondary is held
+                    // hovered_word set when secondary is held
                     cx.try_modifiers_change_and_sync(Modifiers::secondary_key());
                     expected_hovered_word =
                         expected_hovered_word.with_id(expected_hovered_word.id + 1);
