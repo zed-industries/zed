@@ -363,7 +363,7 @@ impl OllamaLanguageModel {
                             MessageContent::ToolResult(tool_result) => {
                                 messages.push(ChatMessage::Tool {
                                     tool_name: tool_result.tool_name.to_string(),
-                                    content: tool_result.content.to_str().unwrap_or("").to_string(),
+                                    content: tool_result.text_contents(),
                                 })
                             }
                             _ => unreachable!("Only tool result should be extracted"),

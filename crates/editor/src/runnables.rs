@@ -715,7 +715,9 @@ mod tests {
     use multi_buffer::{MultiBuffer, PathKey};
     use project::{
         FakeFs, Project, ProjectPath,
-        lsp_store::lsp_ext_command::{CargoRunnableArgs, Runnable, RunnableArgs, RunnableKind},
+        lsp_store::lsp_ext_command::{
+            CargoRunnableArgs, Runnable, RunnableArgs, ShellRunnableArgs,
+        },
     };
     use serde_json::json;
     use task::{TaskTemplate, TaskTemplates};
@@ -1028,7 +1030,6 @@ mod tests {
                             lsp::Position::new(3, 1),
                         ),
                     }),
-                    kind: RunnableKind::Cargo,
                     args: RunnableArgs::Cargo(CargoRunnableArgs {
                         environment: Default::default(),
                         cwd: path!("/project").into(),
@@ -1172,6 +1173,158 @@ mod tests {
         assert!(
             !labels.is_empty(),
             "Runnables should appear after the buffer is saved to disk"
+        );
+    }
+
+    // Verifies that a shell runnable from rust-analyzer produces
+    // a task template that uses the shell program and args.
+    #[gpui::test]
+    async fn test_shell_runnable_produces_correct_task_template(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "main.rs": indoc! {"
+                    #[test]
+                    fn test_one() {
+                        assert!(true);
+                    }
+                "},
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang_with_lsp_task_context());
+
+        let mut fake_servers = language_registry.register_fake_lsp(
+            "Rust",
+            FakeLspAdapter {
+                name: FAKE_LSP_NAME,
+                ..FakeLspAdapter::default()
+            },
+        );
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+        let editor = cx.add_window(|window, cx| {
+            build_editor_with_project(project.clone(), multi_buffer, window, cx)
+        });
+
+        let fake_server = fake_servers.next().await.expect("fake LSP server");
+
+        use project::lsp_store::lsp_ext_command::Runnables;
+        fake_server.set_request_handler::<Runnables, _, _>(move |params, _| async move {
+            let text = params.text_document.uri.path().to_string();
+            if text.contains("main.rs") {
+                let uri = lsp::Uri::from_file_path(path!("/project/main.rs")).expect("valid uri");
+                Ok(vec![Runnable {
+                    label: "nextest test_one".into(),
+                    location: Some(lsp::LocationLink {
+                        origin_selection_range: None,
+                        target_uri: uri,
+                        target_range: lsp::Range::new(
+                            lsp::Position::new(0, 0),
+                            lsp::Position::new(3, 1),
+                        ),
+                        target_selection_range: lsp::Range::new(
+                            lsp::Position::new(0, 0),
+                            lsp::Position::new(3, 1),
+                        ),
+                    }),
+                    args: RunnableArgs::Shell(ShellRunnableArgs {
+                        environment: Default::default(),
+                        cwd: path!("/project").into(),
+                        program: "cargo".into(),
+                        args: vec![
+                            "nextest".into(),
+                            "run".into(),
+                            "--package".into(),
+                            "my-crate".into(),
+                            "--lib".into(),
+                            "--".into(),
+                            "test_one".into(),
+                            "--exact".into(),
+                        ],
+                    }),
+                }])
+            } else {
+                Ok(Vec::new())
+            }
+        });
+
+        editor
+            .update(cx, |editor, window, cx| {
+                editor.refresh_runnables(None, window, cx);
+            })
+            .expect("editor update");
+        cx.executor().advance_clock(UPDATE_DEBOUNCE);
+        cx.executor().run_until_parked();
+
+        let labels = editor
+            .update(cx, |editor, _, _| collect_runnable_labels(editor))
+            .expect("editor update");
+        assert_eq!(
+            labels,
+            vec![(buffer_id, 0, vec!["nextest test_one".to_string()])],
+            "shell runnable should appear for #[test] fn"
+        );
+
+        let templates = editor
+            .update(cx, |editor, _, _| {
+                editor
+                    .runnables
+                    .runnables
+                    .iter()
+                    .flat_map(|(_, (_, tasks))| {
+                        tasks.iter().flat_map(|(_, runnable_tasks)| {
+                            runnable_tasks
+                                .templates
+                                .iter()
+                                .map(|(_, template)| {
+                                    (
+                                        template.label.clone(),
+                                        template.command.clone(),
+                                        template.args.clone(),
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .expect("editor update");
+
+        let (label, command, args) = templates
+            .iter()
+            .find(|(label, _, _)| label == "nextest test_one")
+            .expect("shell runnable task template should exist");
+        assert_eq!(label, "nextest test_one");
+        assert_eq!(command, "cargo");
+        assert_eq!(
+            args,
+            &[
+                "nextest",
+                "run",
+                "--package",
+                "my-crate",
+                "--lib",
+                "--",
+                "test_one",
+                "--exact",
+            ],
+            "shell runnable should preserve program args"
         );
     }
 }

@@ -32,4 +32,9 @@ workspace.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
+fs.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
 tempfile.workspace = true
+workspace = { workspace = true, features = ["test-support"] }
