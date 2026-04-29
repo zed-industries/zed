@@ -127,6 +127,8 @@ pub enum Model {
     Ling2_6FlashFree,
     #[serde(rename = "hy3-preview-free")]
     Hy3PreviewFree,
+    #[serde(rename = "trinity-large-preview-free")]
+    TrinityLargePreviewFree,
     #[serde(rename = "minimax-m2.5")]
     MiniMaxM2_5,
     #[serde(rename = "minimax-m2.5-free")]
@@ -217,7 +219,8 @@ impl Model {
             | Self::Nemotron3SuperFree
             | Self::BigPickle
             | Self::Ling2_6FlashFree
-            | Self::Hy3PreviewFree => &[OpenCodeSubscription::Free],
+            | Self::Hy3PreviewFree
+            | Self::TrinityLargePreviewFree => &[OpenCodeSubscription::Free],
 
             // Custom models get their subscription from settings, not from here
             Self::Custom { .. } => &[],
@@ -279,6 +282,7 @@ impl Model {
             Self::Qwen3_6Plus => "qwen3.6-plus",
             Self::BigPickle => "big-pickle",
             Self::Nemotron3SuperFree => "nemotron-3-super-free",
+            Self::TrinityLargePreviewFree => "trinity-large-preview-free",
 
             Self::Custom { name, .. } => name,
         }
@@ -336,6 +340,7 @@ impl Model {
             Self::Qwen3_6Plus => "Qwen3.6 Plus",
             Self::BigPickle => "Big Pickle",
             Self::Nemotron3SuperFree => "Nemotron 3 Super Free",
+            Self::TrinityLargePreviewFree => "Trinity Large Preview Free",
 
             Self::Custom {
                 name, display_name, ..
@@ -401,7 +406,8 @@ impl Model {
             | Self::BigPickle
             | Self::Nemotron3SuperFree
             | Self::Ling2_6FlashFree
-            | Self::Hy3PreviewFree => ApiProtocol::OpenAiChat,
+            | Self::Hy3PreviewFree
+            | Self::TrinityLargePreviewFree => ApiProtocol::OpenAiChat,
 
             Self::Custom { protocol, .. } => *protocol,
         }
@@ -448,6 +454,7 @@ impl Model {
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 1_000_000,
             Self::Ling2_6FlashFree => 262_100,
             Self::Hy3PreviewFree => 256_000,
+            Self::TrinityLargePreviewFree => 131_072,
 
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -503,6 +510,7 @@ impl Model {
             }
             Self::Ling2_6FlashFree => Some(32_800),
             Self::Hy3PreviewFree => Some(64_000),
+            Self::TrinityLargePreviewFree => Some(131_072),
 
             Self::Custom {
                 max_output_tokens, ..
@@ -568,7 +576,8 @@ impl Model {
             | Self::BigPickle
             | Self::Nemotron3SuperFree
             | Self::Ling2_6FlashFree
-            | Self::Hy3PreviewFree => false,
+            | Self::Hy3PreviewFree
+            | Self::TrinityLargePreviewFree => false,
 
             // DeepSeek models (Anthropic protocol) don't support images
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => false,
