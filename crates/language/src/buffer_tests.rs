@@ -3245,6 +3245,23 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_snapshot_with_edits_and_fast_forward(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let buffer = cx.new(|cx| Buffer::local("one\ntwo\nthree\n", cx));
+
+    let edited_snapshot = buffer.update(cx, |buffer, cx| {
+        buffer.snapshot_with_edits([(0..3, "ONE!!"), (4..7, "TWO!!")], cx)
+    });
+    let edited_snapshot = edited_snapshot.await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.fast_forward(edited_snapshot, cx);
+        let text = buffer.text();
+        assert_eq!(text, "ONE!!\nTWO!!\nthree\n");
+    })
+}
+
+#[gpui::test]
 async fn test_preview_edits(cx: &mut TestAppContext) {
     cx.update(|cx| {
         init_settings(cx, |_| {});

@@ -1275,6 +1275,7 @@ impl Buffer {
         })
     }
 
+    // todo!() make this use EditedBufferSnapshot
     #[ztracing::instrument(skip_all)]
     pub fn preview_edits(
         &self,
@@ -3291,6 +3292,57 @@ impl Buffer {
     pub fn set_group_interval(&mut self, group_interval: Duration) {
         self.text.set_group_interval(group_interval);
     }
+
+    pub fn snapshot_with_edits<I, S, T>(
+        &mut self,
+        edits: I,
+        cx: &mut Context<Self>,
+    ) -> Task<EditedBufferSnapshot>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        let mut snapshot = self.snapshot();
+        let text = snapshot.text.clone();
+        let mut syntax = snapshot.syntax.clone();
+        let language = self.language().cloned();
+        let registry = self.language_registry();
+        let new_text = self.text.snapshot_with_edits(edits);
+        cx.background_spawn(async move {
+            if let Some(language) = language.clone() {
+                syntax.reparse(&text, registry.clone(), language);
+            }
+
+            syntax.interpolate(&new_text.snapshot);
+
+            if let Some(language) = language {
+                syntax.reparse(&snapshot, registry, language);
+            }
+
+            snapshot.text = new_text.snapshot.clone();
+            snapshot.syntax = syntax;
+
+            EditedBufferSnapshot {
+                text: new_text,
+                snapshot,
+            }
+        })
+    }
+
+    pub fn fast_forward(&mut self, edited: EditedBufferSnapshot, cx: &mut Context<Self>) {
+        let was_dirty = self.is_dirty();
+        let base_version = edited.text.base_version.clone();
+        self.text.fast_forward(edited.text);
+        self.did_edit(&base_version, was_dirty, true, cx);
+        self.did_finish_parsing(edited.snapshot.syntax, None, cx);
+        self.reparse = None;
+    }
+}
+
+pub struct EditedBufferSnapshot {
+    pub text: text::EditedBufferSnapshot,
+    pub snapshot: BufferSnapshot,
 }
 
 #[doc(hidden)]

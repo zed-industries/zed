@@ -84,18 +84,13 @@ impl Diff {
     }
 
     pub fn new(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
-        let buffer_text_snapshot = buffer.read(cx).text_snapshot();
+        let buffer_snapshot = buffer.read(cx).snapshot();
         let language = buffer.read(cx).language().cloned();
         let language_registry = buffer.read(cx).language_registry();
         let buffer_diff = cx.new(|cx| {
-            let mut diff = BufferDiff::new_unchanged(&buffer_text_snapshot, cx);
+            let mut diff = BufferDiff::new_unchanged(&buffer_snapshot, cx);
             diff.language_changed(language.clone(), language_registry.clone(), cx);
-            let secondary_diff = cx.new(|cx| {
-                // For the secondary diff buffer we skip assigning the language as we do not really need to perform any syntax highlighting on
-                // it. As a result, by skipping it we are potentially shaving off a lot of RSS plus we get a snappier feel for large diff
-                // view multibuffers.
-                BufferDiff::new_unchanged(&buffer_text_snapshot, cx)
-            });
+            let secondary_diff = cx.new(|cx| BufferDiff::new_unchanged(&buffer_snapshot, cx));
             diff.set_secondary_diff(secondary_diff);
             diff
         });
@@ -108,7 +103,7 @@ impl Diff {
 
         Self::Pending(PendingDiff {
             multibuffer,
-            base_text: Arc::from(buffer_text_snapshot.text().as_str()),
+            base_text: Arc::from(buffer_snapshot.text().as_str()),
             _subscription: cx.observe(&buffer, |this, _, cx| {
                 if let Diff::Pending(diff) = this {
                     diff.update(cx);
