@@ -5011,9 +5011,12 @@ impl Repository {
                         })
                         .await;
 
-                    let Ok(mut stream) = result else {
-                        log::error!("failed to search commits remotely: {error:?}");
-                        return;
+                    let mut stream = match result {
+                        Ok(stream) => stream,
+                        Err(error) => {
+                            log::error!("failed to search commits remotely: {error:?}");
+                            return;
+                        }
                     };
 
                     while let Some(response) = stream.next().await {
