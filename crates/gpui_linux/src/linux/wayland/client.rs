@@ -1169,9 +1169,7 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
             wl_output::Event::Scale { factor } => {
                 in_progress_output.scale = Some(factor);
             }
-            wl_output::Event::Geometry {
-                x, y, subpixel, ..
-            } => {
+            wl_output::Event::Geometry { x, y, subpixel, .. } => {
                 in_progress_output.position = Some(point(DevicePixels(x), DevicePixels(y)));
                 if let WEnum::Value(subpixel) = subpixel {
                     in_progress_output.subpixel = Some(subpixel);
