@@ -7938,6 +7938,29 @@ async fn remove_empty_managed_worktree_ancestors(fs: &dyn Fs, child_path: &Path,
     }
 }
 
+/// Returns the repository's identity path given its common Git directory.
+///
+/// This is the canonical, on-disk path used for project grouping and as the
+/// basis for display names. The goal is to return the directory the user
+/// thinks of as "the project":
+///
+/// - If `common_dir`'s last component starts with `.` (e.g. `.git` for a
+///   normal checkout, or `.bare` for a bare clone), the parent directory is
+///   returned. Both of these are internal Git directories; the parent is the
+///   meaningful project root.
+/// - Otherwise (e.g. `zed.git` for a bare clone), `common_dir` itself is
+///   returned — it is already a meaningful on-disk path.
+pub fn repo_identity_path(common_dir: &Path) -> &Path {
+    let is_dot_entry = common_dir
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with('.'));
+    if is_dot_entry {
+        common_dir.parent().unwrap_or(common_dir)
+    } else {
+        common_dir
+    }
+}
+
 /// Returns a short name for a linked worktree suitable for UI display
 ///
 /// Uses the main worktree path to come up with a short name that disambiguates
