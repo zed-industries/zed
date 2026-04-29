@@ -371,7 +371,7 @@ if __name__ == "__main__":
     github_token = os.environ["GITHUB_TOKEN"]
     tally_api_key = os.environ["TALLY_API_KEY"]
     tally_form_id = os.environ["TALLY_FORM_ID"]
-    slack_bot_token = os.environ["SLACK_CONTRIBUTOR_ROUTING_BOT_TOKEN"]
+    slack_bot_token = os.environ["SLACK_BOT_TOKEN"]
 
     github_headers = {
         "Authorization": f"Bearer {github_token}",

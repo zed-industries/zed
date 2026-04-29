@@ -65,6 +65,6 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           TALLY_API_KEY: ${{ secrets.TALLY_API_KEY }}
           TALLY_FORM_ID: ${{ vars.TALLY_CONTRIBUTOR_FORM_ID }}
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_CONTRIBUTOR_BOT_TOKEN }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_CONTRIBUTOR_ROUTING_BOT_TOKEN }}
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
         run: python script/github-assign-contributor-issue.py "$ISSUE_NUMBER"
