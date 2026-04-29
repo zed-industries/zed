@@ -484,6 +484,7 @@
       "%": "editor::SelectAll",
       "x": "vim::HelixSelectLine",
       "shift-x": "editor::SelectLine",
+      "_": "vim::HelixTrimSelections",
       "ctrl-c": "editor::ToggleComments",
       "alt-o": "editor::SelectLargerSyntaxNode",
       "alt-i": "editor::SelectSmallerSyntaxNode",
