@@ -95,6 +95,9 @@ def fetch_tally_contributors(api_key, form_id):
             print(f"Submissions on page 1: {len(data.get('submissions', []))}")
 
         for submission in data.get("submissions", []):
+            print(
+                f"  Submission {submission.get('id')}: {submission.get('submittedAt')}"
+            )
             record = parse_submission(submission, questions, field_titles)
             if record:
                 contributors[record["github_username"].lower()] = record
@@ -137,6 +140,7 @@ def parse_submission(submission, questions, field_titles):
         except (TypeError, AttributeError):
             continue
 
+    print(f"  Parsed: username={github_username!r}, email={email!r}, areas={areas!r}")
     if not github_username or not areas:
         return None
 
