@@ -19,7 +19,7 @@ pub use crate::client::{NreplClient, RequestStream};
 pub use crate::discovery::{DiscoveredPort, discover_port, discover_port_in};
 pub use crate::editor_session::{
     NreplEditorSession, clear_outputs, eval_form_at_cursor, eval_selection, forget_editor,
-    interrupt, load_file, switch_namespace,
+    interrupt, load_file, switch_namespace, toast_workspace, workspace_for_editor,
 };
 pub use crate::form_at_cursor::{TopLevelForm, parse_namespace, top_level_form_at_offset};
 pub use crate::nrepl_sessions_ui::{
