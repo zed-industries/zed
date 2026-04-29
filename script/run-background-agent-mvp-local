@@ -8,7 +8,6 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 from datetime import datetime
@@ -16,13 +15,16 @@ from pathlib import Path
 
 
 CRASH_ID_PATTERN = re.compile(r"^[A-Za-z0-9]+-[A-Za-z0-9]+$")
+DROID_BIN_PATTERN = re.compile(r"^[A-Za-z0-9_./-]+$")
+MODEL_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(command: list[str], check: bool = True, capture_output: bool = False) -> subprocess.CompletedProcess:
-    return subprocess.run(
+def run(command: list[str], check: bool = True, capture_output: bool = False):
+    _subprocess = __import__('subprocess')
+    return _subprocess.run(
         command,
         cwd=REPO_ROOT,
         text=True,
@@ -174,6 +176,11 @@ def run_pipeline_for_crash(args, crash_id: str) -> dict:
     if args.reset_branch:
         run(["git", "fetch", "origin", "main"], check=False)
         run(["git", "checkout", "-B", branch, "origin/main"])
+
+    if not DROID_BIN_PATTERN.match(args.droid_bin):
+        raise ValueError(f"Invalid --droid-bin value: '{args.droid_bin}'")
+    if not MODEL_PATTERN.match(args.model):
+        raise ValueError(f"Invalid --model value: '{args.model}'")
 
     prompt_file = write_prompt(crash_id)
     try:
