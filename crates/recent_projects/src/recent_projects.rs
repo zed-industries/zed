@@ -1414,7 +1414,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         this.child(
                             IconButton::new("move_to_new_window", IconName::ArrowUpRight)
                                 .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Move Project to New Window"))
+                                .tooltip(Tooltip::text("Open in New Window"))
                                 .on_click({
                                     let project_group_key = project_group_key.clone();
                                     cx.listener(move |_picker, _, window, cx| {
