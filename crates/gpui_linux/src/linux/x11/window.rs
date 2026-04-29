@@ -728,7 +728,7 @@ impl X11WindowState {
             if let Some(client_rc) = client.0.upgrade() {
                 let client_state = client_rc.borrow();
                 let is_bgr = client_state
-                    ._resource_database
+                    .resource_database
                     .get_string("Xft.rgba", "Xft.Rgba")
                     .is_some_and(|v| v.eq_ignore_ascii_case("bgr"));
                 renderer.set_subpixel_layout(is_bgr);
