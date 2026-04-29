@@ -16,10 +16,10 @@ use itertools::{Either, Itertools};
 use settings::{DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens};
 
 pub use settings::{
-    AutoIndentMode, CompletionSettingsContent, EditPredictionPromptFormat, EditPredictionProvider,
-    EditPredictionsMode, FormatOnSave, Formatter, FormatterList, InlayHintKind,
-    LanguageSettingsContent, LineEndingSetting, LspInsertMode, RewrapBehavior,
-    ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    AutoIndentMode, CompletionSettingsContent, EditPredictionDataCollectionChoice,
+    EditPredictionPromptFormat, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
+    Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LineEndingSetting,
+    LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
@@ -478,6 +478,11 @@ pub struct EditPredictionSettings {
     pub ollama: Option<OpenAiCompatibleEditPredictionSettings>,
     pub open_ai_compatible_api: Option<OpenAiCompatibleEditPredictionSettings>,
     pub examples_dir: Option<Arc<Path>>,
+    /// Controls whether training data collection is enabled.
+    ///
+    /// `Default` means the value stored in the legacy KV store is used as a fallback,
+    /// preserving existing users' choices without a migration.
+    pub allow_data_collection: EditPredictionDataCollectionChoice,
 }
 
 impl EditPredictionSettings {
@@ -867,6 +872,7 @@ impl settings::Settings for AllLanguageSettings {
                 ollama: ollama_settings,
                 open_ai_compatible_api: openai_compatible_settings,
                 examples_dir: edit_predictions.examples_dir,
+                allow_data_collection: edit_predictions.allow_data_collection.unwrap_or_default(),
             },
             defaults: default_language_settings,
             languages,

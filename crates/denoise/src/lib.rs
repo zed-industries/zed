@@ -118,12 +118,8 @@ fn run_neural_denoiser(
     input_rx: mpsc::Receiver<[f32; BLOCK_SHIFT]>,
 ) {
     let mut engine = Engine::new();
-    loop {
-        let Ok(sub_block) = input_rx.recv() else {
-            // tx must have dropped, stop thread
-            break;
-        };
-
+    // until tx is dropped
+    while let Ok(sub_block) = input_rx.recv() {
         let denoised_sub_block = engine.feed(&sub_block);
         if denoised_tx.send(denoised_sub_block).is_err() {
             break;

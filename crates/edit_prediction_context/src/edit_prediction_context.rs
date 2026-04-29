@@ -289,6 +289,11 @@ impl RelatedExcerptStore {
                                 .ok()?;
                             let type_definitions = project
                                 .update(cx, |project, cx| {
+                                    // tombi LSP for toml will open a scratch buffer with the JSON schema of
+                                    // the toml file when a goto type definition is requested
+                                    if is_tombi_lsp_in_toml(project, &buffer, cx) {
+                                        return Task::ready(Ok(None));
+                                    }
                                     project.type_definitions(&buffer, identifier.range.start, cx)
                                 })
                                 .ok()?;
@@ -563,7 +568,7 @@ impl RelatedBuffer {
             })
             .collect::<Vec<_>>();
         self.cached_file = Some(CachedRelatedFile {
-            excerpts: excerpts,
+            excerpts,
             buffer_version: buffer.version().clone(),
         });
         self.cached_file.as_ref().unwrap()
@@ -669,6 +674,7 @@ fn identifiers_for_position(
             if let Some(config) = config
                 && config.identifier_capture_indices.contains(&capture.index)
                 && range.contains_inclusive(&node_range)
+                && !is_tsx_tag(&buffer, &capture.node)
                 && Some(&node_range) != last_range.as_ref()
             {
                 let name = buffer.text_for_range(node_range.clone()).collect();
@@ -685,4 +691,60 @@ fn identifiers_for_position(
     }
 
     identifiers
+}
+
+fn is_tsx_tag(buffer: &BufferSnapshot, node: &tree_sitter::Node) -> bool {
+    let Some(language_config) = buffer
+        .language()
+        .and_then(|l| l.config().jsx_tag_auto_close.as_ref())
+    else {
+        return false;
+    };
+    let Some(parent_kind) = node.parent().map(|n| n.kind()) else {
+        return false;
+    };
+
+    if parent_kind != &language_config.open_tag_node_name
+        && parent_kind != &language_config.close_tag_node_name
+        && parent_kind != &language_config.tag_name_node_name
+        && language_config
+            .erroneous_close_tag_name_node_name
+            .as_ref()
+            .is_some_and(|kind| parent_kind != kind)
+        && language_config
+            .erroneous_close_tag_node_name
+            .as_ref()
+            .is_some_and(|kind| parent_kind == kind)
+        && parent_kind != &language_config.jsx_element_node_name
+    {
+        return false;
+    }
+    // do fetch `<Component />`, model probably understands `<div>`, but needs info for user defined components
+    if !buffer
+        .text_for_range(node.byte_range())
+        .all(|str| str.chars().all(|c| c.is_lowercase()))
+    {
+        return false;
+    }
+    true
+}
+
+fn is_tombi_lsp_in_toml(
+    project: &Project,
+    buffer: &Entity<Buffer>,
+    cx: &mut Context<Project>,
+) -> bool {
+    buffer.update(cx, |buffer, cx| {
+        if !buffer.language().is_some_and(|lang| lang.name() == "TOML") {
+            return false;
+        }
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            for (_, lsp) in lsp_store.running_language_servers_for_local_buffer(buffer, cx) {
+                if "tombi".eq_ignore_ascii_case(lsp.name().as_ref()) {
+                    return true;
+                }
+            }
+            false
+        })
+    })
 }

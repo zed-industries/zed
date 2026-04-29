@@ -19,6 +19,7 @@ workspace = true
 [dependencies]
 acp_thread.workspace = true
 action_log.workspace = true
+async-channel.workspace = true
 agent-client-protocol.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
@@ -59,7 +60,6 @@ serde_json.workspace = true
 settings.workspace = true
 shell_command_parser.workspace = true
 smallvec.workspace = true
-smol.workspace = true
 sqlez.workspace = true
 streaming_diff.workspace = true
 strsim.workspace = true
@@ -77,6 +77,7 @@ zed_env_vars.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
+async-io.workspace = true
 agent_servers = { workspace = true, "features" = ["test-support"] }
 client = { workspace = true, "features" = ["test-support"] }
 clock = { workspace = true, "features" = ["test-support"] }

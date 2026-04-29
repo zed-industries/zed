@@ -525,72 +525,6 @@ pub fn init(cx: &mut App) {
                 panel.update(cx, |panel, cx| panel.delete(action, window, cx));
             }
         });
-
-        workspace.register_action(|workspace, _: &git::FileHistory, window, cx| {
-            // First try to get from project panel if it's focused
-            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
-                let maybe_project_path = panel.read(cx).selection.and_then(|selection| {
-                    let project = workspace.project().read(cx);
-                    let worktree = project.worktree_for_id(selection.worktree_id, cx)?;
-                    let entry = worktree.read(cx).entry_for_id(selection.entry_id)?;
-                    if entry.is_file() {
-                        Some(ProjectPath {
-                            worktree_id: selection.worktree_id,
-                            path: entry.path.clone(),
-                        })
-                    } else {
-                        None
-                    }
-                });
-
-                if let Some(project_path) = maybe_project_path {
-                    let project = workspace.project();
-                    let git_store = project.read(cx).git_store();
-                    if let Some((repo, repo_path)) = git_store
-                        .read(cx)
-                        .repository_and_path_for_project_path(&project_path, cx)
-                    {
-                        git_ui::file_history_view::FileHistoryView::open(
-                            repo_path,
-                            git_store.downgrade(),
-                            repo.downgrade(),
-                            workspace.weak_handle(),
-                            window,
-                            cx,
-                        );
-                        return;
-                    }
-                }
-            }
-
-            // Fallback: try to get from active editor
-            if let Some(active_item) = workspace.active_item(cx)
-                && let Some(editor) = active_item.downcast::<Editor>()
-                && let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton()
-                && let Some(file) = buffer.read(cx).file()
-            {
-                let worktree_id = file.worktree_id(cx);
-                let project_path = ProjectPath {
-                    worktree_id,
-                    path: file.path().clone(),
-                };
-                let project = workspace.project();
-                let git_store = project.read(cx).git_store();
-                if let Some((repo, repo_path)) = git_store
-                    .read(cx)
-                    .repository_and_path_for_project_path(&project_path, cx)
-                {
-                    git_ui::file_history_view::FileHistoryView::open(
-                        repo_path,
-                        git_store.downgrade(),
-                        repo.downgrade(),
-                        workspace.weak_handle(),
-                        window,
-                        cx,
-                    );
-                }
-            }
-        });
     })
     .detach();
 }
@@ -1119,16 +1053,21 @@ impl ProjectPanel {
                     || (settings.hide_root && visible_worktrees_count == 1));
             let should_show_compare = !is_dir && self.file_abs_paths_to_diff(cx).is_some();
 
-            let has_git_repo = {
+            let (has_git_repo, has_file_history) = {
                 let project_path = project::ProjectPath {
                     worktree_id,
                     path: entry.path.clone(),
                 };
-                project
-                    .git_store()
-                    .read(cx)
+                let git_store = project.git_store().read(cx);
+                let has_git_repo = git_store
                     .repository_and_path_for_project_path(&project_path, cx)
-                    .is_some()
+                    .is_some();
+                let has_file_history = !is_dir
+                    && has_git_repo
+                    && !git_store
+                        .project_path_git_status(&project_path, cx)
+                        .is_some_and(|status| status.is_created());
+                (has_git_repo, has_file_history)
             };
 
             let has_pasteable_content = self.has_pasteable_content(cx);
@@ -1204,7 +1143,7 @@ impl ProjectPanel {
                                         )
                                     })
                                     .action("Add to .gitignore", Box::new(git::AddToGitignore))
-                                    .when(!is_dir, |menu| {
+                                    .when(has_file_history, |menu| {
                                         menu.action("View File History", Box::new(git::FileHistory))
                                     })
                             })
@@ -3850,6 +3789,14 @@ impl ProjectPanel {
     pub fn selected_entry<'a>(&self, cx: &'a App) -> Option<(&'a Worktree, &'a project::Entry)> {
         let (worktree, entry) = self.selected_entry_handle(cx)?;
         Some((worktree.read(cx), entry))
+    }
+
+    pub fn selected_file_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        let (worktree, entry) = self.selected_sub_entry(cx)?;
+        Some(ProjectPath {
+            worktree_id: worktree.read(cx).id(),
+            path: entry.is_file().then(|| entry.path.clone())?,
+        })
     }
 
     /// Compared to selected_entry, this function resolves to the currently
@@ -7336,6 +7283,25 @@ impl Panel for ProjectPanel {
 
     fn activation_priority(&self) -> u32 {
         1
+    }
+}
+
+impl ProjectPanel {
+    pub fn select_path_for_test(&mut self, project_path: ProjectPath, cx: &App) {
+        let Some(worktree) = self
+            .project
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)
+        else {
+            return;
+        };
+        let Some(entry) = worktree.read(cx).entry_for_path(project_path.path.as_ref()) else {
+            return;
+        };
+        self.selection = Some(SelectedEntry {
+            worktree_id: project_path.worktree_id,
+            entry_id: entry.id,
+        });
     }
 }
 

@@ -4572,8 +4572,8 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             list_worktrees(&project, cx),
             [
+                (path!("/dir/b.rs").as_ref(), true),
                 (path!("/dir/a.rs").as_ref(), false),
-                (path!("/dir/b.rs").as_ref(), true)
             ],
         );
 
@@ -6275,6 +6275,39 @@ async fn test_dirty_buffer_reloads_after_undo(cx: &mut gpui::TestAppContext) {
             "buffer should reload from disk after undo makes it clean"
         );
         assert!(!buffer.is_dirty());
+    });
+}
+
+#[gpui::test]
+async fn test_buffer_file_change_to_binary_fails(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+
+    fs.write(
+        path!("/dir/file.txt").as_ref(),
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01",
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+
+    // Test that existing buffer is left untouched
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "");
     });
 }
 
@@ -10487,7 +10520,7 @@ fn merge_pending_ops_snapshots(
                     t_ops.ops.push(s_op);
                 }
             }
-            t_ops.ops.sort_by(|l, r| l.id.cmp(&r.id));
+            t_ops.ops.sort_by_key(|op| op.id);
         } else {
             target.push(s_ops);
         }
@@ -12035,8 +12068,8 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
             Path::new(path!("/project/some-worktree")).into(),
         );
         pretty_assertions::assert_eq!(
-            repo.read(cx).original_repo_abs_path,
-            Path::new(path!("/project")).into(),
+            repo.read(cx).main_worktree_abs_path(),
+            Some(Path::new(path!("/project"))),
         );
         assert!(
             repo.read(cx).linked_worktree_path().is_some(),
@@ -12088,8 +12121,8 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
             Path::new(path!("/project/subdir/some-submodule")).into(),
         );
         pretty_assertions::assert_eq!(
-            repo.read(cx).original_repo_abs_path,
-            Path::new(path!("/project/subdir/some-submodule")).into(),
+            repo.read(cx).main_worktree_abs_path(),
+            Some(Path::new(path!("/project/subdir/some-submodule"))),
         );
         assert!(
             repo.read(cx).linked_worktree_path().is_none(),
@@ -12280,7 +12313,8 @@ async fn search(
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
             }
-            SearchResult::LimitReached => {}
+            SearchResult::LimitReached | SearchResult::WaitingForScan | SearchResult::Searching => {
+            }
         }
     }
     Ok(results

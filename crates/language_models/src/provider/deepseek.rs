@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use collections::{BTreeMap, HashMap};
+use collections::{HashMap, IndexMap};
 use credentials_provider::CredentialsProvider;
 use deepseek::DEEPSEEK_API_URL;
 
@@ -9,10 +9,11 @@ use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    StopReason, TokenUsage, env_var,
 };
 pub use settings::DeepseekAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
@@ -164,10 +165,10 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models = BTreeMap::default();
+        let mut models = IndexMap::default();
 
-        models.insert("deepseek-chat", deepseek::Model::Chat);
-        models.insert("deepseek-reasoner", deepseek::Model::Reasoner);
+        models.insert("deepseek-v4-flash", deepseek::Model::V4Flash);
+        models.insert("deepseek-v4-pro", deepseek::Model::V4Pro);
 
         for available_model in &Self::settings(cx).available_models {
             models.insert(
@@ -273,6 +274,32 @@ impl LanguageModel for DeepSeekLanguageModel {
         true
     }
 
+    fn supports_thinking(&self) -> bool {
+        matches!(
+            self.model,
+            deepseek::Model::V4Flash | deepseek::Model::V4Pro
+        )
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        if !self.supports_thinking() {
+            return Vec::new();
+        }
+
+        vec![
+            LanguageModelEffortLevel {
+                name: "High".into(),
+                value: "high".into(),
+                is_default: true,
+            },
+            LanguageModelEffortLevel {
+                name: "Max".into(),
+                value: "max".into(),
+                is_default: false,
+            },
+        ]
+    }
+
     fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
         true
     }
@@ -320,7 +347,10 @@ pub fn into_deepseek(
     model: &deepseek::Model,
     max_output_tokens: Option<u64>,
 ) -> deepseek::Request {
-    let is_reasoner = model == &deepseek::Model::Reasoner;
+    let thinking = deepseek_thinking(model, request.thinking_allowed);
+    let thinking_enabled = thinking
+        .as_ref()
+        .is_some_and(|thinking| thinking.kind == deepseek::ThinkingType::Enabled);
 
     let mut messages = Vec::new();
     let mut current_reasoning: Option<String> = None;
@@ -378,15 +408,26 @@ pub fn into_deepseek(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text) => {
-                            messages.push(deepseek::RequestMessage::Tool {
-                                content: text.to_string(),
-                                tool_call_id: tool_result.tool_use_id.to_string(),
-                            });
+                    let mut text_parts: Vec<String> = Vec::new();
+                    for part in &tool_result.content {
+                        match part {
+                            LanguageModelToolResultContent::Text(text) => {
+                                text_parts.push(text.to_string());
+                            }
+                            LanguageModelToolResultContent::Image(_) => {
+                                text_parts.push("[Tool responded with an image]".to_string());
+                            }
                         }
-                        LanguageModelToolResultContent::Image(_) => {}
+                    }
+                    let content = if text_parts.is_empty() {
+                        "<Tool returned an empty string>".to_string()
+                    } else {
+                        text_parts.join("\n")
                     };
+                    messages.push(deepseek::RequestMessage::Tool {
+                        content,
+                        tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
                 }
             }
         }
@@ -397,10 +438,16 @@ pub fn into_deepseek(
         messages,
         stream: true,
         max_tokens: max_output_tokens,
-        temperature: if is_reasoner {
+        temperature: if thinking_enabled {
             None
         } else {
             request.temperature
+        },
+        thinking,
+        reasoning_effort: if thinking_enabled {
+            into_deepseek_reasoning_effort(request.thinking_effort.as_deref())
+        } else {
+            None
         },
         response_format: None,
         tools: request
@@ -414,6 +461,32 @@ pub fn into_deepseek(
                 },
             })
             .collect(),
+    }
+}
+
+fn deepseek_thinking(
+    model: &deepseek::Model,
+    thinking_allowed: bool,
+) -> Option<deepseek::Thinking> {
+    let kind = match model {
+        deepseek::Model::V4Flash | deepseek::Model::V4Pro => {
+            if thinking_allowed {
+                deepseek::ThinkingType::Enabled
+            } else {
+                deepseek::ThinkingType::Disabled
+            }
+        }
+        deepseek::Model::Custom { .. } => return None,
+    };
+
+    Some(deepseek::Thinking { kind })
+}
+
+fn into_deepseek_reasoning_effort(effort: Option<&str>) -> Option<deepseek::ReasoningEffort> {
+    match effort {
+        Some("high") => Some(deepseek::ReasoningEffort::High),
+        Some("max") => Some(deepseek::ReasoningEffort::Max),
+        _ => None,
     }
 }
 

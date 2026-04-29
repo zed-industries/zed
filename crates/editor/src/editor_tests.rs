@@ -3,7 +3,7 @@ use crate::{
     JoinLines,
     code_context_menus::CodeContextMenu,
     edit_prediction_tests::FakeEditPredictionDelegate,
-    element::StickyHeader,
+    element::{StickyHeader, header_jump_data},
     linked_editing_ranges::LinkedEditingRanges,
     runnables::RunnableTasks,
     scroll::scroll_amount::ScrollAmount,
@@ -49,9 +49,9 @@ use project::{
 use serde_json::{self, json};
 use settings::{
     AllLanguageSettingsContent, DelayMs, EditorSettingsContent, GlobalLspSettingsContent,
-    IndentGuideBackgroundColoring, IndentGuideColoring, InlayHintSettingsContent,
-    ProjectSettingsContent, ScrollBeyondLastLine, SearchSettingsContent, SettingsContent,
-    SettingsStore,
+    GoToDefinitionScrollStrategy, IndentGuideBackgroundColoring, IndentGuideColoring,
+    InlayHintSettingsContent, ProjectSettingsContent, ScrollBeyondLastLine, SearchSettingsContent,
+    SettingsContent, SettingsStore,
 };
 use std::{borrow::Cow, sync::Arc};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -2958,6 +2958,102 @@ async fn test_autoscroll(cx: &mut TestAppContext) {
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 1.0)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_relative(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor.set_vertical_scroll_margin(0, cx);
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+
+    // Resize the window such that only 6 lines of text fit on screen.
+    cx.simulate_window_resize(window, size(px(1000.), 6. * line_height));
+
+    cx.set_state(
+        r#"ˇone
+            two
+            three
+            four
+            five
+            six
+            seven
+            eight
+            nine
+            ten
+            eleven
+            twelve
+            thirteen
+            fourteen
+            fifteen
+        "#,
+    );
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
+
+    // Placing the cursor at row 7 with a top-relative autoscroll of 2 display
+    // rows, should land the scroll position's y coordinate at 5.0 (7 - 2).
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(
+            SelectionEffects::scroll(Autoscroll::top_relative(2.0)),
+            window,
+            cx,
+            |selections| selections.select_ranges([Point::new(7, 0)..Point::new(7, 0)]),
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 5.0)
+        );
+    });
+
+    // Seeing as fractional offsets are supported, with the cursor at row 10 and
+    // a top-relative autoscroll of 2.5 display rows, the scroll position's y
+    // coordinate lands at 7.5 (10 - 2.5).
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(
+            SelectionEffects::scroll(Autoscroll::top_relative(2.5)),
+            window,
+            cx,
+            |selections| selections.select_ranges([Point::new(10, 0)..Point::new(10, 0)]),
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 7.5)
+        );
+    });
+
+    // When the requested offset would scroll past the top of the buffer,
+    // `scroll_position.y` is clamped to 0 rather than going negative.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(
+            SelectionEffects::scroll(Autoscroll::top_relative(4.0)),
+            window,
+            cx,
+            |selections| selections.select_ranges([Point::new(1, 0)..Point::new(1, 0)]),
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
         );
     });
 }
@@ -8449,6 +8545,62 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
         cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
         cx.assert_editor_state(wrapped_text);
     }
+}
+
+#[gpui::test]
+async fn test_rewrap_line_comment_in_go(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.languages.0.extend([(
+            "Go".into(),
+            LanguageSettingsContent {
+                allow_rewrap: Some(language_settings::RewrapBehavior::InComments),
+                preferred_line_length: Some(40),
+                ..Default::default()
+            },
+        )])
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let go_lang = languages::language("go", tree_sitter_go::LANGUAGE.into());
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(go_lang), cx));
+    cx.set_state(indoc! {"
+        // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.assert_editor_state(indoc! {"
+        // Lorem ipsum dolor sit amet,
+        // consectetur adipiscing elit.ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_rewrap_line_comment_in_c(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.languages.0.extend([(
+            "C".into(),
+            LanguageSettingsContent {
+                allow_rewrap: Some(language_settings::RewrapBehavior::InComments),
+                preferred_line_length: Some(40),
+                ..Default::default()
+            },
+        )])
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let c_lang = languages::language("c", tree_sitter_c::LANGUAGE.into());
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(c_lang), cx));
+    cx.set_state(indoc! {"
+        // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.assert_editor_state(indoc! {"
+        // Lorem ipsum dolor sit amet,
+        // consectetur adipiscing elit.ˇ
+    "});
 }
 
 #[gpui::test]
@@ -19336,6 +19488,112 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_header_jump_data_uses_selection_excerpt(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    // 25-line buffer so excerpts at rows 1, 10, and 20 (each a 1-line range,
+    // expanded by 2 context lines) can't merge into a single excerpt.
+    let buffer_text = (0..25)
+        .map(|row| format!("line {row}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer.clone(),
+            [
+                Point::new(1, 0)..Point::new(1, 0),
+                Point::new(10, 0)..Point::new(10, 0),
+                Point::new(20, 0)..Point::new(20, 0),
+            ],
+            2,
+            cx,
+        );
+        multibuffer
+    });
+
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx));
+
+    editor.update_in(cx, |editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let display_snapshot = editor.display_snapshot(cx);
+
+        // Ensure the three ranges landed in three separate excerpts.
+        let excerpts: Vec<_> = snapshot
+            .buffer_snapshot()
+            .excerpts_for_buffer(buffer_id)
+            .collect();
+        assert_eq!(excerpts.len(), 3);
+
+        // Place the cursor at the start of the third excerpt, expressed in
+        // terms of the underlying buffer.
+        let selection_buffer_row = 20;
+        let buffer_entity = editor.buffer().read(cx).buffer(buffer_id).unwrap();
+        let selection_anchor = editor.buffer().update(cx, |multibuffer, cx| {
+            multibuffer
+                .buffer_point_to_anchor(&buffer_entity, Point::new(selection_buffer_row, 0), cx)
+                .expect("buffer row 20 maps to a multibuffer anchor")
+        });
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_anchor_ranges([selection_anchor..selection_anchor])
+        });
+
+        let mut latest_selection_anchors: HashMap<BufferId, Anchor> = HashMap::default();
+        for selection in editor.selections.all_anchors(&display_snapshot).iter() {
+            let head = selection.head();
+            if let Some((text_anchor, _)) = snapshot.buffer_snapshot().anchor_to_buffer_anchor(head)
+            {
+                latest_selection_anchors.insert(text_anchor.buffer_id, head);
+            }
+        }
+
+        // The sticky buffer header represents the FIRST excerpt of its buffer,
+        // even when the cursor is in a later excerpt. That mismatch is the
+        // precondition for the regression.
+        let first_excerpt = snapshot
+            .buffer_snapshot()
+            .excerpt_boundaries_in_range(MultiBufferOffset(0)..snapshot.buffer_snapshot().len())
+            .next()
+            .expect("multibuffer has at least one excerpt")
+            .next;
+
+        let jump_data = header_jump_data(
+            &snapshot,
+            DisplayRow(0),
+            FILE_HEADER_HEIGHT + MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+            &first_excerpt,
+            &latest_selection_anchors,
+        );
+
+        match jump_data {
+            JumpData::MultiBufferPoint {
+                position,
+                line_offset_from_top,
+                ..
+            } => {
+                assert_eq!(
+                    position.row, selection_buffer_row,
+                    "jump should target the cursor's buffer row, not the first excerpt's row"
+                );
+                assert!(
+                    line_offset_from_top < selection_buffer_row,
+                    "line_offset_from_top ({line_offset_from_top}) should be measured from the \
+                     selection's excerpt, not the first excerpt; expected less than \
+                     selection_buffer_row ({selection_buffer_row})"
+                );
+            }
+            JumpData::MultiBufferRow { .. } => {
+                panic!("expected MultiBufferPoint jump data when a selection is present")
+            }
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_extra_newline_insertion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -26210,6 +26468,142 @@ async fn test_goto_definition_contained_ranges(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_goto_definition_preserve_scroll_strategy(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.go_to_definition_scroll_strategy = Some(GoToDefinitionScrollStrategy::Preserve);
+        settings.vertical_scroll_margin = Some(0.0);
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let window = cx.window;
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    cx.simulate_window_resize(window, size(px(1000.), 8. * line_height));
+
+    // Build a buffer where `target` is defined on row 10 and called from
+    // row 20, with the cursor placed on the call site.
+    let buffer = indoc! { "
+            // 0
+            // 1
+            // 2
+            // 3
+            // 4
+            // 5
+            // 6
+            // 7
+            // 8
+            // 9
+            fn target() // 10
+            // 11
+            // 12
+            // 13
+            // 14
+            // 15
+            // 16
+            // 17
+            // 18
+            // 19
+            fn caller() { ˇtarget(); } // 20
+            // 21
+            // 22
+            // 23
+            // 24
+            // 25
+            // 26
+            // 27
+            // 28
+            // 29
+            // 30
+        "};
+
+    // Mock the response from the LSP server when requesting to go to a
+    // definition so as to always jump to the `target` function.
+    cx.set_request_handler::<lsp::request::GotoDefinition, _, _>(|url, _, _| async move {
+        Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+            uri: url.clone(),
+            range: lsp::Range::new(lsp::Position::new(10, 3), lsp::Position::new(10, 9)),
+        })))
+    });
+
+    let caller_row = 20.0;
+    let target_row = 10.0;
+    let offset = 1.5;
+    let center_offset = cx.update_editor(|editor, _, _| {
+        editor
+            .visible_line_count()
+            .map(|count| ((count - 1.0) / 2.0).floor())
+            .expect("Visible line count should be available")
+    });
+
+    // When the cursor is visible inside the viewport, going to a definition
+    // should preserve that same offset value.
+    // In this case, with the cursor set at row 20 and the scroll position set
+    // to 18.5 (20 - 1.5), when going to the definition of `target` in row 10,
+    // the scroll position should end up at 8.5 (10 - 1.5), so as to preserve
+    // that same offset of 1.5.
+    cx.set_state(&buffer);
+    cx.update_editor(|editor, window, cx| {
+        editor.set_scroll_position(gpui::Point::new(0.0, caller_row - offset), window, cx);
+    });
+    cx.update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .await
+        .expect("Failed to navigate to definition");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0.0, target_row - offset),
+        );
+    });
+
+    // In the case where the cursor ends up outside of the visible viewport, the
+    // scroll position's offset should be ignored and the center of the viewport
+    // should be used instead.
+    // Since the cursor is jumping to row 10, the scroll position's y coordinate
+    // should end up at 10 minus the offset from the center of the viewport.
+    cx.set_state(&buffer);
+    cx.update_editor(|editor, window, cx| {
+        editor.set_scroll_position(gpui::Point::new(0.0, 0.0), window, cx);
+        let snapshot = editor.display_snapshot(cx);
+        let cursor_row = editor
+            .selections
+            .newest_display(&snapshot)
+            .start
+            .row()
+            .as_f64();
+        let visible_lines = editor
+            .visible_line_count()
+            .expect("Visible line count should be available");
+
+        assert!(cursor_row >= visible_lines, "Cursor should be offscreen");
+    });
+
+    cx.update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .await
+        .expect("Failed to navigate to definition");
+    cx.run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0.0, (target_row - center_offset).max(0.0)),
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(
@@ -32716,6 +33110,78 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_sticky_scroll_with_decoration_prefix_in_item(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "TypeScript".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+        )
+        .with_outline_query(
+            r#"
+            (class_declaration
+                "class" @context
+                name: (_) @name) @item
+            "#,
+        )
+        .expect("TypeScript outline query"),
+    );
+
+    let buffer = indoc! {"
+        ˇ@Decorator
+        class Foo {
+            x = 1;
+            y = 2;
+            z = 3;
+            w = 4;
+        }
+    "};
+    cx.set_state(buffer);
+    cx.update_editor(|e, _, cx| {
+        e.buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_language(Some(language), cx);
+            })
+    });
+
+    let mut sticky_headers = |offset: ScrollOffset| {
+        cx.update_editor(|e, window, cx| {
+            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+        });
+        cx.run_until_parked();
+        cx.update_editor(|e, window, cx| {
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
+                .into_iter()
+                .map(
+                    |StickyHeader {
+                         start_point,
+                         offset,
+                         ..
+                     }| { (start_point, offset) },
+                )
+                .collect::<Vec<_>>()
+        })
+    };
+
+    let class_foo = Point { row: 1, column: 0 };
+
+    assert_eq!(sticky_headers(0.0), vec![]);
+    assert_eq!(sticky_headers(1.5), vec![(class_foo, 0.0)]);
+    assert_eq!(sticky_headers(2.5), vec![(class_foo, 0.0)]);
+    assert_eq!(sticky_headers(5.5), vec![(class_foo, -0.5)]);
+    assert_eq!(sticky_headers(6.0), vec![]);
+    assert_eq!(sticky_headers(7.0), vec![]);
+}
+
+#[gpui::test]
 async fn test_sticky_scroll_with_expanded_deleted_diff_hunks(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
@@ -36810,6 +37276,59 @@ async fn test_custom_fallback_highlights(cx: &mut TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_tsx_nested_jsx_member_expression_highlights(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("<A.B.C></A.B.C>ˇ;");
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "TSX".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["tsx".to_string()],
+                    ..LanguageMatcher::default()
+                },
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+        )
+        .with_highlights_query(include_str!("../../grammars/src/tsx/highlights.scm"))
+        .unwrap(),
+    );
+
+    let component_color = Hsla::green();
+    let theme = Arc::new(SyntaxTheme::new_test(vec![
+        ("tag.component.jsx", component_color),
+        ("type", Hsla::blue()),
+        ("property", Hsla::red()),
+        ("punctuation.bracket", Hsla::default()),
+        ("punctuation.delimiter", Hsla::default()),
+    ]));
+    setup_syntax_highlighting_with_theme(language, theme.clone(), &mut cx);
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        assert_eq!(
+            snapshot
+                .combined_highlights(MultiBufferOffset(0)..snapshot.buffer().len(), &theme)
+                .iter()
+                .filter(|(_, style)| *style == HighlightStyle::color(component_color))
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![
+                (1..2, HighlightStyle::color(component_color)),
+                (3..4, HighlightStyle::color(component_color)),
+                (5..6, HighlightStyle::color(component_color)),
+                (9..10, HighlightStyle::color(component_color)),
+                (11..12, HighlightStyle::color(component_color)),
+                (13..14, HighlightStyle::color(component_color)),
+            ],
+        );
+    });
+}
+
 fn setup_syntax_highlighting(
     language: Arc<Language>,
     cx: &mut EditorTestContext,
@@ -36824,6 +37343,15 @@ fn setup_syntax_highlighting(
         ("punctuation.delimiter", Hsla::default()),
     ]));
 
+    setup_syntax_highlighting_with_theme(language, syntax.clone(), cx);
+    syntax
+}
+
+fn setup_syntax_highlighting_with_theme(
+    language: Arc<Language>,
+    syntax: Arc<SyntaxTheme>,
+    cx: &mut EditorTestContext,
+) {
     language.set_theme(&syntax);
 
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
@@ -36831,13 +37359,11 @@ fn setup_syntax_highlighting(
     cx.update_editor(|editor, window, cx| {
         editor.set_style(
             EditorStyle {
-                syntax: syntax.clone(),
+                syntax,
                 ..EditorStyle::default()
             },
             window,
             cx,
         );
     });
-
-    syntax
 }

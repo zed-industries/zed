@@ -185,6 +185,7 @@ pub struct InProgressOutput {
     scale: Option<i32>,
     position: Option<Point<DevicePixels>>,
     size: Option<Size<DevicePixels>>,
+    subpixel: Option<wl_output::Subpixel>,
 }
 
 impl InProgressOutput {
@@ -195,6 +196,7 @@ impl InProgressOutput {
                 name: self.name.clone(),
                 scale,
                 bounds: Bounds::new(position, size),
+                subpixel: self.subpixel,
             })
         } else {
             None
@@ -207,6 +209,7 @@ pub struct Output {
     pub name: Option<String>,
     pub scale: i32,
     pub bounds: Bounds<DevicePixels>,
+    pub subpixel: Option<wl_output::Subpixel>,
 }
 
 pub(crate) struct WaylandClientState {
@@ -1166,8 +1169,11 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
             wl_output::Event::Scale { factor } => {
                 in_progress_output.scale = Some(factor);
             }
-            wl_output::Event::Geometry { x, y, .. } => {
-                in_progress_output.position = Some(point(DevicePixels(x), DevicePixels(y)))
+            wl_output::Event::Geometry { x, y, subpixel, .. } => {
+                in_progress_output.position = Some(point(DevicePixels(x), DevicePixels(y)));
+                if let WEnum::Value(subpixel) = subpixel {
+                    in_progress_output.subpixel = Some(subpixel);
+                }
             }
             wl_output::Event::Mode { width, height, .. } => {
                 in_progress_output.size = Some(size(DevicePixels(width), DevicePixels(height)))
@@ -2237,7 +2243,13 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                             let paths: SmallVec<[_; 2]> = file_list
                                 .lines()
                                 .filter_map(|path| Url::parse(path).log_err())
-                                .filter_map(|url| url.to_file_path().log_err())
+                                .filter_map(|url| match url.to_file_path() {
+                                    Ok(url) => Some(url),
+                                    Err(()) => {
+                                        log::error!("Failed turn {url:?} into a file path");
+                                        None
+                                    }
+                                })
                                 .collect();
                             let position = Point::new(x.into(), y.into());
 

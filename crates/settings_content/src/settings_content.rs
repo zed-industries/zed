@@ -185,6 +185,13 @@ pub struct SettingsContent {
     /// The URL of the Zed server to connect to.
     pub server_url: Option<String>,
 
+    /// The URL used as the key for credential storage.
+    ///
+    /// When set, credentials are stored under this URL instead of `server_url`.
+    /// This allows running multiple Zed instances side by side without them
+    /// overwriting each other's keychain entries.
+    pub credentials_url: Option<String>,
+
     /// Configuration for session-related features
     pub session: Option<SessionSettingsContent>,
     /// Control what info is collected by Zed.
@@ -218,6 +225,33 @@ pub struct SettingsContent {
 
     /// Local overrides for feature flags, keyed by flag name.
     pub feature_flags: Option<FeatureFlagsMap>,
+
+    /// Settings for developer-oriented instrumentation tools (profilers,
+    /// tracers, etc.) that can be toggled at runtime.
+    pub instrumentation: Option<InstrumentationSettingsContent>,
+}
+
+/// Configuration for developer-oriented instrumentation tools that collect
+/// diagnostic data about a running Zed instance.
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct InstrumentationSettingsContent {
+    /// Configuration for the performance profiler, accessed via the
+    /// `zed: open performance profiler` action.
+    pub performance_profiler: Option<PerformanceProfilerSettingsContent>,
+}
+
+/// Configuration for the performance profiler which collects timing data
+/// for foreground and background executor tasks.
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct PerformanceProfilerSettingsContent {
+    /// Whether to collect timing data for foreground and background executor
+    /// tasks. Enabling this may lead to increased memory usage, hence it's
+    /// disabled by default for regular builds.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, MergeFrom)]
@@ -642,6 +676,12 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub starts_open: Option<bool>,
+
+    /// Maximum length of the commit message title before a warning is shown.
+    /// Set to 0 to disable.
+    ///
+    /// Default: 72
+    pub commit_title_max_length: Option<usize>,
 }
 
 #[derive(

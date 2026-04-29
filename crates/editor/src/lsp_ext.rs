@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::Editor;
 use collections::{HashMap, HashSet};
+use futures_lite::FutureExt as _;
 use gpui::AsyncApp;
 use gpui::{App, Entity, Task};
 use language::Buffer;
@@ -14,7 +15,6 @@ use project::LocationLink;
 use project::Project;
 use project::TaskSourceKind;
 use project::lsp_store::lsp_ext_command::GetLspRunnables;
-use smol::future::FutureExt as _;
 use task::ResolvedTask;
 use task::TaskContext;
 use text::BufferId;
