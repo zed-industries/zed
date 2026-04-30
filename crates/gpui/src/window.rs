@@ -1084,7 +1084,36 @@ pub struct InputLatencySnapshot {
     /// Count of input events that arrived mid-draw and were excluded from
     /// latency recording.
     pub mid_draw_events_dropped: u64,
+    /// Per-action counts of slow input events at three frame-budget tiers.
+    /// Only actions that crossed at least the 8ms threshold are present.
+    pub slow_event_counts: FxHashMap<&'static str, SlowEventCounts>,
 }
+
+/// Counts of slow input events for a single action, bucketed by
+/// frame-budget thresholds. An event is counted in every tier whose
+/// threshold its latency meets or exceeds.
+#[cfg(feature = "input-latency-histogram")]
+#[derive(Default, Clone, Debug)]
+pub struct SlowEventCounts {
+    /// Events that missed the 120fps frame budget (>= 8ms).
+    pub slow_8ms: u64,
+    /// Events that missed the 60fps frame budget (>= 16ms).
+    pub slow_16ms: u64,
+    /// Events that crossed the user-noticeable threshold (>= 100ms).
+    pub slow_100ms: u64,
+    /// Highest latency observed for this action across all slow events.
+    pub max_latency_ns: u64,
+}
+
+/// Latency thresholds (in nanoseconds) that bucket per-action slow-event
+/// counts. Aligned with the 120fps / 60fps / human-perception boundaries
+/// used by `input_latency_ui`'s display histogram.
+#[cfg(feature = "input-latency-histogram")]
+const SLOW_120FPS_NS: u64 = 8_000_000;
+#[cfg(feature = "input-latency-histogram")]
+const SLOW_60FPS_NS: u64 = 16_000_000;
+#[cfg(feature = "input-latency-histogram")]
+const SLOW_NOTICEABLE_NS: u64 = 100_000_000;
 
 /// Records the time between when the first input event in a frame is dispatched
 /// and when the resulting frame is presented, capturing worst-case latency when
@@ -1103,6 +1132,20 @@ struct InputLatencyTracker {
     /// Count of input events that arrived mid-draw and were excluded from
     /// latency recording because their effects won't appear until the next frame.
     mid_draw_events_dropped: u64,
+    /// First action attributed to the in-flight frame, using the same
+    /// first-wins semantics as `first_input_at`. Promoted only when the
+    /// dispatching call is part of an input event flow (see
+    /// `inside_input_dispatch`). Cleared when the frame is presented.
+    current_action: Option<&'static str>,
+    /// True while `Window::dispatch_event` is on the call stack, so that
+    /// programmatic action dispatches outside the input flow (menus,
+    /// command palette, async work) don't get attributed to whatever input
+    /// event happens to fire next.
+    inside_input_dispatch: bool,
+    /// Counts of slow events keyed by action name. Only actions that have
+    /// crossed at least the 8ms tier appear here, so the map stays bounded
+    /// to actions that are actually a perf concern.
+    slow_event_counts: FxHashMap<&'static str, SlowEventCounts>,
 }
 
 #[cfg(feature = "input-latency-histogram")]
@@ -1116,7 +1159,32 @@ impl InputLatencyTracker {
             events_per_frame_histogram: Histogram::new(3)
                 .map_err(|e| anyhow!("Failed to create events per frame histogram: {e}"))?,
             mid_draw_events_dropped: 0,
+            current_action: None,
+            inside_input_dispatch: false,
+            slow_event_counts: FxHashMap::default(),
         })
+    }
+
+    /// Mark the start of an input-event dispatch flow. Action attribution
+    /// is only accepted while this is set, so programmatic action
+    /// dispatches from outside the input flow don't pollute the per-frame
+    /// `current_action` slot.
+    fn enter_input_dispatch(&mut self) {
+        self.inside_input_dispatch = true;
+    }
+
+    /// Mark the end of an input-event dispatch flow.
+    fn exit_input_dispatch(&mut self) {
+        self.inside_input_dispatch = false;
+    }
+
+    /// Attribute the given action to the in-flight frame. First-wins:
+    /// subsequent actions in the same frame are ignored, matching how
+    /// `first_input_at` records only the earliest event's timestamp.
+    fn record_dispatched_action(&mut self, name: &'static str) {
+        if self.inside_input_dispatch {
+            self.current_action.get_or_insert(name);
+        }
     }
 
     /// Record that an input event was dispatched at the given time.
@@ -1137,7 +1205,11 @@ impl InputLatencyTracker {
         if let Some(first_input_at) = self.first_input_at.take() {
             let latency_nanos = first_input_at.elapsed().as_nanos() as u64;
             self.latency_histogram.record(latency_nanos).ok();
+            if let Some(action) = self.current_action {
+                self.record_slow_event_counts(action, latency_nanos);
+            }
         }
+        self.current_action = None;
         if self.pending_input_count > 0 {
             self.events_per_frame_histogram
                 .record(self.pending_input_count)
@@ -1146,11 +1218,34 @@ impl InputLatencyTracker {
         }
     }
 
+    fn record_slow_event_counts(&mut self, action: &'static str, latency_nanos: u64) {
+        if latency_nanos < SLOW_120FPS_NS {
+            return;
+        }
+        let entry = self.slow_event_counts.entry(action).or_default();
+        entry.slow_8ms += 1;
+        if latency_nanos >= SLOW_60FPS_NS {
+            entry.slow_16ms += 1;
+        }
+        if latency_nanos >= SLOW_NOTICEABLE_NS {
+            entry.slow_100ms += 1;
+            log::warn!(
+                "slow input event: action={} latency={:.1}ms",
+                action,
+                latency_nanos as f64 / 1_000_000.0,
+            );
+        }
+        if latency_nanos > entry.max_latency_ns {
+            entry.max_latency_ns = latency_nanos;
+        }
+    }
+
     fn snapshot(&self) -> InputLatencySnapshot {
         InputLatencySnapshot {
             latency_histogram: self.latency_histogram.clone(),
             events_per_frame_histogram: self.events_per_frame_histogram.clone(),
             mid_draw_events_dropped: self.mid_draw_events_dropped,
+            slow_event_counts: self.slow_event_counts.clone(),
         }
     }
 }
@@ -4248,6 +4343,8 @@ impl Window {
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
         #[cfg(feature = "input-latency-histogram")]
         let dispatch_time = Instant::now();
+        #[cfg(feature = "input-latency-histogram")]
+        self.input_latency_tracker.enter_input_dispatch();
         let update_count_before = self.invalidator.update_count();
         // Track input modality for focus-visible styling and hover suppression.
         // Hover is suppressed during keyboard modality so that keyboard navigation
@@ -4367,6 +4464,9 @@ impl Window {
                 self.input_latency_tracker.record_mid_draw_input();
             }
         }
+
+        #[cfg(feature = "input-latency-histogram")]
+        self.input_latency_tracker.exit_input_dispatch();
 
         DispatchEventResult {
             propagate: cx.propagate_event,
@@ -4739,96 +4839,114 @@ impl Window {
         action: &dyn Action,
         cx: &mut App,
     ) {
-        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        // Snapshot update count up front so we can detect whether any action
+        // listener actually mutated state during this dispatch. Used by the
+        // input-latency tracker to attribute slow frames to the action that
+        // did the work, ignoring no-op dispatches whose listeners weren't
+        // registered.
+        #[cfg(feature = "input-latency-histogram")]
+        let update_count_before = self.invalidator.update_count();
 
-        // Capture phase for global actions.
-        cx.propagate_event = true;
-        if let Some(mut global_listeners) = cx
-            .global_action_listeners
-            .remove(&action.as_any().type_id())
-        {
-            for listener in &global_listeners {
-                listener(action.as_any(), DispatchPhase::Capture, cx);
-                if !cx.propagate_event {
-                    break;
+        // Wrapped in a labeled block so the early-return paths below can be
+        // followed by the slow-event attribution at the end of the function.
+        'dispatch: {
+            let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+
+            // Capture phase for global actions.
+            cx.propagate_event = true;
+            if let Some(mut global_listeners) = cx
+                .global_action_listeners
+                .remove(&action.as_any().type_id())
+            {
+                for listener in &global_listeners {
+                    listener(action.as_any(), DispatchPhase::Capture, cx);
+                    if !cx.propagate_event {
+                        break;
+                    }
                 }
+
+                global_listeners.extend(
+                    cx.global_action_listeners
+                        .remove(&action.as_any().type_id())
+                        .unwrap_or_default(),
+                );
+
+                cx.global_action_listeners
+                    .insert(action.as_any().type_id(), global_listeners);
             }
 
-            global_listeners.extend(
-                cx.global_action_listeners
-                    .remove(&action.as_any().type_id())
-                    .unwrap_or_default(),
-            );
+            if !cx.propagate_event {
+                break 'dispatch;
+            }
 
-            cx.global_action_listeners
-                .insert(action.as_any().type_id(), global_listeners);
-        }
+            // Capture phase for window actions.
+            for node_id in &dispatch_path {
+                let node = self.rendered_frame.dispatch_tree.node(*node_id);
+                for DispatchActionListener {
+                    action_type,
+                    listener,
+                } in node.action_listeners.clone()
+                {
+                    let any_action = action.as_any();
+                    if action_type == any_action.type_id() {
+                        listener(any_action, DispatchPhase::Capture, self, cx);
 
-        if !cx.propagate_event {
-            return;
-        }
-
-        // Capture phase for window actions.
-        for node_id in &dispatch_path {
-            let node = self.rendered_frame.dispatch_tree.node(*node_id);
-            for DispatchActionListener {
-                action_type,
-                listener,
-            } in node.action_listeners.clone()
-            {
-                let any_action = action.as_any();
-                if action_type == any_action.type_id() {
-                    listener(any_action, DispatchPhase::Capture, self, cx);
-
-                    if !cx.propagate_event {
-                        return;
+                        if !cx.propagate_event {
+                            break 'dispatch;
+                        }
                     }
                 }
             }
-        }
 
-        // Bubble phase for window actions.
-        for node_id in dispatch_path.iter().rev() {
-            let node = self.rendered_frame.dispatch_tree.node(*node_id);
-            for DispatchActionListener {
-                action_type,
-                listener,
-            } in node.action_listeners.clone()
+            // Bubble phase for window actions.
+            for node_id in dispatch_path.iter().rev() {
+                let node = self.rendered_frame.dispatch_tree.node(*node_id);
+                for DispatchActionListener {
+                    action_type,
+                    listener,
+                } in node.action_listeners.clone()
+                {
+                    let any_action = action.as_any();
+                    if action_type == any_action.type_id() {
+                        cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
+                        listener(any_action, DispatchPhase::Bubble, self, cx);
+
+                        if !cx.propagate_event {
+                            break 'dispatch;
+                        }
+                    }
+                }
+            }
+
+            // Bubble phase for global actions.
+            if let Some(mut global_listeners) = cx
+                .global_action_listeners
+                .remove(&action.as_any().type_id())
             {
-                let any_action = action.as_any();
-                if action_type == any_action.type_id() {
+                for listener in global_listeners.iter().rev() {
                     cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
-                    listener(any_action, DispatchPhase::Bubble, self, cx);
 
+                    listener(action.as_any(), DispatchPhase::Bubble, cx);
                     if !cx.propagate_event {
-                        return;
+                        break;
                     }
                 }
+
+                global_listeners.extend(
+                    cx.global_action_listeners
+                        .remove(&action.as_any().type_id())
+                        .unwrap_or_default(),
+                );
+
+                cx.global_action_listeners
+                    .insert(action.as_any().type_id(), global_listeners);
             }
         }
 
-        // Bubble phase for global actions.
-        if let Some(mut global_listeners) = cx
-            .global_action_listeners
-            .remove(&action.as_any().type_id())
-        {
-            for listener in global_listeners.iter().rev() {
-                cx.propagate_event = false; // Actions stop propagation by default during the bubble phase
-
-                listener(action.as_any(), DispatchPhase::Bubble, cx);
-                if !cx.propagate_event {
-                    break;
-                }
-            }
-
-            global_listeners.extend(
-                cx.global_action_listeners
-                    .remove(&action.as_any().type_id())
-                    .unwrap_or_default(),
-            );
-
-            cx.global_action_listeners
-                .insert(action.as_any().type_id(), global_listeners);
+        #[cfg(feature = "input-latency-histogram")]
+        if self.invalidator.update_count() > update_count_before {
+            self.input_latency_tracker
+                .record_dispatched_action(action.name());
         }
     }
 

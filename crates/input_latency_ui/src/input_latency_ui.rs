@@ -1,5 +1,5 @@
 use collections::HashMap;
-use gpui::{App, Global, InputLatencySnapshot, Window, WindowId, actions};
+use gpui::{App, Global, InputLatencySnapshot, SlowEventCounts, Window, WindowId, actions};
 use hdrhistogram::Histogram;
 use std::time::Instant;
 
@@ -175,6 +175,7 @@ fn format_report(snapshot: &InputLatencySnapshot, previous: &ReporterState) -> S
 
     write_latency_percentiles(&mut report, "Percentiles", histogram, percentiles);
     write_latency_distribution(&mut report, "Distribution", histogram);
+    write_slow_events_by_action(&mut report, &snapshot.slow_event_counts);
 
     let coalesce = &snapshot.events_per_frame_histogram;
     let coalesce_total = coalesce.len();
@@ -282,6 +283,66 @@ fn write_latency_percentiles(
             "  {label}: {:>8.2}ms  ({:>7.1} Hz)\n",
             ns_to_ms(value_ns),
             hz
+        ));
+    }
+}
+
+/// Maximum number of action rows to display in the slow-events-by-action
+/// table. Slow actions are typically a short list, but we cap at a sensible
+/// number to keep the dump readable in pathological cases (e.g. extensions
+/// registering many slow actions).
+const SLOW_EVENTS_MAX_ROWS: usize = 20;
+
+fn write_slow_events_by_action(
+    report: &mut String,
+    counts: &collections::FxHashMap<&'static str, SlowEventCounts>,
+) {
+    if counts.is_empty() {
+        return;
+    }
+
+    let mut rows: Vec<(&'static str, &SlowEventCounts)> =
+        counts.iter().map(|(name, c)| (*name, c)).collect();
+    // Sort by severity: most frames missed at the noticeable threshold first,
+    // then by worst-case latency, then by 60fps misses. This puts the actions
+    // most worth investigating at the top.
+    rows.sort_by(|(a_name, a), (b_name, b)| {
+        b.slow_100ms
+            .cmp(&a.slow_100ms)
+            .then_with(|| b.max_latency_ns.cmp(&a.max_latency_ns))
+            .then_with(|| b.slow_16ms.cmp(&a.slow_16ms))
+            .then_with(|| a_name.cmp(b_name))
+    });
+
+    report.push('\n');
+    report.push_str("Slow events by action:\n");
+    let truncated = rows.len() > SLOW_EVENTS_MAX_ROWS;
+    if truncated {
+        rows.truncate(SLOW_EVENTS_MAX_ROWS);
+    }
+
+    let action_col_width = rows
+        .iter()
+        .map(|(name, _)| name.len())
+        .max()
+        .unwrap_or(0)
+        .max("action".len());
+
+    report.push_str(&format!(
+        "  {:<action_col_width$}  {:>8}  {:>8}  {:>8}  {:>10}\n",
+        "action", ">=8ms", ">=16ms", ">=100ms", "max"
+    ));
+    for (name, c) in &rows {
+        let max_ms = c.max_latency_ns as f64 / 1_000_000.0;
+        report.push_str(&format!(
+            "  {name:<action_col_width$}  {:>8}  {:>8}  {:>8}  {:>8.1}ms\n",
+            c.slow_8ms, c.slow_16ms, c.slow_100ms, max_ms,
+        ));
+    }
+    if truncated {
+        report.push_str(&format!(
+            "  ... ({} more action(s) not shown)\n",
+            counts.len() - SLOW_EVENTS_MAX_ROWS,
         ));
     }
 }
