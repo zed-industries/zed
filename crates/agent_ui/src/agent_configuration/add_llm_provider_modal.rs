@@ -119,7 +119,6 @@ struct ModelCapabilityToggles {
 
 struct ModelInput {
     name: Entity<InputField>,
-    max_completion_tokens: Entity<InputField>,
     max_output_tokens: Entity<InputField>,
     max_tokens: Entity<InputField>,
     capabilities: ModelCapabilityToggles,
@@ -131,7 +130,7 @@ impl ModelInput {
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
-        let base_tab_index = (3 + (model_index * 4)) as isize;
+        let base_tab_index = (3 + (model_index * 3)) as isize;
 
         let model_name = single_line_input(
             "Model Name",
@@ -141,19 +140,11 @@ impl ModelInput {
             window,
             cx,
         );
-        let max_completion_tokens = single_line_input(
-            "Max Completion Tokens",
-            "200000",
-            Some("200000"),
-            base_tab_index + 2,
-            window,
-            cx,
-        );
         let max_output_tokens = single_line_input(
             "Max Output Tokens",
             "Max Output Tokens",
             Some("32000"),
-            base_tab_index + 3,
+            base_tab_index + 2,
             window,
             cx,
         );
@@ -161,7 +152,7 @@ impl ModelInput {
             "Max Tokens",
             "Max Tokens",
             Some("200000"),
-            base_tab_index + 4,
+            base_tab_index + 3,
             window,
             cx,
         );
@@ -169,7 +160,6 @@ impl ModelInput {
         let caps = OpenAiModelCapabilities::default();
         Self {
             name: model_name,
-            max_completion_tokens,
             max_output_tokens,
             max_tokens,
             capabilities: ModelCapabilityToggles {
@@ -190,13 +180,6 @@ impl ModelInput {
         Ok(AnthropicAvailableModel {
             name,
             display_name: None,
-            max_completion_tokens: Some(
-                self.max_completion_tokens
-                    .read(cx)
-                    .text(cx)
-                    .parse::<u64>()
-                    .map_err(|_| SharedString::from("Max Completion Tokens must be a number"))?,
-            ),
             max_output_tokens: Some(
                 self.max_output_tokens
                     .read(cx)
@@ -288,7 +271,7 @@ fn save_provider_to_settings(
                             display_name: m.display_name,
                             max_tokens: m.max_tokens,
                             max_output_tokens: m.max_output_tokens,
-                            max_completion_tokens: m.max_completion_tokens,
+                            max_completion_tokens: None,
                             reasoning_effort: None,
                             capabilities: m.capabilities,
                         })
@@ -419,12 +402,7 @@ impl AddLlmProviderModal {
             .border_color(cx.theme().colors().border.opacity(0.6))
             .bg(cx.theme().colors().element_active.opacity(0.15))
             .child(model.name.clone())
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(model.max_completion_tokens.clone())
-                    .child(model.max_output_tokens.clone()),
-            )
+            .child(model.max_output_tokens.clone())
             .child(model.max_tokens.clone())
             .child(
                 v_flex()
@@ -676,7 +654,7 @@ mod tests {
                 "someprovider",
                 "someurl",
                 "somekey",
-                vec![("", "200000", "200000", "32000")],
+                vec![("", "200000", "32000")],
                 cx,
             )
             .await,
@@ -688,7 +666,7 @@ mod tests {
                 "someprovider",
                 "someurl",
                 "somekey",
-                vec![("somemodel", "abc", "200000", "32000")],
+                vec![("somemodel", "abc", "32000")],
                 cx,
             )
             .await,
@@ -700,19 +678,7 @@ mod tests {
                 "someprovider",
                 "someurl",
                 "somekey",
-                vec![("somemodel", "200000", "abc", "32000")],
-                cx,
-            )
-            .await,
-            Some("Max Completion Tokens must be a number".into())
-        );
-
-        assert_eq!(
-            save_provider_validation_errors(
-                "someprovider",
-                "someurl",
-                "somekey",
-                vec![("somemodel", "200000", "200000", "abc")],
+                vec![("somemodel", "200000", "abc")],
                 cx,
             )
             .await,
@@ -724,10 +690,7 @@ mod tests {
                 "someprovider",
                 "someurl",
                 "somekey",
-                vec![
-                    ("somemodel", "200000", "200000", "32000"),
-                    ("somemodel", "200000", "200000", "32000"),
-                ],
+                vec![("somemodel", "200000", "32000")],
                 cx,
             )
             .await,
@@ -756,7 +719,7 @@ mod tests {
                 "someprovider",
                 "someurl",
                 "someapikey",
-                vec![("somemodel", "200000", "200000", "32000")],
+                vec![("somemodel", "200000", "32000")],
                 cx,
             )
             .await,
@@ -878,7 +841,7 @@ mod tests {
         provider_name: &str,
         api_url: &str,
         api_key: &str,
-        models: Vec<(&str, &str, &str, &str)>,
+        models: Vec<(&str, &str, &str)>,
         cx: &mut VisualTestContext,
     ) -> Option<SharedString> {
         fn set_text(input: &Entity<InputField>, text: &str, window: &mut Window, cx: &mut App) {
@@ -893,9 +856,7 @@ mod tests {
             set_text(&input.api_url, api_url, window, cx);
             set_text(&input.api_key, api_key, window, cx);
 
-            for (i, (name, max_tokens, max_completion_tokens, max_output_tokens)) in
-                models.iter().enumerate()
-            {
+            for (i, (name, max_tokens, max_output_tokens)) in models.iter().enumerate() {
                 if i >= input.models.len() {
                     input
                         .models
@@ -904,12 +865,6 @@ mod tests {
                 let model = &mut input.models[i];
                 set_text(&model.name, name, window, cx);
                 set_text(&model.max_tokens, max_tokens, window, cx);
-                set_text(
-                    &model.max_completion_tokens,
-                    max_completion_tokens,
-                    window,
-                    cx,
-                );
                 set_text(&model.max_output_tokens, max_output_tokens, window, cx);
             }
             save_provider_to_settings(&input, cx)

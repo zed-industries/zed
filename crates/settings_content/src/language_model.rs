@@ -344,7 +344,6 @@ pub struct AnthropicCompatibleAvailableModel {
     pub display_name: Option<String>,
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
-    pub max_completion_tokens: Option<u64>,
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_temperature: Option<f32>,
     #[serde(default)]
