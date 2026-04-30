@@ -123,6 +123,9 @@ pub(crate) enum ThreadError {
     RateLimitExceeded {
         provider: SharedString,
     },
+    BillingQuotaExceeded {
+        provider: SharedString,
+    },
     ServerOverloaded {
         provider: SharedString,
     },
@@ -167,6 +170,9 @@ impl From<anyhow::Error> for ThreadError {
             use LanguageModelCompletionError::*;
             match lm_error {
                 RateLimitExceeded { provider, .. } => Self::RateLimitExceeded {
+                    provider: provider.to_string().into(),
+                },
+                BillingQuotaExceeded { provider, .. } => Self::BillingQuotaExceeded {
                     provider: provider.to_string().into(),
                 },
                 ServerOverloaded { provider, .. } | ApiInternalServerError { provider, .. } => {
@@ -2972,6 +2978,21 @@ pub(crate) mod tests {
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
+
+    #[test]
+    fn test_thread_error_maps_billing_quota_exceeded() {
+        let error = anyhow::anyhow!(LanguageModelCompletionError::BillingQuotaExceeded {
+            provider: String::from("xAI").into(),
+            message: "No credits remaining for this API key".to_string(),
+        });
+
+        match ThreadError::from(error) {
+            ThreadError::BillingQuotaExceeded { provider } => {
+                assert_eq!(provider.to_string(), "xAI")
+            }
+            error => panic!("Expected BillingQuotaExceeded thread error, got: {error:?}"),
+        }
+    }
 
     #[gpui::test]
     async fn test_drop(cx: &mut TestAppContext) {

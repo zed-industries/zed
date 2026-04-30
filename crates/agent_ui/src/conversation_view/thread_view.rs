@@ -1251,6 +1251,11 @@ impl ThreadView {
                     None,
                     format!("{provider}'s rate limit was reached.").into(),
                 ),
+                ThreadError::BillingQuotaExceeded { provider } => (
+                    "billing_quota_exceeded",
+                    None,
+                    format!("{provider}'s API quota or credits are exhausted.").into(),
+                ),
                 ThreadError::ServerOverloaded { provider } => (
                     "server_overloaded",
                     None,
@@ -8264,6 +8269,17 @@ impl ThreadView {
                 .into(),
                 true,
                 true,
+                cx,
+            ),
+            ThreadError::BillingQuotaExceeded { provider } => self.render_error_callout(
+                "Credits or Quota Exhausted",
+                format!(
+                    "{provider}'s API key has exhausted its credits or billing quota. \
+                    Add credits or update billing with {provider}, then try again."
+                )
+                .into(),
+                false,
+                false,
                 cx,
             ),
             ThreadError::ServerOverloaded { provider } => self.render_error_callout(

@@ -3145,6 +3145,7 @@ impl Thread {
             | AuthenticationError { .. }
             | PermissionError { .. }
             | NoApiKey { .. }
+            | BillingQuotaExceeded { .. }
             | ApiEndpointNotFound { .. }
             | PromptTooLarge { .. } => None,
             // These errors might be transient, so retry them

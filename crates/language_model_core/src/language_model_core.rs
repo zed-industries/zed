@@ -102,6 +102,11 @@ pub enum LanguageModelCompletionError {
         provider: LanguageModelProviderName,
         retry_after: Option<Duration>,
     },
+    #[error("{provider}'s API quota or credits are exhausted: {message}")]
+    BillingQuotaExceeded {
+        provider: LanguageModelProviderName,
+        message: String,
+    },
     #[error("{provider}'s API servers are overloaded right now")]
     ServerOverloaded {
         provider: LanguageModelProviderName,
@@ -193,6 +198,82 @@ impl LanguageModelCompletionError {
         Some((upstream_status, inner_message))
     }
 
+    fn quota_exhaustion_message(message: &str) -> Option<String> {
+        let error_json = serde_json::from_str::<serde_json::Value>(message).ok();
+
+        if let Some(error_json) = error_json.as_ref() {
+            if let Some(code) = Self::error_json_string_field(error_json, "code")
+                .or_else(|| Self::error_json_string_field(error_json, "type"))
+                && Self::is_quota_exhaustion_code(code)
+            {
+                return Some(Self::error_json_message(error_json, message));
+            }
+
+            let error_message = Self::error_json_message(error_json, message);
+            if Self::is_quota_exhaustion_text(&error_message) {
+                return Some(error_message);
+            }
+        } else if Self::is_quota_exhaustion_text(message) {
+            return Some(message.to_string());
+        }
+
+        None
+    }
+
+    fn error_json_string_field<'a>(
+        error_json: &'a serde_json::Value,
+        field: &str,
+    ) -> Option<&'a str> {
+        error_json
+            .get("error")
+            .and_then(|error| error.get(field))
+            .or_else(|| error_json.get(field))
+            .and_then(|value| value.as_str())
+    }
+
+    fn error_json_message(error_json: &serde_json::Value, fallback: &str) -> String {
+        error_json
+            .get("error")
+            .and_then(|error| {
+                error
+                    .get("message")
+                    .and_then(|message| message.as_str())
+                    .or_else(|| error.as_str())
+            })
+            .or_else(|| {
+                error_json
+                    .get("message")
+                    .and_then(|message| message.as_str())
+            })
+            .unwrap_or(fallback)
+            .to_string()
+    }
+
+    fn is_quota_exhaustion_code(code: &str) -> bool {
+        matches!(
+            code.to_ascii_lowercase().as_str(),
+            "billing_hard_limit_reached"
+                | "credits_exhausted"
+                | "insufficient_credits"
+                | "insufficient_quota"
+                | "payment_required"
+        )
+    }
+
+    fn is_quota_exhaustion_text(message: &str) -> bool {
+        let message = message.to_ascii_lowercase();
+        [
+            "credit balance is too low",
+            "insufficient credits",
+            "no credits",
+            "out of credits",
+            "ran out of credits",
+            "run out of credits",
+        ]
+        .iter()
+        .any(|phrase| message.contains(phrase))
+    }
+
     pub fn from_cloud_failure(
         upstream_provider: LanguageModelProviderName,
         code: String,
@@ -244,10 +325,16 @@ impl LanguageModelCompletionError {
             StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
                 tokens: parse_prompt_too_long(&message),
             },
-            StatusCode::TOO_MANY_REQUESTS => Self::RateLimitExceeded {
-                provider,
-                retry_after,
-            },
+            StatusCode::TOO_MANY_REQUESTS => {
+                if let Some(message) = Self::quota_exhaustion_message(&message) {
+                    Self::BillingQuotaExceeded { provider, message }
+                } else {
+                    Self::RateLimitExceeded {
+                        provider,
+                        retry_after,
+                    }
+                }
+            }
             StatusCode::INTERNAL_SERVER_ERROR => Self::ApiInternalServerError { provider, message },
             StatusCode::SERVICE_UNAVAILABLE => Self::ServerOverloaded {
                 provider,
@@ -531,6 +618,58 @@ mod tests {
                 assert_eq!(provider.0, "anthropic");
             }
             _ => panic!("Expected ServerOverloaded error for upstream_http_503"),
+        }
+    }
+
+    #[test]
+    fn test_openai_insufficient_quota_429_is_not_rate_limit() {
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("openai-compatible").into(),
+            StatusCode::TOO_MANY_REQUESTS,
+            r#"{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#.to_string(),
+            None,
+        );
+
+        assert_eq!(
+            error.to_string(),
+            "openai-compatible's API quota or credits are exhausted: You exceeded your current quota, please check your plan and billing details."
+        );
+    }
+
+    #[test]
+    fn test_openai_compatible_no_credits_429_is_not_rate_limit() {
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("xAI").into(),
+            StatusCode::TOO_MANY_REQUESTS,
+            r#"{"error":"No credits remaining for this API key"}"#.to_string(),
+            None,
+        );
+
+        assert_eq!(
+            error.to_string(),
+            "xAI's API quota or credits are exhausted: No credits remaining for this API key"
+        );
+    }
+
+    #[test]
+    fn test_openai_rate_limit_429_remains_rate_limit() {
+        let retry_after = Duration::from_secs(30);
+        let error = LanguageModelCompletionError::from_http_status(
+            String::from("openai-compatible").into(),
+            StatusCode::TOO_MANY_REQUESTS,
+            r#"{"error":{"message":"Requests are too frequent","type":"rate_limit_error","code":"rate_limit_exceeded"}}"#.to_string(),
+            Some(retry_after),
+        );
+
+        match error {
+            LanguageModelCompletionError::RateLimitExceeded {
+                provider,
+                retry_after: Some(actual_retry_after),
+            } => {
+                assert_eq!(provider.0, "openai-compatible");
+                assert_eq!(actual_retry_after, retry_after);
+            }
+            _ => panic!("Expected RateLimitExceeded for a rate limit response, got: {error:?}"),
         }
     }
 
