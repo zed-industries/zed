@@ -861,6 +861,153 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_save_provider_anthropic_xapikey(cx: &mut TestAppContext) {
+        let cx = setup_test(cx).await;
+
+        assert_eq!(
+            save_provider_validation_errors_anthropic(
+                "anthropicprovider",
+                "https://api.anthropic.com/v1",
+                "someapikey",
+                AuthHeaderStyle::XApiKey,
+                vec![("somemodel", "200000", "32000")],
+                cx,
+            )
+            .await,
+            None
+        );
+    }
+
+    #[gpui::test]
+    async fn test_save_provider_anthropic_bearer(cx: &mut TestAppContext) {
+        let cx = setup_test(cx).await;
+
+        assert_eq!(
+            save_provider_validation_errors_anthropic(
+                "anthropicprovider",
+                "https://api.anthropic.com/v1",
+                "someapikey",
+                AuthHeaderStyle::Bearer,
+                vec![("somemodel", "200000", "32000")],
+                cx,
+            )
+            .await,
+            None
+        );
+    }
+
+    #[gpui::test]
+    async fn test_save_provider_anthropic_empty_name(cx: &mut TestAppContext) {
+        let cx = setup_test(cx).await;
+
+        assert_eq!(
+            save_provider_validation_errors_anthropic(
+                "",
+                "https://api.anthropic.com/v1",
+                "someapikey",
+                AuthHeaderStyle::XApiKey,
+                vec![],
+                cx,
+            )
+            .await,
+            Some("Provider Name cannot be empty".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_save_provider_anthropic_empty_url(cx: &mut TestAppContext) {
+        let cx = setup_test(cx).await;
+
+        assert_eq!(
+            save_provider_validation_errors_anthropic(
+                "anthropicprovider",
+                "",
+                "someapikey",
+                AuthHeaderStyle::Bearer,
+                vec![],
+                cx,
+            )
+            .await,
+            Some("API URL cannot be empty".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_save_provider_anthropic_empty_key(cx: &mut TestAppContext) {
+        let cx = setup_test(cx).await;
+
+        assert_eq!(
+            save_provider_validation_errors_anthropic(
+                "anthropicprovider",
+                "https://api.anthropic.com/v1",
+                "",
+                AuthHeaderStyle::Bearer,
+                vec![],
+                cx,
+            )
+            .await,
+            Some("API Key cannot be empty".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_save_provider_anthropic_invalid_model_tokens(cx: &mut TestAppContext) {
+        let cx = setup_test(cx).await;
+
+        assert_eq!(
+            save_provider_validation_errors_anthropic(
+                "anthropicprovider",
+                "https://api.anthropic.com/v1",
+                "someapikey",
+                AuthHeaderStyle::XApiKey,
+                vec![("somemodel", "abc", "32000")],
+                cx,
+            )
+            .await,
+            Some("Max Tokens must be a number".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_save_provider_anthropic_invalid_model_output(cx: &mut TestAppContext) {
+        let cx = setup_test(cx).await;
+
+        assert_eq!(
+            save_provider_validation_errors_anthropic(
+                "anthropicprovider",
+                "https://api.anthropic.com/v1",
+                "someapikey",
+                AuthHeaderStyle::Bearer,
+                vec![("somemodel", "200000", "abc")],
+                cx,
+            )
+            .await,
+            Some("Max Output Tokens must be a number".into())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_save_provider_anthropic_duplicate_models(cx: &mut TestAppContext) {
+        let cx = setup_test(cx).await;
+
+        assert_eq!(
+            save_provider_validation_errors_anthropic(
+                "anthropicprovider",
+                "https://api.anthropic.com/v1",
+                "someapikey",
+                AuthHeaderStyle::XApiKey,
+                vec![
+                    ("somemodel", "200000", "32000"),
+                    ("somemodel", "200000", "32000")
+                ],
+                cx,
+            )
+            .await,
+            Some("Model Names must be unique".into())
+        );
+    }
+
     async fn setup_test(cx: &mut TestAppContext) -> &mut VisualTestContext {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
@@ -888,6 +1035,44 @@ mod tests {
         models: Vec<(&str, &str, &str)>,
         cx: &mut VisualTestContext,
     ) -> Option<SharedString> {
+        save_provider_validation_errors_inner(
+            LlmCompatibleProvider::OpenAi,
+            provider_name,
+            api_url,
+            api_key,
+            models,
+            cx,
+        )
+        .await
+    }
+
+    async fn save_provider_validation_errors_anthropic(
+        provider_name: &str,
+        api_url: &str,
+        api_key: &str,
+        _auth_header: AuthHeaderStyle,
+        models: Vec<(&str, &str, &str)>,
+        cx: &mut VisualTestContext,
+    ) -> Option<SharedString> {
+        save_provider_validation_errors_inner(
+            LlmCompatibleProvider::Anthropic,
+            provider_name,
+            api_url,
+            api_key,
+            models,
+            cx,
+        )
+        .await
+    }
+
+    async fn save_provider_validation_errors_inner(
+        provider: LlmCompatibleProvider,
+        provider_name: &str,
+        api_url: &str,
+        api_key: &str,
+        models: Vec<(&str, &str, &str)>,
+        cx: &mut VisualTestContext,
+    ) -> Option<SharedString> {
         fn set_text(input: &Entity<InputField>, text: &str, window: &mut Window, cx: &mut App) {
             input.update(cx, |input, cx| {
                 input.set_text(text, window, cx);
@@ -895,7 +1080,7 @@ mod tests {
         }
 
         let task = cx.update(|window, cx| {
-            let mut input = AddLlmProviderInput::new(LlmCompatibleProvider::OpenAi, window, cx);
+            let mut input = AddLlmProviderInput::new(provider, window, cx);
             set_text(&input.provider_name, provider_name, window, cx);
             set_text(&input.api_url, api_url, window, cx);
             set_text(&input.api_key, api_key, window, cx);
