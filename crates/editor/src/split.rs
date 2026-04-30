@@ -4,6 +4,7 @@ use std::{
 };
 
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use log::info;
 use collections::HashMap;
 
 use gpui::{
@@ -1273,6 +1274,7 @@ impl SplittableEditor {
             DiffViewStyle::Unified => {}
             DiffViewStyle::Split => {
                 if self.too_narrow_for_split && is_split {
+                    info!("split diff deactivated: editor width ({:.0}px) below minimum_split_diff_width threshold ({:.0}px = {} em-widths). Set minimum_split_diff_width to 0 in settings to disable auto-switching.", width.as_f32(), min_width.as_f32(), min_ems);
                     self.unsplit(window, cx);
                 } else if !self.too_narrow_for_split && !is_split {
                     self.split(window, cx);

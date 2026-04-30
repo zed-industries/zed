@@ -255,7 +255,7 @@ pub struct EditorSettingsContent {
     /// switches to unified mode and switches back when the editor is wide
     /// enough. Set to 0 to disable automatic switching.
     ///
-    /// Default: 100
+    /// Default: 68
     pub minimum_split_diff_width: Option<f32>,
 }
 

@@ -324,8 +324,8 @@
   // switches to unified mode and switches back when the editor is wide
   // enough. Set to 0 to disable automatic switching.
   //
-  // Default: 100
-  "minimum_split_diff_width": 100,
+  // Default: 68
+  "minimum_split_diff_width": 68,
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   // Whether to show the signature help after completion or a bracket pair inserted.
