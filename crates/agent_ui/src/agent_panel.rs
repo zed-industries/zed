@@ -1,6 +1,6 @@
 use std::{
     fmt,
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
     sync::{
         Arc,
@@ -70,7 +70,7 @@ use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 use settings::TerminalDockPosition;
-use settings::{Settings, WorkingDirectory, update_settings_file};
+use settings::{Settings, update_settings_file};
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
@@ -120,7 +120,6 @@ impl fmt::Display for TerminalId {
 pub struct AgentPanelTerminalInfo {
     pub id: TerminalId,
     pub title: SharedString,
-    pub working_directory: Option<PathBuf>,
     pub updated_at: DateTime<Utc>,
     pub notified: bool,
 }
@@ -642,7 +641,6 @@ pub(crate) struct AgentThread {
 
 struct AgentTerminal {
     view: Entity<TerminalView>,
-    requested_working_directory: Option<PathBuf>,
     last_known_working_directory: Option<PathBuf>,
     last_known_title: String,
     custom_title: Option<String>,
@@ -661,12 +659,6 @@ impl AgentTerminal {
 
     fn current_working_directory(&self, cx: &App) -> Option<PathBuf> {
         self.view.read(cx).terminal().read(cx).working_directory()
-    }
-
-    fn working_directory(&self, cx: &App) -> Option<PathBuf> {
-        self.current_working_directory(cx)
-            .or_else(|| self.last_known_working_directory.clone())
-            .or_else(|| self.requested_working_directory.clone())
     }
 
     fn refresh_metadata(&mut self, cx: &App) -> bool {
@@ -1294,7 +1286,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let terminal_task = self.project.update(cx, |project, cx| {
-            project.create_terminal_shell(working_directory.clone(), cx)
+            project.create_terminal_shell(working_directory, cx)
         });
         let workspace = self.workspace.clone();
         let workspace_id = self.workspace_id;
@@ -1307,7 +1299,7 @@ impl AgentPanel {
                     log::error!("failed to spawn agent panel terminal: {error:#}");
                     workspace
                         .update(cx, |workspace, cx| workspace.show_error(&error, cx))
-                        .ok();
+                        .log_err();
                     return anyhow::Ok(());
                 }
             };
@@ -1315,14 +1307,7 @@ impl AgentPanel {
                 let terminal_view = cx.new(|cx| {
                     TerminalView::new(terminal, workspace, workspace_id, project, window, cx)
                 });
-                this.insert_terminal(
-                    terminal_id,
-                    terminal_view,
-                    working_directory,
-                    focus,
-                    window,
-                    cx,
-                );
+                this.insert_terminal(terminal_id, terminal_view, focus, window, cx);
             })?;
             anyhow::Ok(())
         })
@@ -1333,32 +1318,36 @@ impl AgentPanel {
         &mut self,
         terminal_id: TerminalId,
         terminal_view: Entity<TerminalView>,
-        requested_working_directory: Option<PathBuf>,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let terminal_entity = terminal_view.read(cx).terminal().clone();
+        // Listen on `TerminalView` for close, since it bridges both shell-exit
+        // (`Event::CloseTerminal`) and user-driven close (`ItemEvent::CloseItem`).
         let item_subscription = cx.subscribe_in(
             &terminal_view,
             window,
-            move |this, _terminal_view, event: &ItemEvent, window, cx| match event {
-                ItemEvent::CloseItem => this.close_terminal(terminal_id, true, window, cx),
-                ItemEvent::UpdateTab | ItemEvent::UpdateBreadcrumbs | ItemEvent::Edit => {
-                    this.refresh_terminal_metadata(terminal_id, cx);
+            move |this, _terminal_view, event: &ItemEvent, window, cx| {
+                if let ItemEvent::CloseItem = event {
+                    this.close_terminal(terminal_id, true, window, cx);
                 }
             },
         );
+        // Listen on the underlying `Terminal` entity for metadata changes and
+        // bell. `ItemEvent::UpdateTab` is intentionally not used, because it
+        // also fires on every `Event::Wakeup` (i.e. each batch of pty output),
+        // which would call `refresh_terminal_metadata` continuously.
         let terminal_subscription = cx.subscribe_in(
             &terminal_entity,
             window,
             move |this, _terminal, event: &TerminalEvent, window, cx| match event {
-                TerminalEvent::CloseTerminal => this.close_terminal(terminal_id, true, window, cx),
                 TerminalEvent::TitleChanged | TerminalEvent::BreadcrumbsChanged => {
                     this.refresh_terminal_metadata(terminal_id, cx);
                 }
                 TerminalEvent::Bell => this.notify_terminal(terminal_id, window, cx),
-                TerminalEvent::Wakeup
+                TerminalEvent::CloseTerminal
+                | TerminalEvent::Wakeup
                 | TerminalEvent::BlinkChanged(_)
                 | TerminalEvent::SelectionsChanged
                 | TerminalEvent::NewNavigationTarget(_)
@@ -1368,7 +1357,6 @@ impl AgentPanel {
 
         let mut terminal = AgentTerminal {
             view: terminal_view,
-            requested_working_directory,
             last_known_working_directory: None,
             last_known_title: String::new(),
             custom_title: None,
@@ -1399,7 +1387,22 @@ impl AgentPanel {
             return;
         };
         terminal.notified = false;
+        self.bump_terminal_order(terminal_id);
         self.set_base_view(BaseView::Terminal { terminal_id }, focus, window, cx);
+    }
+
+    fn bump_terminal_order(&mut self, terminal_id: TerminalId) {
+        // Track most-recently-used order so closing the active terminal falls
+        // back to the previously active one rather than the most-recently
+        // *created* one.
+        if !self.terminals.contains_key(&terminal_id) {
+            return;
+        }
+        if self.terminal_order.last() == Some(&terminal_id) {
+            return;
+        }
+        self.terminal_order.retain(|id| *id != terminal_id);
+        self.terminal_order.push(terminal_id);
     }
 
     pub fn close_terminal(
@@ -1448,12 +1451,20 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let is_active = self.active_terminal_id() == Some(terminal_id);
+        // Only suppress when the user can actually see the bell, i.e. the
+        // terminal is focused AND the OS window is active. A bell delivered to
+        // a background window should still mark the terminal as notified.
+        let user_is_looking = is_active
+            && window.is_window_active()
+            && self.terminals.get(&terminal_id).is_some_and(|terminal| {
+                terminal.view.focus_handle(cx).contains_focused(window, cx)
+            });
+        if user_is_looking {
+            return;
+        }
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
-        if is_active && terminal.view.focus_handle(cx).contains_focused(window, cx) {
-            return;
-        }
         if !terminal.notified {
             terminal.notified = true;
             terminal.updated_at = Utc::now();
@@ -1463,39 +1474,12 @@ impl AgentPanel {
     }
 
     fn default_terminal_working_directory(&self, cx: &App) -> Option<PathBuf> {
-        let is_remote = self.project.read(cx).is_remote();
-        let directory = match &TerminalSettings::get_global(cx).working_directory {
-            WorkingDirectory::CurrentFileDirectory => self
-                .project
-                .read(cx)
-                .active_entry_directory(cx)
-                .or_else(|| self.current_project_directory(cx)),
-            WorkingDirectory::CurrentProjectDirectory => self.current_project_directory(cx),
-            WorkingDirectory::FirstProjectDirectory => {
-                self.project.read(cx).first_project_directory(cx)
-            }
-            WorkingDirectory::AlwaysHome => None,
-            WorkingDirectory::Always { directory } if !is_remote => shellexpand::full(directory)
-                .ok()
-                .map(|directory| Path::new(&directory.to_string()).to_path_buf())
-                .filter(|directory| directory.is_dir()),
-            WorkingDirectory::Always { .. } => None,
-        };
-
-        if is_remote {
-            directory
-        } else {
-            directory.or_else(dirs::home_dir)
-        }
-    }
-
-    fn current_project_directory(&self, cx: &App) -> Option<PathBuf> {
-        self.project
-            .read(cx)
-            .active_project_directory(cx)
-            .as_deref()
-            .map(Path::to_path_buf)
-            .or_else(|| self.project.read(cx).first_project_directory(cx))
+        // Reuse the workspace-based helper so behavior matches the regular
+        // terminal panel (e.g. `WorkingDirectory::FirstProjectDirectory` falling
+        // back to a file's parent directory when the worktree root is a file).
+        self.workspace
+            .upgrade()
+            .and_then(|workspace| terminal_view::default_working_directory(workspace.read(cx), cx))
     }
 
     pub fn activate_draft(
@@ -1621,7 +1605,6 @@ impl AgentPanel {
                 Some(AgentPanelTerminalInfo {
                     id: *id,
                     title: terminal.display_title(cx),
-                    working_directory: terminal.working_directory(cx),
                     updated_at: terminal.updated_at,
                     notified: terminal.notified,
                 })
@@ -2442,6 +2425,7 @@ impl AgentPanel {
                                 if let Some(terminal) = this.terminals.get_mut(&terminal_id) {
                                     terminal.notified = false;
                                 }
+                                this.bump_terminal_order(terminal_id);
                                 cx.emit(AgentPanelEvent::TerminalFocused);
                                 cx.emit(AgentPanelEvent::TerminalsChanged);
                                 cx.notify();

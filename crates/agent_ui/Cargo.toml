@@ -47,7 +47,6 @@ command_palette_hooks.workspace = true
 component.workspace = true
 context_server.workspace = true
 db.workspace = true
-dirs.workspace = true
 editor.workspace = true
 eval_utils = { workspace = true, optional = true }
 extension.workspace = true
@@ -94,7 +93,6 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings.workspace = true
-shellexpand.workspace = true
 streaming_diff.workspace = true
 task.workspace = true
 telemetry.workspace = true
