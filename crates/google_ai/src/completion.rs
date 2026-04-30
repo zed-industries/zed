@@ -70,38 +70,39 @@ pub fn into_google(
                     })]
                 }
                 MessageContent::ToolResult(tool_result) => {
-                    match tool_result.content {
-                        language_model_core::LanguageModelToolResultContent::Text(text) => {
-                            vec![Part::FunctionResponsePart(crate::FunctionResponsePart {
-                                function_response: crate::FunctionResponse {
-                                    name: tool_result.tool_name.to_string(),
-                                    // The API expects a valid JSON object
-                                    response: serde_json::json!({
-                                        "output": text
-                                    }),
-                                },
-                            })]
-                        }
-                        language_model_core::LanguageModelToolResultContent::Image(image) => {
-                            vec![
-                                Part::FunctionResponsePart(crate::FunctionResponsePart {
-                                    function_response: crate::FunctionResponse {
-                                        name: tool_result.tool_name.to_string(),
-                                        // The API expects a valid JSON object
-                                        response: serde_json::json!({
-                                            "output": "Tool responded with an image"
-                                        }),
-                                    },
-                                }),
-                                Part::InlineDataPart(InlineDataPart {
+                    let mut text_output = String::new();
+                    let mut images: Vec<InlineDataPart> = Vec::new();
+                    for part in tool_result.content {
+                        match part {
+                            language_model_core::LanguageModelToolResultContent::Text(text) => {
+                                text_output.push_str(&text);
+                            }
+                            language_model_core::LanguageModelToolResultContent::Image(image) => {
+                                images.push(InlineDataPart {
                                     inline_data: GenerativeContentBlob {
                                         mime_type: "image/png".to_string(),
                                         data: image.source.to_string(),
                                     },
-                                }),
-                            ]
+                                });
+                            }
                         }
                     }
+                    let output = if text_output.is_empty() && !images.is_empty() {
+                        "Tool responded with an image".to_string()
+                    } else {
+                        text_output
+                    };
+                    let mut parts = vec![Part::FunctionResponsePart(crate::FunctionResponsePart {
+                        function_response: crate::FunctionResponse {
+                            name: tool_result.tool_name.to_string(),
+                            // The API expects a valid JSON object
+                            response: serde_json::json!({
+                                "output": output
+                            }),
+                        },
+                    })];
+                    parts.extend(images.into_iter().map(Part::InlineDataPart));
+                    parts
                 }
             })
             .collect()
@@ -311,29 +312,6 @@ impl GoogleEventMapper {
         }
         events
     }
-}
-
-/// Count tokens for a Google AI model using tiktoken. This is synchronous;
-/// callers should spawn it on a background thread if needed.
-pub fn count_google_tokens(request: LanguageModelRequest) -> Result<u64> {
-    let messages = request
-        .messages
-        .into_iter()
-        .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-            role: match message.role {
-                Role::User => "user".into(),
-                Role::Assistant => "assistant".into(),
-                Role::System => "system".into(),
-            },
-            content: Some(message.string_contents()),
-            name: None,
-            function_call: None,
-        })
-        .collect::<Vec<_>>();
-
-    // Tiktoken doesn't yet support these models, so we manually use the
-    // same tokenizer as GPT-4.
-    tiktoken_rs::num_tokens_from_messages("gpt-4", &messages).map(|tokens| tokens as u64)
 }
 
 fn update_usage(usage: &mut UsageMetadata, new: &UsageMetadata) {

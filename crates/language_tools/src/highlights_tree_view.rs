@@ -3,10 +3,10 @@ use editor::{
     scroll::Autoscroll,
 };
 use gpui::{
-    Action, App, AppContext as _, Context, Corner, Div, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, HighlightStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled,
-    Task, UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
+    Action, App, AppContext as _, Context, Div, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, HighlightStyle, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
+    MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, div, rems, uniform_list,
 };
 use language::{BufferId, Point, ToOffset};
 use menu::{SelectNext, SelectPrevious};
@@ -971,7 +971,7 @@ impl HighlightsTreeToolbarItemView {
                     .toggle_state(self.toggle_settings_handle.is_deployed()),
                 Tooltip::text("Highlights Settings"),
             )
-            .anchor(Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .with_handle(self.toggle_settings_handle.clone())
             .menu(move |window, cx| {
                 let tree_view_for_text = tree_view.clone();
