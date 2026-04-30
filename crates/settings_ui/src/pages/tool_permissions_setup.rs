@@ -1024,7 +1024,6 @@ fn render_user_pattern_row(
                     };
 
                     cx.spawn({
-                        let new_pattern = new_pattern.clone();
                         let settings_window = settings_window.clone();
                         async move |cx| {
                             update_task.await?;
@@ -1330,7 +1329,6 @@ fn update_pattern(
 
     let tool_name = tool_name.to_string();
     let old_pattern = old_pattern.to_string();
-    let new_pattern_for_update = new_pattern.clone();
 
     Some(update_settings_file(
         SettingsUiFile::User,
@@ -1352,10 +1350,12 @@ fn update_pattern(
                 };
 
                 if let Some(list) = rules_list {
-                    let already_exists = list.0.iter().any(|r| r.pattern == new_pattern_for_update);
+                    let already_exists = list.0.iter().any(|rule| rule.pattern == new_pattern);
                     if !already_exists {
-                        if let Some(rule) = list.0.iter_mut().find(|r| r.pattern == old_pattern) {
-                            rule.pattern = new_pattern_for_update;
+                        if let Some(rule) =
+                            list.0.iter_mut().find(|rule| rule.pattern == old_pattern)
+                        {
+                            rule.pattern = new_pattern;
                         }
                     }
                 }
