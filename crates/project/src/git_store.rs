@@ -5031,10 +5031,10 @@ impl Repository {
                         };
 
                         for sha in &response.shas {
-                            let Some(oid) = Oid::from_str(sha) else {
+                            let Ok(oid) = Oid::from_str(sha) else {
                                 return;
                             };
-                            if request_tx.send(sha).await.is_err() {
+                            if request_tx.send(oid).await.is_err() {
                                 return;
                             }
                         }
