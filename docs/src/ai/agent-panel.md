@@ -240,7 +240,7 @@ Zed's UI will inform you about this via a warning icon that appears close to the
 
 ## Errors and Debugging {#errors-and-debugging}
 
-If you hit an error or unusual LLM behavior, open the thread as Markdown with `agent: open thread as markdown` and attach it to your GitHub issue.
+If you hit an error or unusual LLM behavior, open the thread as Markdown with `{#action agent::OpenActiveThreadAsMarkdown}` and attach it to your GitHub issue.
 
 You can also open threads as Markdown by clicking on the file icon button, to the right of the thumbs down button, when focused on the panel's editor.
 
