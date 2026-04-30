@@ -187,6 +187,7 @@ pub struct X11ClientState {
     pub(crate) xcb_connection: Rc<XCBConnection>,
     xkb_device_id: i32,
     client_side_decorations_supported: bool,
+    client_side_shadows_supported: bool,
     pub(crate) x_root_index: usize,
     pub(crate) resource_database: Database,
     pub(crate) atoms: XcbAtoms,
@@ -382,11 +383,16 @@ impl X11Client {
         let root = xcb_connection.setup().roots[0].root;
         let compositor_present = check_compositor_present(&xcb_connection, root);
         let gtk_frame_extents_supported =
-            check_gtk_frame_extents_supported(&xcb_connection, &atoms, root);
-        let client_side_decorations_supported = compositor_present && gtk_frame_extents_supported;
+            check_atom_supported(&xcb_connection, root, atoms._GTK_FRAME_EXTENTS);
+        let net_frame_extents_supported =
+            check_atom_supported(&xcb_connection, root, atoms._NET_FRAME_EXTENTS);
+        let client_side_decorations_supported = compositor_present && net_frame_extents_supported;
+        let client_side_shadows_supported =
+            client_side_decorations_supported && gtk_frame_extents_supported;
         log::info!(
-            "x11: compositor present: {}, gtk_frame_extents_supported: {}",
+            "x11: compositor present: {}, net_frame_extents_supported: {}, gtk_frame_extents_supported: {}",
             compositor_present,
+            net_frame_extents_supported,
             gtk_frame_extents_supported
         );
 
@@ -529,6 +535,7 @@ impl X11Client {
             xcb_connection,
             xkb_device_id,
             client_side_decorations_supported,
+            client_side_shadows_supported,
             x_root_index,
             resource_database,
             atoms,
@@ -1603,6 +1610,7 @@ impl LinuxClient for X11Client {
 
         let xcb_connection = state.xcb_connection.clone();
         let client_side_decorations_supported = state.client_side_decorations_supported;
+        let client_side_shadows_supported = state.client_side_shadows_supported;
         let x_root_index = state.x_root_index;
         let atoms = state.atoms;
         let scale_factor = state.scale_factor;
@@ -1622,6 +1630,7 @@ impl LinuxClient for X11Client {
             params,
             &xcb_connection,
             client_side_decorations_supported,
+            client_side_shadows_supported,
             x_root_index,
             x_window,
             &atoms,
@@ -2246,21 +2255,20 @@ fn check_compositor_present(xcb_connection: &XCBConnection, root: xproto::Window
     method1 || method2 || method3
 }
 
-fn check_gtk_frame_extents_supported(
-    xcb_connection: &XCBConnection,
-    atoms: &XcbAtoms,
-    root: xproto::Window,
-) -> bool {
+fn check_atom_supported(xcb_connection: &XCBConnection, root: xproto::Window, atom: u32) -> bool {
+    let net_supported = match get_reply(
+        || "Failed to intern _NET_SUPPORTED",
+        xcb_connection.intern_atom(false, b"_NET_SUPPORTED"),
+    )
+    .log_with_level(Level::Debug)
+    {
+        Some(reply) if reply.atom != x11rb::NONE => reply.atom,
+        _ => return false,
+    };
+
     let Some(supported_atoms) = get_reply(
         || "Failed to get _NET_SUPPORTED",
-        xcb_connection.get_property(
-            false,
-            root,
-            atoms._NET_SUPPORTED,
-            xproto::AtomEnum::ATOM,
-            0,
-            1024,
-        ),
+        xcb_connection.get_property(false, root, net_supported, xproto::AtomEnum::ATOM, 0, 1024),
     )
     .log_with_level(Level::Debug) else {
         return false;
@@ -2272,7 +2280,7 @@ fn check_gtk_frame_extents_supported(
         .filter_map(|chunk| chunk.try_into().ok().map(u32::from_ne_bytes))
         .collect();
 
-    supported_atom_ids.contains(&atoms._GTK_FRAME_EXTENTS)
+    supported_atom_ids.contains(&atom)
 }
 
 fn xdnd_is_atom_supported(atom: u32, atoms: &XcbAtoms) -> bool {

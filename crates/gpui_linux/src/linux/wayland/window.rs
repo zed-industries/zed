@@ -1453,6 +1453,7 @@ impl PlatformWindow for WaylandWindow {
             WindowDecorations::Server => Decorations::Server,
             WindowDecorations::Client => Decorations::Client {
                 tiling: state.tiling,
+                shadows: true,
             },
         }
     }

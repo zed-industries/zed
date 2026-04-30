@@ -394,6 +394,8 @@ pub enum Decorations {
     Client {
         /// The edge tiling state
         tiling: Tiling,
+        /// Whether the platform can expose client-side shadow extents to the window manager.
+        shadows: bool,
     },
 }
 

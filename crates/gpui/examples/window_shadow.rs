@@ -96,7 +96,7 @@ impl Render for WindowShadow {
                     .cursor(CursorStyle::Arrow)
                     .map(|div| match decorations {
                         Decorations::Server => div,
-                        Decorations::Client { tiling } => div
+                        Decorations::Client { tiling, shadows } => div
                             .border_color(grey)
                             .when(!(tiling.top || tiling.right), |div| {
                                 div.rounded_tr(rounding)
@@ -106,7 +106,7 @@ impl Render for WindowShadow {
                             .when(!tiling.bottom, |div| div.border_b(border_size))
                             .when(!tiling.left, |div| div.border_l(border_size))
                             .when(!tiling.right, |div| div.border_r(border_size))
-                            .when(!tiling.is_tiled(), |div| {
+                            .when(shadows && !tiling.is_tiled(), |div| {
                                 div.shadow(vec![gpui::BoxShadow {
                                     color: Hsla {
                                         h: 0.,

@@ -78,6 +78,7 @@ x11rb::atom_manager! {
         _NET_WM_STATE_MODAL,
         _NET_WM_SYNC,
         _NET_SUPPORTED,
+        _NET_FRAME_EXTENTS,
         _MOTIF_WM_HINTS,
         _GTK_SHOW_WINDOW_MENU,
         _GTK_FRAME_EXTENTS,
@@ -281,6 +282,7 @@ pub struct X11WindowState {
     pub(crate) force_render_after_recovery: bool,
     fullscreen: bool,
     client_side_decorations_supported: bool,
+    client_side_shadows_supported: bool,
     decorations: WindowDecorations,
     edge_constraints: Option<EdgeConstraints>,
     pub handle: AnyWindowHandle,
@@ -418,6 +420,7 @@ impl X11WindowState {
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
+        client_side_shadows_supported: bool,
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
@@ -798,6 +801,7 @@ impl X11WindowState {
                 background_appearance: WindowBackgroundAppearance::Opaque,
                 destroyed: false,
                 client_side_decorations_supported,
+                client_side_shadows_supported,
                 decorations: WindowDecorations::Server,
                 last_insets: [0, 0, 0, 0],
                 edge_constraints: None,
@@ -879,6 +883,7 @@ impl X11Window {
         params: WindowParams,
         xcb: &Rc<XCBConnection>,
         client_side_decorations_supported: bool,
+        client_side_shadows_supported: bool,
         x_main_screen_index: usize,
         x_window: xproto::Window,
         atoms: &XcbAtoms,
@@ -898,6 +903,7 @@ impl X11Window {
                 params,
                 xcb,
                 client_side_decorations_supported,
+                client_side_shadows_supported,
                 x_main_screen_index,
                 x_window,
                 atoms,
@@ -1763,13 +1769,21 @@ impl PlatformWindow for X11Window {
                         right: state.maximized_horizontal,
                     }
                 };
-                Decorations::Client { tiling }
+                Decorations::Client {
+                    tiling,
+                    shadows: state.client_side_shadows_supported,
+                }
             }
         }
     }
 
     fn set_client_inset(&self, inset: Pixels) {
         let mut state = self.0.state.borrow_mut();
+
+        if !state.client_side_shadows_supported {
+            state.last_insets = [0, 0, 0, 0];
+            return;
+        }
 
         let dp = (f32::from(inset) * state.scale_factor) as u32;
 
