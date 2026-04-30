@@ -240,7 +240,7 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.new_terminal(window, cx);
+                            panel.new_terminal(Some(workspace), window, cx);
                         });
                     }
                 })
@@ -1309,12 +1309,19 @@ impl AgentPanel {
         self.activate_draft(true, "agent_panel", window, cx);
     }
 
-    pub fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let working_directory = self.default_terminal_working_directory(cx);
+    pub fn new_terminal(
+        &mut self,
+        workspace: Option<&Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.project.read(cx).supports_terminal(cx) {
             self.show_terminal_unavailable_toast(cx);
             return;
         }
+        let working_directory = workspace
+            .map(|workspace| terminal_view::default_working_directory(workspace, cx))
+            .unwrap_or_else(|| self.default_terminal_working_directory(cx));
         self.spawn_terminal(TerminalId::new(), working_directory, true, window, cx);
     }
 
@@ -3450,7 +3457,11 @@ impl AgentPanel {
                                                         workspace.panel::<AgentPanel>(cx)
                                                     {
                                                         panel.update(cx, |panel, cx| {
-                                                            panel.new_terminal(window, cx);
+                                                            panel.new_terminal(
+                                                                Some(workspace),
+                                                                window,
+                                                                cx,
+                                                            );
                                                         });
                                                     }
                                                 });
@@ -4014,7 +4025,7 @@ impl Render for AgentPanel {
                 this.new_thread(action, window, cx);
             }))
             .on_action(cx.listener(|this, _: &NewAgentPanelTerminal, window, cx| {
-                this.new_terminal(window, cx);
+                this.new_terminal(None, window, cx);
             }))
             .on_action(cx.listener(|this, _: &CloseActiveItem, window, cx| {
                 if matches!(this.visible_surface(), VisibleSurface::Terminal(_))
