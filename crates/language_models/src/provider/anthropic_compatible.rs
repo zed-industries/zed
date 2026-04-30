@@ -5,7 +5,8 @@ use anyhow::Result;
 use convert_case::{Case, Casing};
 use credentials_provider::CredentialsProvider;
 use futures::{
-    AsyncBufReadExt, FutureExt, StreamExt, future::BoxFuture, io::BufReader, stream::BoxStream,
+    AsyncBufReadExt, AsyncReadExt, FutureExt, StreamExt, future::BoxFuture, io::BufReader,
+    stream::BoxStream,
 };
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
@@ -312,15 +313,17 @@ impl AnthropicCompatibleLanguageModel {
             .body(AsyncBody::from(serialized_request))
             .map_err(anthropic::AnthropicError::BuildRequestBody)?;
 
-        let response = client
+        let mut response = client
             .send(http_request)
             .await
             .map_err(anthropic::AnthropicError::HttpSend)?;
 
         if !response.status().is_success() {
+            let mut body = String::new();
+            let _ = response.body_mut().read_to_string(&mut body).await;
             return Err(anthropic::AnthropicError::HttpResponseError {
                 status_code: response.status(),
-                message: String::new(),
+                message: body,
             });
         }
 
