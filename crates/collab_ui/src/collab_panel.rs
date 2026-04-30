@@ -2902,7 +2902,10 @@ impl CollabPanel {
             .map_or(AutoWatchScreensState::Off, |workspace| {
                 *workspace.read(cx).auto_watch_screens_state()
             });
-        let is_auto_watching = !matches!(auto_watch_state, AutoWatchScreensState::Off);
+        let is_auto_watching = matches!(
+            auto_watch_state,
+            AutoWatchScreensState::Active { .. } | AutoWatchScreensState::Paused
+        );
 
         let button = match section {
             Section::ActiveCall => {
