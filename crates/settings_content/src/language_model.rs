@@ -21,6 +21,7 @@ pub struct AllLanguageModelSettingsContent {
     pub open_router: Option<OpenRouterSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
+    pub anthropic_compatible: Option<HashMap<Arc<str>, AnthropicCompatibleSettingsContent>>,
     pub vercel_ai_gateway: Option<VercelAiGatewaySettingsContent>,
     pub x_ai: Option<XAiSettingsContent>,
     #[serde(rename = "zed.dev")]
@@ -327,6 +328,31 @@ impl Default for OpenAiCompatibleModelCapabilities {
             interleaved_reasoning: false,
         }
     }
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct AnthropicCompatibleSettingsContent {
+    pub api_url: String,
+    pub available_models: Vec<AnthropicCompatibleAvailableModel>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AnthropicCompatibleAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub default_temperature: Option<f32>,
+    #[serde(default)]
+    pub extra_beta_headers: Vec<String>,
+    pub mode: Option<ModelMode>,
+    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
+    #[serde(default)]
+    pub capabilities: OpenAiCompatibleModelCapabilities,
 }
 
 #[with_fallible_options]

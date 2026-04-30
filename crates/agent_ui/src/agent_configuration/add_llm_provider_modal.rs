@@ -7,8 +7,13 @@ use gpui::{
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, ScrollHandle, Task,
 };
 use language_model::LanguageModelRegistry;
-use language_models::provider::open_ai_compatible::{AvailableModel, ModelCapabilities};
-use settings::{OpenAiCompatibleSettingsContent, update_settings_file};
+use language_models::provider::anthropic_compatible::AvailableModel as AnthropicAvailableModel;
+use language_models::provider::open_ai_compatible::{
+    AvailableModel as OpenAiAvailableModel, ModelCapabilities as OpenAiModelCapabilities,
+};
+use settings::{
+    AnthropicCompatibleSettingsContent, OpenAiCompatibleSettingsContent, update_settings_file,
+};
 use ui::{
     Banner, Checkbox, KeyBinding, Modal, ModalFooter, ModalHeader, Section, ToggleState,
     WithScrollbar, prelude::*,
@@ -40,23 +45,27 @@ fn single_line_input(
 #[derive(Clone, Copy)]
 pub enum LlmCompatibleProvider {
     OpenAi,
+    Anthropic,
 }
 
 impl LlmCompatibleProvider {
     fn name(&self) -> &'static str {
         match self {
             LlmCompatibleProvider::OpenAi => "OpenAI",
+            LlmCompatibleProvider::Anthropic => "Anthropic",
         }
     }
 
     fn api_url(&self) -> &'static str {
         match self {
             LlmCompatibleProvider::OpenAi => "https://api.openai.com/v1",
+            LlmCompatibleProvider::Anthropic => "https://api.anthropic.com/v1",
         }
     }
 }
 
 struct AddLlmProviderInput {
+    provider: LlmCompatibleProvider,
     provider_name: Entity<InputField>,
     api_url: Entity<InputField>,
     api_key: Entity<InputField>,
@@ -81,6 +90,7 @@ impl AddLlmProviderInput {
         });
 
         Self {
+            provider,
             provider_name,
             api_url,
             api_key,
@@ -90,7 +100,8 @@ impl AddLlmProviderInput {
 
     fn add_model(&mut self, window: &mut Window, cx: &mut App) {
         let model_index = self.models.len();
-        self.models.push(ModelInput::new(model_index, window, cx));
+        self.models
+            .push(ModelInput::new(model_index, window, cx));
     }
 
     fn remove_model(&mut self, index: usize) {
@@ -115,7 +126,11 @@ struct ModelInput {
 }
 
 impl ModelInput {
-    fn new(model_index: usize, window: &mut Window, cx: &mut App) -> Self {
+    fn new(
+        model_index: usize,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
         let base_tab_index = (3 + (model_index * 4)) as isize;
 
         let model_name = single_line_input(
@@ -151,36 +166,28 @@ impl ModelInput {
             cx,
         );
 
-        let ModelCapabilities {
-            tools,
-            images,
-            parallel_tool_calls,
-            prompt_cache_key,
-            chat_completions,
-            ..
-        } = ModelCapabilities::default();
-
+        let caps = OpenAiModelCapabilities::default();
         Self {
             name: model_name,
             max_completion_tokens,
             max_output_tokens,
             max_tokens,
             capabilities: ModelCapabilityToggles {
-                supports_tools: tools.into(),
-                supports_images: images.into(),
-                supports_parallel_tool_calls: parallel_tool_calls.into(),
-                supports_prompt_cache_key: prompt_cache_key.into(),
-                supports_chat_completions: chat_completions.into(),
+                supports_tools: caps.tools.into(),
+                supports_images: caps.images.into(),
+                supports_parallel_tool_calls: caps.parallel_tool_calls.into(),
+                supports_prompt_cache_key: caps.prompt_cache_key.into(),
+                supports_chat_completions: caps.chat_completions.into(),
             },
         }
     }
 
-    fn parse(&self, cx: &App) -> Result<AvailableModel, SharedString> {
+    fn parse(&self, cx: &App) -> Result<AnthropicAvailableModel, SharedString> {
         let name = self.name.read(cx).text(cx);
         if name.is_empty() {
             return Err(SharedString::from("Model Name cannot be empty"));
         }
-        Ok(AvailableModel {
+        Ok(AnthropicAvailableModel {
             name,
             display_name: None,
             max_completion_tokens: Some(
@@ -203,8 +210,11 @@ impl ModelInput {
                 .text(cx)
                 .parse::<u64>()
                 .map_err(|_| SharedString::from("Max Tokens must be a number"))?,
-            reasoning_effort: None,
-            capabilities: ModelCapabilities {
+            default_temperature: None,
+            extra_beta_headers: Vec::new(),
+            mode: None,
+            cache_configuration: None,
+            capabilities: OpenAiModelCapabilities {
                 tools: self.capabilities.supports_tools.selected(),
                 images: self.capabilities.supports_images.selected(),
                 parallel_tool_calls: self.capabilities.supports_parallel_tool_calls.selected(),
@@ -264,23 +274,52 @@ fn save_provider_to_settings(
 
     let fs = <dyn Fs>::global(cx);
     let task = cx.write_credentials(&api_url, "Bearer", api_key.as_bytes());
+    let provider = input.provider;
     cx.spawn(async move |cx| {
         task.await
             .map_err(|_| SharedString::from("Failed to write API key to keychain"))?;
         cx.update(|cx| {
-            update_settings_file(fs, cx, |settings, _cx| {
-                settings
-                    .language_models
-                    .get_or_insert_default()
-                    .openai_compatible
-                    .get_or_insert_default()
-                    .insert(
-                        provider_name,
-                        OpenAiCompatibleSettingsContent {
-                            api_url,
-                            available_models: models,
-                        },
-                    );
+            update_settings_file(fs, cx, move |settings, _cx| match provider {
+                LlmCompatibleProvider::OpenAi => {
+                    let openai_models = models
+                        .into_iter()
+                        .map(|m| OpenAiAvailableModel {
+                            name: m.name,
+                            display_name: m.display_name,
+                            max_tokens: m.max_tokens,
+                            max_output_tokens: m.max_output_tokens,
+                            max_completion_tokens: m.max_completion_tokens,
+                            reasoning_effort: None,
+                            capabilities: m.capabilities,
+                        })
+                        .collect();
+                    settings
+                        .language_models
+                        .get_or_insert_default()
+                        .openai_compatible
+                        .get_or_insert_default()
+                        .insert(
+                            provider_name,
+                            OpenAiCompatibleSettingsContent {
+                                api_url,
+                                available_models: openai_models,
+                            },
+                        );
+                }
+                LlmCompatibleProvider::Anthropic => {
+                    settings
+                        .language_models
+                        .get_or_insert_default()
+                        .anthropic_compatible
+                        .get_or_insert_default()
+                        .insert(
+                            provider_name,
+                            AnthropicCompatibleSettingsContent {
+                                api_url,
+                                available_models: models,
+                            },
+                        );
+                }
             });
         });
         Ok(())
@@ -524,6 +563,9 @@ impl Render for AddLlmProviderModal {
                         match self.provider {
                             LlmCompatibleProvider::OpenAi => {
                                 "This provider will use an OpenAI compatible API."
+                            }
+                            LlmCompatibleProvider::Anthropic => {
+                                "This provider will use an Anthropic-compatible API."
                             }
                         },
                     ))
@@ -855,7 +897,9 @@ mod tests {
                 models.iter().enumerate()
             {
                 if i >= input.models.len() {
-                    input.models.push(ModelInput::new(i, window, cx));
+                    input
+                        .models
+                        .push(ModelInput::new(i, window, cx));
                 }
                 let model = &mut input.models[i];
                 set_text(&model.name, name, window, cx);
