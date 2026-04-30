@@ -268,7 +268,10 @@ impl GitHostingProvider for Github {
         http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
         if let Some(email) = author_email {
-            return Ok(Some(build_cdn_avatar_url(&email)?));
+            // Bot noreply emails are not supported by the CDN avatar URL.
+            if !email.ends_with("[bot]@users.noreply.github.com") {
+                return Ok(Some(build_cdn_avatar_url(&email)?));
+            }
         }
 
         let commit = commit.to_string();
