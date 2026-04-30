@@ -21,8 +21,8 @@ use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use smallvec::SmallVec;
-use smol::io::{AsyncBufReadExt, BufReader};
 use smol::Timer;
+use smol::io::{AsyncBufReadExt, BufReader};
 use text::LineEnding;
 
 use std::collections::{BTreeMap, HashSet};
@@ -2125,6 +2125,11 @@ impl GitRepository for RealGitRepository {
                 count_untracked_lines(&git_binary, path_prefixes, &paths_with_stats).await?;
 
             let timeout = async {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "This will not cause non-determinism since the tests \
+                    should complete well before 2s"
+                )]
                 Timer::after(Duration::from_secs(1)).await;
                 warn!("Timed out counting lines in untracked file paths");
                 BTreeMap::<RepoPath, DiffStat>::new()
@@ -2140,6 +2145,7 @@ impl GitRepository for RealGitRepository {
                 .or(timeout)
                 .await;
 
+            dbg!(&total);
             Ok(GitDiffStat {
                 entries: total.into_iter().collect_vec().into(),
             })

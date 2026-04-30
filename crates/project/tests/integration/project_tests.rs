@@ -10325,12 +10325,10 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
-                    diff_stat: Some(
-                        DiffStat {
-                            added: 1,
-                            deleted: 0,
-                        },
-                    ),
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 0,
+                    },),
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),

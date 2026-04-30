@@ -1,8 +1,5 @@
 use fs::{FakeFs, Fs};
-use git::{
-    repository::RepoPath,
-    status::DiffStat,
-};
+use git::{repository::RepoPath, status::DiffStat};
 use gpui::{BackgroundExecutor, TestAppContext};
 use serde_json::json;
 use std::path::{Path, PathBuf};

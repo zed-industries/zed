@@ -669,18 +669,15 @@ pub(crate) async fn count_untracked_lines(
     let stream = output // TODO!(Yara) check if this is not regressing pref (use chromium)
         .split_terminator('\0')
         .filter_map(|path_str| {
-            dbg!(&path_str);
             let Ok(path) = RepoPath::new(path_str) else {
                 return None;
             };
             if paths_with_stats.lock().contains(&path) {
                 return None;
             }
-            dbg!(&path_str);
 
             let absolute_path: Arc<Path> =
                 git_binary.working_directory.join(path.as_std_path()).into();
-            dbg!(&absolute_path);
             untracked_path_diff_stat(Arc::clone(&absolute_path), Arc::clone(&repo_path))
                 .map(move |res| match res {
                     Ok(Some(diff_stat)) => {
@@ -705,9 +702,7 @@ async fn untracked_path_diff_stat(
 ) -> Result<Option<crate::status::DiffStat>> {
     const ONE_MEGABYTE: u64 = 1024 * 1024;
 
-    dbg!();
     let file = smol::fs::symlink_metadata(&absolute_path).await?;
-    dbg!();
     if file.len() > ONE_MEGABYTE {
         return Ok(None);
     }
@@ -718,11 +713,9 @@ async fn untracked_path_diff_stat(
         absolute_path
     };
 
-    dbg!(&absolute_path, &repo_path);
     if file.is_symlink() && absolute_path.strip_prefix(repo_path).is_err() {
         return Ok(None); // symlink to file outside repository
     }
-    dbg!();
 
     if smol::fs::metadata(&absolute_path).await?.is_dir() {
         return Ok(None);
@@ -779,7 +772,7 @@ async fn utf8_line_count(reader: impl smol::io::AsyncRead) -> Result<u32, LineCo
 
     // will be wrong if the buffer
     let has_trailing_chars = last_read.last().is_some_and(|b| *b != b'\n');
-    Ok(count + dbg!(has_trailing_chars) as u32)
+    Ok(count + has_trailing_chars as u32)
 }
 
 fn trim_broken_utf8(s: &[u8]) -> &[u8] {

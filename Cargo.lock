@@ -7271,7 +7271,6 @@ dependencies = [
  "futures 0.3.32",
  "git2",
  "gpui",
- "heapless",
  "http_client",
  "itertools 0.14.0",
  "log",
