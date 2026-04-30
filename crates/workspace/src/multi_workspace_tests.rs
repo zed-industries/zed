@@ -259,6 +259,87 @@ async fn test_open_directory_in_empty_workspace_does_not_open_sidebar(cx: &mut T
 }
 
 #[gpui::test]
+async fn test_open_project_retains_previous_workspace_when_sidebar_is_closed(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/project_a"), json!({ "file_a.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/project_b"), json!({ "file_b.txt": "" }))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert!(!mw.sidebar_open(), "sidebar should start closed");
+        })
+        .unwrap();
+
+    let workspace_a = window
+        .update(cx, |mw, window, cx| {
+            mw.open_project(
+                vec![PathBuf::from(path!("/project_a"))],
+                OpenMode::Activate,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let workspace_b = window
+        .update(cx, |mw, window, cx| {
+            mw.open_project(
+                vec![PathBuf::from(path!("/project_b"))],
+                OpenMode::Activate,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_ne!(workspace_a, workspace_b);
+    window
+        .update(cx, |mw, _window, cx| {
+            assert!(!mw.sidebar_open(), "sidebar should still be closed");
+            assert_eq!(
+                mw.project_group_keys(),
+                vec![ProjectGroupKey::new(
+                    None,
+                    PathList::new(&[path!("/project_a")])
+                )]
+            );
+            mw.open_sidebar(cx);
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert!(mw.sidebar_open());
+            assert_eq!(mw.workspaces().count(), 2);
+            assert_eq!(
+                mw.project_group_keys(),
+                vec![
+                    ProjectGroupKey::new(None, PathList::new(&[path!("/project_b")])),
+                    ProjectGroupKey::new(None, PathList::new(&[path!("/project_a")])),
+                ]
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 async fn test_project_group_keys_duplicate_not_added(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());

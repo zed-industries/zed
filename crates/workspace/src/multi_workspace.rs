@@ -1957,6 +1957,9 @@ impl MultiWorkspace {
                 }
 
                 let create_task = this.update_in(cx, |this, window, cx| {
+                    if empty_workspace.is_none() {
+                        this.retain_active_workspace(cx);
+                    }
                     this.find_or_create_local_workspace(
                         PathList::new(&paths),
                         None,
