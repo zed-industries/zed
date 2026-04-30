@@ -233,6 +233,10 @@ pub struct ProjectSearch {
     excerpts: Entity<MultiBuffer>,
     pending_search: Option<Task<Option<()>>>,
     match_ranges: Vec<Range<Anchor>>,
+    /// Files matched but not loaded as buffers because they exceeded
+    /// `max_loaded_file_size_bytes`. Displayed in the search toolbar tooltip;
+    /// not yet interactively rendered in the multibuffer (Phase 1; issue 20970).
+    deferred_file_count: usize,
     active_query: Option<SearchQuery>,
     last_search_query_text: Option<String>,
     search_id: usize,
@@ -325,6 +329,7 @@ impl ProjectSearch {
             excerpts,
             pending_search: Default::default(),
             match_ranges: Default::default(),
+            deferred_file_count: 0,
             active_query: None,
             last_search_query_text: None,
             search_id: 0,
@@ -348,6 +353,7 @@ impl ProjectSearch {
                 excerpts,
                 pending_search: Default::default(),
                 match_ranges: self.match_ranges.clone(),
+                deferred_file_count: self.deferred_file_count,
                 active_query: self.active_query.clone(),
                 last_search_query_text: self.last_search_query_text.clone(),
                 search_id: self.search_id,
@@ -443,6 +449,7 @@ impl ProjectSearch {
         self.search_id += 1;
         self.active_query = Some(query);
         self.match_ranges.clear();
+        self.deferred_file_count = 0;
         self.search_state = SearchState::Running(SearchActivity::Searching);
         self.pending_search = Some(cx.spawn(async move |project_search, cx| {
             let SearchResults { rx, _task_handle } = search;
@@ -451,6 +458,7 @@ impl ProjectSearch {
             project_search
                 .update(cx, |project_search, cx| {
                     project_search.match_ranges.clear();
+                    project_search.deferred_file_count = 0;
                     project_search
                         .excerpts
                         .update(cx, |excerpts, cx| excerpts.clear(cx));
@@ -459,16 +467,23 @@ impl ProjectSearch {
 
             let mut limit_reached = false;
             while let Some(results) = matches.next().await {
-                let (buffers_with_ranges, has_reached_limit, search_activity) = cx
+                let (buffers_with_ranges, deferred_files_in_chunk, has_reached_limit, search_activity) = cx
                     .background_executor()
                     .spawn(async move {
                         let mut limit_reached = false;
                         let mut search_activity = None;
                         let mut buffers_with_ranges = Vec::with_capacity(results.len());
+                        let mut deferred_files_in_chunk: usize = 0;
                         for result in results {
                             match result {
                                 project::search::SearchResult::Buffer { buffer, ranges } => {
                                     buffers_with_ranges.push((buffer, ranges));
+                                }
+                                project::search::SearchResult::DeferredFile(_summary) => {
+                                    // Phase 1: count deferred files for the toolbar tooltip
+                                    // but do not render them inline yet. Issue 20970 follow-up
+                                    // will add interactive hydration on click.
+                                    deferred_files_in_chunk += 1;
                                 }
                                 project::search::SearchResult::LimitReached => {
                                     limit_reached = true;
@@ -481,10 +496,19 @@ impl ProjectSearch {
                                 }
                             }
                         }
-                        (buffers_with_ranges, limit_reached, search_activity)
+                        (buffers_with_ranges, deferred_files_in_chunk, limit_reached, search_activity)
                     })
                     .await;
                 limit_reached |= has_reached_limit;
+                if deferred_files_in_chunk > 0 {
+                    project_search
+                        .update(cx, |project_search, cx| {
+                            project_search.deferred_file_count =
+                                project_search.deferred_file_count.saturating_add(deferred_files_in_chunk);
+                            cx.notify();
+                        })
+                        .ok()?;
+                }
                 if let Some(search_activity) = search_activity {
                     project_search
                         .update(cx, |project_search, cx| {
@@ -2202,6 +2226,7 @@ impl Render for ProjectSearchBar {
         let project_search = search.entity.read(cx);
         let limit_reached = project_search.search_state.limit_reached();
         let is_search_underway = project_search.pending_search.is_some();
+        let deferred_file_count = project_search.deferred_file_count;
 
         let color_override = match (
             project_search.search_state,
@@ -2325,6 +2350,16 @@ impl Render for ProjectSearchBar {
                         this.tooltip(Tooltip::text(
                             "Search Limits Reached\nTry narrowing your search",
                         ))
+                    })
+                    .when(!limit_reached && deferred_file_count > 0, |this| {
+                        let tooltip_text = if deferred_file_count == 1 {
+                            "1 large file was searched without being loaded into the editor.\nMatches are tracked but not previewed inline yet.".to_string()
+                        } else {
+                            format!(
+                                "{deferred_file_count} large files were searched without being loaded into the editor.\nMatches are tracked but not previewed inline yet."
+                            )
+                        };
+                        this.tooltip(Tooltip::text(tooltip_text))
                     }),
             );
 

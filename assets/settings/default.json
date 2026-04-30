@@ -709,6 +709,15 @@
     "regex": false,
     // Whether to center the cursor on each search match when navigating.
     "center_on_match": false,
+    // Files larger than this size (in bytes) are searched in a streaming mode
+    // that does not load them fully into memory. Match snippets are still
+    // surfaced as deferred results, and the file is loaded on demand when the
+    // user navigates to a match. Set to 0 to disable the streaming mode
+    // entirely and always load every match's file into a buffer (not
+    // recommended on machines with limited RAM — see issue 20970).
+    "max_loaded_file_size_bytes": 10485760,
+    // Maximum match locations captured per deferred (streaming-mode) file.
+    "max_matches_per_deferred_file": 1000,
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:

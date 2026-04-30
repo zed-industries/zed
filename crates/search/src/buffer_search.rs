@@ -3790,6 +3790,8 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                max_loaded_file_size_bytes: 10 * 1024 * 1024,
+                max_matches_per_deferred_file: 1000,
             },
             cx,
         );
@@ -3853,6 +3855,8 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                max_loaded_file_size_bytes: 10 * 1024 * 1024,
+                max_matches_per_deferred_file: 1000,
             },
             cx,
         );
@@ -3891,6 +3895,8 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                max_loaded_file_size_bytes: 10 * 1024 * 1024,
+                max_matches_per_deferred_file: 1000,
             },
             cx,
         );
@@ -4047,6 +4053,12 @@ mod tests {
                         include_ignored: Some(search_settings.include_ignored),
                         regex: Some(search_settings.regex),
                         center_on_match: Some(search_settings.center_on_match),
+                        max_loaded_file_size_bytes: Some(
+                            search_settings.max_loaded_file_size_bytes,
+                        ),
+                        max_matches_per_deferred_file: Some(
+                            search_settings.max_matches_per_deferred_file,
+                        ),
                     });
                 });
             });

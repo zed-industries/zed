@@ -183,6 +183,11 @@ pub struct SearchSettings {
     pub regex: bool,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: bool,
+    /// Files larger than this size (in bytes) are searched in a streaming mode
+    /// that does not load them into memory. `0` disables streaming mode.
+    pub max_loaded_file_size_bytes: u64,
+    /// Maximum match locations captured per deferred (streaming-mode) file.
+    pub max_matches_per_deferred_file: usize,
 }
 
 impl EditorSettings {
@@ -283,6 +288,8 @@ impl Settings for EditorSettings {
                 include_ignored: search.include_ignored.unwrap(),
                 regex: search.regex.unwrap(),
                 center_on_match: search.center_on_match.unwrap(),
+                max_loaded_file_size_bytes: search.max_loaded_file_size_bytes.unwrap(),
+                max_matches_per_deferred_file: search.max_matches_per_deferred_file.unwrap(),
             },
             auto_signature_help: editor.auto_signature_help.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),

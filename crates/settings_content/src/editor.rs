@@ -937,6 +937,20 @@ pub struct SearchSettingsContent {
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,
+    /// Files larger than this size (in bytes) are searched in a streaming mode that
+    /// does not load them fully into memory. Match snippets are still surfaced as
+    /// "deferred" results, and clicking a deferred match loads the file on demand.
+    /// Set to `0` to disable streaming mode (not recommended on machines with
+    /// limited RAM — see issue 20970).
+    ///
+    /// Default: 10485760 (10 MB)
+    pub max_loaded_file_size_bytes: Option<u64>,
+    /// Maximum match locations to capture per deferred (streaming-mode) file.
+    /// Files with more matches than this have their result list truncated and
+    /// are flagged as such in the UI.
+    ///
+    /// Default: 1000
+    pub max_matches_per_deferred_file: Option<usize>,
 }
 
 #[with_fallible_options]

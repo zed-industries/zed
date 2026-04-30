@@ -8152,6 +8152,289 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
     );
 }
 
+/// Override the project search streaming-mode threshold and per-file match cap
+/// for a test. Layered as a user setting so it merges with the defaults loaded
+/// via `SettingsStore::test`. (issue 20970)
+fn override_search_streaming_settings(
+    cx: &mut gpui::TestAppContext,
+    max_loaded_file_size_bytes: u64,
+    max_matches_per_deferred_file: usize,
+) {
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                let search = settings.editor.search.get_or_insert_default();
+                search.max_loaded_file_size_bytes = Some(max_loaded_file_size_bytes);
+                search.max_matches_per_deferred_file = Some(max_matches_per_deferred_file);
+            });
+        });
+    });
+}
+
+/// Drain a project search and split results into (loaded buffer matches, deferred summaries).
+async fn collect_search_results(
+    project: &Entity<Project>,
+    query: SearchQuery,
+    cx: &mut gpui::TestAppContext,
+) -> (
+    Vec<(Entity<Buffer>, Vec<Range<language::Anchor>>)>,
+    Vec<project::search::FileMatchSummary>,
+) {
+    let search_rx = project.update(cx, |project, cx| project.search(query, cx));
+    let mut buffers = Vec::new();
+    let mut deferred = Vec::new();
+    while let Ok(result) = search_rx.rx.recv().await {
+        match result {
+            SearchResult::Buffer { buffer, ranges } => buffers.push((buffer, ranges)),
+            SearchResult::DeferredFile(summary) => deferred.push(summary),
+            SearchResult::LimitReached
+            | SearchResult::WaitingForScan
+            | SearchResult::Searching => {}
+        }
+    }
+    (buffers, deferred)
+}
+
+#[gpui::test]
+async fn test_search_streaming_emits_deferred_for_large_files(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    // Threshold = 256 bytes; cap matches per deferred file at 100.
+    override_search_streaming_settings(cx, 256, 100);
+
+    let small_file_contents = b"small file with target match here\n".to_vec();
+    // A file well over 256 bytes containing a single distinguishing target.
+    let mut large_file_contents = vec![b'X'; 1024];
+    large_file_contents.extend_from_slice(b"\nline two with target match\n");
+    large_file_contents.extend(std::iter::repeat_n(b'Y', 1024));
+    large_file_contents.push(b'\n');
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+    fs.insert_file(path!("/dir/small.txt"), small_file_contents)
+        .await;
+    fs.insert_file(path!("/dir/large.txt"), large_file_contents)
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let query = SearchQuery::text(
+        "target match",
+        false,
+        true,
+        false,
+        Default::default(),
+        Default::default(),
+        false,
+        None,
+    )
+    .unwrap();
+
+    let (buffers, deferred) = collect_search_results(&project, query, cx).await;
+
+    let buffer_paths: Vec<String> = buffers
+        .iter()
+        .map(|(buffer, _)| {
+            buffer.read_with(cx, |buf, cx| {
+                buf.file().unwrap().full_path(cx).to_string_lossy().to_string()
+            })
+        })
+        .collect();
+    assert_eq!(
+        buffer_paths,
+        vec![path!("dir/small.txt").to_string()],
+        "small file should take the buffer-load path"
+    );
+
+    assert_eq!(
+        deferred.len(),
+        1,
+        "exactly one deferred summary is expected for large.txt"
+    );
+    let summary = &deferred[0];
+    assert_eq!(
+        summary.path.path.as_unix_str(),
+        "large.txt",
+        "the deferred summary must point at the large file"
+    );
+    assert_eq!(summary.matches.len(), 1);
+    assert!(
+        summary.matches[0].snippet.contains("target match"),
+        "snippet should contain the matched text, got: {:?}",
+        summary.matches[0].snippet
+    );
+    assert!(!summary.truncated, "single match should not be truncated");
+}
+
+#[gpui::test]
+async fn test_search_streaming_caps_matches_per_file(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    // Cap matches at 5 per deferred file even when there are many.
+    override_search_streaming_settings(cx, 256, 5);
+
+    // 1 KB of `<` characters = ~1024 matches; far above the 5-match cap and
+    // far above the 256-byte file-size threshold.
+    let mut content = Vec::with_capacity(1024);
+    for _ in 0..1024 {
+        content.extend_from_slice(b"<\n");
+    }
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+    fs.insert_file(path!("/dir/big.txt"), content).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let query = SearchQuery::text(
+        "<",
+        false,
+        true,
+        false,
+        Default::default(),
+        Default::default(),
+        false,
+        None,
+    )
+    .unwrap();
+    let (buffers, deferred) = collect_search_results(&project, query, cx).await;
+
+    assert!(buffers.is_empty(), "no buffer-path results expected");
+    assert_eq!(deferred.len(), 1);
+    assert_eq!(
+        deferred[0].matches.len(),
+        5,
+        "matches must be capped at max_matches_per_deferred_file"
+    );
+    assert!(
+        deferred[0].truncated,
+        "summary must be flagged as truncated when the cap fires"
+    );
+}
+
+#[gpui::test]
+async fn test_search_streaming_skips_invalid_utf8(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    override_search_streaming_settings(cx, 256, 100);
+
+    // 1 KB of bytes with an invalid UTF-8 sequence at the start.
+    let mut content = vec![0xFF, 0xFE, 0xFA, 0xFB];
+    content.extend(std::iter::repeat_n(b'A', 1024));
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+    fs.insert_file(path!("/dir/binary.bin"), content).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let query = SearchQuery::text(
+        "A",
+        false,
+        true,
+        false,
+        Default::default(),
+        Default::default(),
+        false,
+        None,
+    )
+    .unwrap();
+    let (buffers, deferred) = collect_search_results(&project, query, cx).await;
+
+    assert!(
+        buffers.is_empty(),
+        "invalid UTF-8 files should not match the buffer path"
+    );
+    assert!(
+        deferred.is_empty(),
+        "invalid UTF-8 files should not match the deferred path either"
+    );
+}
+
+#[gpui::test]
+async fn test_search_streaming_multiline_regex_emits_deferred_empty(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    override_search_streaming_settings(cx, 256, 100);
+
+    // > 256 byte file containing the literal newline-separated `foo\nbar` pattern.
+    let mut content = b"prefix line\nfoo\nbar\nmore content\n".to_vec();
+    content.extend(std::iter::repeat_n(b'X', 1024));
+    content.push(b'\n');
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+    fs.insert_file(path!("/dir/multiline.txt"), content).await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    // A regex pattern containing a literal `\n` is detected as multiline by
+    // SearchQuery::build_regex; see crates/project/src/search.rs.
+    let query = SearchQuery::regex(
+        "foo\\nbar",
+        false,
+        true,
+        false,
+        false,
+        Default::default(),
+        Default::default(),
+        false,
+        None,
+    )
+    .unwrap();
+
+    let (buffers, deferred) = collect_search_results(&project, query, cx).await;
+
+    assert!(buffers.is_empty(), "no buffer-path results expected");
+    assert_eq!(
+        deferred.len(),
+        1,
+        "multiline regex over threshold should still surface the file as deferred"
+    );
+    assert!(
+        deferred[0].matches.is_empty(),
+        "multiline regex matches cannot be enumerated without loading the file"
+    );
+    assert!(
+        deferred[0].truncated,
+        "deferred summary must be truncated when matches are not enumerated"
+    );
+}
+
+#[gpui::test]
+async fn test_search_streaming_below_threshold_uses_buffer_path(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    // Default threshold is 10 MiB; a small file must take the buffer path.
+    override_search_streaming_settings(cx, 10 * 1024 * 1024, 1000);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "tiny.rs": "const TARGET: usize = 1;\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    let query = SearchQuery::text(
+        "TARGET",
+        false,
+        true,
+        false,
+        Default::default(),
+        Default::default(),
+        false,
+        None,
+    )
+    .unwrap();
+    let (buffers, deferred) = collect_search_results(&project, query, cx).await;
+
+    assert_eq!(
+        buffers.len(),
+        1,
+        "small file must take the buffer-load path even when streaming setting is enabled"
+    );
+    assert!(deferred.is_empty(), "no deferred summaries expected");
+}
+
 #[gpui::test]
 async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -12314,8 +12597,10 @@ async fn search(
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
             }
-            SearchResult::LimitReached | SearchResult::WaitingForScan | SearchResult::Searching => {
-            }
+            SearchResult::DeferredFile(_)
+            | SearchResult::LimitReached
+            | SearchResult::WaitingForScan
+            | SearchResult::Searching => {}
         }
     }
     Ok(results

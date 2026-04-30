@@ -20,6 +20,7 @@ use language::{Buffer, BufferSnapshot};
 use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
+use settings::{RegisterSetting, Settings};
 
 use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
 use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
@@ -27,9 +28,45 @@ use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 use crate::{
     Project, ProjectItem, ProjectPath, RemotelyCreatedModels,
     buffer_store::BufferStore,
-    search::{SearchQuery, SearchResult},
+    search::{FileMatchSummary, SearchQuery, SearchResult},
     worktree_store::WorktreeStore,
 };
+
+/// Default size threshold above which project search uses the streaming
+/// (deferred) path: 10 MiB. See issue 20970.
+pub const DEFAULT_MAX_LOADED_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024;
+/// Default cap on matches captured per file in streaming-mode search.
+pub const DEFAULT_MAX_MATCHES_PER_DEFERRED_FILE: usize = 1000;
+
+/// Bound on the project search result channel between the worker pipeline and
+/// the UI consumer. Combined with the per-file match cap and the streaming
+/// path, this prevents unbounded queue growth on large/match-dense projects
+/// (issue 20970).
+const SEARCH_RESULT_CHANNEL_CAPACITY: usize = 32;
+
+/// Settings governing the streaming-mode threshold and per-file match cap for
+/// project search. Read via the standard `settings::Settings` plumbing rather
+/// than `editor::EditorSettings` because the `editor` crate depends on
+/// `project`, which would create a cycle.
+#[derive(Copy, Clone, Debug, RegisterSetting)]
+pub struct ProjectSearchLimitSettings {
+    pub max_loaded_file_size_bytes: u64,
+    pub max_matches_per_deferred_file: usize,
+}
+
+impl Settings for ProjectSearchLimitSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let search = content.editor.search.clone().unwrap_or_default();
+        Self {
+            max_loaded_file_size_bytes: search
+                .max_loaded_file_size_bytes
+                .unwrap_or(DEFAULT_MAX_LOADED_FILE_SIZE_BYTES),
+            max_matches_per_deferred_file: search
+                .max_matches_per_deferred_file
+                .unwrap_or(DEFAULT_MAX_MATCHES_PER_DEFERRED_FILE),
+        }
+    }
+}
 
 pub struct Search {
     buffer_store: Entity<BufferStore>,
@@ -99,6 +136,12 @@ enum FindSearchCandidates {
         /// based on disk contents of a buffer. This step is not performed for buffers we already have in memory.
         confirm_contents_will_match_tx: Sender<MatchingEntry>,
         confirm_contents_will_match_rx: Receiver<MatchingEntry>,
+        /// Channel for files searched in streaming (deferred) mode. Workers send
+        /// `FileMatchSummary` here directly when a file exceeds the size threshold.
+        /// See `handle_find_first_match` and issue 20970.
+        deferred_results_tx: Sender<FileMatchSummary>,
+        /// Streaming-mode threshold and per-file match cap.
+        limits: ProjectSearchLimitSettings,
     },
     Remote,
     OpenBuffersOnly,
@@ -178,9 +221,14 @@ impl Search {
         }
         let open_buffers = Arc::new(open_buffers);
         let executor = cx.background_executor().clone();
-        let (tx, rx) = unbounded();
+        // Bounded so the worker pipeline applies backpressure when the UI
+        // consumer falls behind. Combined with the streaming/deferred path
+        // for large files, this caps peak channel memory at
+        // `SEARCH_RESULT_CHANNEL_CAPACITY × max_per_result_size`.
+        let (tx, rx) = bounded(SEARCH_RESULT_CHANNEL_CAPACITY);
         let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) = unbounded();
         let matching_buffers = grab_buffer_snapshot_rx.clone();
+        let limits: ProjectSearchLimitSettings = *ProjectSearchLimitSettings::get_global(cx);
         let trigger_search = Box::new(move |cx: &mut App| {
             cx.spawn(async move |cx| {
                 for buffer in unnamed_buffers {
@@ -189,6 +237,11 @@ impl Search {
 
                 let (find_all_matches_tx, find_all_matches_rx) =
                     bounded(MAX_CONCURRENT_BUFFER_OPENS);
+                // Shared between the buffer-result forwarder and the deferred-result
+                // forwarder so the project-wide MAX_SEARCH_RESULT_RANGES /
+                // MAX_SEARCH_RESULT_FILES limit is enforced uniformly across both
+                // streams. The first forwarder to detect overflow emits LimitReached.
+                let limit_tracker = Arc::new(Mutex::new(LimitTracker::default()));
                 let query = Arc::new(query);
                 let (candidate_searcher, tasks) = match self.kind {
                     SearchKind::OpenBuffersOnly => {
@@ -215,6 +268,12 @@ impl Search {
                         let (sorted_search_results_tx, sorted_search_results_rx) = unbounded();
 
                         let (input_paths_tx, input_paths_rx) = unbounded();
+                        // Deferred match summaries from the streaming path. Bounded so
+                        // workers receive backpressure if the UI consumer falls behind;
+                        // capacity matches `SEARCH_RESULT_CHANNEL_CAPACITY` so the two
+                        // result streams have the same headroom.
+                        let (deferred_results_tx, deferred_results_rx) =
+                            bounded::<FileMatchSummary>(SEARCH_RESULT_CHANNEL_CAPACITY);
                         let tasks = vec![
                             cx.spawn(Self::provide_search_paths(
                                 std::mem::take(worktrees),
@@ -237,6 +296,12 @@ impl Search {
                                 self.limit,
                             ))
                             .boxed_local(),
+                            cx.background_spawn(Self::forward_deferred_results(
+                                deferred_results_rx,
+                                tx.clone(),
+                                limit_tracker.clone(),
+                            ))
+                            .boxed_local(),
                         ];
                         (
                             FindSearchCandidates::Local {
@@ -244,6 +309,8 @@ impl Search {
                                 confirm_contents_will_match_tx,
                                 confirm_contents_will_match_rx,
                                 input_paths_rx,
+                                deferred_results_tx,
+                                limits,
                             },
                             tasks,
                         )
@@ -382,8 +449,12 @@ impl Search {
                 };
                 let ensure_matches_are_reported_in_order = if should_find_all_matches {
                     Some(
-                        Self::ensure_matched_ranges_are_reported_in_order(sorted_matches_rx, tx)
-                            .boxed_local(),
+                        Self::ensure_matched_ranges_are_reported_in_order(
+                            sorted_matches_rx,
+                            tx,
+                            limit_tracker,
+                        )
+                        .boxed_local(),
                     )
                 } else {
                     drop(tx);
@@ -570,26 +641,61 @@ impl Search {
     async fn ensure_matched_ranges_are_reported_in_order(
         rx: Receiver<oneshot::Receiver<(Entity<Buffer>, Vec<Range<language::Anchor>>)>>,
         tx: Sender<SearchResult>,
+        tracker: Arc<Mutex<LimitTracker>>,
     ) {
         use postage::stream::Stream;
         _ = maybe!(async move {
-            let mut matched_buffers = 0;
-            let mut matches = 0;
             while let Ok(mut next_buffer_matches) = rx.recv().await {
                 let Some((buffer, ranges)) = next_buffer_matches.recv().await else {
                     continue;
                 };
-
-                if matched_buffers > Search::MAX_SEARCH_RESULT_FILES
-                    || matches > Search::MAX_SEARCH_RESULT_RANGES
-                {
-                    _ = tx.send(SearchResult::LimitReached).await;
-                    break;
+                // Bind the decision to a local so the parking_lot guard is
+                // dropped before we hit the `tx.send().await`. Holding the
+                // mutex across an await would deadlock against the deferred
+                // forwarder, which also locks the same tracker.
+                let decision = tracker.lock().observe_match(ranges.len());
+                match decision {
+                    LimitDecision::Emit => {
+                        tx.send(SearchResult::Buffer { buffer, ranges }).await?;
+                    }
+                    LimitDecision::EmitLimitReached => {
+                        let _ = tx.send(SearchResult::LimitReached).await;
+                        break;
+                    }
+                    LimitDecision::Drop => break,
                 }
-                matched_buffers += 1;
-                matches += ranges.len();
+            }
+            anyhow::Ok(())
+        })
+        .await;
+    }
 
-                _ = tx.send(SearchResult::Buffer { buffer, ranges }).await?;
+    /// Drain `FileMatchSummary` values produced by the streaming/deferred path
+    /// and emit them as `SearchResult::DeferredFile`, sharing the project-wide
+    /// limit tracker with the buffer-result forwarder so the
+    /// MAX_SEARCH_RESULT_FILES / MAX_SEARCH_RESULT_RANGES caps fire exactly once.
+    async fn forward_deferred_results(
+        rx: Receiver<FileMatchSummary>,
+        tx: Sender<SearchResult>,
+        tracker: Arc<Mutex<LimitTracker>>,
+    ) {
+        let _ = maybe!(async move {
+            while let Ok(summary) = rx.recv().await {
+                let len = summary.matches.len();
+                // See `ensure_matched_ranges_are_reported_in_order` — the
+                // tracker mutex must be released before the bounded
+                // `tx.send().await` to avoid a deadlock between forwarders.
+                let decision = tracker.lock().observe_match(len);
+                match decision {
+                    LimitDecision::Emit => {
+                        tx.send(SearchResult::DeferredFile(summary)).await?;
+                    }
+                    LimitDecision::EmitLimitReached => {
+                        let _ = tx.send(SearchResult::LimitReached).await;
+                        break;
+                    }
+                    LimitDecision::Drop => break,
+                }
             }
             anyhow::Ok(())
         })
@@ -639,6 +745,47 @@ impl Search {
     }
 }
 
+/// Tracks aggregated match/file counts across both the buffer-result forwarder
+/// and the deferred-result forwarder so the project-wide
+/// `MAX_SEARCH_RESULT_FILES` / `MAX_SEARCH_RESULT_RANGES` caps are enforced
+/// uniformly and `SearchResult::LimitReached` is emitted exactly once.
+#[derive(Default)]
+struct LimitTracker {
+    matched_files: usize,
+    matched_ranges: usize,
+    /// Set true after either forwarder emits `LimitReached`. The other
+    /// forwarder will see this and stop without emitting again.
+    limit_emitted: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LimitDecision {
+    /// Emit the result and update counters.
+    Emit,
+    /// Limits exceeded — emit `LimitReached` and stop. Only one forwarder
+    /// receives this; the other receives `Drop`.
+    EmitLimitReached,
+    /// `LimitReached` already emitted by the peer forwarder; stop without emitting.
+    Drop,
+}
+
+impl LimitTracker {
+    fn observe_match(&mut self, range_count: usize) -> LimitDecision {
+        if self.limit_emitted {
+            return LimitDecision::Drop;
+        }
+        if self.matched_files > Search::MAX_SEARCH_RESULT_FILES
+            || self.matched_ranges > Search::MAX_SEARCH_RESULT_RANGES
+        {
+            self.limit_emitted = true;
+            return LimitDecision::EmitLimitReached;
+        }
+        self.matched_files += 1;
+        self.matched_ranges += range_count;
+        LimitDecision::Emit
+    }
+}
+
 struct Worker {
     query: Arc<SearchQuery>,
     open_buffers: Arc<HashSet<ProjectEntryId>>,
@@ -659,21 +806,32 @@ impl Worker {
             confirm_contents_will_match_rx,
             mut confirm_contents_will_match_tx,
             fs,
+            deferred_results_tx,
+            limits,
         ) = match self.candidates {
             FindSearchCandidates::Local {
                 fs,
                 input_paths_rx,
                 confirm_contents_will_match_rx,
                 confirm_contents_will_match_tx,
+                deferred_results_tx,
+                limits,
             } => (
                 input_paths_rx,
                 confirm_contents_will_match_rx,
                 confirm_contents_will_match_tx,
                 Some(fs),
+                Some(deferred_results_tx),
+                Some(limits),
             ),
-            FindSearchCandidates::Remote | FindSearchCandidates::OpenBuffersOnly => {
-                (unbounded().1, unbounded().1, unbounded().0, None)
-            }
+            FindSearchCandidates::Remote | FindSearchCandidates::OpenBuffersOnly => (
+                unbounded().1,
+                unbounded().1,
+                unbounded().0,
+                None,
+                None,
+                None,
+            ),
         };
         // WorkerA: grabs a request for "find all matches in file/a" <- takes 5 minutes
         // right after: WorkerB: grabs a request for "find all matches in file/b" <- takes 5 seconds
@@ -687,6 +845,8 @@ impl Worker {
                 open_entries: &self.open_buffers,
                 fs: fs.as_deref(),
                 confirm_contents_will_match_tx: &confirm_contents_will_match_tx,
+                deferred_results_tx: deferred_results_tx.as_ref(),
+                limits: limits.as_ref(),
             };
             // Whenever we notice that some step of a pipeline is closed, we don't want to close subsequent
             // steps straight away. Another worker might be about to produce a value that will
@@ -727,6 +887,11 @@ struct RequestHandler<'worker> {
     fs: Option<&'worker dyn Fs>,
     open_entries: &'worker HashSet<ProjectEntryId>,
     confirm_contents_will_match_tx: &'worker Sender<MatchingEntry>,
+    /// `Some` when the worker is processing local candidates (the only kind for
+    /// which the streaming/deferred path is wired up). Remote and open-buffers-only
+    /// modes leave this `None`.
+    deferred_results_tx: Option<&'worker Sender<FileMatchSummary>>,
+    limits: Option<&'worker ProjectSearchLimitSettings>,
 }
 
 impl RequestHandler<'_> {
@@ -752,13 +917,33 @@ impl RequestHandler<'_> {
     async fn handle_find_first_match(&self, mut entry: MatchingEntry) {
         async move {
             let abs_path = entry.worktree_root.join(entry.path.path.as_std_path());
-            let Some(file) = self
+            let fs = self
                 .fs
-                .context("Trying to query filesystem in remote project search")?
-                .open_sync(&abs_path)
-                .await
-                .log_err()
-            else {
+                .context("Trying to query filesystem in remote project search")?;
+
+            // Streaming/deferred path for files larger than the configured threshold:
+            // search the file directly from disk without ever loading it into a Buffer.
+            // Bounded peak memory per file = max_matches × snippet budget. (issue 20970)
+            let deferred_file_size = if let (Some(limits), Some(_)) =
+                (self.limits, self.deferred_results_tx)
+                && limits.max_loaded_file_size_bytes > 0
+            {
+                fs.metadata(&abs_path)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|m| m.len)
+                    .filter(|&len| len > limits.max_loaded_file_size_bytes)
+            } else {
+                None
+            };
+
+            if let Some(file_size) = deferred_file_size {
+                self.run_streaming_search(entry, abs_path, file_size).await;
+                return anyhow::Ok(());
+            }
+
+            let Some(file) = fs.open_sync(&abs_path).await.log_err() else {
                 return anyhow::Ok(());
             };
 
@@ -785,6 +970,80 @@ impl RequestHandler<'_> {
         }
         .await
         .ok();
+    }
+
+    /// Stream-search a file from disk and emit a `FileMatchSummary` rather than
+    /// opening it as a `Buffer`. Used when `metadata.len` exceeds
+    /// `max_loaded_file_size_bytes`.
+    ///
+    /// The `entry: MatchingEntry` is moved in so its `should_scan_tx` is
+    /// dropped at end of scope without ever being fulfilled — that signals
+    /// downstream `maintain_sorted_search_results` that this path will not
+    /// produce a buffer-open request, and the deferred summary is the only
+    /// result emitted for this file.
+    ///
+    /// Note on result ordering: deferred summaries are sent directly to the
+    /// shared result channel and bypass the buffer-path's ordering machinery
+    /// in `ensure_matched_ranges_are_reported_in_order`. Streaming consumers
+    /// see deferred results in worker-completion order, while buffer results
+    /// remain in path order. The project search UI sorts excerpts by
+    /// `PathKey` in the multibuffer, so the final rendered view is still
+    /// stable regardless of arrival order; this only affects the
+    /// streaming-progress visual cadence.
+    async fn run_streaming_search(
+        &self,
+        entry: MatchingEntry,
+        abs_path: PathBuf,
+        file_size: u64,
+    ) {
+        let _ = maybe!(async move {
+            let Some(deferred_tx) = self.deferred_results_tx else {
+                return anyhow::Ok(());
+            };
+            let Some(limits) = self.limits else {
+                return anyhow::Ok(());
+            };
+            let fs = self
+                .fs
+                .context("Trying to query filesystem in remote project search")?;
+            let Some(file) = fs.open_sync(&abs_path).await.log_err() else {
+                return anyhow::Ok(());
+            };
+            let mut file = BufReader::new(file);
+            let file_start = file.fill_buf()?;
+            if let Err(Some(starting_position)) =
+                std::str::from_utf8(file_start).map_err(|e| e.error_len())
+            {
+                log::debug!(
+                    "Invalid UTF-8 sequence in file {abs_path:?} \
+                    at byte position {starting_position}"
+                );
+                return Ok(());
+            }
+            let (matches, truncated) = self
+                .query
+                .search_streaming(file, limits.max_matches_per_deferred_file)
+                .await?;
+            // Skip files we can confirm have no matches at all. For multiline
+            // patterns, `search_streaming` always returns `truncated == true`
+            // because it cannot enumerate without loading the whole file —
+            // those files are surfaced as deferred-empty so the user knows
+            // they were not searched.
+            if matches.is_empty() && !truncated {
+                return Ok(());
+            }
+            let _ = deferred_tx
+                .send(FileMatchSummary {
+                    path: entry.path,
+                    abs_path: abs_path.into(),
+                    file_size,
+                    matches,
+                    truncated,
+                })
+                .await;
+            Ok(())
+        })
+        .await;
     }
 
     async fn handle_scan_path(&self, req: InputPath) {

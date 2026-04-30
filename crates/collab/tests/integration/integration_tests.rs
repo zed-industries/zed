@@ -5290,6 +5290,13 @@ async fn test_project_search(
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
             }
+            SearchResult::DeferredFile(_) => {
+                panic!(
+                    "Unexpected deferred file in collab tests. Tests use small fake-fs files; \
+                    if this triggers, raise the project search threshold via \
+                    SearchSettingsContent::max_loaded_file_size_bytes."
+                )
+            }
             SearchResult::LimitReached => {
                 panic!(
                     "Unexpectedly reached search limit in tests. If you do want to assert limit-reached, change this panic call."

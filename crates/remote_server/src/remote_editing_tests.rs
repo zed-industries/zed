@@ -209,7 +209,9 @@ async fn do_search_and_assert(
             let response = receiver.rx.recv().await.unwrap();
             match response {
                 SearchResult::Buffer { buffer, .. } => break buffer,
-                SearchResult::LimitReached => panic!("incorrect result"),
+                SearchResult::DeferredFile(_) | SearchResult::LimitReached => {
+                    panic!("incorrect result")
+                }
                 SearchResult::WaitingForScan | SearchResult::Searching => continue,
             }
         };

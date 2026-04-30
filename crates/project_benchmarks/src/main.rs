@@ -216,6 +216,10 @@ fn main() -> Result<(), anyhow::Error> {
                             matched_files += 1;
                             matched_chunks += ranges.len();
                         }
+                        SearchResult::DeferredFile(summary) => {
+                            matched_files += 1;
+                            matched_chunks += summary.matches.len();
+                        }
                         SearchResult::LimitReached => break,
                         SearchResult::WaitingForScan | SearchResult::Searching => continue,
                     }

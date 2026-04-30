@@ -192,6 +192,45 @@ impl AgentTool for GrepTool {
 
                 let (buffer, ranges) = match search_result {
                     Some(SearchResult::Buffer { buffer, ranges }) => (buffer, ranges),
+                    Some(SearchResult::DeferredFile(summary)) => {
+                        // The file was over the size threshold and was searched in
+                        // streaming mode without being loaded as a buffer. Render
+                        // its snippets directly into the agent output: the LLM can
+                        // reason about the matches without us paying the full-file
+                        // memory cost. (issue 20970)
+                        for m in &summary.matches {
+                            if skips_remaining > 0 {
+                                skips_remaining -= 1;
+                                continue;
+                            }
+                            if matches_found >= RESULTS_PER_PAGE {
+                                has_more_matches = true;
+                                break;
+                            }
+                            let path_display = summary
+                                .path
+                                .path
+                                .display(util::paths::PathStyle::local());
+                            output.push_str(&format!(
+                                "\n## Matches in {path_display} (line {})\n",
+                                m.line_number
+                            ));
+                            output.push_str("```\n");
+                            output.push_str(&m.snippet);
+                            if !m.snippet.ends_with('\n') {
+                                output.push('\n');
+                            }
+                            output.push_str("```\n");
+                            matches_found += 1;
+                        }
+                        if summary.truncated {
+                            has_more_matches = true;
+                        }
+                        if matches_found >= RESULTS_PER_PAGE {
+                            break;
+                        }
+                        continue;
+                    }
                     Some(SearchResult::LimitReached) => {
                         has_more_matches = true;
                         break;

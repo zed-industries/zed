@@ -10,6 +10,7 @@ use std::{
     borrow::Cow,
     io::{BufRead, BufReader, Read},
     ops::Range,
+    path::Path,
     sync::{Arc, LazyLock},
 };
 use text::Anchor;
@@ -18,15 +19,56 @@ use util::{
     rel_path::RelPath,
 };
 
+use crate::ProjectPath;
+
 #[derive(Debug)]
 pub enum SearchResult {
     Buffer {
         buffer: Entity<Buffer>,
         ranges: Vec<Range<Anchor>>,
     },
+    /// Emitted for files larger than `max_loaded_file_size_bytes` that were searched
+    /// in a streaming mode without ever loading the file into a `Buffer`. Capturing matches
+    /// with `MatchLocation` (offsets + snippets) keeps peak memory bounded by the per-file
+    /// match cap rather than the file size. The buffer is hydrated lazily when the user
+    /// navigates to a deferred match (issue 20970).
+    DeferredFile(FileMatchSummary),
     LimitReached,
     WaitingForScan,
     Searching,
+}
+
+/// A single match within a file that was searched in streaming mode.
+/// `byte_range` is in disk-file UTF-8 byte coordinates so it can be resolved
+/// to a `language::Anchor` later when the buffer is hydrated.
+#[derive(Debug, Clone)]
+pub struct MatchLocation {
+    pub byte_range: Range<u64>,
+    /// 1-indexed line number of the match start.
+    pub line_number: u32,
+    /// 0-indexed byte offset of the match start within its line (post-decode UTF-8).
+    pub line_byte_offset: u32,
+    /// A short bounded-size snippet around the match for inline display.
+    pub snippet: Arc<str>,
+    /// Byte range within `snippet` corresponding to the match itself, so the
+    /// UI can highlight the matched substring without re-running the regex.
+    pub snippet_match_range: Range<u32>,
+}
+
+/// Summary of matches in a file that was searched without being opened as a `Buffer`.
+/// Memory cost is bounded: at most `max_matches_per_deferred_file` entries × snippet budget.
+#[derive(Debug, Clone)]
+pub struct FileMatchSummary {
+    pub path: ProjectPath,
+    pub abs_path: Arc<Path>,
+    pub file_size: u64,
+    /// Matches captured during the streaming scan, capped at the per-file limit.
+    /// For multiline regex over-threshold files this is empty (we cannot safely
+    /// enumerate matches without reading the whole file).
+    pub matches: Vec<MatchLocation>,
+    /// True if more matches existed beyond the per-file cap, OR if the file
+    /// was multiline-regex-over-threshold and we punted on enumeration.
+    pub truncated: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -380,6 +422,137 @@ impl SearchQuery {
         }
     }
 
+    /// Stream-search a file from disk and capture up to `max_matches` matches with
+    /// bounded-size snippets, without ever loading the whole file into memory.
+    ///
+    /// Returns `(matches, truncated)`. `truncated` is true if either:
+    ///  - the per-file match cap was reached, or
+    ///  - the query is multiline (in which case we cannot safely enumerate without
+    ///    reading the whole file, so we return `(vec![], true)` to signal "matched
+    ///    but unenumerated").
+    ///
+    /// Used by project search for files larger than `max_loaded_file_size_bytes`
+    /// (issue 20970) so peak memory is bounded by `max_matches × snippet_budget`,
+    /// not by file size.
+    ///
+    /// Caveat: `BufRead::read_line` allocates the entire line into a `String`
+    /// before yielding. Files without newlines (e.g. a 700 MB minified JSON
+    /// blob) therefore still allocate proportional to line length. Tracked as
+    /// a separate follow-up; the dominant cost on the issue 20970 repro
+    /// (newline-rich XML) is unaffected.
+    pub(crate) async fn search_streaming(
+        &self,
+        mut reader: BufReader<Box<dyn Read + Send + Sync>>,
+        max_matches: usize,
+    ) -> Result<(Vec<MatchLocation>, bool)> {
+        let query_str = self.as_str();
+        if query_str.is_empty() || max_matches == 0 {
+            return Ok((Vec::new(), false));
+        }
+
+        const SNIPPET_BUDGET: usize = 256;
+        const YIELD_THRESHOLD: usize = 20 * 1024;
+
+        let is_multiline_pattern = match self {
+            Self::Text { .. } => query_str.contains('\n'),
+            Self::Regex { multiline, .. } => *multiline,
+        };
+        if is_multiline_pattern {
+            // Cannot safely enumerate multiline matches without holding the file in memory.
+            // Surface the file's existence; UI shows "too large to enumerate".
+            return Ok((Vec::new(), true));
+        }
+
+        let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+
+        let mut matches: Vec<MatchLocation> = Vec::new();
+        let mut byte_offset: u64 = 0;
+        let mut line_number: u32 = 0;
+        let mut bytes_since_yield: usize = 0;
+        let mut text = String::new();
+
+        loop {
+            text.clear();
+            let read = reader.read_line(&mut text)?;
+            if read == 0 {
+                break;
+            }
+            line_number = line_number.saturating_add(1);
+
+            let line_matches: Vec<Range<usize>> = match self {
+                Self::Text {
+                    search, whole_word, ..
+                } => {
+                    let mut found = Vec::new();
+                    for mat in search.find_iter(text.as_bytes()) {
+                        if *whole_word {
+                            let prev_char = text[..mat.start()].chars().next_back();
+                            let next_char = text[mat.end()..].chars().next();
+                            if prev_char.is_some_and(&is_word_char)
+                                || next_char.is_some_and(&is_word_char)
+                            {
+                                continue;
+                            }
+                        }
+                        found.push(mat.start()..mat.end());
+                    }
+                    found
+                }
+                Self::Regex {
+                    regex,
+                    whole_word,
+                    one_match_per_line,
+                    ..
+                } => {
+                    let mut found = Vec::new();
+                    for mat in regex.find_iter(&text).flatten() {
+                        let start = mat.start();
+                        let end = mat.end();
+                        if *whole_word {
+                            let prev_char = text[..start].chars().next_back();
+                            let next_char = text[end..].chars().next();
+                            if prev_char.is_some_and(&is_word_char)
+                                || next_char.is_some_and(&is_word_char)
+                            {
+                                continue;
+                            }
+                        }
+                        found.push(start..end);
+                        if *one_match_per_line {
+                            break;
+                        }
+                    }
+                    found
+                }
+            };
+
+            for range in line_matches {
+                let (snippet, snippet_match_range) =
+                    extract_snippet(&text, range.clone(), SNIPPET_BUDGET);
+                matches.push(MatchLocation {
+                    byte_range: (byte_offset + range.start as u64)
+                        ..(byte_offset + range.end as u64),
+                    line_number,
+                    line_byte_offset: range.start as u32,
+                    snippet,
+                    snippet_match_range,
+                });
+                if matches.len() >= max_matches {
+                    return Ok((matches, true));
+                }
+            }
+
+            byte_offset = byte_offset.saturating_add(text.len() as u64);
+            bytes_since_yield = bytes_since_yield.saturating_add(text.len());
+            if bytes_since_yield >= YIELD_THRESHOLD {
+                bytes_since_yield = 0;
+                yield_now().await;
+            }
+        }
+
+        Ok((matches, false))
+    }
+
     pub(crate) async fn detect(
         &self,
         mut reader: BufReader<Box<dyn Read + Send + Sync>>,
@@ -722,4 +895,51 @@ impl SearchQuery {
         }
         matches
     }
+}
+
+/// Build a bounded-size snippet around `match_range` within `line` (which may
+/// include a trailing newline). Snaps to UTF-8 character boundaries and returns
+/// both the snippet and the new byte range of the match within it.
+///
+/// `budget` bounds the *combined* prefix + suffix size around the match; the
+/// match itself is never truncated, so for pathologically long single matches
+/// the returned snippet may exceed `budget` (this is intentional — clipping
+/// inside a match would mislead the reader about what was found).
+fn extract_snippet(
+    line: &str,
+    match_range: Range<usize>,
+    budget: usize,
+) -> (Arc<str>, Range<u32>) {
+    // Strip the trailing newline (and a preceding CR on Windows-style line endings).
+    let line = line.strip_suffix('\n').unwrap_or(line);
+    let line = line.strip_suffix('\r').unwrap_or(line);
+
+    let match_start = match_range.start.min(line.len());
+    let match_end = match_range.end.min(line.len());
+
+    if line.len() <= budget {
+        return (
+            Arc::from(line),
+            (match_start as u32)..(match_end as u32),
+        );
+    }
+
+    let half = budget / 2;
+    let raw_start = match_start.saturating_sub(half);
+    let raw_end = match_end.saturating_add(half).min(line.len());
+
+    // Snap to UTF-8 character boundaries (walk outward, never inside a match).
+    let snippet_start = (0..=raw_start)
+        .rev()
+        .find(|&i| line.is_char_boundary(i))
+        .unwrap_or(0);
+    let snippet_end = (raw_end..=line.len())
+        .find(|&i| line.is_char_boundary(i))
+        .unwrap_or(line.len());
+
+    let snippet = &line[snippet_start..snippet_end];
+    (
+        Arc::from(snippet),
+        ((match_start - snippet_start) as u32)..((match_end - snippet_start) as u32),
+    )
 }
