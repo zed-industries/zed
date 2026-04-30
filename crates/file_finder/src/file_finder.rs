@@ -336,6 +336,14 @@ impl FileFinder {
                         worktree_id: WorktreeId::from_usize(m.0.worktree_id),
                         path: m.0.path.clone(),
                     },
+                    Match::ExternalPath(path) => {
+                        let path = path.clone();
+                        let open_task = workspace.update(cx, move |workspace, cx| {
+                            workspace.split_abs_path(path, false, window, cx)
+                        });
+                        open_task.detach_and_log_err(cx);
+                        return;
+                    }
                     Match::CreateNew(p) => p.clone(),
                     Match::Channel { .. } => return,
                 };
@@ -462,6 +470,7 @@ enum Match {
         panel_match: Option<ProjectPanelOrdMatch>,
     },
     Search(ProjectPanelOrdMatch),
+    ExternalPath(PathBuf),
     Channel {
         channel_id: ChannelId,
         channel_name: SharedString,
@@ -475,7 +484,7 @@ impl Match {
         match self {
             Match::History { path, .. } => Some(&path.project.path),
             Match::Search(panel_match) => Some(&panel_match.0.path),
-            Match::Channel { .. } | Match::CreateNew(_) => None,
+            Match::ExternalPath(_) | Match::Channel { .. } | Match::CreateNew(_) => None,
         }
     }
 
@@ -489,6 +498,7 @@ impl Match {
                     .read(cx)
                     .absolutize(&path_match.path),
             ),
+            Match::ExternalPath(path) => Some(path.clone()),
             Match::Channel { .. } | Match::CreateNew(_) => None,
         }
     }
@@ -497,7 +507,7 @@ impl Match {
         match self {
             Match::History { panel_match, .. } => panel_match.as_ref(),
             Match::Search(panel_match) => Some(panel_match),
-            Match::Channel { .. } | Match::CreateNew(_) => None,
+            Match::ExternalPath(_) | Match::Channel { .. } | Match::CreateNew(_) => None,
         }
     }
 }
@@ -549,6 +559,7 @@ impl Matches {
         currently_opened: Option<&'a FoundPath>,
         query: Option<&FileSearchQuery>,
         new_search_matches: impl Iterator<Item = ProjectPanelOrdMatch>,
+        new_extra_matches: impl IntoIterator<Item = Match>,
         extend_old_matches: bool,
         path_style: PathStyle,
     ) {
@@ -595,12 +606,14 @@ impl Matches {
             })
             .map(Match::Search)
             .collect();
+        let new_extra_matches = new_extra_matches.into_iter();
 
         if extend_old_matches {
             // since we take history matches instead of new search matches
             // and history matches has not changed(since the query has not changed and we do not extend old matches otherwise),
             // old matches can't contain paths present in history_matches as well.
-            self.matches.retain(|m| matches!(m, Match::Search(_)));
+            self.matches
+                .retain(|m| matches!(m, Match::Search(_) | Match::ExternalPath(_)));
         } else {
             self.matches.clear();
         }
@@ -612,7 +625,11 @@ impl Matches {
         // We build a sorted Vec<Match>, eliminating duplicate search matches.
         // Search matches with the same paths should have equal `ProjectPanelOrdMatch`, so we should
         // not have any duplicates after building the final list.
-        for new_match in new_history_matches.into_values().chain(new_search_matches) {
+        for new_match in new_history_matches
+            .into_values()
+            .chain(new_search_matches)
+            .chain(new_extra_matches)
+        {
             match self.position(&new_match, currently_opened) {
                 Ok(_duplicate) => continue,
                 Err(i) => {
@@ -636,6 +653,9 @@ impl Matches {
         match (a, b) {
             (Match::CreateNew(_), _) => return cmp::Ordering::Less,
             (_, Match::CreateNew(_)) => return cmp::Ordering::Greater,
+            (Match::ExternalPath(_), Match::ExternalPath(_)) => return cmp::Ordering::Equal,
+            (Match::ExternalPath(_), _) => return cmp::Ordering::Greater,
+            (_, Match::ExternalPath(_)) => return cmp::Ordering::Less,
             _ => {}
         }
 
@@ -677,6 +697,7 @@ impl Matches {
         match m {
             Match::History { panel_match, .. } => panel_match.as_ref().map_or(0.0, |pm| pm.0.score),
             Match::Search(pm) => pm.0.score,
+            Match::ExternalPath(_) => 1.0,
             Match::Channel { string_match, .. } => string_match.score,
             Match::CreateNew(_) => 0.0,
         }
@@ -930,7 +951,7 @@ impl FileFinderDelegate {
                 .update(cx, |picker, cx| {
                     picker
                         .delegate
-                        .set_search_matches(search_id, did_cancel, query, matches, cx)
+                        .set_search_matches(search_id, did_cancel, query, matches, None, cx)
                 })
                 .log_err();
         })
@@ -942,6 +963,7 @@ impl FileFinderDelegate {
         did_cancel: bool,
         query: FileSearchQuery,
         matches: impl IntoIterator<Item = ProjectPanelOrdMatch>,
+        extra_matches: impl IntoIterator<Item = Match>,
         cx: &mut Context<Picker<Self>>,
     ) {
         if search_id >= self.latest_search_id {
@@ -967,6 +989,7 @@ impl FileFinderDelegate {
                 self.currently_opened_path.as_ref(),
                 Some(&query),
                 matches.into_iter(),
+                extra_matches,
                 extend_old_matches,
                 path_style,
             );
@@ -1158,6 +1181,16 @@ impl FileFinderDelegate {
                     "Channel Notes".to_string(),
                     vec![],
                 ),
+                Match::ExternalPath(abs_path) => (
+                    abs_path.file_name().map_or(String::new(), |file_name| {
+                        file_name.to_string_lossy().into_owned()
+                    }),
+                    Vec::new(),
+                    abs_path.parent().map_or(String::new(), |parent| {
+                        parent.to_string_lossy().into_owned() + path_style.primary_separator()
+                    }),
+                    Vec::new(),
+                ),
                 Match::CreateNew(project_path) => (
                     format!("Create file: {}", project_path.path.display(path_style)),
                     vec![],
@@ -1305,14 +1338,14 @@ impl FileFinderDelegate {
             let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
 
-            let abs_file_exists = project
+            let resolved_abs_file = project
                 .update(cx, |this, cx| {
                     this.resolve_abs_file_path(query.path_query(), cx)
                 })
-                .await
-                .is_some();
+                .await;
 
-            if abs_file_exists {
+            let mut extra_matches = Vec::new();
+            if let Some(resolved_abs_file) = resolved_abs_file {
                 project.update(cx, |project, cx| {
                     if let Some((worktree, relative_path)) = project.find_worktree(query_path, cx) {
                         path_matches.push(ProjectPanelOrdMatch(PathMatch {
@@ -1324,20 +1357,31 @@ impl FileFinderDelegate {
                             is_dir: false, // File finder doesn't support directories
                             distance_to_relative_ancestor: usize::MAX,
                         }));
+                    } else if let Some(abs_path) = resolved_abs_file.abs_path() {
+                        extra_matches.push(Match::ExternalPath(PathBuf::from(abs_path)));
                     }
                 });
             }
+
+            let has_matches = !path_matches.is_empty() || !extra_matches.is_empty();
 
             picker
                 .update_in(cx, |picker, _, cx| {
                     let picker_delegate = &mut picker.delegate;
                     let search_id = util::post_inc(&mut picker_delegate.search_count);
-                    picker_delegate.set_search_matches(search_id, false, query, path_matches, cx);
+                    picker_delegate.set_search_matches(
+                        search_id,
+                        false,
+                        query,
+                        path_matches,
+                        extra_matches,
+                        cx,
+                    );
 
                     anyhow::Ok(())
                 })
                 .log_err();
-            abs_file_exists
+            has_matches
         })
     }
 
@@ -1478,6 +1522,7 @@ impl PickerDelegate for FileFinderDelegate {
                     self.currently_opened_path.as_ref(),
                     None,
                     None.into_iter(),
+                    None,
                     false,
                     path_style,
                 );
@@ -1643,6 +1688,21 @@ impl PickerDelegate for FileFinderDelegate {
                         window,
                         cx,
                     ),
+                    Match::ExternalPath(path) => {
+                        if secondary {
+                            workspace.split_abs_path(path.clone(), false, window, cx)
+                        } else {
+                            workspace.open_abs_path(
+                                path.clone(),
+                                OpenOptions {
+                                    visible: Some(OpenVisible::None),
+                                    ..Default::default()
+                                },
+                                window,
+                                cx,
+                            )
+                        }
+                    }
                     Match::Channel { .. } => unreachable!("handled above"),
                 }
             });
@@ -1710,7 +1770,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .color(Color::Muted)
                 .size(IconSize::Small)
                 .into_any_element(),
-            Match::Search(_) => v_flex()
+            Match::Search(_) | Match::ExternalPath(_) => v_flex()
                 .flex_none()
                 .size(IconSize::Small.rems())
                 .into_any_element(),
