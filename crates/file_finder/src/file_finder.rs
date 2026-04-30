@@ -22,7 +22,8 @@ use open_path_prompt::{
 };
 use picker::{Picker, PickerDelegate};
 use project::{
-    PathMatchCandidateSet, Project, ProjectPath, WorktreeId, worktree_store::WorktreeStore,
+    DirectoryItem, PathMatchCandidateSet, Project, ProjectPath, WorktreeId,
+    worktree_store::WorktreeStore,
 };
 use project_panel::project_panel_settings::ProjectPanelSettings;
 use settings::Settings;
@@ -42,8 +43,8 @@ use ui::{
 };
 use ui_input::ErasedEditor;
 use util::{
-    ResultExt, maybe,
-    paths::{PathStyle, PathWithPosition},
+    ResultExt, maybe, normalize_path,
+    paths::{PathStyle, PathWithPosition, compare_paths},
     post_inc,
     rel_path::RelPath,
 };
@@ -344,6 +345,17 @@ impl FileFinder {
                         open_task.detach_and_log_err(cx);
                         return;
                     }
+                    Match::PathCompletion { path, is_dir, .. } => {
+                        if *is_dir {
+                            return;
+                        }
+                        let path = path.clone();
+                        let open_task = workspace.update(cx, move |workspace, cx| {
+                            workspace.split_abs_path(path, false, window, cx)
+                        });
+                        open_task.detach_and_log_err(cx);
+                        return;
+                    }
                     Match::CreateNew(p) => p.clone(),
                     Match::Channel { .. } => return,
                 };
@@ -471,6 +483,11 @@ enum Match {
     },
     Search(ProjectPanelOrdMatch),
     ExternalPath(PathBuf),
+    PathCompletion {
+        path: PathBuf,
+        query: String,
+        is_dir: bool,
+    },
     Channel {
         channel_id: ChannelId,
         channel_name: SharedString,
@@ -484,7 +501,10 @@ impl Match {
         match self {
             Match::History { path, .. } => Some(&path.project.path),
             Match::Search(panel_match) => Some(&panel_match.0.path),
-            Match::ExternalPath(_) | Match::Channel { .. } | Match::CreateNew(_) => None,
+            Match::ExternalPath(_)
+            | Match::PathCompletion { .. }
+            | Match::Channel { .. }
+            | Match::CreateNew(_) => None,
         }
     }
 
@@ -499,6 +519,7 @@ impl Match {
                     .absolutize(&path_match.path),
             ),
             Match::ExternalPath(path) => Some(path.clone()),
+            Match::PathCompletion { path, .. } => Some(path.clone()),
             Match::Channel { .. } | Match::CreateNew(_) => None,
         }
     }
@@ -507,7 +528,10 @@ impl Match {
         match self {
             Match::History { panel_match, .. } => panel_match.as_ref(),
             Match::Search(panel_match) => Some(panel_match),
-            Match::ExternalPath(_) | Match::Channel { .. } | Match::CreateNew(_) => None,
+            Match::ExternalPath(_)
+            | Match::PathCompletion { .. }
+            | Match::Channel { .. }
+            | Match::CreateNew(_) => None,
         }
     }
 }
@@ -653,6 +677,24 @@ impl Matches {
         match (a, b) {
             (Match::CreateNew(_), _) => return cmp::Ordering::Less,
             (_, Match::CreateNew(_)) => return cmp::Ordering::Greater,
+            (
+                Match::PathCompletion {
+                    path: a_path,
+                    is_dir: a_is_dir,
+                    ..
+                },
+                Match::PathCompletion {
+                    path: b_path,
+                    is_dir: b_is_dir,
+                    ..
+                },
+            ) => {
+                return b_is_dir
+                    .cmp(a_is_dir)
+                    .then_with(|| compare_paths((b_path, *b_is_dir), (a_path, *a_is_dir)));
+            }
+            (Match::PathCompletion { .. }, _) => return cmp::Ordering::Greater,
+            (_, Match::PathCompletion { .. }) => return cmp::Ordering::Less,
             (Match::ExternalPath(_), Match::ExternalPath(_)) => return cmp::Ordering::Equal,
             (Match::ExternalPath(_), _) => return cmp::Ordering::Greater,
             (_, Match::ExternalPath(_)) => return cmp::Ordering::Less,
@@ -698,6 +740,7 @@ impl Matches {
             Match::History { panel_match, .. } => panel_match.as_ref().map_or(0.0, |pm| pm.0.score),
             Match::Search(pm) => pm.0.score,
             Match::ExternalPath(_) => 1.0,
+            Match::PathCompletion { .. } => 1.0,
             Match::Channel { string_match, .. } => string_match.score,
             Match::CreateNew(_) => 0.0,
         }
@@ -815,6 +858,13 @@ impl FoundPath {
     }
 }
 
+#[derive(Debug, Clone)]
+struct PathCompletionDirectory {
+    path: PathBuf,
+    query_prefix: String,
+    suffix: String,
+}
+
 const MAX_RECENT_SELECTIONS: usize = 20;
 
 pub enum Event {
@@ -827,6 +877,7 @@ struct FileSearchQuery {
     raw_query: String,
     file_query_end: Option<usize>,
     path_position: PathWithPosition,
+    path_lookup_query: Option<String>,
 }
 
 impl FileSearchQuery {
@@ -835,6 +886,12 @@ impl FileSearchQuery {
             Some(file_path_end) => &self.raw_query[..file_path_end],
             None => &self.raw_query,
         }
+    }
+
+    fn path_lookup_query(&self) -> &str {
+        self.path_lookup_query
+            .as_deref()
+            .unwrap_or_else(|| self.path_query())
     }
 }
 
@@ -1191,6 +1248,20 @@ impl FileFinderDelegate {
                     }),
                     Vec::new(),
                 ),
+                Match::PathCompletion { path, is_dir, .. } => (
+                    path.file_name().map_or(String::new(), |file_name| {
+                        let mut file_name = file_name.to_string_lossy().into_owned();
+                        if *is_dir {
+                            file_name.push_str(path_style.primary_separator());
+                        }
+                        file_name
+                    }),
+                    Vec::new(),
+                    path.parent().map_or(String::new(), |parent| {
+                        parent.to_string_lossy().into_owned() + path_style.primary_separator()
+                    }),
+                    Vec::new(),
+                ),
                 Match::CreateNew(project_path) => (
                     format!("Create file: {}", project_path.path.display(path_style)),
                     vec![],
@@ -1314,16 +1385,13 @@ impl FileFinderDelegate {
         )
     }
 
-    /// Attempts to resolve an absolute file path and update the search matches if found.
+    /// Attempts to resolve absolute file path candidates and update the search matches if found.
     ///
-    /// If the query path resolves to an absolute file that exists in the project,
-    /// this method will find the corresponding worktree and relative path, create a
-    /// match for it, and update the picker's search results.
-    ///
-    /// Returns `true` if the absolute path exists, otherwise returns `false`.
-    fn lookup_absolute_path(
+    /// Returns `true` if any candidate resolves to an existing file.
+    fn lookup_path_candidates(
         &self,
         query: FileSearchQuery,
+        path_candidates: Vec<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<bool> {
@@ -1335,19 +1403,29 @@ impl FileFinderDelegate {
                 return false;
             };
 
-            let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
-
-            let resolved_abs_file = project
-                .update(cx, |this, cx| {
-                    this.resolve_abs_file_path(query.path_query(), cx)
-                })
-                .await;
-
             let mut extra_matches = Vec::new();
-            if let Some(resolved_abs_file) = resolved_abs_file {
+
+            for candidate_path in path_candidates {
+                let candidate_query = candidate_path.to_string_lossy().into_owned();
+                let resolved_abs_file = project
+                    .update(cx, |this, cx| {
+                        this.resolve_abs_file_path(&candidate_query, cx)
+                    })
+                    .await;
+
+                let Some(resolved_abs_file) = resolved_abs_file else {
+                    continue;
+                };
+
                 project.update(cx, |project, cx| {
-                    if let Some((worktree, relative_path)) = project.find_worktree(query_path, cx) {
+                    let resolved_path = resolved_abs_file
+                        .abs_path()
+                        .map(PathBuf::from)
+                        .unwrap_or(candidate_path);
+                    if let Some((worktree, relative_path)) =
+                        project.find_worktree(&resolved_path, cx)
+                    {
                         path_matches.push(ProjectPanelOrdMatch(PathMatch {
                             score: 1.0,
                             positions: Vec::new(),
@@ -1357,10 +1435,12 @@ impl FileFinderDelegate {
                             is_dir: false, // File finder doesn't support directories
                             distance_to_relative_ancestor: usize::MAX,
                         }));
-                    } else if let Some(abs_path) = resolved_abs_file.abs_path() {
-                        extra_matches.push(Match::ExternalPath(PathBuf::from(abs_path)));
+                    } else {
+                        extra_matches.push(Match::ExternalPath(resolved_path));
                     }
                 });
+
+                break;
             }
 
             let has_matches = !path_matches.is_empty() || !extra_matches.is_empty();
@@ -1382,6 +1462,262 @@ impl FileFinderDelegate {
                 })
                 .log_err();
             has_matches
+        })
+    }
+
+    fn lookup_path_completions(
+        &mut self,
+        query: FileSearchQuery,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<bool> {
+        let path_query = query.path_lookup_query();
+        let path_style = self.project.read(cx).path_style(cx);
+        let completion_directories = self.path_completion_directories(path_query, path_style, cx);
+        if completion_directories.is_empty() {
+            return Task::ready(false);
+        }
+
+        let search_id = util::post_inc(&mut self.search_count);
+        cx.spawn_in(window, async move |picker, cx| {
+            let Some(project) = picker
+                .read_with(cx, |picker, _| picker.delegate.project.clone())
+                .log_err()
+            else {
+                return true;
+            };
+
+            let mut completions = Vec::new();
+            for completion_directory in completion_directories {
+                let directory_query = completion_directory.path.to_string_lossy().into_owned();
+                let entries = project
+                    .update(cx, |project, cx| {
+                        project.list_directory(directory_query, cx)
+                    })
+                    .await;
+                let Ok(mut entries) = entries else {
+                    continue;
+                };
+
+                entries.sort_by(|a, b| compare_paths((&a.path, a.is_dir), (&b.path, b.is_dir)));
+                Self::push_path_completion_matches(
+                    &completion_directory,
+                    entries,
+                    path_style,
+                    &mut completions,
+                );
+
+                if completions.len() >= 100 {
+                    completions.truncate(100);
+                    break;
+                }
+            }
+
+            let has_completions = !completions.is_empty();
+            if has_completions {
+                picker
+                    .update(cx, |picker, cx| {
+                        picker.delegate.set_path_completion_matches(
+                            search_id,
+                            query,
+                            completions,
+                            cx,
+                        )
+                    })
+                    .log_err();
+            }
+
+            has_completions
+        })
+    }
+
+    fn set_path_completion_matches(
+        &mut self,
+        search_id: usize,
+        query: FileSearchQuery,
+        completions: Vec<Match>,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        if search_id >= self.latest_search_id {
+            self.latest_search_id = search_id;
+            self.latest_search_query = Some(query);
+            self.latest_search_did_cancel = false;
+            self.matches = Matches {
+                separate_history: self.separate_history,
+                matches: completions,
+            };
+            self.selected_index = 0;
+            cx.notify();
+        }
+    }
+
+    fn push_path_completion_matches(
+        completion_directory: &PathCompletionDirectory,
+        entries: Vec<DirectoryItem>,
+        path_style: PathStyle,
+        completions: &mut Vec<Match>,
+    ) {
+        let suffix = completion_directory.suffix.to_lowercase();
+        for entry in entries {
+            let entry_name = entry.path.to_string_lossy();
+            if !suffix.is_empty() && !entry_name.to_lowercase().starts_with(&suffix) {
+                continue;
+            }
+
+            let Some(path) = path_style.join(&completion_directory.path, &entry.path) else {
+                continue;
+            };
+            let path = if path_style == PathStyle::local() {
+                normalize_path(Path::new(&path))
+            } else {
+                PathBuf::from(path)
+            };
+
+            if completions.iter().any(|completion| {
+                matches!(completion, Match::PathCompletion { path: completion_path, .. } if completion_path == &path)
+            }) {
+                continue;
+            }
+
+            let mut query = completion_directory.query_prefix.clone();
+            query.push_str(&entry_name);
+            if entry.is_dir {
+                query.push_str(path_style.primary_separator());
+            }
+
+            completions.push(Match::PathCompletion {
+                path,
+                query,
+                is_dir: entry.is_dir,
+            });
+        }
+    }
+
+    fn relative_path_candidates(&self, path_query: &str, cx: &App) -> Vec<PathBuf> {
+        let project = self.project.read(cx);
+        let path_style = project.path_style(cx);
+        if !Self::is_explicit_relative_path(path_query, path_style) {
+            return Vec::new();
+        }
+
+        let mut base_paths = Vec::new();
+        if let Some(parent) = self
+            .currently_opened_path
+            .as_ref()
+            .and_then(|path| path.absolute.parent())
+        {
+            base_paths.push(parent.to_path_buf());
+        }
+        base_paths.extend(
+            project
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf()),
+        );
+
+        let mut candidates = Vec::new();
+        for base_path in base_paths {
+            let Some(candidate_path) = path_style.join(&base_path, path_query) else {
+                continue;
+            };
+            let candidate_path = if path_style == PathStyle::local() {
+                normalize_path(Path::new(&candidate_path))
+            } else {
+                PathBuf::from(candidate_path)
+            };
+            if !candidates.contains(&candidate_path) {
+                candidates.push(candidate_path);
+            }
+        }
+        candidates
+    }
+
+    fn path_completion_directories(
+        &self,
+        path_query: &str,
+        path_style: PathStyle,
+        cx: &App,
+    ) -> Vec<PathCompletionDirectory> {
+        if path_style.is_absolute(path_query) {
+            let (query_prefix, suffix) = Self::path_dir_and_suffix(path_query, path_style);
+            return vec![PathCompletionDirectory {
+                path: PathBuf::from(&query_prefix),
+                query_prefix,
+                suffix,
+            }];
+        }
+
+        if !Self::is_explicit_relative_path(path_query, path_style) {
+            return Vec::new();
+        }
+
+        let (query_prefix, suffix) = Self::path_dir_and_suffix(path_query, path_style);
+        let project = self.project.read(cx);
+        let mut base_paths = Vec::new();
+        if let Some(parent) = self
+            .currently_opened_path
+            .as_ref()
+            .and_then(|path| path.absolute.parent())
+        {
+            base_paths.push(parent.to_path_buf());
+        }
+        base_paths.extend(
+            project
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf()),
+        );
+
+        let mut directories = Vec::new();
+        for base_path in base_paths {
+            let Some(path) = path_style.join(&base_path, &query_prefix) else {
+                continue;
+            };
+            let path = if path_style == PathStyle::local() {
+                normalize_path(Path::new(&path))
+            } else {
+                PathBuf::from(path)
+            };
+            if directories
+                .iter()
+                .any(|directory: &PathCompletionDirectory| directory.path == path)
+            {
+                continue;
+            }
+            directories.push(PathCompletionDirectory {
+                path,
+                query_prefix: query_prefix.clone(),
+                suffix: suffix.clone(),
+            });
+        }
+        directories
+    }
+
+    fn path_dir_and_suffix(query: &str, path_style: PathStyle) -> (String, String) {
+        let last_separator = path_style
+            .separators()
+            .iter()
+            .filter_map(|separator| query.rfind(separator).map(|index| (index, *separator)))
+            .max_by_key(|(index, _)| *index);
+
+        if let Some((index, separator)) = last_separator {
+            let suffix_start = index + separator.len();
+            (
+                query[..suffix_start].to_string(),
+                query[suffix_start..].to_string(),
+            )
+        } else if path_style.is_absolute(query) {
+            (
+                query.to_string() + path_style.primary_separator(),
+                String::new(),
+            )
+        } else {
+            (String::new(), query.to_string())
+        }
+    }
+
+    fn is_explicit_relative_path(path_query: &str, path_style: PathStyle) -> bool {
+        path_style.separators().iter().any(|separator| {
+            path_query.starts_with(&format!(".{separator}"))
+                || path_query.starts_with(&format!("..{separator}"))
         })
     }
 
@@ -1470,6 +1806,7 @@ impl PickerDelegate for FileFinderDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let raw_query = raw_query.trim();
+        let path_lookup_query = raw_query.to_owned();
 
         let raw_query = match &raw_query.get(0..2) {
             Some(".\\" | "./") => &raw_query[2..],
@@ -1493,6 +1830,7 @@ impl PickerDelegate for FileFinderDelegate {
             }
             _ => raw_query,
         };
+        let path_lookup_query_prefix_len = path_lookup_query.len().saturating_sub(raw_query.len());
 
         if raw_query.is_empty() {
             // if there was no query before, and we already have some (history) matches
@@ -1546,6 +1884,15 @@ impl PickerDelegate for FileFinderDelegate {
             };
 
             let query = FileSearchQuery {
+                path_lookup_query: if path_lookup_query_prefix_len > 0 {
+                    let path_lookup_query_end =
+                        path_lookup_query_prefix_len + file_query_end.unwrap_or(raw_query.len());
+                    path_lookup_query
+                        .get(..path_lookup_query_end)
+                        .map(str::to_owned)
+                } else {
+                    None
+                },
                 raw_query,
                 file_query_end,
                 path_position,
@@ -1553,27 +1900,75 @@ impl PickerDelegate for FileFinderDelegate {
 
             cx.spawn_in(window, async move |this, cx| {
                 let _ = maybe!(async move {
-                    let is_absolute_path = path.is_absolute();
-                    let did_resolve_abs_path = is_absolute_path
-                        && this
+                    let did_resolve_path = this
+                        .update_in(cx, |this, window, cx| {
+                            let path_query = query.path_lookup_query();
+                            let path_style = this.delegate.project.read(cx).path_style(cx);
+                            let path_candidates =
+                                if path_style.is_absolute(path_query) || path.is_absolute() {
+                                    vec![PathBuf::from(path_query)]
+                                } else {
+                                    this.delegate.relative_path_candidates(path_query, cx)
+                                };
+
+                            if path_candidates.is_empty() {
+                                Task::ready(false)
+                            } else {
+                                this.delegate.lookup_path_candidates(
+                                    query.clone(),
+                                    path_candidates,
+                                    window,
+                                    cx,
+                                )
+                            }
+                        })?
+                        .await;
+
+                    if !did_resolve_path {
+                        let did_complete_path = this
                             .update_in(cx, |this, window, cx| {
                                 this.delegate
-                                    .lookup_absolute_path(query.clone(), window, cx)
+                                    .lookup_path_completions(query.clone(), window, cx)
                             })?
                             .await;
 
-                    // Only check for relative paths if no absolute paths were
-                    // found.
-                    if !did_resolve_abs_path {
-                        this.update_in(cx, |this, window, cx| {
-                            this.delegate.spawn_search(query, window, cx)
-                        })?
-                        .await;
+                        if !did_complete_path {
+                            this.update_in(cx, |this, window, cx| {
+                                this.delegate.spawn_search(query, window, cx)
+                            })?
+                            .await;
+                        }
                     }
                     anyhow::Ok(())
                 })
                 .await;
             })
+        }
+    }
+
+    fn confirm_update_query(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        match self.matches.get(self.selected_index()) {
+            Some(Match::PathCompletion { query, is_dir, .. }) if *is_dir => Some(query.clone()),
+            _ => None,
+        }
+    }
+
+    fn confirm_completion(
+        &mut self,
+        _query: String,
+        _window: &mut Window,
+        _: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        match self.matches.get(self.selected_index()) {
+            Some(Match::PathCompletion {
+                query: completion_query,
+                ..
+            }) => Some(completion_query.clone()),
+            _ => None,
         }
     }
 
@@ -1593,6 +1988,9 @@ impl PickerDelegate for FileFinderDelegate {
                 let finder = self.file_finder.clone();
                 window.dispatch_action(OpenChannelNotesById { channel_id }.boxed_clone(), cx);
                 finder.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+                return;
+            }
+            if matches!(m, Match::PathCompletion { is_dir: true, .. }) {
                 return;
             }
 
@@ -1703,6 +2101,21 @@ impl PickerDelegate for FileFinderDelegate {
                             )
                         }
                     }
+                    Match::PathCompletion { path, .. } => {
+                        if secondary {
+                            workspace.split_abs_path(path.clone(), false, window, cx)
+                        } else {
+                            workspace.open_abs_path(
+                                path.clone(),
+                                OpenOptions {
+                                    visible: Some(OpenVisible::None),
+                                    ..Default::default()
+                                },
+                                window,
+                                cx,
+                            )
+                        }
+                    }
                     Match::Channel { .. } => unreachable!("handled above"),
                 }
             });
@@ -1770,7 +2183,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .color(Color::Muted)
                 .size(IconSize::Small)
                 .into_any_element(),
-            Match::Search(_) | Match::ExternalPath(_) => v_flex()
+            Match::Search(_) | Match::ExternalPath(_) | Match::PathCompletion { .. } => v_flex()
                 .flex_none()
                 .size(IconSize::Small.rems())
                 .into_any_element(),
@@ -1787,6 +2200,9 @@ impl PickerDelegate for FileFinderDelegate {
 
         let file_icon = match path_match {
             Match::Channel { .. } => Some(Icon::new(IconName::Hash).color(Color::Muted)),
+            Match::PathCompletion { is_dir: true, .. } => {
+                Some(Icon::new(IconName::Folder).color(Color::Muted))
+            }
             _ => maybe!({
                 if !settings.file_icons {
                     return None;
