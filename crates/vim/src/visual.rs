@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use editor::{
-    Bias, DisplayPoint, Editor, MultiBufferOffset, SelectionEffects,
+    Bias, DisplayPoint, Editor, MultiBufferOffset, RowExt, SelectionEffects,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
 };
@@ -228,8 +228,17 @@ impl Vim {
                 )
             {
                 let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
+                let include_soft_wrapped_lines = matches!(
+                    motion,
+                    Motion::Up {
+                        display_lines: true
+                    } | Motion::Down {
+                        display_lines: true
+                    }
+                );
                 vim.visual_block_motion(
                     is_up_or_down,
+                    include_soft_wrapped_lines,
                     editor,
                     window,
                     cx,
@@ -299,6 +308,7 @@ impl Vim {
     pub fn visual_block_motion(
         &mut self,
         preserve_goal: bool,
+        include_soft_wrapped_lines: bool,
         editor: &mut Editor,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -313,6 +323,16 @@ impl Vim {
             let map = &s.display_snapshot();
             let mut head = s.newest_anchor().head().to_display_point(map);
             let mut tail = s.oldest_anchor().tail().to_display_point(map);
+            let mut selected_rows = s
+                .all_display(map)
+                .into_iter()
+                .map(|selection| selection.start.row())
+                .collect::<Vec<_>>();
+            selected_rows.sort_unstable();
+            selected_rows.dedup();
+            let block_includes_adjacent_display_rows = selected_rows
+                .windows(2)
+                .any(|rows| rows[0].next_row() == rows[1]);
 
             let mut head_x = map.x_for_display_point(head, &text_layout_details);
             let mut tail_x = map.x_for_display_point(tail, &text_layout_details);
@@ -414,11 +434,24 @@ impl Vim {
                     break;
                 }
 
-                // Find the next or previous buffer row where the `row` should
-                // be moved to, so that wrapped lines are skipped.
-                row = map
-                    .start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
-                    .row();
+                let next_row = if include_soft_wrapped_lines || block_includes_adjacent_display_rows
+                {
+                    if going_up {
+                        row.previous_row()
+                    } else {
+                        row.next_row()
+                    }
+                } else {
+                    // Find the next or previous buffer row where the `row` should
+                    // be moved to, so that wrapped lines are skipped.
+                    map.start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction)
+                        .row()
+                };
+
+                if next_row == row {
+                    break;
+                }
+                row = next_row;
             }
 
             s.select(selections);
@@ -934,13 +967,32 @@ impl Vim {
 }
 #[cfg(test)]
 mod test {
+    use gpui::UpdateGlobal;
     use indoc::indoc;
+    use language::language_settings::SoftWrap;
+    use settings::SettingsStore;
     use workspace::item::Item;
 
     use crate::{
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
+
+    fn set_soft_wrap(cx: &mut VimTestContext, columns: u32) {
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.soft_wrap = Some(SoftWrap::Bounded);
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .preferred_line_length = Some(columns);
+                });
+            })
+        });
+        cx.run_until_parked();
+    }
 
     #[gpui::test]
     async fn test_enter_visual_mode(cx: &mut gpui::TestAppContext) {
@@ -1651,6 +1703,24 @@ mod test {
             «1ˇ»2345678901234567890
             "
         });
+    }
+
+    #[gpui::test]
+    async fn test_visual_block_display_line_motion_on_wrapped_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        set_soft_wrap(&mut cx, 12);
+
+        cx.set_state("ˇ12345678901234567890", Mode::Normal);
+        assert_eq!(cx.display_text(), "123456789012\n34567890");
+        cx.simulate_keystrokes("ctrl-v g j");
+        cx.assert_state("«1ˇ»23456789012«3ˇ»4567890", Mode::VisualBlock);
+
+        cx.simulate_keystrokes("l");
+        cx.assert_state("«12ˇ»3456789012«34ˇ»567890", Mode::VisualBlock);
+
+        cx.set_state("123456789012ˇ34567890", Mode::Normal);
+        cx.simulate_keystrokes("ctrl-v g k");
+        cx.assert_state("«1ˇ»23456789012«3ˇ»4567890", Mode::VisualBlock);
     }
 
     #[gpui::test]

@@ -1255,7 +1255,7 @@ impl Vim {
         self.update_editor(cx, |vim, editor, cx| {
             if last_mode != Mode::VisualBlock && last_mode.is_visual() && mode == Mode::VisualBlock
             {
-                vim.visual_block_motion(true, editor, window, cx, &mut |_, point, goal| {
+                vim.visual_block_motion(true, false, editor, window, cx, &mut |_, point, goal| {
                     Some((point, goal))
                 })
             }
