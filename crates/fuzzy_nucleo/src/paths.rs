@@ -9,7 +9,7 @@ use std::{
 use util::{paths::PathStyle, rel_path::RelPath};
 
 use nucleo::Utf32Str;
-use nucleo::pattern::Atom;
+use nucleo::pattern::Pattern;
 
 use fuzzy::CharBag;
 
@@ -109,27 +109,29 @@ pub(crate) fn distance_between_paths(path: &RelPath, relative_to: &RelPath) -> u
     path_components.count() + relative_components.count() + 1
 }
 
+#[inline]
 fn get_filename_match_bonus(
     candidate_buf: &str,
-    query_atoms: &[Atom],
+    pattern: &Pattern,
     matcher: &mut nucleo::Matcher,
 ) -> f64 {
-    let filename = match std::path::Path::new(candidate_buf).file_name() {
-        Some(f) => f.to_str().unwrap_or(""),
-        None => return 0.0,
-    };
-    if filename.is_empty() || query_atoms.is_empty() {
+    let Some(filename) = std::path::Path::new(candidate_buf)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .filter(|f| !f.is_empty())
+    else {
         return 0.0;
-    }
+    };
     let mut buf = Vec::new();
     let haystack = Utf32Str::new(filename, &mut buf);
-    let mut total_score = 0u32;
-    for atom in query_atoms {
-        if let Some(score) = atom.score(haystack, matcher) {
-            total_score = total_score.saturating_add(score as u32);
-        }
-    }
-    total_score as f64 / filename.len().max(1) as f64
+    let score: u32 = pattern
+        .atoms
+        .iter()
+        .filter_map(|atom| atom.score(haystack, matcher))
+        .map(|s| s as u32)
+        .sum();
+
+    score as f64 / filename.len().max(1) as f64
 }
 
 fn path_match_helper<'a>(
@@ -190,8 +192,7 @@ fn path_match_helper<'a>(
         matched_chars.dedup();
 
         let length_penalty = candidate_buf.len() as f64 * LENGTH_PENALTY;
-        let filename_bonus =
-            get_filename_match_bonus(&candidate_buf, &query.pattern.atoms, matcher);
+        let filename_bonus = get_filename_match_bonus(&candidate_buf, &query.pattern, matcher);
         let positive = (score as f64 + filename_bonus) * case_penalty(case_mismatches);
         let adjusted_score = positive - length_penalty;
         let positions = positions_from_sorted(&candidate_buf, &matched_chars);

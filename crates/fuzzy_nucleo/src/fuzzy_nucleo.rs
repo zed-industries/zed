@@ -69,15 +69,13 @@ impl Query {
         if query.chars().all(char::is_whitespace) {
             return None;
         }
+        let normalized = query.split_whitespace().collect::<Vec<_>>().join(" ");
         let pattern = Pattern::new(
-            query,
+            &normalized,
             CaseMatching::Ignore,
             Normalization::Smart,
             AtomKind::Fuzzy,
         );
-        if pattern.atoms.is_empty() {
-            return None;
-        }
         let wants_case_penalty = case.is_smart() && query.chars().any(|c| c.is_uppercase());
         let query_chars =
             wants_case_penalty.then(|| query.chars().filter(|c| !c.is_whitespace()).collect());
