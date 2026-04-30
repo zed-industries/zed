@@ -688,7 +688,10 @@ mod tests {
                 "someprovider",
                 "someurl",
                 "somekey",
-                vec![("somemodel", "200000", "32000"), ("somemodel", "200000", "32000")],
+                vec![
+                    ("somemodel", "200000", "32000"),
+                    ("somemodel", "200000", "32000")
+                ],
                 cx,
             )
             .await,
