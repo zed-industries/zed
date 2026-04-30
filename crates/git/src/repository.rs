@@ -1759,8 +1759,40 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git = git_binary?;
+                // Use `%gs` (reflog subject), not `%s` (commit subject). See
+                // https://github.com/zed-industries/zed/issues/55234 for further
+                // context.
+                //
+                // A stash is a regular commit object whose tree records the working
+                // directory state. The list of stashes is not an array — it's the
+                // reflog of `refs/stash`, where each reflog entry points at a stash
+                // commit. From git-stash(1):
+                //
+                //     "The latest stash you created is stored in `refs/stash`; older
+                //      stashes are found in the reflog of this reference and can be
+                //      named using the usual reflog syntax."
+                //     -- https://git-scm.com/docs/git-stash (DESCRIPTION)
+                //
+                // `git stash store` is documented as: "Store a given stash created via
+                // `git stash create` ... in the stash ref, updating the stash reflog."
+                // Crucially, it does not rewrite the underlying commit object — it
+                // only adds a reflog entry pointing at the existing commit.
+                //
+                // From git's pretty-format docs:
+                //
+                //     %s    subject
+                //     %gs   reflog subject
+                //
+                //     -- https://git-scm.com/docs/pretty-formats
+                //
+                // So `%s` would return the ORIGINAL message forever, regardless of how
+                // many times the stash gets renamed externally — no amount of cache
+                // invalidation or fs-watching can fix that, because the data we asked
+                // git for genuinely never changes. `%gs` reads the reflog message that
+                // `store -m` actually updates, and matches what `git stash list` shows
+                // by default.
                 let output = git
-                    .build_command(&["stash", "list", "--pretty=format:%gd%x00%H%x00%ct%x00%s"])
+                    .build_command(&["stash", "list", "--pretty=format:%gd%x00%H%x00%ct%x00%gs"])
                     .output()
                     .await?;
                 if output.status.success() {
@@ -1768,7 +1800,7 @@ impl GitRepository for RealGitRepository {
                     stdout.parse()
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
-                    anyhow::bail!("git status failed: {stderr}");
+                    anyhow::bail!("git stash list failed: {stderr}");
                 }
             })
             .boxed()
