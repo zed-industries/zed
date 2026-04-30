@@ -1369,7 +1369,7 @@ impl WorktreeStore {
                 let folder_path = snapshot.abs_path().to_path_buf();
                 let main_path = snapshot
                     .root_repo_common_dir()
-                    .and_then(|dir| Some(dir.parent()?.to_path_buf()))
+                    .map(|dir| crate::git_store::repo_identity_path(dir).to_path_buf())
                     .unwrap_or_else(|| folder_path.clone());
                 (main_path, folder_path)
             })

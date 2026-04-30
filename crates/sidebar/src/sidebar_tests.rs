@@ -9692,8 +9692,10 @@ mod property_test {
 
             for workspace in group_workspaces {
                 for snapshot in root_repository_snapshots(workspace, cx) {
-                    let repo_path_list =
-                        PathList::new(&[snapshot.original_repo_abs_path.to_path_buf()]);
+                    let Some(main_worktree_abs_path) = snapshot.main_worktree_abs_path() else {
+                        continue;
+                    };
+                    let repo_path_list = PathList::new(&[main_worktree_abs_path.to_path_buf()]);
                     if repo_path_list != path_list {
                         continue;
                     }

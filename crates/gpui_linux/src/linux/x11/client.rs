@@ -188,7 +188,7 @@ pub struct X11ClientState {
     xkb_device_id: i32,
     client_side_decorations_supported: bool,
     pub(crate) x_root_index: usize,
-    pub(crate) _resource_database: Database,
+    pub(crate) resource_database: Database,
     pub(crate) atoms: XcbAtoms,
     pub(crate) windows: HashMap<xproto::Window, WindowRef>,
     pub(crate) mouse_focused_window: Option<xproto::Window>,
@@ -525,7 +525,7 @@ impl X11Client {
             xkb_device_id,
             client_side_decorations_supported,
             x_root_index,
-            _resource_database: resource_database,
+            resource_database,
             atoms,
             windows: HashMap::default(),
             mouse_focused_window: None,
@@ -1599,6 +1599,10 @@ impl LinuxClient for X11Client {
         let appearance = state.common.appearance;
         let compositor_gpu = state.compositor_gpu.take();
         let supports_xinput_gestures = state.supports_xinput_gestures;
+        let is_bgr = state
+            .resource_database
+            .get_string("Xft.rgba", "Xft.Rgba")
+            .is_some_and(|v| v.eq_ignore_ascii_case("bgr"));
         let window = X11Window::new(
             handle,
             X11ClientStatePtr(Rc::downgrade(&self.0)),
@@ -1615,6 +1619,7 @@ impl LinuxClient for X11Client {
             appearance,
             parent_window,
             supports_xinput_gestures,
+            is_bgr,
         )?;
         check_reply(
             || "Failed to set XdndAware property",
