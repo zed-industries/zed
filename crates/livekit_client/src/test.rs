@@ -430,64 +430,67 @@ impl TestServer {
             .get_mut(&*room_name)
             .with_context(|| format!("room {room_name} does not exist"))?;
 
-        let removed_video = room
-            .video_tracks
-            .iter()
-            .position(|t| t.sid == *track_sid)
-            .map(|i| room.video_tracks.remove(i));
-        let removed_audio = room
-            .audio_tracks
-            .iter()
-            .position(|t| t.sid == *track_sid)
-            .map(|i| room.audio_tracks.remove(i));
-
-        for (room_identity, client_room) in &room.client_rooms {
-            if *room_identity != identity {
-                let event = if let Some(server_track) = &removed_video {
-                    let track = RemoteTrack::Video(RemoteVideoTrack {
-                        server_track: server_track.clone(),
-                        _room: client_room.downgrade(),
-                    });
-                    let publication = RemoteTrackPublication {
-                        sid: track_sid.clone(),
-                        room: client_room.downgrade(),
-                        track: track.clone(),
-                    };
-                    let participant = RemoteParticipant {
-                        identity: identity.clone(),
-                        room: client_room.downgrade(),
-                    };
-                    Some(RoomEvent::TrackUnsubscribed {
-                        track,
-                        publication,
-                        participant,
-                    })
-                } else if let Some(server_track) = &removed_audio {
-                    let track = RemoteTrack::Audio(RemoteAudioTrack {
-                        server_track: server_track.clone(),
-                        room: client_room.downgrade(),
-                    });
-                    let publication = RemoteTrackPublication {
-                        sid: track_sid.clone(),
-                        room: client_room.downgrade(),
-                        track: track.clone(),
-                    };
-                    let participant = RemoteParticipant {
-                        identity: identity.clone(),
-                        room: client_room.downgrade(),
-                    };
-                    Some(RoomEvent::TrackUnsubscribed {
-                        track,
-                        publication,
-                        participant,
-                    })
-                } else {
-                    None
+        if let Some(video_to_unpublish) = room.video_tracks.iter().position(|t| t.sid == *track_sid)
+        {
+            let video_to_unpublish = room.video_tracks.remove(video_to_unpublish);
+            for client_room in room
+                .client_rooms
+                .iter()
+                .filter(|(id, _)| **id == identity)
+                .map(|(_, room)| room)
+            {
+                let track = RemoteTrack::Video(RemoteVideoTrack {
+                    server_track: video_to_unpublish.clone(),
+                    _room: client_room.downgrade(),
+                });
+                let publication = RemoteTrackPublication {
+                    sid: track_sid.clone(),
+                    room: client_room.downgrade(),
+                    track: track.clone(),
+                };
+                let participant = RemoteParticipant {
+                    identity: identity.clone(),
+                    room: client_room.downgrade(),
+                };
+                let event = RoomEvent::TrackUnsubscribed {
+                    track,
+                    publication,
+                    participant,
                 };
 
-                if let Some(event) = event {
-                    client_room.0.lock().updates_tx.blocking_send(event).ok();
-                }
+                client_room.0.lock().updates_tx.blocking_send(event).ok();
+            }
+        }
+
+        if let Some(audio_to_unpublish) = room.audio_tracks.iter().position(|t| t.sid == *track_sid)
+        {
+            let audio_to_unpublish = room.audio_tracks.remove(audio_to_unpublish);
+            for client_room in room
+                .client_rooms
+                .iter()
+                .filter(|(id, _)| **id == identity)
+                .map(|(_, room)| room)
+            {
+                let track = RemoteTrack::Audio(RemoteAudioTrack {
+                    server_track: audio_to_unpublish.clone(),
+                    room: client_room.downgrade(),
+                });
+                let publication = RemoteTrackPublication {
+                    sid: track_sid.clone(),
+                    room: client_room.downgrade(),
+                    track: track.clone(),
+                };
+                let participant = RemoteParticipant {
+                    identity: identity.clone(),
+                    room: client_room.downgrade(),
+                };
+                let event = RoomEvent::TrackUnsubscribed {
+                    track,
+                    publication,
+                    participant,
+                };
+
+                client_room.0.lock().updates_tx.blocking_send(event).ok();
             }
         }
 
