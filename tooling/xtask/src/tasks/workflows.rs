@@ -15,6 +15,7 @@ mod compare_perf;
 mod compliance_check;
 mod danger;
 mod deploy_collab;
+mod deploy_docs;
 mod extension_auto_bump;
 mod extension_bump;
 mod extension_tests;
@@ -23,7 +24,6 @@ mod extensions;
 mod nix_build;
 mod publish_extension_cli;
 mod release_nightly;
-mod retag_release;
 mod run_bundling;
 
 mod release;
@@ -204,6 +204,8 @@ pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(compliance_check::compliance_check),
         WorkflowFile::zed(danger::danger),
         WorkflowFile::zed(deploy_collab::deploy_collab),
+        WorkflowFile::zed(deploy_docs::deploy_docs),
+        WorkflowFile::zed(deploy_docs::deploy_nightly_docs),
         WorkflowFile::zed(extension_bump::extension_bump),
         WorkflowFile::zed(extension_auto_bump::extension_auto_bump),
         WorkflowFile::zed(extension_tests::extension_tests),
@@ -211,7 +213,6 @@ pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(publish_extension_cli::publish_extension_cli),
         WorkflowFile::zed(release::release),
         WorkflowFile::zed(release_nightly::release_nightly),
-        WorkflowFile::zed(retag_release::retag_release),
         WorkflowFile::zed(run_agent_evals::run_cron_unit_evals),
         WorkflowFile::zed(run_agent_evals::run_unit_evals),
         WorkflowFile::zed(run_bundling::run_bundling),
