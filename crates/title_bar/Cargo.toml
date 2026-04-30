@@ -29,6 +29,9 @@ test-support = [
 ]
 
 [dependencies]
+terminal_view = { path = "../terminal_view" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 agent_settings.workspace = true
 anyhow.workspace = true
 auto_update.workspace = true
@@ -52,7 +55,6 @@ remote_connection.workspace = true
 rpc.workspace = true
 semver.workspace = true
 schemars.workspace = true
-serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 telemetry.workspace = true

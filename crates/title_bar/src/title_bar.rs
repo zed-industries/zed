@@ -160,6 +160,7 @@ pub struct TitleBar {
     update_version: Entity<UpdateVersion>,
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
     _diagnostics_subscription: Option<gpui::Subscription>,
+    selected_language: String,
 }
 
 impl Render for TitleBar {
@@ -184,7 +185,6 @@ impl Render for TitleBar {
         let show_menus = show_menus(cx);
 
         let mut children = <ArrayVec<_, 4>>::new();
-
         let mut project_name = None;
         let mut repository = None;
         let mut linked_worktree_name = None;
@@ -238,7 +238,7 @@ impl Render for TitleBar {
                                 title_bar.child(menu)
                             },
                         )
-                        .children(self.render_restricted_mode(cx))
+                        .children(self.render_restricted_mode(cx))        
                         .when(render_project_items, |title_bar| {
                             title_bar
                                 .when(title_bar_settings.show_project_items, |title_bar| {
@@ -262,6 +262,7 @@ impl Render for TitleBar {
                 .into_any_element(),
         );
 
+        
         children.push(self.render_collaborator_list(window, cx).into_any_element());
 
         if title_bar_settings.show_onboarding_banner {
@@ -301,6 +302,87 @@ impl Render for TitleBar {
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .children(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
+
+                .child(
+                    h_flex()
+                        .gap_1p5() 
+
+                        // ▶ RUN BUTTON
+                        .child(
+                            Button::new("run-button", "▶")
+                                .label_size(LabelSize::Small)                                
+
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let Some(workspace) = this.workspace.upgrade() else { return };
+
+                                    workspace.update(cx, |workspace, cx| {
+                                        let Some(active_item) = workspace.active_item(cx) else { return };
+                                        let Some(project_path) = active_item.project_path(cx) else { return };
+
+                                        let Some(worktree) = this.effective_active_worktree(cx) else { return };
+                                        let worktree = worktree.read(cx);
+
+                                        let abs_path = worktree.abs_path().join(&*project_path.path);
+
+                                        let dir = match abs_path.parent() {
+                                            Some(d) => d,
+                                            None => return,
+                                        };
+
+                                        let file_name = abs_path.file_name().unwrap().to_string_lossy();
+                                        let file_stem = abs_path.file_stem().unwrap().to_string_lossy();
+
+                                        let cmd = match this.selected_language.as_str() {
+                                            "Java" => format!("javarun {}", file_stem),
+                                            "Python" => format!("python {}", file_name),
+                                            "C++" => format!("runfile {}", file_name),
+                                            _ => return,
+                                        };
+
+                                        println!("Executing: {}", cmd);
+
+                                        let dir_str = dir.display().to_string();
+
+                                        std::process::Command::new("wt")
+                                                .args([
+                                                    "cmd",
+                                                    "/K",
+                                                    "cd",
+                                                    "/d",
+                                                    &dir_str,
+                                                    "&&",
+                                                    "javarun",
+                                                    &file_stem,
+                                                ])
+                                                .spawn()
+                                                .ok();
+                                    });
+                                }))
+                        )
+
+                        // ▼ LANGUAGE BUTTON
+                        .child(
+                            Button::new("lang-dropdown", self.selected_language.clone())
+                                .label_size(LabelSize::Small)
+                                .end_icon(
+                                    Icon::new(IconName::ChevronDown)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted)
+                                )
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.selected_language = match this.selected_language.as_str() {
+                                        "Java" => "Python".into(),
+                                        "Python" => "C++".into(),
+                                        _ => "Java".into(),
+                                    };
+                                    cx.notify();
+                                }))
+                        )
+
+                        .into_any_element()
+                )
+                
                 .child(self.update_version.clone())
                 .when(
                     user.is_none()
@@ -447,6 +529,7 @@ impl TitleBar {
             project,
             user_store,
             client,
+           selected_language: "Java".into(),
             _subscriptions: subscriptions,
             banner: None,
             update_version,
