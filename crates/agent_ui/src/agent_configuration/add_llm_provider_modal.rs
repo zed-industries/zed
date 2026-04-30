@@ -42,7 +42,7 @@ fn single_line_input(
     })
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum LlmCompatibleProvider {
     OpenAi,
     Anthropic,
@@ -100,8 +100,7 @@ impl AddLlmProviderInput {
 
     fn add_model(&mut self, window: &mut Window, cx: &mut App) {
         let model_index = self.models.len();
-        self.models
-            .push(ModelInput::new(model_index, window, cx));
+        self.models.push(ModelInput::new(model_index, window, cx));
     }
 
     fn remove_model(&mut self, index: usize) {
@@ -125,11 +124,7 @@ struct ModelInput {
 }
 
 impl ModelInput {
-    fn new(
-        model_index: usize,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Self {
+    fn new(model_index: usize, window: &mut Window, cx: &mut App) -> Self {
         let base_tab_index = (3 + (model_index * 3)) as isize;
 
         let model_name = single_line_input(
@@ -423,49 +418,51 @@ impl AddLlmProviderModal {
                                 cx.notify();
                             })),
                     )
-                    .child(
-                        Checkbox::new(
-                            ("supports-parallel-tool-calls", ix),
-                            model.capabilities.supports_parallel_tool_calls,
+                    .when(self.provider == LlmCompatibleProvider::OpenAi, |this| {
+                        this.child(
+                            Checkbox::new(
+                                ("supports-parallel-tool-calls", ix),
+                                model.capabilities.supports_parallel_tool_calls,
+                            )
+                            .label("Supports parallel_tool_calls")
+                            .on_click(cx.listener(
+                                move |this, checked, _window, cx| {
+                                    this.input.models[ix]
+                                        .capabilities
+                                        .supports_parallel_tool_calls = *checked;
+                                    cx.notify();
+                                },
+                            )),
                         )
-                        .label("Supports parallel_tool_calls")
-                        .on_click(cx.listener(
-                            move |this, checked, _window, cx| {
-                                this.input.models[ix]
-                                    .capabilities
-                                    .supports_parallel_tool_calls = *checked;
-                                cx.notify();
-                            },
-                        )),
-                    )
-                    .child(
-                        Checkbox::new(
-                            ("supports-prompt-cache-key", ix),
-                            model.capabilities.supports_prompt_cache_key,
+                        .child(
+                            Checkbox::new(
+                                ("supports-prompt-cache-key", ix),
+                                model.capabilities.supports_prompt_cache_key,
+                            )
+                            .label("Supports prompt_cache_key")
+                            .on_click(cx.listener(
+                                move |this, checked, _window, cx| {
+                                    this.input.models[ix].capabilities.supports_prompt_cache_key =
+                                        *checked;
+                                    cx.notify();
+                                },
+                            )),
                         )
-                        .label("Supports prompt_cache_key")
-                        .on_click(cx.listener(
-                            move |this, checked, _window, cx| {
-                                this.input.models[ix].capabilities.supports_prompt_cache_key =
-                                    *checked;
-                                cx.notify();
-                            },
-                        )),
-                    )
-                    .child(
-                        Checkbox::new(
-                            ("supports-chat-completions", ix),
-                            model.capabilities.supports_chat_completions,
+                        .child(
+                            Checkbox::new(
+                                ("supports-chat-completions", ix),
+                                model.capabilities.supports_chat_completions,
+                            )
+                            .label("Supports /chat/completions")
+                            .on_click(cx.listener(
+                                move |this, checked, _window, cx| {
+                                    this.input.models[ix].capabilities.supports_chat_completions =
+                                        *checked;
+                                    cx.notify();
+                                },
+                            )),
                         )
-                        .label("Supports /chat/completions")
-                        .on_click(cx.listener(
-                            move |this, checked, _window, cx| {
-                                this.input.models[ix].capabilities.supports_chat_completions =
-                                    *checked;
-                                cx.notify();
-                            },
-                        )),
-                    ),
+                    }),
             )
             .when(has_more_than_one_model, |this| {
                 this.child(
@@ -858,9 +855,7 @@ mod tests {
 
             for (i, (name, max_tokens, max_output_tokens)) in models.iter().enumerate() {
                 if i >= input.models.len() {
-                    input
-                        .models
-                        .push(ModelInput::new(i, window, cx));
+                    input.models.push(ModelInput::new(i, window, cx));
                 }
                 let model = &mut input.models[i];
                 set_text(&model.name, name, window, cx);
