@@ -37,7 +37,7 @@ use ui::utils::platform_title_bar_height;
 
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
-use std::cmp::{Ordering, Reverse};
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::path::{Path, PathBuf};
@@ -1120,7 +1120,7 @@ impl Sidebar {
         for group in &groups {
             let group_key = &group.key;
             let group_workspaces = &group.workspaces;
-            let mut terminals: Vec<TerminalEntry> = group_workspaces
+            let terminals: Vec<TerminalEntry> = group_workspaces
                 .iter()
                 .flat_map(|workspace| terminal_entries_for_workspace(workspace, cx))
                 .collect();
@@ -1354,8 +1354,6 @@ impl Sidebar {
                 }
             }
 
-            terminals.sort_by_key(|terminal| Reverse((terminal.updated_at, terminal.id)));
-
             let has_threads = if !threads.is_empty() || !terminals.is_empty() {
                 true
             } else {
@@ -1431,17 +1429,13 @@ impl Sidebar {
                     has_threads,
                 });
 
-                for terminal in matched_terminals {
-                    entries.push(terminal.into());
-                }
-
-                for thread in matched_threads {
-                    if let Some(sid) = thread.metadata.session_id.clone() {
-                        current_session_ids.insert(sid);
-                    }
-                    current_thread_ids.insert(thread.metadata.thread_id);
-                    entries.push(thread.into());
-                }
+                Self::push_entries_by_display_time(
+                    &mut entries,
+                    matched_terminals,
+                    matched_threads,
+                    &mut current_session_ids,
+                    &mut current_thread_ids,
+                );
             } else {
                 project_header_indices.push(entries.len());
                 entries.push(ListEntry::ProjectHeader {
@@ -1458,17 +1452,13 @@ impl Sidebar {
                     continue;
                 }
 
-                for terminal in terminals {
-                    entries.push(terminal.into());
-                }
-
-                for thread in threads {
-                    if let Some(sid) = &thread.metadata.session_id {
-                        current_session_ids.insert(sid.clone());
-                    }
-                    current_thread_ids.insert(thread.metadata.thread_id);
-                    entries.push(thread.into());
-                }
+                Self::push_entries_by_display_time(
+                    &mut entries,
+                    terminals,
+                    threads,
+                    &mut current_session_ids,
+                    &mut current_thread_ids,
+                );
             }
         }
 
@@ -3778,6 +3768,41 @@ impl Sidebar {
 
     fn thread_display_time(metadata: &ThreadMetadata) -> DateTime<Utc> {
         metadata.interacted_at.unwrap_or(metadata.updated_at)
+    }
+
+    fn entry_display_time(entry: &ListEntry) -> DateTime<Utc> {
+        match entry {
+            ListEntry::Thread(thread) => Self::thread_display_time(&thread.metadata),
+            ListEntry::Terminal(terminal) => terminal.updated_at,
+            ListEntry::ProjectHeader { .. } => DateTime::<Utc>::MIN_UTC,
+        }
+    }
+
+    fn push_entries_by_display_time(
+        entries: &mut Vec<ListEntry>,
+        terminals: Vec<TerminalEntry>,
+        threads: Vec<ThreadEntry>,
+        current_session_ids: &mut HashSet<acp::SessionId>,
+        current_thread_ids: &mut HashSet<agent_ui::ThreadId>,
+    ) {
+        let mut row_entries = terminals
+            .into_iter()
+            .map(ListEntry::Terminal)
+            .chain(threads.into_iter().map(ListEntry::Thread))
+            .collect::<Vec<_>>();
+        row_entries.sort_by(|left, right| {
+            Self::entry_display_time(right).cmp(&Self::entry_display_time(left))
+        });
+
+        for entry in row_entries {
+            if let ListEntry::Thread(thread) = &entry {
+                if let Some(session_id) = &thread.metadata.session_id {
+                    current_session_ids.insert(session_id.clone());
+                }
+                current_thread_ids.insert(thread.metadata.thread_id);
+            }
+            entries.push(entry);
+        }
     }
 
     /// The sort order used by the ctrl-tab switcher

@@ -238,15 +238,9 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|workspace, _: &NewAgentPanelTerminal, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        let working_directory =
-                            terminal_view::default_working_directory(workspace, cx);
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.new_terminal_with_working_directory(
-                                working_directory,
-                                window,
-                                cx,
-                            );
+                            panel.new_terminal(window, cx);
                         });
                     }
                 })
@@ -811,8 +805,6 @@ pub struct AgentPanel {
     overlay_view: Option<OverlayView>,
     draft_thread: Option<Entity<ConversationView>>,
     retained_threads: HashMap<ThreadId, Entity<ConversationView>>,
-    // Agent-panel terminals are transient; serialization keeps the most recent
-    // thread state so reopening the workspace does not restore terminal shells.
     terminals: IndexMap<TerminalId, AgentTerminal>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -840,52 +832,44 @@ impl AgentPanel {
 
         let selected_agent = self.selected_agent.clone();
 
-        let conversation_view_to_serialize = self.active_conversation_view().or_else(|| {
-            let last_active_thread_id = self.last_active_thread_id?;
-            self.draft_thread
-                .as_ref()
-                .filter(|draft| draft.read(cx).thread_id == last_active_thread_id)
-                .or_else(|| self.retained_threads.get(&last_active_thread_id))
-        });
-        let last_active_thread = conversation_view_to_serialize.and_then(|conversation_view| {
-            let is_draft = self
-                .draft_thread
-                .as_ref()
-                .is_some_and(|draft| draft.entity_id() == conversation_view.entity_id());
-            conversation_view
-                .read(cx)
-                .root_thread(cx)
-                .map(|thread| {
-                    let thread = thread.read(cx);
-                    let title = thread.title();
-                    let work_dirs = thread.work_dirs().cloned();
-                    SerializedActiveThread {
-                        session_id: (!is_draft).then(|| thread.session_id().0.to_string()),
-                        agent_type: conversation_view.read(cx).agent_key().clone(),
-                        title: title.map(|t| t.to_string()),
-                        work_dirs: work_dirs.map(|dirs| dirs.serialize()),
-                    }
+        let is_draft_active = self.active_thread_is_draft(cx);
+        let last_active_thread = self
+            .active_agent_thread(cx)
+            .map(|thread| {
+                let thread = thread.read(cx);
+
+                let title = thread.title();
+                let work_dirs = thread.work_dirs().cloned();
+                SerializedActiveThread {
+                    session_id: (!is_draft_active).then(|| thread.session_id().0.to_string()),
+                    agent_type: self.selected_agent.clone(),
+                    title: title.map(|t| t.to_string()),
+                    work_dirs: work_dirs.map(|dirs| dirs.serialize()),
+                }
+            })
+            .or_else(|| {
+                // The active view may be in `Loading` or `LoadError` — for
+                // example, while a restored thread is waiting for a custom
+                // agent to finish registering. Without this fallback, a
+                // stray `serialize()` triggered during that window would
+                // write `session_id=None` and wipe the restored session
+                if is_draft_active {
+                    return None;
+                }
+                let conversation_view = self.active_conversation_view()?;
+                let session_id = conversation_view.read(cx).root_session_id.clone()?;
+                let metadata = ThreadMetadataStore::try_global(cx)
+                    .and_then(|store| store.read(cx).entry_by_session(&session_id).cloned());
+                Some(SerializedActiveThread {
+                    session_id: Some(session_id.0.to_string()),
+                    agent_type: self.selected_agent.clone(),
+                    title: metadata
+                        .as_ref()
+                        .and_then(|m| m.title.as_ref())
+                        .map(|t| t.to_string()),
+                    work_dirs: metadata.map(|m| m.folder_paths().serialize()),
                 })
-                .or_else(|| {
-                    if is_draft {
-                        return None;
-                    }
-                    let conversation_view = conversation_view.read(cx);
-                    let session_id = conversation_view.root_session_id.clone()?;
-                    let agent_type = conversation_view.agent_key().clone();
-                    let metadata = ThreadMetadataStore::try_global(cx)
-                        .and_then(|store| store.read(cx).entry_by_session(&session_id).cloned());
-                    Some(SerializedActiveThread {
-                        session_id: Some(session_id.0.to_string()),
-                        agent_type,
-                        title: metadata
-                            .as_ref()
-                            .and_then(|metadata| metadata.title.as_ref())
-                            .map(|title| title.to_string()),
-                        work_dirs: metadata.map(|metadata| metadata.folder_paths().serialize()),
-                    })
-                })
-        });
+            });
 
         let kvp = KeyValueStore::global(cx);
         let draft_thread_prompt = self.draft_thread.as_ref().and_then(|conversation| {
@@ -1345,15 +1329,6 @@ impl AgentPanel {
 
     pub fn new_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let working_directory = self.default_terminal_working_directory(cx);
-        self.new_terminal_with_working_directory(working_directory, window, cx);
-    }
-
-    fn new_terminal_with_working_directory(
-        &mut self,
-        working_directory: Option<PathBuf>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
         if !self.project.read(cx).supports_terminal(cx) {
             self.show_terminal_unavailable_toast(cx);
             return;
@@ -1480,6 +1455,7 @@ impl AgentPanel {
         };
         let was_notified = terminal.notified;
         terminal.notified = false;
+        terminal.updated_at = Utc::now();
         self.bump_terminal_order(terminal_id);
         self.set_base_view(BaseView::Terminal { terminal_id }, focus, window, cx);
         if was_notified {
@@ -2582,6 +2558,7 @@ impl AgentPanel {
                             cx.on_focus_in(&focus_handle, window, move |this, _window, cx| {
                                 if let Some(terminal) = this.terminals.get_mut(&terminal_id) {
                                     terminal.notified = false;
+                                    terminal.updated_at = Utc::now();
                                 }
                                 this.bump_terminal_order(terminal_id);
                                 cx.emit(AgentPanelEvent::TerminalFocused);
@@ -3505,16 +3482,8 @@ impl AgentPanel {
                                                     if let Some(panel) =
                                                         workspace.panel::<AgentPanel>(cx)
                                                     {
-                                                        let working_directory =
-                                                            terminal_view::default_working_directory(
-                                                                workspace, cx,
-                                                            );
                                                         panel.update(cx, |panel, cx| {
-                                                            panel.new_terminal_with_working_directory(
-                                                                working_directory,
-                                                                window,
-                                                                cx,
-                                                            );
+                                                            panel.new_terminal(window, cx);
                                                         });
                                                     }
                                                 });
