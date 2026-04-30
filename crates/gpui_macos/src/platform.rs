@@ -52,7 +52,7 @@ use std::{
     ptr,
     rc::Rc,
     slice, str,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, atomic::AtomicBool},
 };
 use util::{
     ResultExt,
@@ -179,6 +179,7 @@ pub(crate) struct MacPlatformState {
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
+    cursor_hidden: Arc<AtomicBool>,
 }
 
 impl MacPlatform {
@@ -215,6 +216,7 @@ impl MacPlatform {
             on_thermal_state_change: None,
             menus: None,
             keyboard_mapper,
+            cursor_hidden: Arc::new(AtomicBool::new(false)),
         }))
     }
 
@@ -619,12 +621,14 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let renderer_context = self.0.lock().renderer_context.clone();
+        let guard = self.0.lock();
+        let renderer_context = guard.renderer_context.clone();
         Ok(Box::new(MacWindow::open(
             handle,
             options,
-            self.foreground_executor(),
-            self.background_executor(),
+            guard.cursor_hidden.clone(),
+            guard.foreground_executor.clone(),
+            guard.background_executor.clone(),
             renderer_context,
         )))
     }
