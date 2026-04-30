@@ -9030,7 +9030,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                 &snapshot,
             ),
             &snapshot,
-            &unstaged_diff.base_text(cx).text(),
+            &unstaged_diff.base_text_string(cx).unwrap_or_default(),
             &[(
                 2..3,
                 "",
@@ -9111,7 +9111,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     diff_1.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text(cx).language().cloned(), Some(language))
+        assert_eq!(
+            diff.base_text().unwrap().language().cloned(),
+            Some(language)
+        )
     });
     cx.run_until_parked();
     diff_1.update(cx, |diff, cx| {
@@ -9166,7 +9169,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
                 &snapshot,
             ),
             &snapshot,
-            &diff.base_text(cx).text(),
+            &diff.base_text_string(cx).unwrap_or_default(),
             &[(
                 2..3,
                 "",
@@ -9317,6 +9320,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         );
     });
 
+    dbg!("---------------------");
     // Stage a hunk. It appears as optimistically staged.
     uncommitted_diff.update(cx, |diff, cx| {
         let range =
@@ -9354,16 +9358,18 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         );
     });
 
+    dbg!("!!!!!!!!!!!!!!!!!");
     // The diff emits a change event for the range of the staged hunk.
     assert!(matches!(
         diff_events.next().await.unwrap(),
-        BufferDiffEvent::HunksStagedOrUnstaged(_)
+        BufferDiffEvent::HunksStagedOrUnstaged(_, _)
     ));
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged(DiffChanged {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
         extended_range: _,
+        base_text_changed: _,
     }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -9408,10 +9414,11 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
         extended_range: _,
+        base_text_changed: _,
     }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(0, 0)..Point::new(4, 0));
+        assert_eq!(changed_range, Point::new(1, 0)..Point::new(2, 0));
     } else {
         panic!("Unexpected event {event:?}");
     }
@@ -9460,13 +9467,14 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
     assert!(matches!(
         diff_events.next().await.unwrap(),
-        BufferDiffEvent::HunksStagedOrUnstaged(_)
+        BufferDiffEvent::HunksStagedOrUnstaged(_, _)
     ));
     let event = diff_events.next().await.unwrap();
     if let BufferDiffEvent::DiffChanged(DiffChanged {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
         extended_range: _,
+        base_text_changed: _,
     }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -9510,6 +9518,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
         extended_range: _,
+        base_text_changed: _,
     }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -10116,6 +10125,98 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
         "Index should show file as executable (100755).\ngit ls-files -s:\n{}",
         index_contents
     );
+}
+
+#[gpui::test]
+async fn test_staging_preserves_line_ending(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let committed_contents = "one\r\ntwo\r\nthree\r\n".to_string();
+    let file_contents = "one\r\nTWO\r\nthree\r\n".to_string();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            "existing.txt": file_contents.clone(),
+            "new.txt": "hello\r\nworld\r\n",
+        }),
+    )
+    .await;
+
+    fs.set_head_and_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("existing.txt", committed_contents.clone())],
+    );
+
+    let repo = fs
+        .open_repo(path!("/dir/.git").as_ref(), Some("git".as_ref()))
+        .unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    // Case 1: file that already exists in the index with CRLF.
+    // After staging a modified hunk, the written index text should retain CRLF.
+    {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/existing.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let uncommitted_diff = project
+            .update(cx, |project, cx| {
+                project.open_uncommitted_diff(buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
+            diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
+        });
+
+        cx.run_until_parked();
+
+        let index_text = repo
+            .load_index_text(RepoPath::from_rel_path(rel_path("existing.txt")))
+            .await
+            .unwrap();
+        assert_eq!(index_text, "one\r\nTWO\r\nthree\r\n");
+    }
+
+    // Case 2: file not previously in the index, with CRLF in the working copy.
+    // Staging it should write CRLF to the index.
+    {
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/new.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let uncommitted_diff = project
+            .update(cx, |project, cx| {
+                project.open_uncommitted_diff(buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
+            diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
+        });
+
+        cx.run_until_parked();
+
+        let index_text = repo
+            .load_index_text(RepoPath::from_rel_path(rel_path("new.txt")))
+            .await
+            .unwrap();
+        assert_eq!(index_text, "hello\r\nworld\r\n");
+    }
 }
 
 #[gpui::test]

@@ -146,6 +146,7 @@ struct BufferGitState {
     oid_buffers: HashMap<git::Oid, (Arc<str>, Entity<language::Buffer>)>,
     head_changed: bool,
     index_changed: bool,
+    // todo!() unused now?
     language_changed: bool,
 }
 
@@ -1848,7 +1849,7 @@ impl GitStore {
         event: &BufferDiffEvent,
         cx: &mut Context<Self>,
     ) {
-        if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
+        if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text, line_ending) = event {
             let buffer_id = diff.read(cx).buffer_id;
             if let Some(diff_state) = self.diffs.get(&buffer_id) {
                 let hunk_staging_operation_count = diff_state.update(cx, |diff_state, _| {
@@ -1860,7 +1861,10 @@ impl GitStore {
                         log::debug!("hunks changed for {}", path.as_unix_str());
                         repo.spawn_set_index_text_job(
                             path,
-                            new_index_text.as_ref().map(|rope| rope.to_string()),
+                            new_index_text.as_ref().map(|rope| {
+                                text::chunks_with_line_ending(rope, *line_ending)
+                                    .collect::<String>()
+                            }),
                             Some(hunk_staging_operation_count),
                             cx,
                         )
@@ -3703,7 +3707,6 @@ impl BufferGitState {
 
         let index_changed = self.index_changed;
         let head_changed = self.head_changed;
-        let language_changed = self.language_changed;
         let prev_hunk_staging_operation_count = self.hunk_staging_operation_count_as_of_write;
         let index_matches_head = match (self.index_text.as_ref(), self.head_text.as_ref()) {
             // todo!() check that we still have this optimization
@@ -3751,6 +3754,7 @@ impl BufferGitState {
                 .clone();
             let old_index = index_buffer.read(cx).snapshot();
             let language = language.clone();
+            let language_registry = language_registry.clone();
             cx.spawn(async move |_, cx| {
                 let edits = if index_changed {
                     let index_text = index_text.clone();
@@ -3761,9 +3765,10 @@ impl BufferGitState {
                 };
                 let edited_snapshot = index_buffer
                     .update(cx, |index_buffer, cx| {
-                        if language_changed {
-                            index_buffer.set_language(language, cx);
+                        if let Some(language_registry) = language_registry {
+                            index_buffer.set_language_registry(language_registry);
                         }
+                        index_buffer.set_language(language, cx);
                         index_buffer.snapshot_with_edits(edits, cx)
                     })
                     .await;
@@ -3795,9 +3800,10 @@ impl BufferGitState {
                 };
                 let edited_snapshot = head_buffer
                     .update(cx, |head_buffer, cx| {
-                        if language_changed {
-                            head_buffer.set_language(language, cx);
+                        if let Some(language_registry) = language_registry {
+                            head_buffer.set_language_registry(language_registry);
                         }
+                        head_buffer.set_language(language, cx);
                         head_buffer.snapshot_with_edits(edits, cx)
                     })
                     .await;

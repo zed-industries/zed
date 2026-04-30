@@ -1645,11 +1645,17 @@ impl Buffer {
     {
         let mut snapshot = self.snapshot.clone();
         let base_version = self.version();
-        let timestamp = self.lamport_clock.tick();
         let edits: Vec<_> = edits
             .into_iter()
             .map(|(range, new_text)| (range.to_offset(&snapshot), new_text.into()))
             .collect();
+        if edits.is_empty() {
+            return EditedBufferSnapshot {
+                base_version,
+                snapshot,
+            };
+        }
+        let timestamp = self.lamport_clock.tick();
         snapshot.apply_edit_internal(edits, timestamp);
         snapshot.version.observe(timestamp);
         EditedBufferSnapshot {

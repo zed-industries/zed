@@ -33,6 +33,7 @@ ztracing.workspace = true
 [dev-dependencies]
 ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 
 settings.workspace = true
