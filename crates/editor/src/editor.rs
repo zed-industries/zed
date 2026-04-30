@@ -7110,62 +7110,63 @@ impl Editor {
         let toggle_task = cx.spawn_in(window, async move |editor, cx| {
             let (resolved_tasks, debug_scenarios, task_context) = runnable_task.await?;
 
-            let code_actions: Option<Rc<[AvailableCodeAction]>> = if let Some(CodeActionSource::RunMenu(_)) = &deployed_from {
-                None
-            } else {
-                let fetch_tasks = editor.update_in(cx, |editor, window, cx| {
-                    let buffer_snapshot = buffer.read(cx).snapshot();
-                    let line_end_column = buffer_snapshot.line_len(buffer_row);
-                    let start_offset =
-                        buffer_snapshot.point_to_offset(text::Point::new(buffer_row, 0));
-                    let end_offset = buffer_snapshot
-                        .point_to_offset(text::Point::new(buffer_row, line_end_column));
-                    let start_anchor = buffer_snapshot.anchor_before(start_offset);
-                    let end_anchor = buffer_snapshot.anchor_after(end_offset);
+            let code_actions: Option<Rc<[AvailableCodeAction]>> =
+                if let Some(CodeActionSource::RunMenu(_)) = &deployed_from {
+                    None
+                } else {
+                    let fetch_tasks = editor.update_in(cx, |editor, window, cx| {
+                        let buffer_snapshot = buffer.read(cx).snapshot();
+                        let line_end_column = buffer_snapshot.line_len(buffer_row);
+                        let start_offset =
+                            buffer_snapshot.point_to_offset(text::Point::new(buffer_row, 0));
+                        let end_offset = buffer_snapshot
+                            .point_to_offset(text::Point::new(buffer_row, line_end_column));
+                        let start_anchor = buffer_snapshot.anchor_before(start_offset);
+                        let end_anchor = buffer_snapshot.anchor_after(end_offset);
 
-                    let providers = editor.code_action_providers.clone();
-                    let tasks: Vec<_> = providers
-                        .iter()
-                        .map(|provider| {
-                            provider.code_actions(&buffer, start_anchor..end_anchor, window, cx)
-                        })
-                        .collect();
-                    (providers, tasks)
-                })?;
+                        let providers = editor.code_action_providers.clone();
+                        let tasks: Vec<_> = providers
+                            .iter()
+                            .map(|provider| {
+                                provider.code_actions(&buffer, start_anchor..end_anchor, window, cx)
+                            })
+                            .collect();
+                        (providers, tasks)
+                    })?;
 
-                let (providers, tasks) = fetch_tasks;
-                let all_results = future::join_all(tasks).await;
+                    let (providers, tasks) = fetch_tasks;
+                    let all_results = future::join_all(tasks).await;
 
-                let cached = editor.update(cx, |editor, _cx| {
-                    editor.cached_code_actions_for_row(buffer_id, buffer_row)
-                })?;
+                    let cached = editor.update(cx, |editor, _cx| {
+                        editor.cached_code_actions_for_row(buffer_id, buffer_row)
+                    })?;
 
-                let mut actions: Vec<AvailableCodeAction> =
-                    cached.map(|rc| rc.to_vec()).unwrap_or_default();
+                    let mut actions: Vec<AvailableCodeAction> =
+                        cached.map(|rc| rc.to_vec()).unwrap_or_default();
 
-                for (provider, provider_actions) in providers.iter().zip(all_results) {
-                    if let Some(provider_actions) = provider_actions.log_err() {
-                        for action in provider_actions {
-                            let is_duplicate = actions.iter().any(|a| {
-                                a.action.server_id == action.server_id
-                                    && a.action.lsp_action == action.lsp_action
-                            });
-                            if !is_duplicate {
-                                actions.push(AvailableCodeAction {
-                                    action,
-                                    provider: provider.clone(),
+                    for (provider, provider_actions) in providers.iter().zip(all_results) {
+                        if let Some(provider_actions) = provider_actions.log_err() {
+                            for action in provider_actions {
+                                let is_duplicate = actions.iter().any(|a| {
+                                    a.action.server_id == action.server_id
+                                        && a.action.lsp_action == action.lsp_action
                                 });
+                                if !is_duplicate {
+                                    actions.push(AvailableCodeAction {
+                                        action,
+                                        provider: provider.clone(),
+                                    });
+                                }
                             }
                         }
                     }
-                }
 
-                if actions.is_empty() {
-                    None
-                } else {
-                    Some(Rc::from(actions))
-                }
-            };
+                    if actions.is_empty() {
+                        None
+                    } else {
+                        Some(Rc::from(actions))
+                    }
+                };
 
             editor.update_in(cx, |editor, window, cx| {
                 let spawn_straight_away = quick_launch

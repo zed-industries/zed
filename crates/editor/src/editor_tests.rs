@@ -37116,10 +37116,7 @@ async fn test_viewport_code_action_cache_populated_on_edit(cx: &mut gpui::TestAp
                                 params.range.start.line,
                                 params.range.start.character,
                             ),
-                            lsp::Position::new(
-                                params.range.end.line,
-                                params.range.end.character,
-                            ),
+                            lsp::Position::new(params.range.end.line, params.range.end.character),
                         ),
                         message: "unused variable".to_string(),
                         ..Default::default()
