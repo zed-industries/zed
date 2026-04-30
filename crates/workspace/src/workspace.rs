@@ -4808,7 +4808,7 @@ impl Workspace {
     }
 
     pub fn toggle_auto_watch_screens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.auto_watchg.enabled() {
+        if self.auto_watch.enabled() {
             self.auto_watch = AutoWatch::Off;
             cx.notify();
             return;
