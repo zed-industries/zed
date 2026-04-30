@@ -666,7 +666,7 @@ pub(crate) async fn count_untracked_lines(
     let output = git_binary.run_raw(&args).await?;
     let repo_path: Arc<Path> = git_binary.working_directory.clone().into();
 
-    let stream = output // TODO!(Yara) check if this is not regressing pref (use chromium)
+    let stream = output 
         .split_terminator('\0')
         .filter_map(|path_str| {
             let Ok(path) = RepoPath::new(path_str) else {

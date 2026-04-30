@@ -7576,8 +7576,6 @@ impl Repository {
                     return Ok(());
                 }
 
-                let has_head = prev_snapshot.head_commit.is_some();
-
                 let stash_entries = backend.stash_entries().await?;
                 let changed_path_statuses = cx
                     .background_spawn(async move {
@@ -7586,14 +7584,7 @@ impl Repository {
                         let changed_paths_vec = changed_paths.iter().cloned().collect::<Vec<_>>();
 
                         let status_task = backend.status(&changed_paths_vec);
-                        let diff_stat_future = if has_head {
-                            backend.diff_stat(&changed_paths_vec)
-                        } else {
-                            future::ready(Ok(status::GitDiffStat {
-                                entries: Arc::default(),
-                            }))
-                            .boxed()
-                        };
+                        let diff_stat_future = backend.diff_stat(&changed_paths_vec);
 
                         let (statuses, diff_stats) =
                             futures::future::try_join(status_task, diff_stat_future).await?;
@@ -8627,17 +8618,8 @@ async fn compute_snapshot(
     let (statuses, diff_stats, stash_entries) = cx
         .background_spawn({
             let backend = backend.clone();
-            let snapshot = snapshot.clone();
             async move {
-                let diff_stat_future: BoxFuture<'_, Result<status::GitDiffStat>> =
-                    if snapshot.head_commit.is_some() {
-                        backend.diff_stat(&[])
-                    } else {
-                        future::ready(Ok(status::GitDiffStat {
-                            entries: Arc::default(),
-                        }))
-                        .boxed()
-                    };
+                let diff_stat_future = backend.diff_stat(&[]);
                 futures::future::try_join3(
                     backend.status(&[RepoPath::from_rel_path(
                         &RelPath::new(".".as_ref(), PathStyle::local()).unwrap(),

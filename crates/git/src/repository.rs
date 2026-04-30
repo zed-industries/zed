@@ -2114,7 +2114,11 @@ impl GitRepository for RealGitRepository {
         let fut = async move {
             let git_binary = git_binary?;
 
-            let tracked = tracked_lines(&git_binary, &path_prefixes).await?;
+            // `git diff --numstat HEAD` fails when there are no commits yet,
+            // so treat errors as "no tracked changes" rather than propagating.
+            let tracked = tracked_lines(&git_binary, &path_prefixes)
+                .await
+                .unwrap_or_default();
             let paths_with_stats: Mutex<_> = tracked
                 .iter()
                 .map(|(path, _)| path.clone())
@@ -2145,7 +2149,6 @@ impl GitRepository for RealGitRepository {
                 .or(timeout)
                 .await;
 
-            dbg!(&total);
             Ok(GitDiffStat {
                 entries: total.into_iter().collect_vec().into(),
             })
@@ -3828,8 +3831,6 @@ mod tests {
             git_directory.join(format!("index-{}.tmp", Uuid::nil()))
         );
     }
-
-    // TODO!(yara) test worktrees (both symlink behaviour and basic untracked)
 
     #[gpui::test]
     async fn test_diff_stat_includes_untracked_files(cx: &mut TestAppContext) {
