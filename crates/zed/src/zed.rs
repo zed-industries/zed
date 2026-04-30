@@ -2470,8 +2470,8 @@ mod tests {
         DisplayPoint, Editor, MultiBufferOffset, SelectionEffects, display_map::DisplayRow,
     };
     use gpui::{
-        Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, Modifiers, TestAppContext,
-        UpdateGlobal, VisualTestContext, WindowHandle, actions, point, px,
+        Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, Entity, Modifiers,
+        TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions, point, px,
     };
     use language::LanguageRegistry;
     use languages::{markdown_lang, rust_lang};
@@ -2482,7 +2482,9 @@ mod tests {
     use serde_json::json;
     use settings::{SaturatingBool, SettingsStore, watch_config_file};
     use std::{
+        cell::RefCell,
         path::{Path, PathBuf},
+        rc::Rc,
         sync::Arc,
         time::Duration,
     };
@@ -2520,6 +2522,66 @@ mod tests {
             .unwrap();
 
         futures::future::join_all(all_tasks).await;
+    }
+
+    #[gpui::test]
+    async fn test_open_prompt_uses_project_lister_for_remote_server_project(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let (remote_options, server_client, _) = remote::RemoteClient::fake_server(cx, server_cx);
+        let server = server_cx.new(|_| ());
+        let _ping_handler = server_client.add_request_handler(
+            server.downgrade(),
+            |_: Entity<()>, _: client::TypedEnvelope<proto::Ping>, _| async { Ok(proto::Ack {}) },
+        );
+        let remote_client = remote::RemoteClient::connect_mock(remote_options, cx).await;
+        let project = cx.update(|cx| {
+            Project::remote(
+                remote_client,
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                false,
+                cx,
+            )
+        });
+
+        let (workspace, cx) = cx.add_window_view({
+            let app_state = app_state.clone();
+            move |window, cx| workspace::Workspace::new(None, project, app_state, window, cx)
+        });
+        let lister_was_local = Rc::new(RefCell::new(None));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let lister_was_local = lister_was_local.clone();
+            workspace.set_prompt_for_open_path(Box::new(move |_, lister, _, cx| {
+                *lister_was_local.borrow_mut() = Some(lister.is_local(cx));
+                let (tx, rx) = futures::channel::oneshot::channel();
+                tx.send(None).ok();
+                rx
+            }));
+
+            workspace::prompt_for_open_path_and_open(
+                workspace,
+                workspace.app_state().clone(),
+                PathPromptOptions {
+                    files: true,
+                    directories: true,
+                    multiple: true,
+                    prompt: None,
+                },
+                false,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert_eq!(*lister_was_local.borrow(), Some(false));
     }
 
     #[gpui::test]
