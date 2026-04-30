@@ -772,6 +772,15 @@ impl LinuxClient for WaylandClient {
         )?;
         state.windows.insert(surface_id, window.0.clone());
 
+        if let Some(activation) = state.globals.activation.as_ref() {
+            // SAFETY: This is called on the main thread during window creation,
+            // before any child processes are spawned from this window.
+            if let Ok(token) = std::env::var("XDG_ACTIVATION_TOKEN") {
+                unsafe { std::env::remove_var("XDG_ACTIVATION_TOKEN") };
+                activation.activate(token, &window.0.surface());
+            }
+        }
+
         Ok(Box::new(window))
     }
 
