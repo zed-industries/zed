@@ -208,7 +208,7 @@ pub enum SplitSide {
 }
 
 impl EditorElement {
-    pub(crate) const SCROLLBAR_WIDTH: Pixels = px(15.);
+    pub(crate) const SCROLLBAR_WIDTH: Pixels = ui::EDITOR_SCROLLBAR_WIDTH;
 
     pub fn new(editor: &Entity<Editor>, style: EditorStyle) -> Self {
         Self {
@@ -6814,7 +6814,9 @@ impl EditorElement {
                             .display_snapshot
                             .display_point_to_anchor(point_for_position.nearest_valid, Bias::Left);
                         editor.change_selections(
-                            SelectionEffects::scroll(Autoscroll::top_relative(line_index)),
+                            SelectionEffects::scroll(Autoscroll::top_relative(
+                                line_index as ScrollOffset,
+                            )),
                             window,
                             cx,
                             |selections| {
@@ -8734,6 +8736,7 @@ pub(crate) fn render_buffer_header(
 
     let file = buffer.file().cloned();
     let editor = editor.clone();
+    let buffer_snapshot = buffer.clone();
 
     right_click_menu("buffer-header-context-menu")
         .trigger(move |_, _, _| header)
@@ -8741,6 +8744,7 @@ pub(crate) fn render_buffer_header(
             let menu_context = focus_handle.clone();
             let editor = editor.clone();
             let file = file.clone();
+            let buffer_snapshot = buffer_snapshot.clone();
             ContextMenu::build(window, cx, move |mut menu, window, cx| {
                 if let Some(file) = file
                     && let Some(project) = editor.read(cx).project()
@@ -8826,6 +8830,19 @@ pub(crate) fn render_buffer_header(
                             )
                         });
                 }
+
+                menu = editor.update(cx, |editor, cx| {
+                    let mut menu = menu;
+                    for addon in editor.addons.values() {
+                        menu = addon.extend_buffer_header_context_menu(
+                            menu,
+                            &buffer_snapshot,
+                            window,
+                            cx,
+                        );
+                    }
+                    menu
+                });
 
                 menu.context(menu_context)
             })
@@ -8963,6 +8980,10 @@ impl LineWithInvisibles {
         let mut layouts = Vec::with_capacity(max_line_count);
         let mut fragments: SmallVec<[LineFragment; 1]> = SmallVec::new();
         let mut line = String::new();
+        // Byte offset into the logical line used to position invisible markers.
+        // Unlike `line`, this is not cleared when we flush `shape_line` for
+        // mid-line inlays/replacements, so marker offsets stay correct in that case.
+        let mut line_byte_offset: usize = 0;
         let mut invisibles = Vec::new();
         let mut width = Pixels::ZERO;
         let mut len = 0;
@@ -9036,6 +9057,7 @@ impl LineWithInvisibles {
 
                         width += size.width;
                         len += highlighted_chunk.text.len();
+                        line_byte_offset += highlighted_chunk.text.len();
                         fragments.push(LineFragment::Element {
                             id: renderer.id,
                             element: Some(element),
@@ -9065,6 +9087,7 @@ impl LineWithInvisibles {
 
                         width += line_layout.width;
                         len += highlighted_chunk.text.len();
+                        line_byte_offset += highlighted_chunk.text.len();
                         fragments.push(LineFragment::Text(line_layout))
                     }
                 }
@@ -9095,6 +9118,7 @@ impl LineWithInvisibles {
                         });
 
                         line.clear();
+                        line_byte_offset = 0;
                         styles.clear();
                         row += 1;
                         line_exceeded_max_len = false;
@@ -9136,8 +9160,8 @@ impl LineWithInvisibles {
                             if highlighted_chunk.is_tab {
                                 if non_whitespace_added || !is_soft_wrapped {
                                     invisibles.push(Invisible::Tab {
-                                        line_start_offset: line.len(),
-                                        line_end_offset: line.len() + line_chunk.len(),
+                                        line_start_offset: line_byte_offset,
+                                        line_end_offset: line_byte_offset + line_chunk.len(),
                                     });
                                 }
                             } else {
@@ -9149,7 +9173,10 @@ impl LineWithInvisibles {
                                             && (non_whitespace_added || !is_soft_wrapped)
                                         {
                                             Some(Invisible::Whitespace {
-                                                line_offset: line.len() + index,
+                                                line_start_offset: line_byte_offset + index,
+                                                line_end_offset: line_byte_offset
+                                                    + index
+                                                    + c.len_utf8(),
                                             })
                                         } else {
                                             None
@@ -9160,6 +9187,7 @@ impl LineWithInvisibles {
                         }
 
                         line.push_str(line_chunk);
+                        line_byte_offset += line_chunk.len();
                     }
                 }
             }
@@ -9431,15 +9459,23 @@ impl LineWithInvisibles {
                     line_start_offset,
                     line_end_offset,
                 } => (*line_start_offset, *line_end_offset, &layout.tab_invisible),
-                Invisible::Whitespace { line_offset } => {
-                    (*line_offset, line_offset + 1, &layout.space_invisible)
-                }
+                Invisible::Whitespace {
+                    line_start_offset,
+                    line_end_offset,
+                } => (
+                    *line_start_offset,
+                    *line_end_offset,
+                    &layout.space_invisible,
+                ),
             };
 
-            let x_offset: ScrollPixelOffset = self.x_for_index(token_offset).into();
+            let token_x = self.x_for_index(token_offset);
+            // Center the marker inside the actual glyph's width so it lines up with
+            // proportional fonts instead of assuming a monospace `em_width` cell.
+            let glyph_width = (self.x_for_index(token_end_offset) - token_x).max(Pixels::ZERO);
+            let x_offset: ScrollPixelOffset = token_x.into();
             let invisible_offset: ScrollPixelOffset =
-                ((layout.position_map.em_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0)
-                    .into();
+                ((glyph_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0).into();
             let origin = content_origin
                 + gpui::point(
                     Pixels::from(
@@ -9635,8 +9671,13 @@ enum Invisible {
         line_start_offset: usize,
         line_end_offset: usize,
     },
+    /// A whitespace character (ASCII space or any other Unicode whitespace).
+    ///
+    /// Storing both offsets correctly accounts for multi-byte whitespace characters
+    /// such as U+00A0 NO-BREAK SPACE, keeping adjacency checks correct.
     Whitespace {
-        line_offset: usize,
+        line_start_offset: usize,
+        line_end_offset: usize,
     },
 }
 
@@ -11201,7 +11242,6 @@ impl Element for EditorElement {
                         scroll_max,
                         line_layouts,
                         line_height,
-                        em_width,
                         em_advance,
                         em_layout_width,
                         snapshot,
@@ -12085,7 +12125,6 @@ pub(crate) struct PositionMap {
     pub scroll_position: gpui::Point<ScrollOffset>,
     pub scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
     pub scroll_max: gpui::Point<ScrollOffset>,
-    pub em_width: Pixels,
     pub em_advance: Pixels,
     pub em_layout_width: Pixels,
     pub visible_row_range: Range<DisplayRow>,
@@ -13424,7 +13463,8 @@ mod tests {
                 line_end_offset: TAB_SIZE as usize,
             },
             Invisible::Whitespace {
-                line_offset: TAB_SIZE as usize,
+                line_start_offset: TAB_SIZE as usize,
+                line_end_offset: TAB_SIZE as usize + 1,
             },
             Invisible::Tab {
                 line_start_offset: TAB_SIZE as usize + 1,
@@ -13435,10 +13475,12 @@ mod tests {
                 line_end_offset: TAB_SIZE as usize * 3,
             },
             Invisible::Whitespace {
-                line_offset: TAB_SIZE as usize * 3 + 1,
+                line_start_offset: TAB_SIZE as usize * 3 + 1,
+                line_end_offset: TAB_SIZE as usize * 3 + 2,
             },
             Invisible::Whitespace {
-                line_offset: TAB_SIZE as usize * 3 + 3,
+                line_start_offset: TAB_SIZE as usize * 3 + 3,
+                line_end_offset: TAB_SIZE as usize * 3 + 4,
             },
         ];
         assert_eq!(
@@ -13466,6 +13508,34 @@ mod tests {
 
             assert_eq!(expected_invisibles, actual_invisibles);
         }
+    }
+
+    #[gpui::test]
+    fn test_multibyte_whitespace_uses_utf8_byte_offsets(cx: &mut TestAppContext) {
+        init_test(cx, |s| {
+            s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+        });
+
+        // Regression test for #49186. NBSP (U+00A0) is rendered via the invisible
+        // character `replacement` pipeline, which flushes the internal `line`
+        // scratch buffer mid-line. Any whitespace invisible that follows must use
+        // the absolute byte offset within the logical line (here: byte 4 for the
+        // trailing ASCII space), not an offset relative to the post-flush buffer.
+        let actual_invisibles = collect_invisibles_from_new_editor(
+            cx,
+            EditorMode::full(),
+            "a\u{00A0}b ",
+            px(500.0),
+            false,
+        );
+
+        assert_eq!(
+            actual_invisibles,
+            vec![Invisible::Whitespace {
+                line_start_offset: 4,
+                line_end_offset: 5,
+            }]
+        );
     }
 
     #[gpui::test]
@@ -13508,19 +13578,24 @@ mod tests {
                 line_end_offset: tab_size as usize,
             },
             Invisible::Whitespace {
-                line_offset: tab_size as usize + 3,
+                line_start_offset: tab_size as usize + 3,
+                line_end_offset: tab_size as usize + 4,
             },
             Invisible::Whitespace {
-                line_offset: tab_size as usize + 4,
+                line_start_offset: tab_size as usize + 4,
+                line_end_offset: tab_size as usize + 5,
             },
             Invisible::Whitespace {
-                line_offset: tab_size as usize + 5,
+                line_start_offset: tab_size as usize + 5,
+                line_end_offset: tab_size as usize + 6,
             },
             Invisible::Whitespace {
-                line_offset: tab_size as usize + 6,
+                line_start_offset: tab_size as usize + 6,
+                line_end_offset: tab_size as usize + 7,
             },
             Invisible::Whitespace {
-                line_offset: tab_size as usize + 7,
+                line_start_offset: tab_size as usize + 7,
+                line_end_offset: tab_size as usize + 8,
             },
         ];
         let expected_invisibles = std::iter::once(repeated_invisibles)

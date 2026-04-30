@@ -327,6 +327,8 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FivePointThreeCodex
             | Model::FivePointFour
             | Model::FivePointFourPro
+            | Model::FivePointFive
+            | Model::FivePointFivePro
             | Model::O1
             | Model::O3 => true,
             Model::ThreePointFiveTurbo | Model::Four | Model::FourTurbo | Model::O3Mini => false,
@@ -382,7 +384,22 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        if self.model.supports_chat_completions() {
+        if self.model.uses_responses_api() {
+            let request = into_open_ai_response(
+                request,
+                self.model.id(),
+                self.model.supports_parallel_tool_calls(),
+                self.model.supports_prompt_cache_key(),
+                self.max_output_tokens(),
+                self.model.reasoning_effort(),
+            );
+            let completions = self.stream_response(request, cx);
+            async move {
+                let mapper = OpenAiResponseEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            }
+            .boxed()
+        } else {
             let request = into_open_ai(
                 request,
                 self.model.id(),
@@ -395,21 +412,6 @@ impl LanguageModel for OpenAiLanguageModel {
             let completions = self.stream_completion(request, cx);
             async move {
                 let mapper = OpenAiEventMapper::new();
-                Ok(mapper.map_stream(completions.await?).boxed())
-            }
-            .boxed()
-        } else {
-            let request = into_open_ai_response(
-                request,
-                self.model.id(),
-                self.model.supports_parallel_tool_calls(),
-                self.model.supports_prompt_cache_key(),
-                self.max_output_tokens(),
-                self.model.reasoning_effort(),
-            );
-            let completions = self.stream_response(request, cx);
-            async move {
-                let mapper = OpenAiResponseEventMapper::new();
                 Ok(mapper.map_stream(completions.await?).boxed())
             }
             .boxed()

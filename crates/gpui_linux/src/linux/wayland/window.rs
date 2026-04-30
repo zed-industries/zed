@@ -403,6 +403,16 @@ impl WaylandWindowState {
             || self.background_appearance != WindowBackgroundAppearance::Opaque
     }
 
+    fn update_subpixel_layout(&mut self) {
+        use wayland_client::protocol::wl_output::Subpixel;
+        let is_bgr = self
+            .display
+            .as_ref()
+            .and_then(|(_, output)| output.subpixel)
+            .is_some_and(|s| s == Subpixel::HorizontalBgr);
+        self.renderer.set_subpixel_layout(is_bgr);
+    }
+
     pub fn primary_output_scale(&mut self) -> i32 {
         let mut scale = 1;
         let mut current_output = self.display.take();
@@ -864,6 +874,7 @@ impl WaylandWindowStatePtr {
                 state.outputs.insert(id, output.clone());
 
                 let scale = state.primary_output_scale();
+                state.update_subpixel_layout();
 
                 // We use `PreferredBufferScale` instead to set the scale if it's available
                 if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
@@ -876,6 +887,7 @@ impl WaylandWindowStatePtr {
                 state.outputs.remove(&output.id());
 
                 let scale = state.primary_output_scale();
+                state.update_subpixel_layout();
 
                 // We use `PreferredBufferScale` instead to set the scale if it's available
                 if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
