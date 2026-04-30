@@ -2,20 +2,10 @@ use anyhow::{Context as _, Result};
 use std::process::Stdio;
 
 /// A wrapper around `smol::process::Child` that ensures all subprocesses
-/// (including descendants that escape the original process group via
-/// `setsid` on Unix or `CREATE_BREAKAWAY_FROM_JOB` on Windows) are killed
-/// when the wrapper's `kill` is called.
-#[cfg(not(windows))]
+/// are killed when `kill` is called. On Unix this includes descendants
+/// that escaped the original process group via `setsid`.
 pub struct Child {
     process: smol::process::Child,
-}
-
-#[cfg(windows)]
-pub struct Child {
-    process: smol::process::Child,
-    /// Job object configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so the
-    /// kernel kills every process in the job when this handle is dropped.
-    _job: std::os::windows::io::OwnedHandle,
 }
 
 impl std::ops::Deref for Child {
@@ -63,34 +53,8 @@ impl Child {
         stdout: Stdio,
         stderr: Stdio,
     ) -> Result<Self> {
-        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
-        use windows::Win32::Foundation::HANDLE;
-        use windows::Win32::System::JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-            SetInformationJobObject,
-        };
-        use windows::core::PCWSTR;
-
-        // SAFETY: FFI call with no preconditions; result checked.
-        let job_handle = unsafe { CreateJobObjectW(None, PCWSTR::null()) }
-            .context("CreateJobObjectW failed")?;
-        // SAFETY: CreateJobObjectW transfers ownership of the handle.
-        let job: OwnedHandle = unsafe { OwnedHandle::from_raw_handle(job_handle.0 as _) };
-
-        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        // SAFETY: pointer to local info, valid for the duration of the call.
-        unsafe {
-            SetInformationJobObject(
-                HANDLE(job.as_raw_handle() as _),
-                JobObjectExtendedLimitInformation,
-                &info as *const _ as *const _,
-                std::mem::size_of_val(&info) as u32,
-            )
-        }
-        .context("SetInformationJobObject failed")?;
-
+        // TODO(windows): create a job object and add the child process handle to it,
+        // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
         let mut command = smol::process::Command::from(command);
         let process = command
             .stdin(stdin)
@@ -104,23 +68,7 @@ impl Child {
                 )
             })?;
 
-        // Race window: descendants forked between `spawn` returning and
-        // `AssignProcessToJobObject` escape the job. Closing it race-free would
-        // require CREATE_SUSPENDED, which std::process::Command doesn't expose.
-        // Debug adapters don't fork during startup, so this is acceptable.
-        // SAFETY: handles owned and valid for the call.
-        unsafe {
-            AssignProcessToJobObject(
-                HANDLE(job.as_raw_handle() as _),
-                HANDLE(process.as_raw_handle() as _),
-            )
-        }
-        .context("AssignProcessToJobObject failed")?;
-
-        Ok(Self {
-            process,
-            _job: job,
-        })
+        Ok(Self { process })
     }
 
     pub fn into_inner(self) -> smol::process::Child {
@@ -140,13 +88,8 @@ impl Child {
 
     #[cfg(windows)]
     pub fn kill(&mut self) -> Result<()> {
-        use std::os::windows::io::AsRawHandle;
-        use windows::Win32::Foundation::HANDLE;
-        use windows::Win32::System::JobObjects::TerminateJobObject;
-
-        // SAFETY: job handle is owned by self and valid for this call.
-        unsafe { TerminateJobObject(HANDLE(self._job.as_raw_handle() as _), 1) }
-            .context("TerminateJobObject failed")?;
+        // TODO(windows): terminate the job object in kill
+        self.process.kill()?;
         Ok(())
     }
 }
