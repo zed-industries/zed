@@ -4873,9 +4873,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.auto_watch.enabled() {
+        let AutoWatch::Paused = self.auto_watch else {
             return;
-        }
+        };
 
         let watched_peer = self.next_watched_peer(cx);
         self.auto_watch = AutoWatch::Active { watched_peer };
