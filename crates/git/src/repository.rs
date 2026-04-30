@@ -2869,6 +2869,19 @@ impl GitRepository for RealGitRepository {
                         .map(|s| SharedString::from(s.to_owned())));
                 }
 
+                if let Ok(output) = git
+                    .run(&["ls-remote", "--symref", "origin", "HEAD"])
+                    .await
+                    && let Some(branch) = parse_ls_remote_symref_head(&output)
+                {
+                    let resolved = if include_remote_name {
+                        format!("origin/{branch}")
+                    } else {
+                        branch.to_owned()
+                    };
+                    return Ok(Some(resolved.into()));
+                }
+
                 if let Ok(default_branch) = git.run(&["config", "init.defaultBranch"]).await {
                     if git.run(&["rev-parse", &default_branch]).await.is_ok() {
                         return Ok(Some(default_branch.into()));
@@ -3661,6 +3674,21 @@ fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
         ahead,
         behind,
     }))
+}
+
+/// Parses the symbolic-ref line from `git ls-remote --symref <remote> HEAD`.
+/// Output format:
+///
+/// ```text
+/// ref: refs/heads/<branch>\tHEAD
+/// <sha>\tHEAD
+/// ```
+fn parse_ls_remote_symref_head(output: &str) -> Option<&str> {
+    output
+        .lines()
+        .find_map(|line| line.strip_prefix("ref: refs/heads/"))
+        .map(|stripped| stripped.split('\t').next().unwrap_or(stripped))
+        .filter(|branch| !branch.is_empty())
 }
 
 fn checkpoint_author_envs() -> HashMap<String, String> {
@@ -4522,6 +4550,116 @@ mod tests {
             original_repo_path_from_common_dir(Path::new("/.git")),
             Some(PathBuf::from("/"))
         );
+    }
+
+    #[test]
+    fn test_parse_ls_remote_symref_head() {
+        let typical = "ref: refs/heads/develop\tHEAD\nabc123\tHEAD\n";
+        assert_eq!(parse_ls_remote_symref_head(typical), Some("develop"));
+
+        let only_sha = "abc123\tHEAD\n";
+        assert_eq!(parse_ls_remote_symref_head(only_sha), None);
+
+        assert_eq!(parse_ls_remote_symref_head(""), None);
+
+        // Empty branch name (malformed but plausible).
+        let malformed = "ref: refs/heads/\tHEAD\n";
+        assert_eq!(parse_ls_remote_symref_head(malformed), None);
+
+        // Tolerate missing trailing `\tHEAD`.
+        let no_tab = "ref: refs/heads/main\n";
+        assert_eq!(parse_ls_remote_symref_head(no_tab), Some("main"));
+
+        // Branch names containing slashes (`feature/foo`) are passed through verbatim.
+        let nested = "ref: refs/heads/feature/foo\tHEAD\n";
+        assert_eq!(parse_ls_remote_symref_head(nested), Some("feature/foo"));
+    }
+
+    #[gpui::test]
+    async fn test_default_branch_uses_ls_remote_when_origin_head_unset(
+        cx: &mut TestAppContext,
+    ) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let remote_dir = tempfile::tempdir().unwrap();
+        let local_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path();
+        let local_path = local_dir.path();
+
+        // Set up a "remote" repo whose default branch is `develop`.
+        run_test_git(cx, remote_path, &["init", "--initial-branch=develop"]).await;
+        run_test_git(cx, remote_path, &["config", "user.email", "test@example.com"]).await;
+        run_test_git(cx, remote_path, &["config", "user.name", "Test"]).await;
+        run_test_git(
+            cx,
+            remote_path,
+            &["commit", "--allow-empty", "-m", "initial"],
+        )
+        .await;
+
+        // Set up a local repo with `origin` pointing at it. Crucially, we
+        // never run `git remote set-head`, so `refs/remotes/origin/HEAD`
+        // stays unset — exactly the broken-clone state we want to repair.
+        run_test_git(cx, local_path, &["init"]).await;
+        run_test_git(
+            cx,
+            local_path,
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote_path.to_str().expect("non-utf8 tempdir path"),
+            ],
+        )
+        .await;
+        run_test_git(cx, local_path, &["fetch", "origin"]).await;
+
+        let symref_failed = test_git_binary(cx, local_path)
+            .run(&["symbolic-ref", "refs/remotes/origin/HEAD"])
+            .await
+            .is_err();
+        assert!(
+            symref_failed,
+            "test invariant: refs/remotes/origin/HEAD must not be set"
+        );
+
+        let repo = RealGitRepository::new(
+            &local_path.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let bare = repo.default_branch(false).await.unwrap();
+        assert_eq!(bare.as_deref(), Some("develop"));
+
+        let with_remote = repo.default_branch(true).await.unwrap();
+        assert_eq!(with_remote.as_deref(), Some("origin/develop"));
+    }
+
+    fn test_git_binary(cx: &TestAppContext, working_directory: &Path) -> GitBinary {
+        GitBinary::new(
+            PathBuf::from("git"),
+            working_directory.to_path_buf(),
+            working_directory.join(".git"),
+            cx.executor(),
+            true,
+        )
+    }
+
+    async fn run_test_git(cx: &TestAppContext, working_directory: &Path, args: &[&str]) {
+        test_git_binary(cx, working_directory)
+            .run(args)
+            .await
+            .unwrap_or_else(|err| {
+                panic!(
+                    "git {:?} in {} failed: {err}",
+                    args,
+                    working_directory.display()
+                )
+            });
     }
 
     impl RealGitRepository {
