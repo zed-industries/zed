@@ -7,6 +7,7 @@ use gpui::{
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Render, ScrollHandle, Task,
 };
 use language_model::LanguageModelRegistry;
+use language_models::provider::anthropic_compatible::AuthHeaderStyle;
 use language_models::provider::anthropic_compatible::AvailableModel as AnthropicAvailableModel;
 use language_models::provider::open_ai_compatible::{
     AvailableModel as OpenAiAvailableModel, ModelCapabilities as OpenAiModelCapabilities,
@@ -69,6 +70,7 @@ struct AddLlmProviderInput {
     provider_name: Entity<InputField>,
     api_url: Entity<InputField>,
     api_key: Entity<InputField>,
+    auth_header: AuthHeaderStyle,
     models: Vec<ModelInput>,
 }
 
@@ -94,6 +96,7 @@ impl AddLlmProviderInput {
             provider_name,
             api_url,
             api_key,
+            auth_header: AuthHeaderStyle::XApiKey,
             models: vec![ModelInput::new(0, window, cx)],
         }
     }
@@ -237,6 +240,7 @@ fn save_provider_to_settings(
         return Task::ready(Err("API Key cannot be empty".into()));
     }
 
+    let auth_header = input.auth_header.clone();
     let mut models = Vec::new();
     let mut model_names: HashSet<String> = HashSet::default();
     for model in &input.models {
@@ -296,6 +300,7 @@ fn save_provider_to_settings(
                             AnthropicCompatibleSettingsContent {
                                 api_url,
                                 available_models: models,
+                                auth_header: Some(auth_header),
                             },
                         );
                 }
@@ -573,6 +578,44 @@ impl Render for AddLlmProviderModal {
                                     .child(self.input.provider_name.clone())
                                     .child(self.input.api_url.clone())
                                     .child(self.input.api_key.clone())
+                                    .when(self.provider == LlmCompatibleProvider::Anthropic, |this| {
+                                        let auth_header = self.input.auth_header.clone();
+                                        this.child(
+                                            v_flex()
+                                                .gap_1()
+                                                .child(
+                                                    Label::new("Auth Header")
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                                .child(
+                                                    h_flex()
+                                                        .gap_1()
+                                                        .child(
+                                                            Button::new("auth-x-api-key", "X-Api-Key")
+                                                                .style(if auth_header == AuthHeaderStyle::XApiKey {
+                                                                    ButtonStyle::Filled
+                                                                } else {
+                                                                    ButtonStyle::Subtle
+                                                                })
+                                                                .on_click(cx.listener(|this, _, _, _| {
+                                                                    this.input.auth_header = AuthHeaderStyle::XApiKey;
+                                                                })),
+                                                        )
+                                                        .child(
+                                                            Button::new("auth-bearer", "Bearer")
+                                                                .style(if auth_header == AuthHeaderStyle::Bearer {
+                                                                    ButtonStyle::Filled
+                                                                } else {
+                                                                    ButtonStyle::Subtle
+                                                                })
+                                                                .on_click(cx.listener(|this, _, _, _| {
+                                                                    this.input.auth_header = AuthHeaderStyle::Bearer;
+                                                                })),
+                                                        ),
+                                                ),
+                                        )
+                                    })
                                     .child(self.render_model_section(cx)),
                             ),
                     )

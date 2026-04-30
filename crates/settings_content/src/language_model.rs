@@ -335,6 +335,15 @@ impl Default for OpenAiCompatibleModelCapabilities {
 pub struct AnthropicCompatibleSettingsContent {
     pub api_url: String,
     pub available_models: Vec<AnthropicCompatibleAvailableModel>,
+    pub auth_header: Option<AuthHeaderStyle>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthHeaderStyle {
+    #[default]
+    XApiKey,
+    Bearer,
 }
 
 #[with_fallible_options]

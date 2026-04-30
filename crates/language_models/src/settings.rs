@@ -124,6 +124,7 @@ impl settings::Settings for AllLanguageModelSettings {
                         AnthropicCompatibleSettings {
                             api_url: value.api_url,
                             available_models: value.available_models,
+                            auth_header: value.auth_header.unwrap_or_default(),
                         },
                     )
                 })

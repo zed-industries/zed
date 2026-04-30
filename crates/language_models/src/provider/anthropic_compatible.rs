@@ -4,7 +4,9 @@ use anthropic::completion::AnthropicEventMapper;
 use anyhow::Result;
 use convert_case::{Case, Casing};
 use credentials_provider::CredentialsProvider;
-use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{
+    AsyncBufReadExt, FutureExt, StreamExt, future::BoxFuture, io::BufReader, stream::BoxStream,
+};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
@@ -22,12 +24,14 @@ use ui_input::InputField;
 use util::ResultExt;
 
 pub use settings::AnthropicCompatibleAvailableModel as AvailableModel;
+pub use settings::AuthHeaderStyle;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicCompatibleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub auth_header: AuthHeaderStyle,
 }
 
 pub struct AnthropicCompatibleLanguageModelProvider {
@@ -235,10 +239,11 @@ impl AnthropicCompatibleLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url) = self.state.read_with(cx, |state, _cx| {
+        let (api_key, api_url, auth_header) = self.state.read_with(cx, |state, _cx| {
             (
                 state.api_key_state.key(&state.settings.api_url),
                 state.settings.api_url.clone(),
+                state.settings.auth_header.clone(),
             )
         });
 
@@ -247,17 +252,101 @@ impl AnthropicCompatibleLanguageModel {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            let request = anthropic::stream_completion(
-                http_client.as_ref(),
-                &api_url,
-                &api_key,
-                request,
-                beta_headers,
-            );
-            request.await.map_err(Into::into)
+
+            let api_key_str: &str = &api_key;
+            match auth_header {
+                AuthHeaderStyle::XApiKey => {
+                    let request = anthropic::stream_completion(
+                        http_client.as_ref(),
+                        &api_url,
+                        api_key_str,
+                        request,
+                        beta_headers,
+                    );
+                    request.await.map_err(Into::into)
+                }
+                AuthHeaderStyle::Bearer => Self::stream_completion_with_bearer(
+                    http_client.as_ref(),
+                    &api_url,
+                    api_key_str,
+                    request,
+                    beta_headers,
+                )
+                .await
+                .map_err(Into::into),
+            }
         });
 
         async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    async fn stream_completion_with_bearer(
+        client: &dyn HttpClient,
+        api_url: &str,
+        api_key: &str,
+        request: anthropic::Request,
+        beta_headers: Option<String>,
+    ) -> Result<
+        BoxStream<'static, Result<anthropic::Event, anthropic::AnthropicError>>,
+        anthropic::AnthropicError,
+    > {
+        use http_client::AsyncBody;
+        use http_client::http;
+
+        let uri = format!("{api_url}/v1/messages");
+
+        let mut request_builder = http::Request::builder()
+            .method(http::Method::POST)
+            .uri(uri)
+            .header("Anthropic-Version", "2023-06-01")
+            .header("Authorization", format!("Bearer {}", api_key.trim()))
+            .header("Content-Type", "application/json");
+
+        if let Some(beta_headers) = beta_headers {
+            request_builder = request_builder.header("Anthropic-Beta", beta_headers);
+        }
+
+        let serialized_request =
+            serde_json::to_string(&request).map_err(anthropic::AnthropicError::SerializeRequest)?;
+        let http_request = request_builder
+            .body(AsyncBody::from(serialized_request))
+            .map_err(anthropic::AnthropicError::BuildRequestBody)?;
+
+        let response = client
+            .send(http_request)
+            .await
+            .map_err(anthropic::AnthropicError::HttpSend)?;
+
+        if !response.status().is_success() {
+            return Err(anthropic::AnthropicError::HttpResponseError {
+                status_code: response.status(),
+                message: String::new(),
+            });
+        }
+
+        let reader = BufReader::new(response.into_body());
+        let stream = reader
+            .lines()
+            .filter_map(|line| async move {
+                match line {
+                    Ok(line) => {
+                        let line = line
+                            .strip_prefix("data: ")
+                            .or_else(|| line.strip_prefix("data:"))?;
+
+                        match serde_json::from_str::<anthropic::Event>(line) {
+                            Ok(event) => Some(Ok(event)),
+                            Err(error) => {
+                                Some(Err(anthropic::AnthropicError::DeserializeResponse(error)))
+                            }
+                        }
+                    }
+                    Err(error) => Some(Err(anthropic::AnthropicError::ReadResponse(error))),
+                }
+            })
+            .boxed();
+
+        Ok(stream)
     }
 
     fn convert_mode(&self) -> AnthropicModelMode {
