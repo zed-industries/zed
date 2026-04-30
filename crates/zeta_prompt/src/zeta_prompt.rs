@@ -97,6 +97,8 @@ pub enum ZetaFormat {
     V0327SingleFile,
     /// V0318-style prompt with buffer diagnostics
     V0420Diagnostics,
+    /// Seed-Coder SPM prompt that fills at the cursor instead of rewriting an editable region.
+    V0428SeedFIM,
 }
 
 impl std::fmt::Display for ZetaFormat {
@@ -248,7 +250,8 @@ pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> Option
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::V0318SeedMultiRegions
-        | ZetaFormat::V0420Diagnostics => 4096,
+        | ZetaFormat::V0420Diagnostics
+        | ZetaFormat::V0428SeedFIM => 4096,
         ZetaFormat::V0327SingleFile => 16384,
     };
 
@@ -266,6 +269,7 @@ pub fn special_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] 
         ZetaFormat::V0211SeedCoder | ZetaFormat::V0331SeedCoderModelPy => {
             seed_coder::special_tokens()
         }
+        ZetaFormat::V0428SeedFIM => seed_fim::special_tokens(),
         ZetaFormat::v0226Hashline => hashline::special_tokens(),
         ZetaFormat::V0304VariableEdit => v0304_variable_edit::special_tokens(),
         ZetaFormat::V0304SeedNoEdits => seed_coder::special_tokens(),
@@ -351,6 +355,7 @@ pub fn token_limits_for_format(format: ZetaFormat) -> (usize, usize) {
         | ZetaFormat::V0420Diagnostics
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0327SingleFile
+        | ZetaFormat::V0428SeedFIM
         | ZetaFormat::V0304SeedNoEdits => (350, 150),
 
         ZetaFormat::V0304VariableEdit => (1024, 0),
@@ -370,7 +375,8 @@ pub fn stop_tokens_for_format(format: ZetaFormat) -> &'static [&'static str] {
         | ZetaFormat::V0331SeedCoderModelPy
         | ZetaFormat::V0304VariableEdit
         | ZetaFormat::V0306SeedMultiRegions
-        | ZetaFormat::V0304SeedNoEdits => &[],
+        | ZetaFormat::V0304SeedNoEdits
+        | ZetaFormat::V0428SeedFIM => &[],
         ZetaFormat::V0316SeedMultiRegions => &[multi_region::V0316_END_MARKER],
         ZetaFormat::V0318SeedMultiRegions | ZetaFormat::V0420Diagnostics => {
             &[multi_region::V0318_END_MARKER]
@@ -405,7 +411,8 @@ pub fn excerpt_ranges_for_format(
         | ZetaFormat::V0316SeedMultiRegions
         | ZetaFormat::V0318SeedMultiRegions
         | ZetaFormat::V0317SeedMultiRegions
-        | ZetaFormat::V0420Diagnostics => (
+        | ZetaFormat::V0420Diagnostics
+        | ZetaFormat::V0428SeedFIM => (
             ranges.editable_350.clone(),
             ranges.editable_350_context_150.clone(),
         ),
@@ -478,6 +485,9 @@ pub fn write_cursor_excerpt_section_for_format(
             editable_range,
             cursor_offset,
         ),
+        ZetaFormat::V0428SeedFIM => {
+            seed_fim::write_cursor_excerpt_section(prompt, path, context, cursor_offset)
+        }
         ZetaFormat::v0226Hashline => hashline::write_cursor_excerpt_section(
             prompt,
             path,
@@ -742,6 +752,17 @@ pub fn format_prompt_with_budget_for_format(
                 budget_with_margin,
             )
         }
+        ZetaFormat::V0428SeedFIM => {
+            let budget_with_margin = apply_prompt_budget_margin(max_tokens);
+            seed_fim::format_prompt_with_budget(
+                path,
+                context,
+                cursor_offset,
+                &input.events,
+                related_files,
+                budget_with_margin,
+            )
+        }
         ZetaFormat::V0327SingleFile => {
             let mut cursor_section = String::new();
             write_cursor_excerpt_section_for_format(
@@ -862,7 +883,8 @@ pub fn max_edit_event_count_for_format(format: &ZetaFormat) -> usize {
         | ZetaFormat::V0318SeedMultiRegions
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0420Diagnostics
-        | ZetaFormat::V0327SingleFile => 6,
+        | ZetaFormat::V0327SingleFile
+        | ZetaFormat::V0428SeedFIM => 6,
     }
 }
 
@@ -888,7 +910,8 @@ pub fn get_prefill_for_format(
         | ZetaFormat::V0318SeedMultiRegions
         | ZetaFormat::V0317SeedMultiRegions
         | ZetaFormat::V0420Diagnostics
-        | ZetaFormat::V0327SingleFile => String::new(),
+        | ZetaFormat::V0327SingleFile
+        | ZetaFormat::V0428SeedFIM => String::new(),
     }
 }
 
@@ -907,7 +930,8 @@ pub fn output_end_marker_for_format(format: ZetaFormat) -> Option<&'static str> 
         ZetaFormat::V0317SeedMultiRegions => Some(multi_region::V0317_END_MARKER),
         ZetaFormat::V0327SingleFile => Some(multi_region::V0327_END_MARKER),
 
-        ZetaFormat::V0112MiddleAtEnd
+        ZetaFormat::V0428SeedFIM
+        | ZetaFormat::V0112MiddleAtEnd
         | ZetaFormat::V0113Ordered
         | ZetaFormat::V0114180EditableRegion
         | ZetaFormat::v0226Hashline
@@ -1005,7 +1029,8 @@ pub fn format_expected_output(
     patch: &str,
     cursor_offset: Option<usize>,
 ) -> Result<String> {
-    let (context, editable_range, _, _) = resolve_cursor_region(input, format);
+    let (context, editable_range, _, cursor_offset_in_context) =
+        resolve_cursor_region(input, format);
     let mut old_editable = context[editable_range].to_string();
     if !old_editable.is_empty() && !old_editable.ends_with('\n') {
         old_editable.push('\n');
@@ -1022,6 +1047,13 @@ pub fn format_expected_output(
     let empty_patch = patch.lines().count() <= 3;
 
     match format {
+        ZetaFormat::V0428SeedFIM => seed_fim::format_expected_middle_output(
+            input.cursor_path.as_ref(),
+            context,
+            cursor_offset_in_context,
+            patch,
+            cursor_offset,
+        ),
         // Multi-region formats: non-empty patches need diff application
         // then marker-span encoding.
         ZetaFormat::V0316SeedMultiRegions => {
@@ -1224,6 +1256,10 @@ pub fn parse_zeta2_model_output(
         ZetaFormat::V0327SingleFile => (
             editable_range_in_context,
             multi_region::apply_marker_span_v0318(old_editable_region, output)?,
+        ),
+        ZetaFormat::V0428SeedFIM => (
+            0..context.len(),
+            seed_fim::apply_middle_output(context, cursor_offset, output),
         ),
         _ => (editable_range_in_context, output.to_string()),
     };
@@ -3470,6 +3506,314 @@ pub mod seed_coder {
     }
 }
 
+pub mod seed_fim {
+    use super::*;
+
+    pub fn special_tokens() -> &'static [&'static str] {
+        &[
+            seed_coder::FIM_SUFFIX,
+            seed_coder::FIM_PREFIX,
+            seed_coder::FIM_MIDDLE,
+            seed_coder::FILE_MARKER,
+            CURSOR_MARKER,
+        ]
+    }
+
+    pub fn write_cursor_excerpt_section(
+        prompt: &mut String,
+        path: &Path,
+        context: &str,
+        cursor_offset: usize,
+    ) {
+        prompt.push_str(&build_cursor_prefix_section(path, context, cursor_offset));
+    }
+
+    pub fn format_prompt_with_budget(
+        path: &Path,
+        context: &str,
+        cursor_offset: usize,
+        events: &[Arc<Event>],
+        related_files: &[RelatedFile],
+        max_tokens: usize,
+    ) -> String {
+        let suffix_section = build_suffix_section(context, cursor_offset);
+        let cursor_prefix_section = build_cursor_prefix_section(path, context, cursor_offset);
+
+        let suffix_tokens = estimate_tokens(suffix_section.len() + seed_coder::FIM_PREFIX.len());
+        let cursor_prefix_tokens =
+            estimate_tokens(cursor_prefix_section.len() + seed_coder::FIM_MIDDLE.len());
+        let budget_after_cursor = max_tokens.saturating_sub(suffix_tokens + cursor_prefix_tokens);
+
+        let edit_history_section = super::format_edit_history_within_budget(
+            events,
+            seed_coder::FILE_MARKER,
+            "edit_history",
+            budget_after_cursor,
+            max_edit_event_count_for_format(&ZetaFormat::V0428SeedFIM),
+        );
+        let edit_history_tokens = estimate_tokens(edit_history_section.len() + "\n".len());
+        let budget_after_edit_history =
+            budget_after_cursor.saturating_sub(edit_history_tokens + "\n".len());
+
+        let related_files_section = super::format_related_files_within_budget(
+            related_files,
+            seed_coder::FILE_MARKER,
+            "",
+            budget_after_edit_history,
+        );
+
+        let mut prompt = String::new();
+        prompt.push_str(&suffix_section);
+        prompt.push_str(seed_coder::FIM_PREFIX);
+        prompt.push_str(&related_files_section);
+        if !related_files_section.is_empty() {
+            prompt.push('\n');
+        }
+        prompt.push_str(&edit_history_section);
+        if !edit_history_section.is_empty() {
+            prompt.push('\n');
+        }
+        prompt.push_str(&cursor_prefix_section);
+        prompt.push_str(seed_coder::FIM_MIDDLE);
+        prompt
+    }
+
+    pub fn apply_middle_output(context: &str, cursor_offset: usize, output: &str) -> String {
+        let mut replacement = String::new();
+        replacement.push_str(&context[..cursor_offset]);
+        replacement.push_str(output);
+        replacement.push_str(&context[cursor_offset..]);
+        replacement
+    }
+
+    pub(crate) fn format_expected_middle_output(
+        cursor_path: &Path,
+        context: &str,
+        cursor_offset: usize,
+        patch: &str,
+        cursor_offset_in_patch: Option<usize>,
+    ) -> Result<String> {
+        if patch.lines().count() <= 3 {
+            return Ok(String::new());
+        }
+
+        if let Some((new_context, first_hunk_offset)) =
+            apply_matching_diff_to_context(cursor_path, context, patch)?
+            && let Some(mut middle) = middle_from_old_and_new(context, cursor_offset, &new_context)
+        {
+            insert_cursor_marker(
+                &mut middle,
+                first_hunk_offset,
+                cursor_offset_in_patch,
+                cursor_offset,
+            );
+            return Ok(middle);
+        }
+
+        let (mut middle, first_hunk_offset) =
+            extract_insertions_at_cursor(cursor_path, context, cursor_offset, patch)?;
+        insert_cursor_marker(
+            &mut middle,
+            first_hunk_offset,
+            cursor_offset_in_patch,
+            cursor_offset,
+        );
+        Ok(middle)
+    }
+
+    fn build_suffix_section(context: &str, cursor_offset: usize) -> String {
+        let mut section = String::new();
+        section.push_str(seed_coder::FIM_SUFFIX);
+        section.push_str(&context[cursor_offset..]);
+        section
+    }
+
+    fn build_cursor_prefix_section(path: &Path, context: &str, cursor_offset: usize) -> String {
+        let mut section = String::new();
+        let path_str = path.to_string_lossy();
+        write!(section, "{}{}\n", seed_coder::FILE_MARKER, path_str).ok();
+        section.push_str(&context[..cursor_offset]);
+        section
+    }
+
+    fn middle_from_old_and_new(
+        old_context: &str,
+        cursor_offset: usize,
+        new_context: &str,
+    ) -> Option<String> {
+        let prefix = &old_context[..cursor_offset];
+        let suffix = &old_context[cursor_offset..];
+        let after_prefix = new_context.strip_prefix(prefix)?;
+        Some(after_prefix.strip_suffix(suffix)?.to_string())
+    }
+
+    fn middle_from_nested_old_and_new(
+        old_text: &str,
+        cursor_offset: usize,
+        new_text: &str,
+    ) -> Option<String> {
+        let prefix_end = old_text[..cursor_offset]
+            .rfind('\n')
+            .map_or(0, |offset| offset + 1);
+        let suffix_start = old_text[cursor_offset..]
+            .find('\n')
+            .map_or(old_text.len(), |offset| cursor_offset + offset + 1);
+
+        let local_old_text = &old_text[prefix_end..suffix_start];
+        let local_cursor_offset = cursor_offset - prefix_end;
+        let local_prefix = &local_old_text[..local_cursor_offset];
+        let local_suffix = &local_old_text[local_cursor_offset..];
+
+        let local_new_start = new_text.find(local_prefix)?;
+        let after_local_prefix = local_new_start + local_prefix.len();
+        let local_new_end = new_text[after_local_prefix..]
+            .find(local_suffix)
+            .map(|offset| after_local_prefix + offset)?;
+        Some(new_text[after_local_prefix..local_new_end].to_string())
+    }
+
+    fn apply_matching_diff_to_context(
+        cursor_path: &Path,
+        context: &str,
+        patch: &str,
+    ) -> Result<Option<(String, Option<usize>)>> {
+        let mut diff = udiff::DiffParser::new(patch);
+        let mut text = context.to_string();
+        let mut first_hunk_offset = None;
+        let mut applied_any_hunk = false;
+
+        while let Some(event) = diff.next()? {
+            let udiff::DiffEvent::Hunk {
+                path,
+                mut hunk,
+                status,
+            } = event
+            else {
+                continue;
+            };
+
+            if status == udiff::FileStatus::Deleted
+                || !patch_path_matches_cursor_path(path.as_ref(), cursor_path)
+            {
+                continue;
+            }
+
+            let candidates = udiff::find_context_candidates(&text, &mut hunk);
+            let Some(hunk_offset) =
+                udiff::disambiguate_by_line_number(&candidates, hunk.start_line, &|offset| {
+                    text[..offset].matches('\n').count() as u32
+                })
+            else {
+                continue;
+            };
+
+            if first_hunk_offset.is_none() {
+                first_hunk_offset = Some(hunk_offset);
+            }
+
+            for edit in hunk.edits.iter().rev() {
+                let range = (hunk_offset + edit.range.start)..(hunk_offset + edit.range.end);
+                text.replace_range(range, &edit.text);
+            }
+            applied_any_hunk = true;
+        }
+
+        Ok(applied_any_hunk.then_some((text, first_hunk_offset)))
+    }
+
+    fn extract_insertions_at_cursor(
+        cursor_path: &Path,
+        context: &str,
+        cursor_offset: usize,
+        patch: &str,
+    ) -> Result<(String, Option<usize>)> {
+        let mut diff = udiff::DiffParser::new(patch);
+        let mut output = String::new();
+        let mut first_hunk_offset = None;
+
+        while let Some(event) = diff.next()? {
+            let udiff::DiffEvent::Hunk {
+                path,
+                mut hunk,
+                status,
+            } = event
+            else {
+                continue;
+            };
+
+            if status == udiff::FileStatus::Deleted
+                || !patch_path_matches_cursor_path(path.as_ref(), cursor_path)
+            {
+                continue;
+            }
+
+            let candidates = udiff::find_context_candidates(context, &mut hunk);
+            let Some(hunk_offset) =
+                udiff::disambiguate_by_line_number(&candidates, hunk.start_line, &|offset| {
+                    context[..offset].matches('\n').count() as u32
+                })
+            else {
+                continue;
+            };
+
+            for edit in &hunk.edits {
+                let range_start = hunk_offset + edit.range.start;
+                let range_end = hunk_offset + edit.range.end;
+                if range_start <= cursor_offset && cursor_offset <= range_end {
+                    let local_cursor_offset = cursor_offset - range_start;
+                    let old_text = &context[range_start..range_end];
+                    if let Some(middle) =
+                        middle_from_old_and_new(old_text, local_cursor_offset, &edit.text)
+                    {
+                        if first_hunk_offset.is_none() {
+                            first_hunk_offset = Some(hunk_offset);
+                        }
+                        output.push_str(&middle);
+                    } else if let Some(middle) =
+                        middle_from_nested_old_and_new(old_text, local_cursor_offset, &edit.text)
+                    {
+                        if first_hunk_offset.is_none() {
+                            first_hunk_offset = Some(hunk_offset);
+                        }
+                        output.push_str(&middle);
+                    }
+                }
+            }
+        }
+
+        Ok((output, first_hunk_offset))
+    }
+
+    fn insert_cursor_marker(
+        output: &mut String,
+        first_hunk_offset: Option<usize>,
+        cursor_offset_in_patch: Option<usize>,
+        insertion_start_offset: usize,
+    ) {
+        let (Some(first_hunk_offset), Some(cursor_offset_in_patch)) =
+            (first_hunk_offset, cursor_offset_in_patch)
+        else {
+            return;
+        };
+
+        let cursor_offset = first_hunk_offset + cursor_offset_in_patch;
+        let insertion_end_offset = insertion_start_offset + output.len();
+        if cursor_offset < insertion_start_offset || cursor_offset > insertion_end_offset {
+            return;
+        }
+
+        let cursor_offset_in_output = cursor_offset - insertion_start_offset;
+        if output.is_char_boundary(cursor_offset_in_output) {
+            output.insert_str(cursor_offset_in_output, CURSOR_MARKER);
+        }
+    }
+
+    fn patch_path_matches_cursor_path(patch_path: &str, cursor_path: &Path) -> bool {
+        let cursor_path = cursor_path.to_string_lossy();
+        patch_path == cursor_path || patch_path == cursor_path.trim_start_matches('/')
+    }
+}
+
 pub mod v0304_variable_edit {
     //! A prompt format with no fixed editable region. The entire context is shown
     //! to the model, and it chooses which text to replace by outputting surrounding
@@ -5150,6 +5494,129 @@ mod tests {
     fn format_seed_coder_with_budget(input: &ZetaPromptInput, max_tokens: usize) -> String {
         format_prompt_with_budget_for_format(input, ZetaFormat::V0211SeedCoder, max_tokens)
             .expect("seed coder prompt formatting should succeed")
+    }
+
+    #[track_caller]
+    fn format_seed_fim(input: &ZetaPromptInput) -> String {
+        format_prompt_with_budget_for_format(input, ZetaFormat::V0428SeedFIM, 10000)
+            .expect("seed fim prompt formatting should succeed")
+    }
+
+    #[test]
+    fn test_seed_fim_basic_format() {
+        let input = make_input(
+            "prefix\neditable\nsuffix",
+            7..15,
+            10,
+            vec![make_event("a.rs", "-old\n+new\n")],
+            vec![make_related_file("related.rs", "fn helper() {}\n")],
+        );
+
+        assert_eq!(
+            format_seed_fim(&input),
+            indoc! {r#"
+                <[fim-suffix]>table
+                suffix<[fim-prefix]><filename>related.rs
+                fn helper() {}
+
+                <filename>edit_history
+                --- a/a.rs
+                +++ b/a.rs
+                -old
+                +new
+
+                <filename>test.rs
+                prefix
+                edi<[fim-middle]>"#}
+        );
+    }
+
+    #[test]
+    fn test_seed_fim_parse_inserts_at_cursor() {
+        let input = make_input(
+            "let value = ;\n",
+            0..14,
+            "let value = ".len(),
+            vec![],
+            vec![],
+        );
+
+        let parsed = parse_zeta2_model_output("42", ZetaFormat::V0428SeedFIM, &input).unwrap();
+
+        assert_eq!(parsed.range_in_excerpt, 0..14);
+        assert_eq!(parsed.new_editable_region, "let value = 42;\n");
+    }
+
+    #[test]
+    fn test_seed_fim_expected_output_extracts_cursor_insertion() {
+        let input = make_input(
+            "let value = ;\n",
+            0..14,
+            "let value = ".len(),
+            vec![],
+            vec![],
+        );
+        let patch = indoc! {"
+            --- a/test.rs
+            +++ b/test.rs
+            @@ -1,1 +1,1 @@
+            -let value = ;
+            +let value = 42;
+        "};
+
+        let output = format_expected_output(&input, ZetaFormat::V0428SeedFIM, patch, None).unwrap();
+
+        assert_eq!(output, "42");
+    }
+
+    #[test]
+    fn test_seed_fim_expected_output_ignores_other_edits() {
+        let input = make_input(
+            "a\nlet value = ;\nb\n",
+            0..18,
+            "a\nlet value = ".len(),
+            vec![],
+            vec![],
+        );
+        let patch = indoc! {"
+            --- a/test.rs
+            +++ b/test.rs
+            @@ -1,3 +1,3 @@
+            -a
+            +renamed
+             let value = ;
+            -b
+            +c
+        "};
+
+        let output = format_expected_output(&input, ZetaFormat::V0428SeedFIM, patch, None).unwrap();
+
+        assert_eq!(output, "");
+    }
+
+    #[test]
+    fn test_seed_fim_expected_output_extracts_cursor_insertion_from_mixed_edits() {
+        let input = make_input(
+            "a\nlet value = ;\nb\n",
+            0..18,
+            "a\nlet value = ".len(),
+            vec![],
+            vec![],
+        );
+        let patch = indoc! {"
+            --- a/test.rs
+            +++ b/test.rs
+            @@ -1,3 +1,3 @@
+            -a
+            +renamed
+            -let value = ;
+            +let value = 42;
+             b
+        "};
+
+        let output = format_expected_output(&input, ZetaFormat::V0428SeedFIM, patch, None).unwrap();
+
+        assert_eq!(output, "42");
     }
 
     #[test]
