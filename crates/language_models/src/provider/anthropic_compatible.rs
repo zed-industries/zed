@@ -337,6 +337,7 @@ impl AnthropicCompatibleLanguageModel {
                         match serde_json::from_str::<anthropic::Event>(line) {
                             Ok(event) => Some(Ok(event)),
                             Err(error) => {
+                                log::warn!("Failed to parse SSE event: {}", error);
                                 Some(Err(anthropic::AnthropicError::DeserializeResponse(error)))
                             }
                         }
@@ -524,9 +525,8 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
-                    let _ = task.await;
-                }
+                let task = state.update(cx, |state, cx| state.authenticate(cx));
+                let _ = task.await;
                 this.update(cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
