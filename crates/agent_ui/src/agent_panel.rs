@@ -13,7 +13,7 @@ use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol::schema as acp;
 use agent_servers::AgentServer;
-use collections::{HashSet, IndexMap};
+use collections::HashSet;
 use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
 use project::AgentId;
@@ -482,21 +482,14 @@ pub fn init(cx: &mut App) {
                                 dock_is_open && !panel.read(cx).terminal_selections(cx).is_empty()
                             });
 
-                        let panel = workspace.panel::<AgentPanel>(cx);
-                        let has_agent_panel_terminal_selection =
-                            panel.as_ref().is_some_and(|panel| {
-                                !panel.read(cx).terminal_selections(cx).is_empty()
-                            });
-
                         if !has_editor_selection
                             && !has_terminal_selection
                             && !has_terminal_panel_selection
-                            && !has_agent_panel_terminal_selection
                         {
                             return;
                         }
 
-                        let Some(agent_panel) = panel else {
+                        let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) else {
                             return;
                         };
 
@@ -709,17 +702,6 @@ impl AgentTerminal {
         self.view.read(cx).terminal().read(cx).working_directory()
     }
 
-    fn selection_text(&self, cx: &App) -> Option<String> {
-        self.view
-            .read(cx)
-            .terminal()
-            .read(cx)
-            .last_content
-            .selection_text
-            .clone()
-            .filter(|text| !text.is_empty())
-    }
-
     fn refresh_metadata(&mut self, cx: &App) -> bool {
         let working_directory = self.current_working_directory(cx);
         let title = self.display_title(cx).to_string();
@@ -805,7 +787,7 @@ pub struct AgentPanel {
     overlay_view: Option<OverlayView>,
     draft_thread: Option<Entity<ConversationView>>,
     retained_threads: HashMap<ThreadId, Entity<ConversationView>>,
-    terminals: IndexMap<TerminalId, AgentTerminal>,
+    terminals: HashMap<TerminalId, AgentTerminal>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     _extension_subscription: Option<Subscription>,
@@ -1169,7 +1151,7 @@ impl AgentPanel {
             context_server_registry,
             draft_thread: None,
             retained_threads: HashMap::default(),
-            terminals: IndexMap::default(),
+            terminals: HashMap::default(),
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
 
@@ -1434,7 +1416,6 @@ impl AgentPanel {
             _subscriptions: vec![item_subscription, view_subscription, terminal_subscription],
         };
         terminal.refresh_metadata(cx);
-        self.terminals.shift_remove(&terminal_id);
         self.terminals.insert(terminal_id, terminal);
         if focus {
             self.set_base_view(BaseView::Terminal { terminal_id }, true, window, cx);
@@ -1456,22 +1437,11 @@ impl AgentPanel {
         let was_notified = terminal.notified;
         terminal.notified = false;
         terminal.updated_at = Utc::now();
-        self.bump_terminal_order(terminal_id);
         self.set_base_view(BaseView::Terminal { terminal_id }, focus, window, cx);
         if was_notified {
             cx.emit(AgentPanelEvent::TerminalsChanged);
             cx.notify();
         }
-    }
-
-    fn bump_terminal_order(&mut self, terminal_id: TerminalId) {
-        // Track most-recently-used order so closing the active terminal falls
-        // back to the previously active one rather than the most-recently
-        // *created* one.
-        let Some((terminal_id, terminal)) = self.terminals.shift_remove_entry(&terminal_id) else {
-            return;
-        };
-        self.terminals.insert(terminal_id, terminal);
     }
 
     pub fn close_terminal(
@@ -1481,11 +1451,16 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.terminals.shift_remove(&terminal_id);
+        self.terminals.remove(&terminal_id);
 
         let was_active = self.active_terminal_id() == Some(terminal_id);
         if was_active {
-            if let Some(next_terminal_id) = self.terminals.keys().next_back().copied() {
+            if let Some(next_terminal_id) = self
+                .terminals
+                .iter()
+                .max_by_key(|(terminal_id, terminal)| (terminal.updated_at, **terminal_id))
+                .map(|(terminal_id, _)| *terminal_id)
+            {
                 self.set_base_view(
                     BaseView::Terminal {
                         terminal_id: next_terminal_id,
@@ -1727,13 +1702,6 @@ impl AgentPanel {
                 updated_at: terminal.updated_at,
                 notified: terminal.notified,
             })
-            .collect()
-    }
-
-    pub fn terminal_selections(&self, cx: &App) -> Vec<String> {
-        self.terminals
-            .values()
-            .filter_map(|terminal| terminal.selection_text(cx))
             .collect()
     }
 
@@ -2560,7 +2528,6 @@ impl AgentPanel {
                                     terminal.notified = false;
                                     terminal.updated_at = Utc::now();
                                 }
-                                this.bump_terminal_order(terminal_id);
                                 cx.emit(AgentPanelEvent::TerminalFocused);
                                 cx.notify();
                             }),
