@@ -41,7 +41,7 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
-    AutoWatchScreensState, CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes,
+    AutoWatch, CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes,
     OpenChannelNotesById, ScreenShare, ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{
@@ -2899,13 +2899,10 @@ impl CollabPanel {
         let auto_watch_state = self
             .workspace
             .upgrade()
-            .map_or(AutoWatchScreensState::Off, |workspace| {
+            .map_or(AutoWatch::Off, |workspace| {
                 *workspace.read(cx).auto_watch_screens_state()
             });
-        let is_auto_watching = matches!(
-            auto_watch_state,
-            AutoWatchScreensState::Active { .. } | AutoWatchScreensState::Paused
-        );
+        let is_auto_watching = auto_watch_state.enabled();
 
         let button = match section {
             Section::ActiveCall => {
@@ -2929,7 +2926,7 @@ impl CollabPanel {
                                     .icon_size(IconSize::Small)
                                     .toggle_state(is_auto_watching)
                                     .selected_style(match auto_watch_state {
-                                        AutoWatchScreensState::Paused => {
+                                        AutoWatch::Paused => {
                                             ButtonStyle::Tinted(TintColor::Warning)
                                         }
                                         _ => ButtonStyle::Tinted(TintColor::Accent),
@@ -2938,13 +2935,11 @@ impl CollabPanel {
                                         this.visible_on_hover("section-header")
                                     })
                                     .tooltip(Tooltip::text(match auto_watch_state {
-                                        AutoWatchScreensState::Paused => {
+                                        AutoWatch::Paused => {
                                             "Auto Watch Screens (paused while sharing)"
                                         }
-                                        AutoWatchScreensState::Active { .. } => {
-                                            "Stop Auto Watching Screens"
-                                        }
-                                        AutoWatchScreensState::Off => "Auto Watch Screens",
+                                        AutoWatch::Active { .. } => "Stop Auto Watching Screens",
+                                        AutoWatch::Off => "Auto Watch Screens",
                                     }))
                                     .on_click(cx.listener(
                                         |this, _, window, cx| {

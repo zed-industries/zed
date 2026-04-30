@@ -1363,7 +1363,7 @@ pub struct Workspace {
     project: Entity<Project>,
     follower_states: HashMap<CollaboratorId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, CollaboratorId>,
-    auto_watch_screen_state: AutoWatchScreensState,
+    auto_watch: AutoWatch,
     window_edited: bool,
     last_window_title: Option<String>,
     dirty_items: HashMap<EntityId, Subscription>,
@@ -1417,10 +1417,16 @@ pub struct FollowerState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AutoWatchScreensState {
+pub enum AutoWatch {
     Off,
     Active { watched_peer: Option<PeerId> },
     Paused,
+}
+
+impl AutoWatch {
+    pub fn enabled(&self) -> bool {
+        matches!(self, AutoWatch::Active { .. } | AutoWatch::Paused)
+    }
 }
 
 struct FollowerView {
@@ -1801,7 +1807,7 @@ impl Workspace {
             project: project.clone(),
             follower_states: Default::default(),
             last_leaders_by_pane: Default::default(),
-            auto_watch_screen_state: AutoWatchScreensState::Off,
+            auto_watch: AutoWatch::Off,
             dispatching_keystrokes: Default::default(),
             window_edited: false,
             last_window_title: None,
@@ -4792,8 +4798,8 @@ impl Workspace {
         }
     }
 
-    pub fn auto_watch_screens_state(&self) -> &AutoWatchScreensState {
-        &self.auto_watch_screen_state
+    pub fn auto_watch_screens_state(&self) -> &AutoWatch {
+        &self.auto_watch
     }
 
     fn next_watched_peer(&self, cx: &App) -> Option<PeerId> {
@@ -4802,8 +4808,8 @@ impl Workspace {
     }
 
     pub fn toggle_auto_watch_screens(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !matches!(self.auto_watch_screen_state, AutoWatchScreensState::Off) {
-            self.auto_watch_screen_state = AutoWatchScreensState::Off;
+        if self.auto_watchg.enabled() {
+            self.auto_watch = AutoWatch::Off;
             cx.notify();
             return;
         }
@@ -4816,10 +4822,10 @@ impl Workspace {
             .map_or(false, |call| call.is_sharing_screen(cx));
 
         if local_is_sharing {
-            self.auto_watch_screen_state = AutoWatchScreensState::Paused;
+            self.auto_watch = AutoWatch::Paused;
         } else {
             let watched_peer = self.next_watched_peer(cx);
-            self.auto_watch_screen_state = AutoWatchScreensState::Active { watched_peer };
+            self.auto_watch = AutoWatch::Active { watched_peer };
 
             if let Some(peer_id) = watched_peer {
                 self.open_shared_screen(peer_id, window, cx);
@@ -4835,7 +4841,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let AutoWatchScreensState::Active { watched_peer } = self.auto_watch_screen_state else {
+        let AutoWatch::Active { watched_peer } = self.auto_watch else {
             return;
         };
 
@@ -4852,7 +4858,7 @@ impl Workspace {
                 self.next_watched_peer(cx)
             };
 
-            self.auto_watch_screen_state = AutoWatchScreensState::Active {
+            self.auto_watch = AutoWatch::Active {
                 watched_peer: next_watched_peer,
             };
 
@@ -4867,12 +4873,12 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(self.auto_watch_screen_state, AutoWatchScreensState::Paused) {
+        if self.auto_watch.enabled() {
             return;
         }
 
         let watched_peer = self.next_watched_peer(cx);
-        self.auto_watch_screen_state = AutoWatchScreensState::Active { watched_peer };
+        self.auto_watch = AutoWatch::Active { watched_peer };
 
         if let Some(peer_id) = watched_peer {
             self.open_shared_screen(peer_id, window, cx);
@@ -6616,11 +6622,8 @@ impl Workspace {
                 self.handle_auto_watch_video_tracks_changed(*participant_id, window, cx);
             }
             ActiveCallEvent::LocalScreenShareStarted => {
-                if matches!(
-                    self.auto_watch_screen_state,
-                    AutoWatchScreensState::Active { .. }
-                ) {
-                    self.auto_watch_screen_state = AutoWatchScreensState::Paused;
+                if let AutoWatch::Active { .. } = self.auto_watch {
+                    self.auto_watch = AutoWatch::Paused;
                     cx.notify();
                 }
             }
