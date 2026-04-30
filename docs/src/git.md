@@ -168,11 +168,48 @@ Find more information about setting the `preferred-line-length` in the [Configur
 
 Create a new branch using {#action git::Branch} or switch to an existing branch using {#action git::Switch} or {#action git::CheckoutBranch}.
 
+When you are working in a [Git worktree](#git-worktrees), use the branch picker after switching to the worktree to create or check out the branch you want to use there.
+
 ### Deleting Branches
 
 To delete a branch, open the branch switcher with {#action git::Switch}, find the branch you want to delete, and use the delete option. Zed will confirm before deleting to prevent accidental data loss.
 
 > **Note:** You cannot delete the branch you currently have checked out. Switch to a different branch first.
+
+## Git Worktrees
+
+Git worktrees let you keep multiple checkouts of the same repository on disk at the same time.
+This is useful when you want to work on more than one branch or task without stashing, rebuilding, or disturbing the files in your main checkout.
+
+Open the worktree picker from the title bar, next to the project picker, or by running {#action git::Worktree}.
+From the picker, you can:
+
+- Create a new linked worktree either from the current branch or default branch
+- Type a name to create a named worktree or let Zed automatically pick one for you
+- Switch the current workspace to an existing worktree
+- Open an existing worktree in a new window
+- Delete linked worktrees that are not currently open in the project
+
+### Worktree Management
+
+New worktrees are created in detached HEAD state.
+After switching to the new worktree, use the branch picker next to the worktree picker to create a new branch or check out an existing, unused branch.
+This keeps Zed from accidentally checking out the same branch in multiple worktrees.
+
+The directory used for new worktrees is controlled by the `git.worktree_directory` setting.
+By default, Zed creates worktrees under `../worktrees` relative to the repository's working directory.
+
+See [All Settings](./reference/all-settings.md#git-worktree-directory) for examples.
+
+### Init Setup
+
+To run setup steps after Zed creates a linked worktree, use the [`create_worktree` task hook](./tasks.md#hooks).
+For agent-specific workflows, see [Worktree Isolation](./ai/parallel-agents.md#worktree-isolation).
+
+### Multi-root Workspaces
+
+If your project contains multiple Git repositories (i.e., multi-root folders), Zed creates a linked worktree for each repository when creating a new worktree from the picker.
+Non-Git folders in the same project are included in the new workspace as-is.
 
 ## Merge Conflicts
 
@@ -337,6 +374,7 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action git::Branch}                     | {#kb git::Branch}                     |
 | {#action git::Switch}                     | {#kb git::Switch}                     |
 | {#action git::CheckoutBranch}             | {#kb git::CheckoutBranch}             |
+| {#action git::Worktree}                   | {#kb git::Worktree}                   |
 | {#action git::Blame}                      | {#kb git::Blame}                      |
 | {#action git::StashAll}                   | {#kb git::StashAll}                   |
 | {#action git::StashPop}                   | {#kb git::StashPop}                   |

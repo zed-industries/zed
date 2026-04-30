@@ -18,6 +18,7 @@ use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont,
     MarkdownOptions, MarkdownStyle,
 };
+use project::Project;
 use project::search::SearchQuery;
 use settings::Settings;
 use theme::{SystemAppearance, Theme, ThemeRegistry};
@@ -25,7 +26,7 @@ use theme_settings::ThemeSettings;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
 use util::markdown::split_local_url_fragment;
 use util::normalize_path;
-use workspace::item::{Item, ItemBufferKind, ItemHandle};
+use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions};
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
@@ -665,26 +666,61 @@ impl MarkdownPreviewView {
                     }
                 })
                 .on_checkbox_toggle(move |source_range, new_checked, window, cx| {
-                    let task_marker = if new_checked { "[x]" } else { "[ ]" };
-                    editor_for_checkbox.update(cx, |editor, cx| {
-                        editor.edit(
-                            [(
-                                MultiBufferOffset(source_range.start)
-                                    ..MultiBufferOffset(source_range.end),
-                                task_marker,
-                            )],
-                            cx,
-                        );
-                    });
-                    if let Some(view) = view_handle.upgrade() {
-                        cx.update_entity(&view, |this, cx| {
-                            this.update_markdown_from_active_editor(false, false, window, cx);
-                        });
-                    }
+                    Self::apply_checkbox_toggle_to_editor(
+                        &editor_for_checkbox,
+                        source_range,
+                        new_checked,
+                        cx,
+                    );
+                    Self::refresh_preview(view_handle.clone(), window, cx);
                 });
         }
 
         markdown_element
+    }
+
+    fn apply_checkbox_toggle_to_editor(
+        editor: &Entity<Editor>,
+        source_range: std::ops::Range<usize>,
+        new_checked: bool,
+        cx: &mut App,
+    ) {
+        let task_marker = if new_checked { "[x]" } else { "[ ]" };
+        let expected_existing_marker = if new_checked { "[ ]" } else { "[x]" };
+
+        editor.update(cx, |editor, cx| {
+            let existing_marker: String = editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .text_for_range(
+                    MultiBufferOffset(source_range.start)..MultiBufferOffset(source_range.end),
+                )
+                .collect();
+
+            debug_assert_eq!(existing_marker, expected_existing_marker);
+
+            editor.edit(
+                [(
+                    MultiBufferOffset(source_range.start)..MultiBufferOffset(source_range.end),
+                    task_marker,
+                )],
+                cx,
+            );
+        });
+    }
+
+    fn refresh_preview(view_handle: WeakEntity<Self>, window: &mut Window, cx: &mut App) {
+        if let Some(view) = view_handle.upgrade() {
+            let preview_is_focused = view.read(cx).focus_handle.contains_focused(window, cx);
+            if !preview_is_focused {
+                return;
+            }
+
+            cx.update_entity(&view, |this, cx| {
+                this.update_markdown_from_active_editor(false, false, window, cx);
+            });
+        }
     }
 }
 
@@ -745,7 +781,9 @@ fn open_preview_url(
     window: &mut Window,
     cx: &mut App,
 ) {
-    if let Some(path) = resolve_preview_path(url.as_ref(), base_directory.as_deref())
+    let (path_text, _) = split_preview_url(url.as_ref());
+
+    if let Some(path) = resolve_preview_path(path_text, base_directory.as_deref())
         && let Some(workspace) = workspace.upgrade()
     {
         let _ = workspace.update(cx, |workspace, cx| {
@@ -767,14 +805,22 @@ fn open_preview_url(
     cx.open_url(url.as_ref());
 }
 
+fn split_preview_url(url: &str) -> (&str, Option<&str>) {
+    match url.split_once('#') {
+        Some((path, fragment)) => (path, Some(fragment)),
+        None => (url, None),
+    }
+}
+
 fn resolve_preview_path(url: &str, base_directory: Option<&Path>) -> Option<PathBuf> {
     if url.starts_with("http://") || url.starts_with("https://") {
         return None;
     }
 
-    let decoded_url = urlencoding::decode(url)
+    let (path_text, _) = split_preview_url(url);
+    let decoded_url = urlencoding::decode(path_text)
         .map(|decoded| decoded.into_owned())
-        .unwrap_or_else(|_| url.to_string());
+        .unwrap_or_else(|_| path_text.to_string());
     let candidate = PathBuf::from(&decoded_url);
 
     if candidate.is_absolute() && candidate.exists() {
@@ -809,15 +855,18 @@ fn resolve_preview_image(
         .map(|decoded| decoded.into_owned())
         .unwrap_or_else(|_| dest_url.to_string());
 
-    let decoded_path = Path::new(&decoded);
-
-    if let Ok(relative_path) = decoded_path.strip_prefix("/") {
+    if let Some(stripped) = ['/', '\\']
+        .iter()
+        .find_map(|prefix| decoded.strip_prefix(*prefix))
+    {
         if let Some(root) = workspace_directory {
-            let absolute_path = root.join(relative_path);
+            let absolute_path = root.join(stripped);
             if absolute_path.exists() {
                 return Some(ImageSource::Resource(Resource::Path(Arc::from(
                     absolute_path.as_path(),
                 ))));
+            } else {
+                return None;
             }
         }
     }
@@ -828,9 +877,8 @@ fn resolve_preview_image(
         base_directory?.join(decoded)
     };
 
-    Some(ImageSource::Resource(Resource::Path(Arc::from(
-        path.as_path(),
-    ))))
+    path.exists()
+        .then(|| ImageSource::Resource(Resource::Path(Arc::from(path.as_path()))))
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -879,6 +927,52 @@ impl Item for MarkdownPreviewView {
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
         Some("Markdown Preview Opened")
+    }
+
+    fn can_save(&self, cx: &App) -> bool {
+        self.active_editor
+            .as_ref()
+            .is_some_and(|editor_state| editor_state.editor.read(cx).can_save(cx))
+    }
+
+    fn can_save_as(&self, cx: &App) -> bool {
+        self.active_editor
+            .as_ref()
+            .is_some_and(|editor_state| editor_state.editor.read(cx).can_save_as(cx))
+    }
+
+    fn save(
+        &mut self,
+        options: SaveOptions,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.active_editor
+            .as_ref()
+            .map(|editor_state| {
+                editor_state
+                    .editor
+                    .update(cx, |editor, cx| editor.save(options, project, window, cx))
+            })
+            .unwrap_or_else(|| Task::ready(Ok(())))
+    }
+
+    fn save_as(
+        &mut self,
+        project: Entity<Project>,
+        path: project::ProjectPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.active_editor
+            .as_ref()
+            .map(|editor_state| {
+                editor_state
+                    .editor
+                    .update(cx, |editor, cx| editor.save_as(project, path, window, cx))
+            })
+            .unwrap_or_else(|| Task::ready(Ok(())))
     }
 
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
@@ -1095,98 +1189,200 @@ mod tests {
     use crate::markdown_preview_view::ImageSource;
     use crate::markdown_preview_view::Resource;
     use crate::markdown_preview_view::resolve_preview_image;
-    use anyhow::Result;
-    use std::fs;
-    use tempfile::TempDir;
+    use editor::Editor;
+    use gpui::{Entity, TestAppContext};
+    use serde_json::json;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use util::path;
+    use util::test::TempTree;
+    use workspace::{AppState, MultiWorkspace, SaveIntent, Workspace, open_paths};
 
-    use super::resolve_preview_path;
+    use super::{MarkdownPreviewView, resolve_preview_path};
 
     #[test]
-    fn resolves_relative_preview_paths() -> Result<()> {
-        let temp_dir = TempDir::new()?;
-        let base_directory = temp_dir.path();
+    fn resolves_relative_preview_path_and_missing_cases() {
+        let tree = markdown_fixture_tree(json!({
+            "notes.md": "# Notes"
+        }));
+        let base_directory = markdown_fixture_directory(&tree);
         let file = base_directory.join("notes.md");
-        fs::write(&file, "# Notes")?;
 
         assert_eq!(
-            resolve_preview_path("notes.md", Some(base_directory)),
+            resolve_preview_path("notes.md", Some(base_directory.as_path())),
             Some(file)
         );
         assert_eq!(
-            resolve_preview_path("nonexistent.md", Some(base_directory)),
+            resolve_preview_path("nonexistent.md", Some(base_directory.as_path())),
             None
         );
         assert_eq!(resolve_preview_path("notes.md", None), None);
-
-        Ok(())
     }
 
     #[test]
-    fn resolves_urlencoded_preview_paths() -> Result<()> {
-        let temp_dir = TempDir::new()?;
-        let base_directory = temp_dir.path();
-        let file = base_directory.join("release notes.md");
-        fs::write(&file, "# Release Notes")?;
+    fn resolves_urlencoded_preview_path_and_ignores_fragment_component() {
+        let tree = markdown_fixture_tree(json!({
+            "release notes.md": "# Release Notes",
+            "notes.md": "# Notes"
+        }));
+        let base_directory = markdown_fixture_directory(&tree);
 
         assert_eq!(
-            resolve_preview_path("release%20notes.md", Some(base_directory)),
-            Some(file)
+            resolve_preview_path(
+                "release%20notes.md#overview",
+                Some(base_directory.as_path())
+            ),
+            Some(base_directory.join("release notes.md"))
         );
-
-        Ok(())
+        assert_eq!(
+            resolve_preview_path("notes.md#L10", Some(base_directory.as_path())),
+            Some(base_directory.join("notes.md"))
+        );
     }
 
     #[test]
-    fn resolves_workspace_absolute_preview_images() -> Result<()> {
-        let temp_dir = TempDir::new()?;
-        let workspace_directory = temp_dir.path();
+    fn does_not_treat_web_links_as_preview_files() {
+        assert_eq!(resolve_preview_path("https://zed.dev", None), None);
+        assert_eq!(resolve_preview_path("http://example.com", None), None);
+    }
 
-        let base_directory = workspace_directory.join("docs");
-        fs::create_dir_all(&base_directory)?;
-
+    #[test]
+    fn resolves_workspace_absolute_preview_image_path_and_rejects_missing() {
+        let tree = TempTree::new(json!({
+            "docs": {},
+            "test_image.png": "mock data"
+        }));
+        let workspace_directory = tree.path();
+        let base_directory = markdown_fixture_directory(&tree);
         let image_file = workspace_directory.join("test_image.png");
-        fs::write(&image_file, "mock data")?;
 
-        let resolved_success = resolve_preview_image(
-            "/test_image.png",
-            Some(&base_directory),
-            Some(workspace_directory),
-        );
-
-        match resolved_success {
-            Some(ImageSource::Resource(Resource::Path(p))) => {
-                assert_eq!(p.as_ref(), image_file.as_path());
-            }
-            _ => panic!("Expected successful resolution to be a Resource::Path"),
+        for workspace_root_relative_path in ["/test_image.png", "\\test_image.png"] {
+            let resolved = resolve_preview_image(
+                workspace_root_relative_path,
+                Some(&base_directory),
+                Some(workspace_directory),
+            );
+            assert_resolved_preview_image_path(resolved, image_file.as_path());
         }
 
-        let resolved_missing = resolve_preview_image(
+        let missing = resolve_preview_image(
             "/missing_image.png",
             Some(&base_directory),
             Some(workspace_directory),
         );
-
-        let expected_missing_path = if std::path::Path::new("/missing_image.png").is_absolute() {
-            std::path::PathBuf::from("/missing_image.png")
-        } else {
-            // join is to retain windows path prefix C:/
-            #[expect(clippy::join_absolute_paths)]
-            base_directory.join("/missing_image.png")
-        };
-
-        match resolved_missing {
-            Some(ImageSource::Resource(Resource::Path(p))) => {
-                assert_eq!(p.as_ref(), expected_missing_path.as_path());
-            }
-            _ => panic!("Expected missing file to fallback to a Resource::Path"),
-        }
-
-        Ok(())
+        assert!(missing.is_none());
     }
 
-    #[test]
-    fn does_not_treat_web_links_as_preview_paths() {
-        assert_eq!(resolve_preview_path("https://zed.dev", None), None);
-        assert_eq!(resolve_preview_path("http://example.com", None), None);
+    #[gpui::test]
+    async fn toggles_task_checkbox_and_saves_when_preview_is_active(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "todo.md": "- [ ] Finish work\n"
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir/todo.md"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let preview = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let editor: Entity<Editor> = workspace
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+                    .unwrap();
+
+                workspace.update(cx, |workspace, cx| {
+                    let preview = MarkdownPreviewView::create_markdown_view(
+                        workspace,
+                        editor.clone(),
+                        window,
+                        cx,
+                    );
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(preview.clone()), true, true, None, window, cx)
+                    });
+                    preview
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let save_task = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace: Entity<Workspace> = multi_workspace.workspace().clone();
+                let view_handle = preview.downgrade();
+                assert!(preview.read(cx).focus_handle.contains_focused(window, cx));
+                preview.update(cx, |preview, cx| {
+                    let editor = preview.active_editor.as_ref().unwrap().editor.clone();
+                    MarkdownPreviewView::apply_checkbox_toggle_to_editor(&editor, 2..5, true, cx);
+                });
+                MarkdownPreviewView::refresh_preview(view_handle, window, cx);
+
+                workspace.update(cx, |workspace: &mut Workspace, cx| {
+                    workspace.save_active_item(SaveIntent::Save, window, cx)
+                })
+            })
+            .unwrap();
+
+        save_task.await.unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(
+            app_state
+                .fs
+                .load(path!("/dir/todo.md").as_ref())
+                .await
+                .unwrap(),
+            "- [x] Finish work\n"
+        );
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            editor::init(cx);
+            crate::init(cx);
+            state
+        })
+    }
+
+    fn markdown_fixture_tree(docs_tree: serde_json::Value) -> TempTree {
+        TempTree::new(json!({
+            "docs": docs_tree
+        }))
+    }
+
+    fn markdown_fixture_directory(tree: &TempTree) -> PathBuf {
+        tree.path().join("docs")
+    }
+
+    #[track_caller]
+    fn assert_resolved_preview_image_path(
+        resolved: Option<ImageSource>,
+        expected_path: &std::path::Path,
+    ) {
+        match resolved {
+            Some(ImageSource::Resource(Resource::Path(path))) => {
+                assert_eq!(path.as_ref(), expected_path);
+            }
+            _ => panic!("Expected preview image to resolve to a local path"),
+        }
     }
 }

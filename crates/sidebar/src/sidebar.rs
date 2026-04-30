@@ -383,11 +383,12 @@ fn workspace_menu_worktree_labels(
 
             if let Some(snapshot) = repository_snapshot {
                 let worktree_name = if snapshot.is_linked_worktree() {
-                    project::linked_worktree_short_name(
-                        snapshot.original_repo_abs_path.as_ref(),
-                        root_path,
-                    )
-                    .unwrap_or_else(|| folder_name.clone())
+                    snapshot
+                        .main_worktree_abs_path()
+                        .and_then(|main_worktree_path| {
+                            project::linked_worktree_short_name(main_worktree_path, root_path)
+                        })
+                        .unwrap_or_else(|| folder_name.clone())
                 } else {
                     "main".into()
                 };
@@ -4182,6 +4183,9 @@ impl Sidebar {
             .and_then(|mw| mw.read(cx).last_active_workspace_for_group(key, cx))
             .or_else(|| self.workspace_for_group(key, cx));
         if let Some(workspace) = workspace {
+            if self.is_active_workspace(&workspace, cx) {
+                return;
+            }
             self.activate_workspace(&workspace, window, cx);
         } else {
             self.open_workspace_for_group(key, window, cx);
@@ -5012,8 +5016,7 @@ impl Render for Sidebar {
                                     .when_some(sticky_header, |this, header| this.child(header))
                                     .custom_scrollbars(
                                         Scrollbars::new(ScrollAxes::Vertical)
-                                            .tracked_scroll_handle(&self.list_state)
-                                            .width_sm(),
+                                            .tracked_scroll_handle(&self.list_state),
                                         window,
                                         cx,
                                     ),
@@ -5244,7 +5247,7 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
             .find(|snapshot| abs_path.starts_with(&*snapshot.work_directory_abs_path));
 
         let is_linked = repo_info.map(|s| s.is_linked_worktree()).unwrap_or(false);
-        let original_repo_path = repo_info.map(|s| &s.original_repo_abs_path);
+        let main_worktree_path = repo_info.and_then(|s| s.main_worktree_abs_path());
         let branch = repo_info.and_then(|s| s.branch.as_ref().map(|b| b.ref_name.clone()));
 
         write!(output, "  - {}", abs_path.display()).ok();
@@ -5255,8 +5258,13 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
             write!(output, " [branch: {branch}]").ok();
         }
         if is_linked {
-            if let Some(original) = original_repo_path {
-                write!(output, " [linked worktree -> {}]", original.display()).ok();
+            if let Some(main_worktree_path) = main_worktree_path {
+                write!(
+                    output,
+                    " [linked worktree -> {}]",
+                    main_worktree_path.display()
+                )
+                .ok();
             } else {
                 write!(output, " [linked worktree]").ok();
             }

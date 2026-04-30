@@ -5513,6 +5513,7 @@ dependencies = [
  "tracing",
  "tree-sitter-bash",
  "tree-sitter-c",
+ "tree-sitter-go",
  "tree-sitter-html",
  "tree-sitter-md",
  "tree-sitter-python",
@@ -7674,7 +7675,6 @@ dependencies = [
  "mach2 0.5.0",
  "media",
  "metal",
- "naga 29.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "num_cpus",
  "objc",
  "objc2",
@@ -9659,7 +9659,6 @@ dependencies = [
  "ui",
  "ui_input",
  "util",
- "vercel",
  "x_ai",
 ]
 
@@ -10430,11 +10429,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
+ "fs",
  "gpui",
  "language",
  "log",
  "markdown",
  "project",
+ "serde_json",
  "settings",
  "tempfile",
  "theme",
@@ -10937,31 +10938,6 @@ name = "multimap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
-
-[[package]]
-name = "naga"
-version = "29.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85b4372fed0bd362d646d01b6926df0e837859ccc522fed720c395e0460f29c8"
-dependencies = [
- "arrayvec",
- "bit-set 0.9.1",
- "bitflags 2.10.0",
- "cfg-if",
- "cfg_aliases 0.2.1",
- "codespan-reporting",
- "half",
- "hashbrown 0.16.1",
- "hexf-parse",
- "indexmap 2.11.4",
- "libm",
- "log",
- "num-traits",
- "once_cell",
- "rustc-hash 1.1.0",
- "thiserror 2.0.17",
- "unicode-ident",
-]
 
 [[package]]
 name = "naga"
@@ -11895,6 +11871,7 @@ dependencies = [
  "futures 0.3.32",
  "google_ai",
  "http_client",
+ "language_model_core",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -19469,16 +19446,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
-name = "vercel"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "schemars 1.0.4",
- "serde",
- "strum 0.27.2",
-]
-
-[[package]]
 name = "version-compare"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20512,7 +20479,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "js-sys",
  "log",
- "naga 29.0.0 (git+https://github.com/zed-industries/wgpu.git?branch=v29)",
+ "naga",
  "parking_lot",
  "portable-atomic",
  "profiling",
@@ -20542,7 +20509,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "indexmap 2.11.4",
  "log",
- "naga 29.0.0 (git+https://github.com/zed-industries/wgpu.git?branch=v29)",
+ "naga",
  "once_cell",
  "parking_lot",
  "portable-atomic",
@@ -20607,7 +20574,7 @@ dependencies = [
  "libc",
  "libloading",
  "log",
- "naga 29.0.0 (git+https://github.com/zed-industries/wgpu.git?branch=v29)",
+ "naga",
  "ndk-sys",
  "objc2",
  "objc2-core-foundation",
@@ -20640,7 +20607,7 @@ name = "wgpu-naga-bridge"
 version = "29.0.0"
 source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
 dependencies = [
- "naga 29.0.0 (git+https://github.com/zed-industries/wgpu.git?branch=v29)",
+ "naga",
  "wgpu-types",
 ]
 
@@ -22383,7 +22350,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.235.0"
+version = "1.2.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

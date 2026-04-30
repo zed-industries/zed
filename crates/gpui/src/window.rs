@@ -601,6 +601,22 @@ impl HitboxId {
         if window.last_input_was_keyboard() {
             return false;
         }
+        self.hit_test(window)
+    }
+
+    /// Checks if the hitbox with this ID is currently hovered, regardless of the last
+    /// input modality used.
+    ///
+    /// See [`HitboxId::is_hovered`] for more details.
+    pub(crate) fn is_hovered_ignoring_last_input(self, window: &Window) -> bool {
+        // If this hitbox has captured the pointer, it's always considered hovered
+        if window.captured_hitbox == Some(self) {
+            return true;
+        }
+        self.hit_test(window)
+    }
+
+    fn hit_test(self, window: &Window) -> bool {
         let hit_test = &window.mouse_hit_test;
         for id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
             if self == *id {
@@ -877,9 +893,11 @@ impl Frame {
             .rev()
             .fold_while(None, |style, request| match request.hitbox_id {
                 None => Done(Some(request.style)),
-                Some(hitbox_id) => Continue(
-                    style.or_else(|| hitbox_id.is_hovered(window).then_some(request.style)),
-                ),
+                Some(hitbox_id) => Continue(style.or_else(|| {
+                    hitbox_id
+                        .is_hovered_ignoring_last_input(window)
+                        .then_some(request.style)
+                })),
             })
             .into_inner()
     }
@@ -1439,6 +1457,10 @@ impl Window {
             move |active| {
                 handle
                     .update(&mut cx, |_, window, cx| {
+                        if !active {
+                            cx.platform.set_cursor_style(CursorStyle::Arrow);
+                        }
+
                         window.active.set(active);
                         window.modifiers = window.platform_window.modifiers();
                         window.capslock = window.platform_window.capslock();
@@ -3573,6 +3595,7 @@ impl Window {
         );
         let integer_origin = quantized_origin.map(|c| ScaledPixels(c.trunc()));
         let subpixel_rendering = self.should_use_subpixel_rendering(font_id, font_size);
+        let dilation = self.text_system().glyph_dilation_for_color(color);
         let params = RenderGlyphParams {
             font_id,
             glyph_id,
@@ -3581,6 +3604,7 @@ impl Window {
             scale_factor,
             is_emoji: false,
             subpixel_rendering,
+            dilation,
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
@@ -3670,6 +3694,7 @@ impl Window {
             scale_factor,
             is_emoji: true,
             subpixel_rendering: false,
+            dilation: 0,
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;

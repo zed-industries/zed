@@ -1052,9 +1052,7 @@ impl Render for ThreadsArchiveView {
                     .size_full(),
                 )
                 .custom_scrollbars(
-                    Scrollbars::new(ScrollAxes::Vertical)
-                        .tracked_scroll_handle(&self.list_state)
-                        .width_sm(),
+                    Scrollbars::new(ScrollAxes::Vertical).tracked_scroll_handle(&self.list_state),
                     window,
                     cx,
                 )
