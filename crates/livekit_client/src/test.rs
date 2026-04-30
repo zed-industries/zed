@@ -436,7 +436,7 @@ impl TestServer {
             for client_room in room
                 .client_rooms
                 .iter()
-                .filter(|(id, _)| **id == identity)
+                .filter(|(id, _)| **id != identity)
                 .map(|(_, room)| room)
             {
                 let track = RemoteTrack::Video(RemoteVideoTrack {
@@ -468,7 +468,7 @@ impl TestServer {
             for client_room in room
                 .client_rooms
                 .iter()
-                .filter(|(id, _)| **id == identity)
+                .filter(|(id, _)| **id != identity)
                 .map(|(_, room)| room)
             {
                 let track = RemoteTrack::Audio(RemoteAudioTrack {
